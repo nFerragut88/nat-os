@@ -30,13 +30,21 @@ _Static_assert((TASK_FRAME_BYTES % 16) == 0,
 
 static task_t   g_tasks[TASK_MAX];
 static uint32_t g_stacks[TASK_MAX][TASK_STACK_WORDS];
-static int      g_current;             /* 0 = boot context */
-static int      g_started;             /* has the boot SP been captured yet? */
+
+/* -1 means "no task is running yet": the boot context is about to be abandoned
+ * and its stack pointer must NOT be saved, because doing so would overwrite the
+ * fabricated frame of whichever task occupies that slot.
+ *
+ * An earlier design adopted the boot context as task 0 instead, capturing its
+ * stack pointer on the first interrupt. That created two ways for a task to
+ * come into existence — fabricated and captured — and only the fabricated path
+ * worked: tasks 1 and 2 ran, task 0 never resumed. Deleting the second path was
+ * cheaper than debugging it, and leaves one code path to be correct about. */
+static int g_current = -1;
 
 int task_create(const char *name, task_entry_fn entry)
 {
-    /* Task 0 is reserved for the boot context, so allocation starts at 1. */
-    for (int id = 1; id < TASK_MAX; id++) {
+    for (int id = 0; id < TASK_MAX; id++) {
         if (g_tasks[id].state != TASK_UNUSED) {
             continue;
         }
@@ -78,18 +86,15 @@ int task_create(const char *name, task_entry_fn entry)
 /* Called from _handler_level3. Must not be static — assembly names it. */
 uint32_t task_schedule(uint32_t current_sp)
 {
-    if (!g_started) {
-        /* First ever switch: the interrupted context is the boot path. Adopt
-         * it as task 0 rather than treating it as a special case forever. */
-        g_tasks[0].state      = TASK_READY;
-        g_tasks[0].name       = "boot";
-        g_tasks[0].stack_base = 0;      /* its stack is the linker's, not ours */
-        g_started = 1;
+    /* On the very first switch there is no task to save — the interrupted
+     * context is the boot path, which is deliberately discarded. */
+    if (g_current >= 0) {
+        g_tasks[g_current].sp = current_sp;
     }
 
-    g_tasks[g_current].sp = current_sp;
-
-    /* Round robin from the one after current, so no task can starve another. */
+    /* Round robin from the one after current, so no task can starve another.
+     * With g_current == -1 the first candidate is 0, so the first switch enters
+     * whichever task was created first. */
     int next = g_current;
     for (int i = 1; i <= TASK_MAX; i++) {
         int candidate = (g_current + i) % TASK_MAX;
@@ -97,6 +102,12 @@ uint32_t task_schedule(uint32_t current_sp)
             next = candidate;
             break;
         }
+    }
+    if (next < 0) {
+        /* Nothing runnable at all. Returning the interrupted stack pointer is
+         * the only safe answer — resuming the boot context beats jumping to a
+         * fabricated frame that does not exist. */
+        return current_sp;
     }
 
     g_current = next;
@@ -113,15 +124,15 @@ uint32_t task_switch_count(int id)
 
 int task_stack_intact(int id)
 {
-    if (id <= 0 || id >= TASK_MAX || g_tasks[id].stack_base == 0) {
-        return 1;   /* boot task has no guard we control */
+    if (id < 0 || id >= TASK_MAX || g_tasks[id].stack_base == 0) {
+        return 1;   /* no stack of ours to check */
     }
     return g_tasks[id].stack_base[0] == STACK_GUARD;
 }
 
 uint32_t task_stack_headroom(int id)
 {
-    if (id <= 0 || id >= TASK_MAX || g_tasks[id].stack_base == 0) {
+    if (id < 0 || id >= TASK_MAX || g_tasks[id].stack_base == 0) {
         return 0;
     }
     uint32_t untouched = 0;
