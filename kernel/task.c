@@ -96,12 +96,17 @@ int task_create(const char *name, task_entry_fn entry)
  * and timer_late_count() will climb — that is expected and harmless here,
  * because the question is what the frame CONTAINS, not when it arrives.
  */
-#define TRACE_SWITCHES 5
+/* Switch tracing. Set to 0 for a quiet boot; raise it to watch the first N
+ * switches when touching the handler or the frame layout. Retained rather than
+ * deleted because it is what turned M2's silence into a sequence. */
+#define TRACE_SWITCHES 0
 
 /* A/B switch. With the in-loop probes compiled in, the selection loop is
  * correct; with them out, switch 4 returned 2 -> 2 while the task table said
  * every task was READY. Same source otherwise. Flip this to reproduce. */
 #define TRACE_PROBES 0
+
+#if TRACE_SWITCHES > 0
 
 static uint32_t g_trace_n;
 
@@ -158,6 +163,8 @@ static void trace_frame(int from, int to, uint32_t in_sp, const uint32_t *frame,
     uart_puts("\n");
 }
 
+#endif /* TRACE_SWITCHES > 0 */
+
 /* Test hook. Byte-for-byte the selection loop as it was WITHOUT the volatile
  * workaround, so GCC is free to emit a zero-overhead LOOP again. Called from
  * kmain before timer_start(), i.e. single-threaded with no interrupt source
@@ -201,7 +208,8 @@ uint32_t task_schedule(uint32_t current_sp)
      * ordinary branches, which worked but treated the symptom. */
     for (int i = 1; i <= TASK_MAX; i++) {
         int candidate = (g_current + i) % TASK_MAX;
-        if (TRACE_PROBES && g_trace_n < TRACE_SWITCHES) {
+#if TRACE_SWITCHES > 0 && TRACE_PROBES
+        if (g_trace_n < TRACE_SWITCHES) {
             uart_puts("\n   probe i=");
             uart_put_dec((unsigned int)i);
             uart_puts(" cand=");
@@ -210,6 +218,7 @@ uint32_t task_schedule(uint32_t current_sp)
             uart_put_dec((unsigned int)g_tasks[candidate].state);
             uart_puts(g_tasks[candidate].state == TASK_READY ? " MATCH" : " skip");
         }
+#endif
         if (g_tasks[candidate].state == TASK_READY) {
             next = candidate;
             break;
@@ -222,33 +231,23 @@ uint32_t task_schedule(uint32_t current_sp)
         return current_sp;
     }
 
+#if TRACE_SWITCHES > 0
     /* switches == 0 means this task has never run, so its frame is still the
      * one task_create fabricated. Anything else is a frame the handler saved. */
     int fabricated = (g_tasks[next].switches == 0);
     int from = g_current;
+#endif
 
     g_current = next;
     g_tasks[next].switches++;
 
+#if TRACE_SWITCHES > 0
     if (g_trace_n < TRACE_SWITCHES) {
         g_trace_n++;
-
-        /* Same function, two contexts. task_select_probe() answers correctly
-         * when called from kmain; call it here, inside the level-3 handler,
-         * and compare. Also dump PS as the handler sees it — if EXCM is set,
-         * the zero-overhead loop-back is disabled and the body runs once. */
-        uart_puts("\n   isr ps=");
-        uart_put_hex(xt_get_ps());
-        uart_puts(" probe(");
-        uart_put_dec((unsigned int)from);
-        uart_puts(")=");
-        uart_put_dec((unsigned int)task_select_probe(from));
-        uart_puts("  volatile-loop said ");
-        uart_put_dec((unsigned int)next);
-
         trace_frame(from, next, current_sp,
                     (const uint32_t *)g_tasks[next].sp, fabricated);
     }
+#endif
 
     return g_tasks[next].sp;
 }

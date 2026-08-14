@@ -92,6 +92,24 @@ SECTIONS
   /* Kernel stack grows down from the top of DRAM. */
   _stack_top = ORIGIN(dram) + LENGTH(dram);
 
+  /* Boot stack reservation.
+   *
+   * The boot context is abandoned once kmain hands off to the scheduler, and
+   * every task thereafter runs on its own stack from .bss. The reservation is
+   * therefore only needed until handoff — but it is kept permanently rather
+   * than reclaimed, because the heap must not be adjacent to a stack that grew
+   * further than expected before handoff. 4 KB is far more than the boot path
+   * uses and costs 2% of DRAM. */
+  _boot_stack_size = 4K;
+
+  /* Heap: everything between the end of .bss and the boot stack reservation.
+   * Placed by the linker rather than sized by hand so it absorbs changes in
+   * .bss automatically — a fixed heap base silently shrinks when a static
+   * array grows, which is the sort of thing that shows up as a mysterious
+   * allocation failure much later. */
+  _heap_start = ALIGN(_bss_end, 8);
+  _heap_end   = _stack_top - _boot_stack_size;
+
   /* Keep the toolchain from complaining about unplaced debug sections. */
   /DISCARD/ : { *(.eh_frame) *(.comment) }
 }
