@@ -26,13 +26,28 @@
  *
  *   0    a0            1..14  a2..a15
  *   15   SAR           16     EPC3          17  EPS3
+ *   18   LBEG          19     LEND          20  LCOUNT
+ *
+ * LBEG/LEND/LCOUNT back the Xtensa zero-overhead LOOP instruction, and they are
+ * part of a task's context whether or not that task ever knows it. GCC emits
+ * LOOP for ordinary counted C loops, so any task can be suspended mid-loop with
+ * LCOUNT non-zero. Omitting these three words cost a full debugging session:
+ * the scheduler's own round robin compiled to a LOOP, stale LCOUNT survived
+ * into the handler, the hardware branched back to LEND, and the "no candidate
+ * matched" fallback overwrote a selection that had in fact matched. It presented
+ * as a task switching to itself forever. Adding a uart_puts() inside the loop
+ * made the symptom disappear, because a loop body containing a call cannot be a
+ * zero-overhead loop and GCC emitted a plain branch instead.
  */
-#define TASK_FRAME_WORDS  18
-#define TASK_FRAME_BYTES  80           /* 18 words, padded to 16-byte alignment */
+#define TASK_FRAME_WORDS  21
+#define TASK_FRAME_BYTES  96           /* 21 words, padded to 16-byte alignment */
 
-#define TASK_FRAME_IDX_SAR   15
-#define TASK_FRAME_IDX_EPC3  16
-#define TASK_FRAME_IDX_EPS3  17
+#define TASK_FRAME_IDX_SAR    15
+#define TASK_FRAME_IDX_EPC3   16
+#define TASK_FRAME_IDX_EPS3   17
+#define TASK_FRAME_IDX_LBEG   18
+#define TASK_FRAME_IDX_LEND   19
+#define TASK_FRAME_IDX_LCOUNT 20
 
 typedef void (*task_entry_fn)(void);
 

@@ -14,6 +14,7 @@
 
 #include "task.h"
 #include "timer.h"
+#include "uart.h"
 #include "xtensa.h"
 
 /* Written into the lowest stack word; if it changes, the task overflowed. */
@@ -83,6 +84,80 @@ int task_create(const char *name, task_entry_fn entry)
     return -1;
 }
 
+/* ---- switch tracing -------------------------------------------------- */
+/*
+ * Prints the frame the handler is about to restore. Ticks 1-3 restore frames
+ * fabricated by task_create; tick 4 is the first restore of a frame the
+ * handler itself saved. Dumping both means the saved frame can be read against
+ * a known-good fabricated one instead of against expectations.
+ *
+ * This runs at interrupt level 3 and blocks on the UART for the length of the
+ * dump, which is far longer than a tick period. Ticks are missed as a result
+ * and timer_late_count() will climb — that is expected and harmless here,
+ * because the question is what the frame CONTAINS, not when it arrives.
+ */
+#define TRACE_SWITCHES 5
+
+/* A/B switch. With the in-loop probes compiled in, the selection loop is
+ * correct; with them out, switch 4 returned 2 -> 2 while the task table said
+ * every task was READY. Same source otherwise. Flip this to reproduce. */
+#define TRACE_PROBES 0
+
+static uint32_t g_trace_n;
+
+static const char *const FRAME_REGS[TASK_FRAME_WORDS] = {
+    "a0 ", "a2 ", "a3 ", "a4 ", "a5 ", "a6 ", "a7 ", "a8 ", "a9 ",
+    "a10", "a11", "a12", "a13", "a14", "a15", "sar", "epc", "eps",
+    "lbg", "lnd", "lct"
+};
+
+static void trace_frame(int from, int to, uint32_t in_sp, const uint32_t *frame,
+                        int fabricated)
+{
+    uart_puts("\n-- switch ");
+    uart_put_dec(g_trace_n);
+    uart_puts(": ");
+    uart_put_dec((unsigned int)from);
+    uart_puts(" -> ");
+    uart_put_dec((unsigned int)to);
+    uart_puts(fabricated ? "  (fabricated frame)\n" : "  (SAVED frame)\n");
+
+    uart_puts("   in_sp=");
+    uart_put_hex(in_sp);
+    uart_puts("  frame@");
+    uart_put_hex((uint32_t)frame);
+    uart_puts("  base=");
+    uart_put_hex((uint32_t)g_tasks[to].stack_base);
+    uart_puts("\n");
+
+    /* The whole task table. If the round robin stops offering a task, the
+     * question is whether the scheduler skipped it or whether its state field
+     * stopped saying READY — and those are different bugs. */
+    uart_puts("   table:");
+    for (int i = 0; i < TASK_MAX; i++) {
+        uart_puts(" [");
+        uart_put_dec((unsigned int)i);
+        uart_puts("] st=");
+        uart_put_dec((unsigned int)g_tasks[i].state);
+        uart_puts(" sp=");
+        uart_put_hex(g_tasks[i].sp);
+        uart_puts(" sw=");
+        uart_put_dec(g_tasks[i].switches);
+    }
+    uart_puts("\n");
+
+    for (int i = 0; i < TASK_FRAME_WORDS; i++) {
+        uart_puts("   ");
+        uart_puts(FRAME_REGS[i]);
+        uart_putc('=');
+        uart_put_hex(frame[i]);
+        if ((i % 3) == 2) {
+            uart_putc('\n');
+        }
+    }
+    uart_puts("\n");
+}
+
 /* Called from _handler_level3. Must not be static — assembly names it. */
 uint32_t task_schedule(uint32_t current_sp)
 {
@@ -96,8 +171,20 @@ uint32_t task_schedule(uint32_t current_sp)
      * With g_current == -1 the first candidate is 0, so the first switch enters
      * whichever task was created first. */
     int next = g_current;
-    for (int i = 1; i <= TASK_MAX; i++) {
+    /* `volatile` denies GCC the constant trip count it needs to emit a
+     * zero-overhead LOOP. Under test: the selection is correct whenever this
+     * loop is NOT a hardware loop, and wrong whenever it is. */
+    for (volatile int i = 1; i <= TASK_MAX; i++) {
         int candidate = (g_current + i) % TASK_MAX;
+        if (TRACE_PROBES && g_trace_n < TRACE_SWITCHES) {
+            uart_puts("\n   probe i=");
+            uart_put_dec((unsigned int)i);
+            uart_puts(" cand=");
+            uart_put_dec((unsigned int)candidate);
+            uart_puts(" st=");
+            uart_put_dec((unsigned int)g_tasks[candidate].state);
+            uart_puts(g_tasks[candidate].state == TASK_READY ? " MATCH" : " skip");
+        }
         if (g_tasks[candidate].state == TASK_READY) {
             next = candidate;
             break;
@@ -110,8 +197,20 @@ uint32_t task_schedule(uint32_t current_sp)
         return current_sp;
     }
 
+    /* switches == 0 means this task has never run, so its frame is still the
+     * one task_create fabricated. Anything else is a frame the handler saved. */
+    int fabricated = (g_tasks[next].switches == 0);
+    int from = g_current;
+
     g_current = next;
     g_tasks[next].switches++;
+
+    if (g_trace_n < TRACE_SWITCHES) {
+        g_trace_n++;
+        trace_frame(from, next, current_sp,
+                    (const uint32_t *)g_tasks[next].sp, fabricated);
+    }
+
     return g_tasks[next].sp;
 }
 

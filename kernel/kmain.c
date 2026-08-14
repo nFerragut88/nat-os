@@ -81,7 +81,7 @@ static void task_report(void)
 
     for (;;) {
         uint32_t t = timer_ticks();
-        if (t - reported < 1u) {
+        if (t - reported < 200u) {
             continue;
         }
         reported = t;
