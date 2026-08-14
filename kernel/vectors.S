@@ -68,7 +68,10 @@ _vector_double:
  * counter. Saving them into each task's frame and restoring before RFI is what
  * makes a switch actually switch.
  *
- * Frame is 80 bytes: 18 words, padded to keep the stack 16-byte aligned.
+ *   LBEG, LEND,   zero-overhead LOOP state — see the note at the save site.
+ *   LCOUNT        Omitting these is what broke M2.
+ *
+ * Frame is 96 bytes: 21 words, padded to keep the stack 16-byte aligned.
  * Layout must match TASK_FRAME_IDX_* in task.h.
  */
 
@@ -79,7 +82,7 @@ _vector_double:
     .type _handler_level3, @function
 
 _handler_level3:
-    addi     a1, a1, -80
+    addi     a1, a1, -96
     s32i     a0,  a1, 0
     s32i     a2,  a1, 4
     s32i     a3,  a1, 8
@@ -102,6 +105,18 @@ _handler_level3:
     rsr.eps3 a2
     s32i     a2,  a1, 68
 
+    /* Zero-overhead LOOP state. GCC emits LOOP for ordinary counted C loops,
+     * so a task can be suspended with LCOUNT non-zero; leaving these out lets a
+     * stale LCOUNT branch the handler — or the next task — back to a previous
+     * task's LEND. Saved BEFORE any C is called, because task_schedule's own
+     * round robin compiles to a LOOP and would otherwise clobber them. */
+    rsr.lbeg   a2
+    s32i       a2,  a1, 72
+    rsr.lend   a2
+    s32i       a2,  a1, 76
+    rsr.lcount a2
+    s32i       a2,  a1, 80
+
     /* Tick bookkeeping and comparator re-arm. */
     call0    timer_isr
 
@@ -120,6 +135,17 @@ _handler_level3:
     wsr.epc3 a2
     l32i     a2,  a1, 60
     wsr.sar  a2
+
+    /* LOOP state. LCOUNT is written last: it is the register that actually arms
+     * the hardware loop, so LBEG and LEND must already describe the right body
+     * before it becomes live. */
+    l32i       a2,  a1, 72
+    wsr.lbeg   a2
+    l32i       a2,  a1, 76
+    wsr.lend   a2
+    l32i       a2,  a1, 80
+    wsr.lcount a2
+
     l32i     a0,  a1, 0
     l32i     a2,  a1, 4
     l32i     a3,  a1, 8
@@ -135,7 +161,7 @@ _handler_level3:
     l32i     a13, a1, 48
     l32i     a14, a1, 52
     l32i     a15, a1, 56
-    addi     a1, a1, 80
+    addi     a1, a1, 96
     rfi      3
 
     .size _handler_level3, . - _handler_level3
