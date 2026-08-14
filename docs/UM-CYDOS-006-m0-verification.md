@@ -111,6 +111,13 @@ Stated explicitly so later work does not over-claim on this evidence.
   watchdog. That it survived 8 seconds suggests watchdogs are not armed at this
   point in boot, but this is inference, not measurement, and may change once
   interrupts are enabled.
+
+  > **CORRECTED 2026-08-14.** The inference was wrong. The RTC watchdog **is**
+  > armed by the second-stage bootloader, which expects the application to take
+  > ownership of it. M0 survived its capture window by luck of timing, not
+  > because nothing was running. Measured directly during M2: `rst:0x10
+  > (RTCWDT_RTC_RESET)` on every boot once the CPU was kept busy. See
+  > UM-CYDOS-009 §8 and `kernel/watchdog.c`.
 - **No memory beyond the first few bytes.** DRAM and IRAM were exercised only at
   their lowest addresses. Neither region has been validated across its full
   declared length — directly relevant to the overlap risk in UM-CYDOS-004 §5.
