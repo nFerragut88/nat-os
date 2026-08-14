@@ -1,7 +1,7 @@
 # UM-CYDOS-009 — Milestone 2 Verification Report
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.0 · 2026-08-14 · Status: **PASS with a qualified fix** — exit criteria met on hardware; one defect closed by workaround rather than by root cause
+Revision 1.1 · 2026-08-14 · Status: **PASS** — exit criteria met on hardware; the §6 defect is root-caused and fixed at source
 
 ---
 
@@ -16,9 +16,10 @@ M2 is the harder claim, because the interrupt now returns to a **different**
 context than the one it interrupted. Everything above this layer — drivers, the
 VM host, any notion of concurrency — assumes it works.
 
-The milestone passes. It is reported as **PASS with a qualified fix** because
-the defect that dominated the effort is closed empirically but not explained.
-Section 6 documents that honestly rather than presenting a clean result.
+The milestone passes. Section 6 documents the defect that dominated the effort,
+including two wrong diagnoses and one wrong fix that was kept anyway, because
+the reasoning is more reusable than the result: the same hazard applies to every
+C function this kernel will ever call from an interrupt handler.
 
 ## 2. What M2 had to establish
 
@@ -89,7 +90,7 @@ each would be an untested mechanism in the one code path that must be correct.
 | 60 | `SAR` | Clobbered by any shift |
 | 64 | `EPC3` | Interrupted PC |
 | 68 | `EPS3` | Interrupted PS |
-| 72–80 | `LBEG`, `LEND`, `LCOUNT` | Zero-overhead loop state — see §6.4 |
+| 72–80 | `LBEG`, `LEND`, `LCOUNT` | Zero-overhead loop state — see §6.5 |
 
 `a1` is not stored: the frame's own address *is* the saved stack pointer.
 
@@ -98,6 +99,7 @@ each would be an untested mechanism in the one code path that must be correct.
 ```
 addi a1, a1, -96        ; frame on the interrupted task's stack
 save a0, a2..a15, SAR, EPC3, EPS3, LBEG, LEND, LCOUNT
+clear PS.EXCM           ; MUST precede any C — see §6.3
 call0 timer_isr         ; tick bookkeeping, comparator re-arm
 mov  a2, a1
 call0 task_schedule     ; a2 in = current sp, a2 out = sp to resume
@@ -167,64 +169,96 @@ the wire. One entry marker per task turned that silence into a sequence and
 settled it immediately. That should have been the first instrument, not the
 fourth.
 
-### 6.3 Root cause
+### 6.3 Root cause — `PS.EXCM` disables the zero-overhead loop
 
 GCC compiled the round robin into an Xtensa **zero-overhead `LOOP`**:
 
 <!--FIGURE: loop_defect -->
 
-The `next = g_current` fallback — the value meaning "no candidate matched" —
-occupies the `LEND` slot. In the hardware-loop form, that assignment reaches the
-caller even when a candidate did match.
+**On Xtensa, the zero-overhead loop-back is disabled while `PS.EXCM` is set.**
+The `LEND` comparison never fires, so the body executes exactly once and falls
+straight through into whatever instruction occupies the `LEND` slot. Here that
+instruction is `or a12, a3, a3` — the `next = g_current` fallback.
 
-The bug was found by instrumenting the loop, and the instrumentation *made it
-disappear*. That was the real clue: a loop body containing a call cannot be a
-zero-overhead loop, so adding `uart_puts()` silently changed the code
-generation. Disassembly confirmed the `LOOP` and the fallback's position.
+Hardware sets `EXCM` on interrupt entry. The handler had never cleared it, so
+every call into C ran with hardware loops silently degraded to a single
+iteration.
 
-### 6.4 A hypothesis that measurement rejected
+This accounts for the whole observation set, including the parts that looked
+arbitrary:
 
-The obvious explanation was stale `LCOUNT`: a task suspended mid-loop, its loop
+| Observation | Explanation |
+|---|---|
+| Switches 1–3 correct | All were first-iteration hits — one iteration is enough |
+| Switch 4 wrong | First case needing a second iteration; task 3 is `UNUSED` |
+| Result was always `g_current` | That is precisely the instruction at `LEND` |
+| Instrumentation fixed it | A body containing a call cannot be a hardware loop |
+| `volatile` counter fixed it | Denies GCC the constant trip count |
+| Saving `LCOUNT` did nothing | `LCOUNT` was never the mechanism |
+
+**The scope is far wider than the scheduler.** GCC emits hardware loops for
+ordinary counted C loops, so *every* C function reachable from an interrupt
+handler was affected — every future driver, and the VM interpreter. The
+scheduler is simply where it happened to become visible, and it became visible
+only because a single wrong iteration still produced a plausible-looking answer
+three times in a row.
+
+### 6.4 The decisive experiment
+
+The hypotheses were separated with a test hook, `task_select_probe()`, holding
+the selection loop in its original hardware-loop form. Calling the **same
+function** from two contexts in the **same build**:
+
+```
+from kmain (PS.EXCM = 0):   probe(2) = 0    correct
+from the ISR (PS.EXCM = 1): probe(2) = 2    wrong
+```
+
+with the handler's own PS dumped alongside: `isr ps=0x00060733` — `INTLEVEL=3`,
+and bit 4 `EXCM` **set**. After the fix, the same line reads `isr ps=0x00060723`
+with `EXCM` clear and `probe(2) = 0`.
+
+This is what a controlled comparison is for. The earlier A/B in §6.5 varied the
+*code generation* and could only ever show correlation; varying the *context*
+while holding the code identical isolates the cause.
+
+### 6.5 A hypothesis that measurement rejected
+
+The first explanation was stale `LCOUNT`: a task suspended mid-loop, its loop
 state lost across the switch, the hardware later branching back to a previous
-`LEND`. The context frame was extended to save `LBEG`/`LEND`/`LCOUNT` and the
+`LEND`. The context frame was extended to save `LBEG`/`LEND`/`LCOUNT`, and the
 build reflashed.
 
 **The symptom did not change**, and every dumped frame showed
-`lct=0x00000000`. No task had ever been suspended mid-loop. The hypothesis was
-wrong.
+`lct=0x00000000`. No task had ever been suspended mid-loop.
 
-The frame change was nevertheless **kept**, on its own merits: GCC emits `LOOP`
-for ordinary counted C loops, so a task *can* be suspended mid-loop, and losing
-that state would corrupt it on resume. ESP-IDF's own context switch saves these
-three registers for precisely this reason. It is a real fix for a real hazard —
-it is simply not the fix for *this* defect.
+The frame change was nevertheless **kept**, on its own merits: a task genuinely
+can be suspended mid-loop, and losing that state would corrupt it on resume.
+ESP-IDF's context switch saves these three registers for the same reason. A real
+fix for a real hazard — just not for this defect. Recorded because a confident
+prediction that measurement rejected is the most reusable part of the exercise.
 
-### 6.5 The controlled comparison
+### 6.6 Fix
 
-Identical source in all three arms; only the code generation differs.
+`_handler_level3` clears `PS.EXCM` after saving the context and before calling
+any C:
 
-| Selection loop compiles to | Switch 4 | Result |
-|---|---|---|
-| Hardware `LOOP` | `2 -> 2` | Broken |
-| Ordinary branches — `uart_puts()` in body | `2 -> 0` | Correct |
-| Ordinary branches — `volatile` counter | `2 -> 0` | Correct |
+```
+rsr.ps   a2
+movi     a3, ~0x10
+and      a2, a2, a3
+wsr.ps   a2
+rsync
+```
 
-The shipped fix is a `volatile` loop counter, which denies GCC the constant trip
-count it needs to emit `LOOP`.
+Safe at this point: `PS.INTLEVEL` is still 3, so interrupts remain masked, and
+`EPC3`/`EPS3` are already saved, so the eventual `RFI` is unaffected. It also
+means a fault inside the handler now reaches the kernel exception vector and the
+panic handler rather than the double-exception vector.
 
-### 6.6 Status: workaround, not root cause
-
-**This is not closed.** The result is reproducible and unambiguous, but *why*
-the hardware loop mis-selects is unexplained — stale `LCOUNT` was ruled out by
-measurement, so the mechanism is something else. Candidates not yet
-distinguished: the early `break` leaving the loop armed and interacting with
-interrupt entry; a code-generation defect around the signed-modulo idiom inside
-a `LOOP` body; or an erratum.
-
-Operationally this means **one `volatile` qualifier is load-bearing.** Removing
-it as untidy reintroduces a scheduler that starves every task but one, and does
-so silently. The declaration carries a comment saying so. Resolving it properly
-requires single-stepping the loop under JTAG and watching the candidate register.
+The `volatile` workaround has been **removed**. The selection loop is a plain
+counted loop again, compiles to a hardware `LOOP`, and is correct. Verified at
+3,418 ticks and 1,140/1,139/1,139 switches with zero corruption.
 
 ## 7. Results
 
@@ -280,21 +314,28 @@ feeding it, at which point it becomes a genuine hang detector.
 - **No idle task.** With every task busy this has not mattered; it will as soon
   as blocking exists.
 - **Single core.** APP_CPU is untouched.
-- **The §6 defect is not root-caused.**
+- **No audit of other `EXCM` consequences.** §6.3 establishes that hardware
+  loops were degraded while `EXCM` was set, and clearing it fixes that. Whether
+  anything else in the kernel silently depended on `EXCM` being set for the
+  duration of the handler has not been examined. Nothing suggests it does — the
+  handler is short and the only C it calls is the tick and the scheduler — but
+  the question was not asked systematically.
 
 ## 10. Metrics
 
 | Quantity | Value |
 |---|---|
-| Image size | 5,040 B |
+| Image size | 5,312 B (includes retained instrumentation) |
 | Frame | 96 B / 21 words |
 | Tick interval | 800,000 cycles (~10 ms) |
 | Tasks | 3 of 4 slots |
 | Stack per task | 2 KB; ~196 B peak use |
-| Switches observed | 1,207+ |
+| Ticks observed | 3,418 |
+| Switches observed | 1,140 / 1,139 / 1,139 |
 | Corruption events | 0 |
-| Build cycles spent on §6 | 9 |
+| Build cycles spent on §6 | 12 |
 | Wrong hypotheses recorded | 3 |
+| Instructions in the fix | 5 |
 
 ## 11. References
 
@@ -302,6 +343,6 @@ feeding it, at which point it becomes a genuine hang detector.
 - UM-CYDOS-003 — `call0` ABI selection; why register windows are absent
 - UM-CYDOS-006 §6, UM-CYDOS-008 §6 — watchdog notes corrected by §8 above
 - UM-CYDOS-008 — M1 interrupt dispatch and register-integrity measurement
-- `kernel/vectors.S` — handler and frame layout
-- `kernel/task.c` — scheduler, fabricated frames, and the `volatile` of §6.6
+- `kernel/vectors.S` — handler, frame layout, and the `EXCM` clear of §6.6
+- `kernel/task.c` — scheduler, fabricated frames, and `task_select_probe()`
 - `kernel/watchdog.c` — disable sequence and register addresses

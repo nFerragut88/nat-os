@@ -210,11 +210,11 @@ def loop_defect():
         y += 32
     b += (
         f'<text x="24" y="{y + 12}" {_FONT} font-size="9" fill="{SOFT}">'
-        f'The fallback instruction sits exactly at LEND. Reaching it writes '
-        f'next = g_current, which presents as</text>'
+        f'While PS.EXCM is set the loop-back is disabled: the body runs ONCE and falls '
+        f'through to LEND, writing</text>'
         f'<text x="24" y="{y + 26}" {_FONT} font-size="9" fill="{SOFT}">'
-        f'a task switching to itself forever while the task table shows every task READY.'
-        f'</text>'
+        f'next = g_current. Correct three times by luck — every early switch hit on the '
+        f'first iteration.</text>'
     )
     return _wrap(580, y + 40, b)
 
@@ -253,8 +253,8 @@ FIGURES = {
                                          "Entering a fabricated frame and resuming a saved "
                                          "one are different mechanisms."),
     "loop_defect": (loop_defect, "The scheduler's round robin as GCC compiled it. The "
-                                 "no-match fallback occupies the LEND slot of a "
-                                 "zero-overhead hardware loop."),
+                                 "no-match fallback occupies the LEND slot, which is "
+                                 "reached on every call while PS.EXCM is set."),
     "layer_stack": (layer_stack, "Project scope by layer. Borrowing L1 costs one binary "
                                  "dependency and saves weeks of silicon bring-up."),
 }

@@ -117,6 +117,29 @@ _handler_level3:
     rsr.lcount a2
     s32i       a2,  a1, 80
 
+    /* Clear PS.EXCM before calling any C.
+     *
+     * Hardware sets EXCM on interrupt entry, and while it is set the Xtensa
+     * zero-overhead loop is DISABLED: the LEND comparison never fires, so a
+     * hardware loop body executes exactly once and falls through to whatever
+     * instruction sits at LEND. GCC emits these loops for ordinary counted C
+     * loops, which means every C function reachable from this handler is
+     * affected, not just the one that exposed it.
+     *
+     * That is what broke M2. The scheduler's round robin ran a single
+     * iteration, and the "no candidate matched" assignment occupying the LEND
+     * slot then made every task switch to itself.
+     *
+     * Safe to clear here: PS.INTLEVEL is still 3, so interrupts stay masked,
+     * and EPC3/EPS3 are already saved, so the eventual RFI is unaffected. It
+     * also means a fault inside the handler reaches the kernel exception
+     * vector and the panic handler, instead of the double-exception vector. */
+    rsr.ps   a2
+    movi     a3, ~0x10
+    and      a2, a2, a3
+    wsr.ps   a2
+    rsync
+
     /* Tick bookkeeping and comparator re-arm. */
     call0    timer_isr
 
