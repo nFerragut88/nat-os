@@ -219,6 +219,51 @@ def loop_defect():
     return _wrap(580, y + 40, b)
 
 
+def dram_budget():
+    """Measured DRAM split, and what a full framebuffer would cost."""
+    b = _DEFS
+    total = 180736.0
+    x0, w0 = 30.0, 520.0
+
+    segs = [
+        ("kernel + stacks", 10160, PANEL),
+        ("heap", 166448, OURS),
+        ("boot stack", 4096, BORROWED),
+    ]
+    x = x0
+    for label, size, fill in segs:
+        w = (size / total) * w0
+        b += (
+            f'<rect x="{x}" y="30" width="{w}" height="34" rx="2" fill="{fill}" '
+            f'stroke="{ACCENT if fill == OURS else RULE}" stroke-width="1"/>'
+        )
+        if w > 60:
+            b += (
+                f'<text x="{x + w/2}" y="51" {_FONT} font-size="10" font-weight="600" '
+                f'fill="{INK}" text-anchor="middle">{label}</text>'
+            )
+        x += w
+    b += (
+        f'<text x="{x0}" y="22" {_MONO} font-size="8.5" fill="{FAINT}">'
+        f'0x3FFB0000</text>'
+        f'<text x="{x0 + w0}" y="22" {_MONO} font-size="8.5" fill="{FAINT}" '
+        f'text-anchor="end">0x3FFDC200 · 180,736 B</text>'
+    )
+
+    # The framebuffer overlay, drawn against the same scale.
+    fb = (153600.0 / total) * w0
+    hx = x0 + (10160.0 / total) * w0
+    b += (
+        f'<rect x="{hx}" y="80" width="{fb}" height="26" rx="2" fill="none" '
+        f'stroke="{ACCENT_LT}" stroke-width="1.4" stroke-dasharray="4 3"/>'
+        f'<text x="{hx + fb/2}" y="97" {_FONT} font-size="9.5" fill="{ACCENT_LT}" '
+        f'text-anchor="middle">240×320×16bpp framebuffer — 153,600 B</text>'
+        f'<text x="{hx + fb + 8}" y="97" {_FONT} font-size="9" fill="{SOFT}">'
+        f'leaves 12,832 B</text>'
+    )
+    return _wrap(580, 118, b)
+
+
 def layer_stack():
     b = _DEFS
     layers = [
@@ -257,6 +302,9 @@ FIGURES = {
                                  "reached on every call while PS.EXCM is set."),
     "layer_stack": (layer_stack, "Project scope by layer. Borrowing L1 costs one binary "
                                  "dependency and saves weeks of silicon bring-up."),
+    "dram_budget": (dram_budget, "Measured DRAM split after M3. A full 16-bit framebuffer "
+                                 "would take 92% of the heap, which is the constraint M5 "
+                                 "has to design around."),
 }
 
 

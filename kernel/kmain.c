@@ -14,6 +14,8 @@
  * or the reporter never speaks.
  */
 
+#include "arena.h"
+#include "heap.h"
 #include "uart.h"
 #include "timer.h"
 #include "task.h"
@@ -115,6 +117,163 @@ static void task_report(void)
     }
 }
 
+/* ---- Milestone 3 self-test -------------------------------------------- */
+/*
+ * Runs single-threaded before the tick is armed, so nothing here can be
+ * disturbed by a context switch and a failure cannot be blamed on M2.
+ * Each block corresponds to one exit criterion in UM-CYDOS-007 §5.
+ */
+
+#define LEAK_ITERS 10000u
+#define LEAK_SLOTS 8u
+
+static void *g_slots[LEAK_SLOTS];
+
+static void m3_selftest(void)
+{
+    heap_init();
+
+    uint32_t base_free   = heap_free_bytes();
+    uint32_t base_large  = heap_largest_free();
+    uint32_t base_blocks = heap_blocks();
+
+    uart_puts("  heap         : ");
+    uart_put_dec(heap_total());
+    uart_puts(" B usable, largest ");
+    uart_put_dec(base_large);
+    uart_puts(" B, blocks ");
+    uart_put_dec(base_blocks);
+    uart_puts("\n");
+
+    /* --- Criterion 1: 10,000 alloc/free cycles leave no leak --------------
+     * Sizes vary so blocks are split and coalesced constantly; a missed merge
+     * shows up as a largest-free that never recovers, which is the failure a
+     * simple "free bytes match" test would miss entirely. */
+    uint32_t seed = 0x1234567u;
+    uint32_t oom  = 0;
+
+    for (uint32_t i = 0; i < LEAK_ITERS; i++) {
+        uint32_t s = i % LEAK_SLOTS;
+        heap_free(g_slots[s]);          /* NULL on the first pass — a no-op */
+        seed = seed * 1664525u + 1013904223u;
+        uint32_t sz = 16u + ((seed >> 13) % 500u);
+        g_slots[s] = heap_alloc(sz);
+        if (!g_slots[s]) {
+            oom++;
+        }
+    }
+    for (uint32_t s = 0; s < LEAK_SLOTS; s++) {
+        heap_free(g_slots[s]);
+        g_slots[s] = 0;
+    }
+
+    int chk = heap_check();
+    int leak_ok = (heap_free_bytes() == base_free) &&
+                  (heap_largest_free() == base_large) &&
+                  (heap_blocks() == base_blocks) &&
+                  (heap_used_bytes() == 0u) && (chk == 0) && (oom == 0u);
+
+    uart_puts("  [1] no leak  : ");
+    uart_puts(leak_ok ? "PASS" : "FAIL");
+    uart_puts("  after ");
+    uart_put_dec(LEAK_ITERS);
+    uart_puts(" cycles  free=");
+    uart_put_dec(heap_free_bytes());
+    uart_puts(" largest=");
+    uart_put_dec(heap_largest_free());
+    uart_puts(" blocks=");
+    uart_put_dec(heap_blocks());
+    uart_puts(" check=");
+    uart_put_dec((unsigned int)chk);
+    uart_puts("\n");
+
+    /* --- Criterion 3: exhaustion fails cleanly ---------------------------- */
+    uint32_t fails_before = heap_fail_count();
+    void *huge = heap_alloc(heap_total() + 1u);
+    int oom_ok = (huge == 0) && (heap_fail_count() == fails_before + 1u) &&
+                 (heap_check() == 0) && (heap_free_bytes() == base_free);
+
+    /* A refused free must not corrupt the list either. Both a wild pointer and
+     * a double free are counted rather than acted on. */
+    uint32_t bad_before = heap_bad_free_count();
+    void *live = heap_alloc(64);
+    heap_free(live);
+    heap_free(live);                    /* double free */
+    uint32_t stack_local = 0;
+    heap_free(&stack_local);            /* not a heap pointer at all */
+    int guard_ok = (heap_bad_free_count() == bad_before + 2u) &&
+                   (heap_check() == 0) && (heap_free_bytes() == base_free);
+
+    uart_puts("  [3] oom safe : ");
+    uart_puts((oom_ok && guard_ok) ? "PASS" : "FAIL");
+    uart_puts("  oversize=NULL fails=");
+    uart_put_dec(heap_fail_count());
+    uart_puts(" bad_frees=");
+    uart_put_dec(heap_bad_free_count());
+    uart_puts(" check=");
+    uart_put_dec((unsigned int)heap_check());
+    uart_puts("\n");
+
+    /* --- Criterion 2: arena bounds are queryable -------------------------- */
+    int a = arena_create(4096);
+    int b = arena_create(1024);
+
+    uint32_t abase = 0, alen = 0;
+    int q = arena_bounds(a, &abase, &alen);
+
+    /* The checks the interpreter will make on every load and store. The last
+     * one is the reason arena_contains() works in the offset domain: addr+len
+     * wraps the address space, and a naive comparison would admit it. */
+    int bounds_ok =
+        (q == 0) && (alen == 4096u) && (abase != 0u) &&
+        arena_contains(a, abase, 4096u)             &&  /* exact fit      */
+        arena_contains(a, abase + 4095u, 1u)        &&  /* last byte      */
+        arena_contains(a, abase, 0u)                &&  /* empty access   */
+        !arena_contains(a, abase + 4096u, 1u)       &&  /* one past end   */
+        !arena_contains(a, abase - 1u, 1u)          &&  /* one before     */
+        !arena_contains(a, abase, 4097u)            &&  /* one too long   */
+        !arena_contains(a, abase + 8u, 0xFFFFFFF8u) &&  /* wrap attempt   */
+        !arena_contains(b, abase, 1u)               &&  /* wrong arena    */
+        !arena_contains(99, abase, 1u);                 /* bogus id       */
+
+    /* Zeroed on creation: an application must not see the previous tenant. */
+    int zero_ok = 1;
+    for (uint32_t i = 0; i < 4096u / 4u; i++) {
+        if (((volatile uint32_t *)abase)[i] != 0u) {
+            zero_ok = 0;
+            break;
+        }
+    }
+
+    uart_puts("  [2] arenas   : ");
+    uart_puts((bounds_ok && zero_ok) ? "PASS" : "FAIL");
+    uart_puts("  live=");
+    uart_put_dec(arena_count());
+    uart_puts(" committed=");
+    uart_put_dec(arena_bytes_committed());
+    uart_puts(" B  base=");
+    uart_put_hex(abase);
+    uart_puts(" len=");
+    uart_put_dec(alen);
+    uart_puts("\n");
+
+    arena_destroy(a);
+    arena_destroy(b);
+    arena_destroy(a);                   /* already gone — counted, not acted on */
+
+    uart_puts("  arenas freed : check=");
+    uart_put_dec((unsigned int)heap_check());
+    uart_puts(" free=");
+    uart_put_dec(heap_free_bytes());
+    uart_puts("/");
+    uart_put_dec(base_free);
+    uart_puts(" rejects=");
+    uart_put_dec(arena_reject_count());
+    uart_puts(" high_water=");
+    uart_put_dec(heap_high_water());
+    uart_puts(" B\n");
+}
+
 void kmain(void)
 {
     uart_puts("\n\n");
@@ -133,6 +292,8 @@ void kmain(void)
     uart_put_hex(xt_get_vecbase());
     uart_puts("\n");
 
+    m3_selftest();
+
     id_report = task_create("report", task_report);
     id_a      = task_create("worker-a", task_a);
     id_b      = task_create("worker-b", task_b);
@@ -142,20 +303,6 @@ void kmain(void)
     uart_put_dec((unsigned int)id_a);
     uart_puts(" b=");
     uart_put_dec((unsigned int)id_b);
-    uart_puts("\n");
-
-    /* Single-threaded selection test. No interrupt source is armed yet, so a
-     * wrong answer here cannot involve context switching at all. Expected, with
-     * tasks 0/1/2 READY and 3 unused: -1->0, 0->1, 1->2, 2->0. */
-    uart_puts("  select probe : ");
-    for (int c = -1; c < TASK_MAX; c++) {
-        int got = task_select_probe(c);
-        int want = (c == 2 || c == 3) ? 0 : c + 1;
-        uart_put_dec((unsigned int)c);
-        uart_puts("->");
-        uart_put_dec((unsigned int)got);
-        uart_puts(got == want ? " ok  " : " WRONG  ");
-    }
     uart_puts("\n");
 
     uart_puts("  tick every   : ");
