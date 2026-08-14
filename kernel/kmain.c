@@ -144,6 +144,20 @@ void kmain(void)
     uart_put_dec((unsigned int)id_b);
     uart_puts("\n");
 
+    /* Single-threaded selection test. No interrupt source is armed yet, so a
+     * wrong answer here cannot involve context switching at all. Expected, with
+     * tasks 0/1/2 READY and 3 unused: -1->0, 0->1, 1->2, 2->0. */
+    uart_puts("  select probe : ");
+    for (int c = -1; c < TASK_MAX; c++) {
+        int got = task_select_probe(c);
+        int want = (c == 2 || c == 3) ? 0 : c + 1;
+        uart_put_dec((unsigned int)c);
+        uart_puts("->");
+        uart_put_dec((unsigned int)got);
+        uart_puts(got == want ? " ok  " : " WRONG  ");
+    }
+    uart_puts("\n");
+
     uart_puts("  tick every   : ");
     uart_put_dec(TICK_INTERVAL_CYCLES);
     uart_puts(" cycles\n");

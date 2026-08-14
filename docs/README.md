@@ -57,10 +57,11 @@ Reproducing a build: **005** alone is sufficient.
 | Panic handler | **Closed** — exercised deliberately with an `ill` instruction; prints EXCCAUSE/EPC and halts |
 | Watchdogs | **Closed** — measured armed, now disabled and read back, UM-CYDOS-009 §8 |
 
-> **Carried risk — the M2 scheduler fix is a workaround, not a root cause.** The
-> round robin is correct only when it does not compile to an Xtensa
-> zero-overhead `LOOP`, and a single `volatile` qualifier is what currently
-> guarantees that. The behaviour is reproducible and the comparison is
-> controlled (UM-CYDOS-009 §6.5), but the mechanism is unexplained. Removing
-> that qualifier as untidy reintroduces a scheduler that starves every task but
-> one, silently. First real job for the JTAG probe.
+> **Standing rule for interrupt handlers — clear `PS.EXCM` before calling C.**
+> Hardware sets `EXCM` on interrupt entry, and while it is set the Xtensa
+> zero-overhead loop-back is disabled: a hardware loop body executes once and
+> falls through to whatever sits at `LEND`. GCC emits these loops for ordinary
+> counted C loops, so this silently degrades **every C function reachable from a
+> handler** — drivers and the VM interpreter included, not just the scheduler
+> where it was found. `_handler_level3` now clears it; any future handler must
+> do the same. UM-CYDOS-009 §6.

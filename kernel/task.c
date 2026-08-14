@@ -158,6 +158,30 @@ static void trace_frame(int from, int to, uint32_t in_sp, const uint32_t *frame,
     uart_puts("\n");
 }
 
+/* Test hook. Byte-for-byte the selection loop as it was WITHOUT the volatile
+ * workaround, so GCC is free to emit a zero-overhead LOOP again. Called from
+ * kmain before timer_start(), i.e. single-threaded with no interrupt source
+ * armed and no context switching in existence.
+ *
+ * This separates two very different explanations for the M2 defect:
+ *   - wrong answers here  => the loop is mis-executed on its own, and interrupts
+ *                            were never involved
+ *   - correct answers here => the loop is fine in isolation and something about
+ *                            interrupt context corrupts it
+ */
+int task_select_probe(int current)
+{
+    int next = current;
+    for (int i = 1; i <= TASK_MAX; i++) {
+        int candidate = (current + i) % TASK_MAX;
+        if (g_tasks[candidate].state == TASK_READY) {
+            next = candidate;
+            break;
+        }
+    }
+    return next;
+}
+
 /* Called from _handler_level3. Must not be static — assembly names it. */
 uint32_t task_schedule(uint32_t current_sp)
 {
@@ -171,10 +195,11 @@ uint32_t task_schedule(uint32_t current_sp)
      * With g_current == -1 the first candidate is 0, so the first switch enters
      * whichever task was created first. */
     int next = g_current;
-    /* `volatile` denies GCC the constant trip count it needs to emit a
-     * zero-overhead LOOP. Under test: the selection is correct whenever this
-     * loop is NOT a hardware loop, and wrong whenever it is. */
-    for (volatile int i = 1; i <= TASK_MAX; i++) {
+    /* Plain counted loop. GCC is free to emit a zero-overhead LOOP here, and
+     * does; that is correct now that _handler_level3 clears PS.EXCM before
+     * calling C. This loop previously needed a `volatile` counter to force
+     * ordinary branches, which worked but treated the symptom. */
+    for (int i = 1; i <= TASK_MAX; i++) {
         int candidate = (g_current + i) % TASK_MAX;
         if (TRACE_PROBES && g_trace_n < TRACE_SWITCHES) {
             uart_puts("\n   probe i=");
@@ -207,6 +232,20 @@ uint32_t task_schedule(uint32_t current_sp)
 
     if (g_trace_n < TRACE_SWITCHES) {
         g_trace_n++;
+
+        /* Same function, two contexts. task_select_probe() answers correctly
+         * when called from kmain; call it here, inside the level-3 handler,
+         * and compare. Also dump PS as the handler sees it — if EXCM is set,
+         * the zero-overhead loop-back is disabled and the body runs once. */
+        uart_puts("\n   isr ps=");
+        uart_put_hex(xt_get_ps());
+        uart_puts(" probe(");
+        uart_put_dec((unsigned int)from);
+        uart_puts(")=");
+        uart_put_dec((unsigned int)task_select_probe(from));
+        uart_puts("  volatile-loop said ");
+        uart_put_dec((unsigned int)next);
+
         trace_frame(from, next, current_sp,
                     (const uint32_t *)g_tasks[next].sp, fabricated);
     }

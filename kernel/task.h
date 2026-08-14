@@ -49,6 +49,9 @@
 #define TASK_FRAME_IDX_LEND   19
 #define TASK_FRAME_IDX_LCOUNT 20
 
+/* Test hook — see task.c. Runs the selection loop single-threaded. */
+int task_select_probe(int current);
+
 typedef void (*task_entry_fn)(void);
 
 typedef enum {
