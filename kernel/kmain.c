@@ -1,4 +1,4 @@
-/* cyd-os — Milestone 2: preemptive task switching.
+﻿/* cyd-os — Milestone 2: preemptive task switching.
  *
  * M1 proved the kernel can be interrupted and resume with its registers
  * intact. M2 uses that: the same interrupt now saves the full context, asks
@@ -13,6 +13,7 @@
 #include "uart.h"
 #include "timer.h"
 #include "task.h"
+#include "watchdog.h"
 #include "xtensa.h"
 
 #define TICK_INTERVAL_CYCLES  800000u   /* ~10 ms at the measured ~80 MHz */
@@ -79,6 +80,14 @@ void kmain(void)
 {
     banner();
 
+    /* First, before anything can take long enough to trip it. The bootloader
+     * leaves the RTC watchdog armed; three milestones ran without noticing,
+     * and it presented as a scheduler bug. */
+    watchdog_disable_all();
+    uart_puts("  rtc wdt      : ");
+    uart_put_hex(watchdog_rtc_config());
+    uart_puts(watchdog_rtc_config() == 0u ? "  (disarmed)\n" : "  (STILL ARMED)\n");
+
     xt_set_vecbase((unsigned int)&_vecbase);
     uart_puts("  vecbase      : ");
     uart_put_hex(xt_get_vecbase());
@@ -102,8 +111,23 @@ void kmain(void)
      * itself a scheduled task and will be suspended and resumed like the
      * others; the fact that it keeps printing coherently is part of the test. */
     uint32_t reported = 0;
+    uint32_t spins = 0;
     for (;;) {
         uint32_t t = timer_ticks();
+
+        /* Unconditional heartbeat: proves whether the boot task is scheduled
+         * at all, and shows the tick independently of the report threshold.
+         * Without this, "no output" is ambiguous between a stalled timer and
+         * a starved task. */
+        if (++spins >= 400000u) {
+            spins = 0;
+            uart_puts("  [boot alive, ticks=");
+            uart_put_dec(t);
+            uart_puts(" sw=");
+            uart_put_dec(task_switch_count(0));
+            uart_puts("]\n");
+        }
+
         if (t - reported < 20u) {
             continue;
         }
