@@ -87,6 +87,8 @@ slot.
 
 ### 3.2 Interrupt entry and exit
 
+<!--FIGURE: frame_layout -->
+
 Hardware saves **nothing** on entry. It records the interrupted PC in `EPC3`,
 the processor state in `EPS3`, raises `PS.INTLEVEL`, and jumps. Everything else
 is the handler's responsibility.

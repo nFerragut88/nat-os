@@ -1,0 +1,217 @@
+/* Used Medias LLC — engineering report house style.
+ *
+ * Print-first: sized for A4, with running headers/footers supplied by the PDF
+ * renderer rather than CSS, and page-break rules that keep tables and figures
+ * from being split across a fold.
+ */
+
+@page {
+  size: A4;
+  margin: 22mm 18mm 20mm 18mm;
+}
+
+:root {
+  --ink:        #12161c;
+  --ink-soft:   #4a5462;
+  --ink-faint:  #8b95a3;
+  --rule:       #d8dde4;
+  --rule-soft:  #eceff3;
+  --accent:     #1f4e79;
+  --accent-lt:  #2d6da4;
+  --panel:      #f6f8fa;
+  --warn-bg:    #fff8e6;
+  --warn-edge:  #d9a441;
+  --ok-edge:    #2e7d52;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: "Segoe UI", "Calibri", "Helvetica Neue", Arial, sans-serif;
+  font-size: 10.2pt;
+  line-height: 1.55;
+  color: var(--ink);
+  margin: 0;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+/* ---------- cover block ---------- */
+
+.cover {
+  border-top: 4pt solid var(--accent);
+  padding-top: 14pt;
+  margin-bottom: 24pt;
+}
+
+.cover .org {
+  font-size: 8.5pt;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.cover .division {
+  font-size: 8.5pt;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin-top: 2pt;
+}
+
+.cover h1 {
+  font-size: 21pt;
+  line-height: 1.2;
+  margin: 12pt 0 4pt 0;
+  font-weight: 600;
+  color: var(--ink);
+  border: none;
+  padding: 0;
+}
+
+.cover .docid {
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 9pt;
+  color: var(--ink-soft);
+}
+
+.cover .meta {
+  margin-top: 10pt;
+  padding-top: 8pt;
+  border-top: 0.5pt solid var(--rule);
+  display: flex;
+  gap: 26pt;
+  font-size: 8.5pt;
+  color: var(--ink-soft);
+}
+
+.cover .meta b {
+  display: block;
+  font-size: 7.5pt;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  font-weight: 600;
+}
+
+/* ---------- headings ---------- */
+
+h1, h2, h3, h4 { font-weight: 600; color: var(--ink); page-break-after: avoid; }
+
+h1 {
+  font-size: 15pt;
+  margin: 20pt 0 8pt 0;
+  padding-bottom: 4pt;
+  border-bottom: 1.5pt solid var(--accent);
+}
+
+h2 {
+  font-size: 12.5pt;
+  margin: 16pt 0 6pt 0;
+  padding-bottom: 3pt;
+  border-bottom: 0.5pt solid var(--rule);
+}
+
+h3 { font-size: 10.8pt; margin: 12pt 0 4pt 0; color: var(--accent); }
+h4 { font-size: 10pt;   margin: 10pt 0 3pt 0; color: var(--ink-soft); }
+
+p { margin: 0 0 7pt 0; }
+
+/* ---------- tables ---------- */
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 9pt 0 12pt 0;
+  font-size: 9pt;
+  page-break-inside: avoid;
+}
+
+thead th {
+  background: var(--accent);
+  color: #fff;
+  text-align: left;
+  font-weight: 600;
+  font-size: 8.4pt;
+  letter-spacing: 0.03em;
+  padding: 5pt 7pt;
+}
+
+tbody td {
+  padding: 4.5pt 7pt;
+  border-bottom: 0.5pt solid var(--rule-soft);
+  vertical-align: top;
+}
+
+tbody tr:nth-child(even) { background: var(--panel); }
+
+/* ---------- code ---------- */
+
+code {
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 8.8pt;
+  background: var(--panel);
+  padding: 1pt 3pt;
+  border-radius: 2pt;
+  color: #14304a;
+}
+
+pre {
+  background: var(--panel);
+  border: 0.5pt solid var(--rule);
+  border-left: 2.5pt solid var(--accent);
+  padding: 8pt 10pt;
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 8.4pt;
+  line-height: 1.42;
+  overflow-x: auto;
+  page-break-inside: avoid;
+  margin: 8pt 0 11pt 0;
+}
+
+pre code { background: none; padding: 0; font-size: inherit; }
+
+/* ---------- callouts ---------- */
+
+blockquote {
+  margin: 9pt 0;
+  padding: 7pt 11pt;
+  background: var(--warn-bg);
+  border-left: 3pt solid var(--warn-edge);
+  color: #5c4813;
+  font-size: 9.2pt;
+  page-break-inside: avoid;
+}
+
+blockquote p:last-child { margin-bottom: 0; }
+
+/* ---------- figures ---------- */
+
+figure {
+  margin: 13pt 0 15pt 0;
+  page-break-inside: avoid;
+  text-align: center;
+}
+
+figure svg { max-width: 100%; height: auto; }
+
+figcaption {
+  margin-top: 5pt;
+  font-size: 8.2pt;
+  color: var(--ink-faint);
+  font-style: italic;
+}
+
+figcaption b { font-style: normal; color: var(--ink-soft); }
+
+/* ---------- misc ---------- */
+
+ul, ol { margin: 0 0 8pt 0; padding-left: 17pt; }
+li { margin-bottom: 2.5pt; }
+
+hr { border: none; border-top: 0.5pt solid var(--rule); margin: 14pt 0; }
+
+strong { font-weight: 600; color: var(--ink); }
+
+a { color: var(--accent); text-decoration: none; }

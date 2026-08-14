@@ -31,6 +31,8 @@ virtual machine.
 
 ## 3. Layer model and project scope
 
+<!--FIGURE: layer_stack -->
+
 The system is divided into five layers. The scope decision is *where the
 project starts writing its own code*.
 

@@ -50,6 +50,8 @@ reduces available IRAM once it does.
 
 ## 3. cyd-os layout
 
+<!--FIGURE: memory_map -->
+
 Declared in `kernel/linker.ld`:
 
 ```
