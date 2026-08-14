@@ -14,6 +14,8 @@ actually run on the device" precisely enough to debug a failure to boot.
 
 ## 2. The four stages
 
+<!--FIGURE: boot_chain -->
+
 ```
    power on
        │

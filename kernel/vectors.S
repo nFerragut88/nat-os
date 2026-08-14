@@ -50,15 +50,26 @@ _vector_double:
 /* Level-3 interrupt handler.                                          */
 /* ------------------------------------------------------------------ */
 /*
- * Runs on the interrupted context's stack. Saves everything a call0 C function
- * is permitted to clobber — a0 (return address), a2..a11 (caller-saved), and
- * SAR (clobbered by any shift) — then calls C, restores, and returns with
- * RFI 3, which restores PC and PS from EPC3/EPS3 atomically.
+ * Runs on the interrupted context's stack, saves the FULL context there, then
+ * asks the scheduler which stack to resume on. Because the stack pointer may
+ * come back different, this is also the context switch.
  *
- * a12..a15 are callee-saved under call0, so the C handler preserves them
- * itself and they are deliberately not saved here.
+ * Everything is saved, not just the caller-saved set:
+ *   a0            return address
+ *   a2..a11       caller-saved under call0
+ *   a12..a15      callee-saved — the resumed task expects ITS values, not the
+ *                 interrupted task's, so they must travel with the frame
+ *   SAR           clobbered by any shift
+ *   EPC3, EPS3    THE CRITICAL PART — see below
  *
- * Frame is 64 bytes: 12 words used, padded to keep the stack 16-byte aligned.
+ * EPC3 and EPS3 hold the interrupted PC and processor state, and RFI 3 restores
+ * from them. They are single registers, not per-task. Swapping stacks alone
+ * would therefore resume the new task's registers but the OLD task's program
+ * counter. Saving them into each task's frame and restoring before RFI is what
+ * makes a switch actually switch.
+ *
+ * Frame is 80 bytes: 18 words, padded to keep the stack 16-byte aligned.
+ * Layout must match TASK_FRAME_IDX_* in task.h.
  */
 
     .section .text, "ax"
@@ -68,38 +79,64 @@ _vector_double:
     .type _handler_level3, @function
 
 _handler_level3:
-    addi    a1, a1, -64
-    s32i    a0,  a1, 0
-    s32i    a2,  a1, 4
-    s32i    a3,  a1, 8
-    s32i    a4,  a1, 12
-    s32i    a5,  a1, 16
-    s32i    a6,  a1, 20
-    s32i    a7,  a1, 24
-    s32i    a8,  a1, 28
-    s32i    a9,  a1, 32
-    s32i    a10, a1, 36
-    s32i    a11, a1, 40
-    rsr.sar a2
-    s32i    a2,  a1, 44
+    addi     a1, a1, -80
+    s32i     a0,  a1, 0
+    s32i     a2,  a1, 4
+    s32i     a3,  a1, 8
+    s32i     a4,  a1, 12
+    s32i     a5,  a1, 16
+    s32i     a6,  a1, 20
+    s32i     a7,  a1, 24
+    s32i     a8,  a1, 28
+    s32i     a9,  a1, 32
+    s32i     a10, a1, 36
+    s32i     a11, a1, 40
+    s32i     a12, a1, 44
+    s32i     a13, a1, 48
+    s32i     a14, a1, 52
+    s32i     a15, a1, 56
+    rsr.sar  a2
+    s32i     a2,  a1, 60
+    rsr.epc3 a2
+    s32i     a2,  a1, 64
+    rsr.eps3 a2
+    s32i     a2,  a1, 68
 
-    call0   timer_isr
+    /* Tick bookkeeping and comparator re-arm. */
+    call0    timer_isr
 
-    l32i    a2,  a1, 44
-    wsr.sar a2
-    l32i    a0,  a1, 0
-    l32i    a2,  a1, 4
-    l32i    a3,  a1, 8
-    l32i    a4,  a1, 12
-    l32i    a5,  a1, 16
-    l32i    a6,  a1, 20
-    l32i    a7,  a1, 24
-    l32i    a8,  a1, 28
-    l32i    a9,  a1, 32
-    l32i    a10, a1, 36
-    l32i    a11, a1, 40
-    addi    a1, a1, 64
-    rfi     3
+    /* Hand the current stack pointer to the scheduler; it returns the stack
+     * pointer to resume on, which may belong to a different task. From this
+     * instruction onward a1 may no longer be the stack we arrived on. */
+    mov      a2, a1
+    call0    task_schedule
+    mov      a1, a2
+
+    /* Restore EPS3/EPC3 first: after this, RFI will return to whatever task
+     * this frame describes. */
+    l32i     a2,  a1, 68
+    wsr.eps3 a2
+    l32i     a2,  a1, 64
+    wsr.epc3 a2
+    l32i     a2,  a1, 60
+    wsr.sar  a2
+    l32i     a0,  a1, 0
+    l32i     a2,  a1, 4
+    l32i     a3,  a1, 8
+    l32i     a4,  a1, 12
+    l32i     a5,  a1, 16
+    l32i     a6,  a1, 20
+    l32i     a7,  a1, 24
+    l32i     a8,  a1, 28
+    l32i     a9,  a1, 32
+    l32i     a10, a1, 36
+    l32i     a11, a1, 40
+    l32i     a12, a1, 44
+    l32i     a13, a1, 48
+    l32i     a14, a1, 52
+    l32i     a15, a1, 56
+    addi     a1, a1, 80
+    rfi      3
 
     .size _handler_level3, . - _handler_level3
 

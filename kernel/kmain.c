@@ -1,151 +1,138 @@
-/* cyd-os — Milestone 1: interrupts.
+/* cyd-os — Milestone 2: preemptive task switching.
  *
- * M0 established that the kernel loads and runs. M1 establishes that it can be
- * interrupted and resume correctly, which is the prerequisite for every form of
- * scheduling.
+ * M1 proved the kernel can be interrupted and resume with its registers
+ * intact. M2 uses that: the same interrupt now saves the full context, asks
+ * the scheduler for a different stack, and resumes somebody else.
  *
- * Three things are demonstrated:
- *   1. the vector table is installed and a timer interrupt is dispatched
- *   2. the tick advances at a stable, measurable rate
- *   3. interrupted code resumes with its registers intact
- *
- * (3) is checked rather than assumed because a context switch (M2) is built
- * entirely on that property, and a save/restore bug in the interrupt path
- * would otherwise surface later as inexplicable corruption in unrelated code.
+ * Two worker tasks each maintain private state that must survive being
+ * suspended arbitrarily. If the context switch is wrong, that state diverges —
+ * so each task verifies its own invariant continuously rather than trusting
+ * that switching worked.
  */
 
 #include "uart.h"
 #include "timer.h"
+#include "task.h"
 #include "xtensa.h"
 
-/* Tick interval in CPU cycles. The kernel does not yet know the CPU frequency,
- * so this is a cycle count, and the real rate is derived by measuring ticks
- * against the host's clock during capture. At 240 MHz this is 100 Hz; at
- * 80 MHz it is 33 Hz. Either way the measurement tells us which. */
-#define TICK_INTERVAL_CYCLES  2400000u
+#define TICK_INTERVAL_CYCLES  800000u   /* ~10 ms at the measured ~80 MHz */
 
-extern char _bss_start;
-extern char _bss_end;
 extern char _stack_top;
 extern char _vecbase;
 
-static volatile unsigned int data_canary = 0xC0DEFACEu;
-static volatile unsigned int bss_canary;
+/* Each worker keeps a counter and a value derived from it. The pair is only
+ * consistent if every switch preserved the task's registers and stack exactly.
+ * Written from the tasks, read by the reporter — volatile, single words. */
+static volatile uint32_t work_a_count, work_a_bad;
+static volatile uint32_t work_b_count, work_b_bad;
+
+/* Verifies that long-lived local state survives being suspended.
+ *
+ * Several values are kept live across the whole loop, so the compiler naturally
+ * parks them in callee-saved registers (a12..a15) and spills the rest to this
+ * task's stack — which is precisely the state a context switch must preserve.
+ * A handler that saved only the caller-saved set, or that failed to give each
+ * task its own stack, breaks this within a few switches.
+ *
+ * Registers are deliberately NOT pinned with explicit __asm__("aN") bindings.
+ * Doing so claims a register the compiler may already be using (a15 in
+ * particular can serve as a frame pointer); writes then land on arbitrary
+ * memory. That is not a hypothetical — it corrupted the task table on the
+ * first attempt at this test, and the scheduler stopped finding runnable
+ * tasks. Let the compiler allocate; check the values, not their location. */
+static void worker(volatile uint32_t *count, volatile uint32_t *bad, uint32_t seed)
+{
+    uint32_t n     = 0;
+    uint32_t magic = seed;
+    uint32_t alt   = ~seed;
+    uint32_t acc   = seed ^ 0x9E3779B9u;
+
+    for (;;) {
+        n++;
+        acc = acc * 1664525u + 1013904223u;
+
+        /* Barrier only — keeps the values live across a point where an
+         * interrupt can land, without dictating where they live. */
+        __asm__ volatile ("" : "+r"(n), "+r"(magic), "+r"(alt), "+r"(acc));
+
+        if (magic != seed || alt != ~seed) {
+            (*bad)++;
+            magic = seed;       /* repair, so one fault is not counted forever */
+            alt   = ~seed;
+        }
+        *count = n;
+    }
+}
+
+static void task_a(void) { worker(&work_a_count, &work_a_bad, 0xA5A5A5A5u); }
+static void task_b(void) { worker(&work_b_count, &work_b_bad, 0x5A5A5A5Au); }
 
 static void banner(void)
 {
     uart_puts("\n\n");
     uart_puts("=====================================\n");
-    uart_puts(" cyd-os  milestone 1 — interrupts\n");
+    uart_puts(" cyd-os  milestone 2 — task switching\n");
     uart_puts("=====================================\n");
-}
-
-static void self_check(void)
-{
-    uart_puts("  .data loaded : ");
-    uart_puts(data_canary == 0xC0DEFACEu ? "ok\n" : "FAIL\n");
-
-    uart_puts("  .bss cleared : ");
-    uart_puts(bss_canary == 0 ? "ok\n" : "FAIL\n");
-
-    uart_puts("  stack top    : ");
-    uart_put_hex((unsigned int)&_stack_top);
-    uart_puts("\n");
-
-    unsigned int pc = (unsigned int)(void *)&self_check;
-    uart_puts("  code at      : ");
-    uart_put_hex(pc);
-    uart_puts(pc >= 0x40080000u && pc < 0x400A0000u ? "  (IRAM ok)\n" : "  (NOT IRAM!)\n");
-}
-
-/* Hammer the caller-saved registers with known values, then confirm they
- * survived. Interrupts fire asynchronously, so running this continuously means
- * some iterations are certain to be interrupted mid-sequence — which is
- * precisely the case that a faulty save/restore would corrupt.
- *
- * Values are chosen to be distinct and non-zero so a stray zero or a
- * neighbouring register's value is obvious rather than plausible.
- */
-static int register_integrity_ok(void)
-{
-    register unsigned int r2 __asm__("a2") = 0x11111111u;
-    register unsigned int r3 __asm__("a3") = 0x22222222u;
-    register unsigned int r4 __asm__("a4") = 0x33333333u;
-    register unsigned int r5 __asm__("a5") = 0x44444444u;
-    register unsigned int r6 __asm__("a6") = 0x55555555u;
-    register unsigned int r7 __asm__("a7") = 0x66666666u;
-
-    /* Keep them live across a window in which an interrupt may land. The empty
-     * asm block prevents the compiler from folding the checks away. */
-    __asm__ volatile ("" :: "a"(r2), "a"(r3), "a"(r4), "a"(r5), "a"(r6), "a"(r7));
-
-    return r2 == 0x11111111u && r3 == 0x22222222u && r4 == 0x33333333u &&
-           r5 == 0x44444444u && r6 == 0x55555555u && r7 == 0x66666666u;
 }
 
 void kmain(void)
 {
     banner();
-    self_check();
 
-    uart_puts("  vecbase      : ");
     xt_set_vecbase((unsigned int)&_vecbase);
+    uart_puts("  vecbase      : ");
     uart_put_hex(xt_get_vecbase());
-    uart_puts(xt_get_vecbase() == (unsigned int)&_vecbase ? "  (installed)\n"
-                                                          : "  (WRITE FAILED)\n");
+    uart_puts("\n");
 
-    uart_puts("  tick every   : ");
-    uart_put_dec(TICK_INTERVAL_CYCLES);
-    uart_puts(" cycles\n");
+    int a = task_create("worker-a", task_a);
+    int b = task_create("worker-b", task_b);
+    uart_puts("  tasks created: ");
+    uart_put_dec((unsigned int)a);
+    uart_puts(", ");
+    uart_put_dec((unsigned int)b);
+    uart_puts("  (0 = boot context)\n");
 
     timer_start(TICK_INTERVAL_CYCLES);
+    uart_puts("  tick every   : ");
+    uart_put_dec(TICK_INTERVAL_CYCLES);
+    uart_puts(" cycles\n\n");
 
-    uart_puts("  intenable    : ");
-    uart_put_hex(xt_get_intenable());
-    uart_puts("\n");
-    uart_puts("  ps           : ");
-    uart_put_hex(xt_get_ps());
-    uart_puts("\n\n");
-
-    /* Wait for the first tick before claiming anything works. If interrupts are
-     * not being delivered this never advances, and the absence of the next line
-     * is itself the diagnosis. */
-    uart_puts("  waiting for first tick... ");
-    unsigned int spins = 0;
-    while (timer_ticks() == 0 && spins < 200000000u) {
-        spins++;
-    }
-    uart_puts(timer_ticks() > 0 ? "arrived\n\n" : "NEVER ARRIVED — check vector/intenable\n\n");
-
-    unsigned int reported = 0;
-    unsigned int checks = 0;
-    unsigned int corruptions = 0;
-
+    /* The boot path continues as task 0 — its stack pointer is captured on the
+     * first switch, so no explicit hand-off is needed. This loop is therefore
+     * itself a scheduled task and will be suspended and resumed like the
+     * others; the fact that it keeps printing coherently is part of the test. */
+    uint32_t reported = 0;
     for (;;) {
-        if (!register_integrity_ok()) {
-            corruptions++;
+        uint32_t t = timer_ticks();
+        if (t - reported < 20u) {
+            continue;
         }
-        checks++;
+        reported = t;
 
-        unsigned int t = timer_ticks();
-        if (t != reported) {
-            reported = t;
+        uart_puts("  t=");
+        uart_put_dec(t);
+        uart_puts("  switches boot/a/b=");
+        uart_put_dec(task_switch_count(0));
+        uart_putc('/');
+        uart_put_dec(task_switch_count(a));
+        uart_putc('/');
+        uart_put_dec(task_switch_count(b));
 
-            /* One line per 25 ticks keeps the UART from becoming the bottleneck
-             * while still showing the rate. */
-            if ((t % 25u) == 0u) {
-                uart_puts("  tick ");
-                uart_put_dec(t);
-                uart_puts("  delta=");
-                uart_put_dec(timer_last_delta());
-                uart_puts("cy  late=");
-                uart_put_dec(timer_late_count());
-                uart_puts("  regchecks=");
-                uart_put_dec(checks);
-                uart_puts("  corrupt=");
-                uart_put_dec(corruptions);
-                uart_puts("\n");
-            }
-        }
+        uart_puts("  work a/b=");
+        uart_put_dec(work_a_count);
+        uart_putc('/');
+        uart_put_dec(work_b_count);
+
+        uart_puts("  guards=");
+        uart_puts(task_stack_intact(a) && task_stack_intact(b) ? "ok" : "BROKEN");
+
+        uart_puts("  free a/b=");
+        uart_put_dec(task_stack_headroom(a));
+        uart_putc('/');
+        uart_put_dec(task_stack_headroom(b));
+
+        uart_puts("w  corrupt=");
+        uart_put_dec(work_a_bad + work_b_bad);
+        uart_puts("\n");
     }
 }
