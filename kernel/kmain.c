@@ -58,8 +58,13 @@ static void worker(volatile uint32_t *count, volatile uint32_t *bad, uint32_t se
     }
 }
 
-static void task_a(void) { worker(&work_a_count, &work_a_bad, 0xA5A5A5A5u); }
-static void task_b(void) { worker(&work_b_count, &work_b_bad, 0x5A5A5A5Au); }
+/* Entry markers, same purpose as task 0's: they distinguish "the round robin
+ * reached this task" from "the switch died on the way there". Tick 2 enters
+ * worker-a, tick 3 enters worker-b, and tick 4 is the first time any task is
+ * RESUMED from a frame the handler actually saved rather than one fabricated
+ * by task_create — three different mechanisms that all fail as silence. */
+static void task_a(void) { uart_puts("  [task 1 entered]\n"); worker(&work_a_count, &work_a_bad, 0xA5A5A5A5u); }
+static void task_b(void) { uart_puts("  [task 2 entered]\n"); worker(&work_b_count, &work_b_bad, 0x5A5A5A5Au); }
 
 /* Reporter. A task like any other — it is suspended and resumed on the same
  * schedule as the workers, so the fact that its output stays coherent is
@@ -68,9 +73,15 @@ static void task_report(void)
 {
     uint32_t reported = 0;
 
+    /* First thing a fabricated task ever does. If this appears, the RFI landed
+     * on the entry point and the task owns the CPU; if it never appears, the
+     * switch itself is where control is lost. Those two failures are otherwise
+     * indistinguishable, because both present as silence. */
+    uart_puts("\n  [task 0 entered]\n");
+
     for (;;) {
         uint32_t t = timer_ticks();
-        if (t - reported < 100u) {
+        if (t - reported < 1u) {
             continue;
         }
         reported = t;
@@ -154,6 +165,10 @@ void kmain(void)
             uart_put_hex(xt_ccount());
             uart_puts(" intenable=");
             uart_put_hex(xt_get_intenable());
+            uart_puts(" ps=");
+            uart_put_hex(xt_get_ps());
+            uart_puts(" ccompare1=");
+            uart_put_hex(xt_get_ccompare1());
             uart_puts("\n");
         }
     }
