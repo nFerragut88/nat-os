@@ -219,9 +219,12 @@ changes. It also explains the apparent slowness of the M0 spin-loop heartbeat.
   exception has been deliberately triggered to confirm the output path works
   under fault conditions. **Recommended before M2**, since M2 is when it will
   first be needed in anger.
-- **Watchdogs still unaddressed.** Nothing feeds or disables them. Survival for
-  the capture window suggests none are armed at this point in boot; this is
-  inference, not measurement.
+- **Watchdogs — CORRECTED 2026-08-14.** This report originally recorded the
+  watchdog state as "inference, not measurement", and the inference was wrong.
+  The RTC watchdog **is** armed by the bootloader. It was later measured
+  directly: every boot after the first reported st:0x10 (RTCWDT_RTC_RESET)\.
+  M0 and M1 survived their capture windows by luck of timing, not because no
+  watchdog was running. See \kernel/watchdog.c\.
 - **No CPU frequency control.** The kernel neither reads nor sets the clock.
 
 ## 7. Metrics

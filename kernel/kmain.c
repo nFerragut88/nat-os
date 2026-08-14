@@ -1,13 +1,17 @@
-﻿/* cyd-os — Milestone 2: preemptive task switching.
+/* cyd-os — Milestone 2: preemptive task switching.
  *
- * M1 proved the kernel can be interrupted and resume with its registers
- * intact. M2 uses that: the same interrupt now saves the full context, asks
- * the scheduler for a different stack, and resumes somebody else.
+ * M1 proved the kernel can be interrupted and resume with its registers intact.
+ * M2 uses that: the same interrupt saves the full context, asks the scheduler
+ * for a different stack, and resumes somebody else.
  *
- * Two worker tasks each maintain private state that must survive being
- * suspended arbitrarily. If the context switch is wrong, that state diverges —
- * so each task verifies its own invariant continuously rather than trusting
- * that switching worked.
+ * Every task is created the same way — including the reporter. kmain sets up,
+ * starts the tick, and then never runs again; its stack is abandoned. There is
+ * deliberately no path by which a running context becomes a task, because an
+ * earlier design had exactly that and it was the one path that did not work.
+ *
+ * Two workers verify that their private state survives arbitrary suspension;
+ * a third task reports. If the switch is wrong, the workers' invariants break
+ * or the reporter never speaks.
  */
 
 #include "uart.h"
@@ -18,29 +22,18 @@
 
 #define TICK_INTERVAL_CYCLES  800000u   /* ~10 ms at the measured ~80 MHz */
 
-extern char _stack_top;
 extern char _vecbase;
 
-/* Each worker keeps a counter and a value derived from it. The pair is only
- * consistent if every switch preserved the task's registers and stack exactly.
- * Written from the tasks, read by the reporter — volatile, single words. */
 static volatile uint32_t work_a_count, work_a_bad;
 static volatile uint32_t work_b_count, work_b_bad;
 
-/* Verifies that long-lived local state survives being suspended.
- *
- * Several values are kept live across the whole loop, so the compiler naturally
- * parks them in callee-saved registers (a12..a15) and spills the rest to this
- * task's stack — which is precisely the state a context switch must preserve.
- * A handler that saved only the caller-saved set, or that failed to give each
- * task its own stack, breaks this within a few switches.
- *
- * Registers are deliberately NOT pinned with explicit __asm__("aN") bindings.
- * Doing so claims a register the compiler may already be using (a15 in
- * particular can serve as a frame pointer); writes then land on arbitrary
- * memory. That is not a hypothetical — it corrupted the task table on the
- * first attempt at this test, and the scheduler stopped finding runnable
- * tasks. Let the compiler allocate; check the values, not their location. */
+static int id_report, id_a, id_b;
+
+/* Keeps several values live across the whole loop, so the compiler parks them
+ * in callee-saved registers and spills the rest to this task's stack — exactly
+ * the state a context switch must preserve. Registers are not pinned with
+ * explicit __asm__("aN") bindings: that claims registers the compiler may
+ * already be using, and writes then land on arbitrary memory. */
 static void worker(volatile uint32_t *count, volatile uint32_t *bad, uint32_t seed)
 {
     uint32_t n     = 0;
@@ -68,79 +61,28 @@ static void worker(volatile uint32_t *count, volatile uint32_t *bad, uint32_t se
 static void task_a(void) { worker(&work_a_count, &work_a_bad, 0xA5A5A5A5u); }
 static void task_b(void) { worker(&work_b_count, &work_b_bad, 0x5A5A5A5Au); }
 
-static void banner(void)
+/* Reporter. A task like any other — it is suspended and resumed on the same
+ * schedule as the workers, so the fact that its output stays coherent is
+ * itself part of the test. */
+static void task_report(void)
 {
-    uart_puts("\n\n");
-    uart_puts("=====================================\n");
-    uart_puts(" cyd-os  milestone 2 — task switching\n");
-    uart_puts("=====================================\n");
-}
-
-void kmain(void)
-{
-    banner();
-
-    /* First, before anything can take long enough to trip it. The bootloader
-     * leaves the RTC watchdog armed; three milestones ran without noticing,
-     * and it presented as a scheduler bug. */
-    watchdog_disable_all();
-    uart_puts("  rtc wdt      : ");
-    uart_put_hex(watchdog_rtc_config());
-    uart_puts(watchdog_rtc_config() == 0u ? "  (disarmed)\n" : "  (STILL ARMED)\n");
-
-    xt_set_vecbase((unsigned int)&_vecbase);
-    uart_puts("  vecbase      : ");
-    uart_put_hex(xt_get_vecbase());
-    uart_puts("\n");
-
-    int a = task_create("worker-a", task_a);
-    int b = task_create("worker-b", task_b);
-    uart_puts("  tasks created: ");
-    uart_put_dec((unsigned int)a);
-    uart_puts(", ");
-    uart_put_dec((unsigned int)b);
-    uart_puts("  (0 = boot context)\n");
-
-    timer_start(TICK_INTERVAL_CYCLES);
-    uart_puts("  tick every   : ");
-    uart_put_dec(TICK_INTERVAL_CYCLES);
-    uart_puts(" cycles\n\n");
-
-    /* The boot path continues as task 0 — its stack pointer is captured on the
-     * first switch, so no explicit hand-off is needed. This loop is therefore
-     * itself a scheduled task and will be suspended and resumed like the
-     * others; the fact that it keeps printing coherently is part of the test. */
     uint32_t reported = 0;
-    uint32_t spins = 0;
+
     for (;;) {
         uint32_t t = timer_ticks();
-
-        /* Unconditional heartbeat: proves whether the boot task is scheduled
-         * at all, and shows the tick independently of the report threshold.
-         * Without this, "no output" is ambiguous between a stalled timer and
-         * a starved task. */
-        if (++spins >= 400000u) {
-            spins = 0;
-            uart_puts("  [boot alive, ticks=");
-            uart_put_dec(t);
-            uart_puts(" sw=");
-            uart_put_dec(task_switch_count(0));
-            uart_puts("]\n");
-        }
-
-        if (t - reported < 20u) {
+        if (t - reported < 100u) {
             continue;
         }
         reported = t;
 
         uart_puts("  t=");
         uart_put_dec(t);
-        uart_puts("  switches boot/a/b=");
-        uart_put_dec(task_switch_count(0));
+        uart_puts("  switches r/a/b=");
+        uart_put_dec(task_switch_count(id_report));
         uart_putc('/');
-        uart_put_dec(task_switch_count(a));
+        uart_put_dec(task_switch_count(id_a));
         uart_putc('/');
-        uart_put_dec(task_switch_count(b));
+        uart_put_dec(task_switch_count(id_b));
 
         uart_puts("  work a/b=");
         uart_put_dec(work_a_count);
@@ -148,15 +90,71 @@ void kmain(void)
         uart_put_dec(work_b_count);
 
         uart_puts("  guards=");
-        uart_puts(task_stack_intact(a) && task_stack_intact(b) ? "ok" : "BROKEN");
+        uart_puts(task_stack_intact(id_report) && task_stack_intact(id_a) &&
+                  task_stack_intact(id_b) ? "ok" : "BROKEN");
 
-        uart_puts("  free a/b=");
-        uart_put_dec(task_stack_headroom(a));
+        uart_puts("  freew a/b=");
+        uart_put_dec(task_stack_headroom(id_a));
         uart_putc('/');
-        uart_put_dec(task_stack_headroom(b));
+        uart_put_dec(task_stack_headroom(id_b));
 
-        uart_puts("w  corrupt=");
+        uart_puts("  corrupt=");
         uart_put_dec(work_a_bad + work_b_bad);
         uart_puts("\n");
+    }
+}
+
+void kmain(void)
+{
+    uart_puts("\n\n");
+    uart_puts("=====================================\n");
+    uart_puts(" cyd-os  milestone 2 — task switching\n");
+    uart_puts("=====================================\n");
+
+    /* Before anything can take long enough to trip it. The bootloader arms the
+     * RTC watchdog and expects the application to take ownership. */
+    watchdog_disable_all();
+    uart_puts("  rtc wdt      : ");
+    uart_puts(watchdog_rtc_config() == 0u ? "disarmed\n" : "STILL ARMED\n");
+
+    xt_set_vecbase((unsigned int)&_vecbase);
+    uart_puts("  vecbase      : ");
+    uart_put_hex(xt_get_vecbase());
+    uart_puts("\n");
+
+    id_report = task_create("report", task_report);
+    id_a      = task_create("worker-a", task_a);
+    id_b      = task_create("worker-b", task_b);
+    uart_puts("  tasks        : report=");
+    uart_put_dec((unsigned int)id_report);
+    uart_puts(" a=");
+    uart_put_dec((unsigned int)id_a);
+    uart_puts(" b=");
+    uart_put_dec((unsigned int)id_b);
+    uart_puts("\n");
+
+    uart_puts("  tick every   : ");
+    uart_put_dec(TICK_INTERVAL_CYCLES);
+    uart_puts(" cycles\n");
+    uart_puts("  handing off to the scheduler — kmain does not return\n\n");
+
+    timer_start(TICK_INTERVAL_CYCLES);
+
+    /* The first tick should switch into task 0 and never resume this context.
+     * DIAGNOSTIC: if we are still here, report whether the tick is advancing —
+     * that separates "interrupt not firing" from "switch not working", which
+     * produce identical silence. */
+    uint32_t spins = 0;
+    for (;;) {
+        if (++spins >= 600000u) {
+            spins = 0;
+            uart_puts("  [kmain still here] ticks=");
+            uart_put_dec(timer_ticks());
+            uart_puts(" ccount=");
+            uart_put_hex(xt_ccount());
+            uart_puts(" intenable=");
+            uart_put_hex(xt_get_intenable());
+            uart_puts("\n");
+        }
     }
 }
