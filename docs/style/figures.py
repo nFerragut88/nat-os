@@ -136,6 +136,8 @@ def frame_layout():
         ("SAR", "shift amount"),
         ("EPC3", "interrupted PC — the switch depends on this"),
         ("EPS3", "interrupted PS"),
+        ("LBEG / LEND", "zero-overhead LOOP bounds"),
+        ("LCOUNT", "iterations left — a task can be suspended mid-loop"),
     ]
     y = 14
     for name, desc in cells:
@@ -148,9 +150,73 @@ def frame_layout():
         y += 32
     b += (
         f'<text x="30" y="{y + 10}" {_MONO} font-size="8.5" fill="{FAINT}">'
-        f'18 words · 80 bytes with padding · 16-byte aligned</text>'
+        f'21 words · 96 bytes with padding · 16-byte aligned</text>'
     )
     return _wrap(580, y + 24, b)
+
+
+def switch_sequence():
+    """The first five switches, as observed on hardware."""
+    b = _DEFS
+    steps = [
+        ("boot", "0", "fabricated", True),
+        ("0", "1", "fabricated", True),
+        ("1", "2", "fabricated", True),
+        ("2", "0", "SAVED", False),
+        ("0", "1", "SAVED", False),
+    ]
+    x = 24
+    for i, (src, dst, kind, fab) in enumerate(steps, start=1):
+        fill = PANEL if fab else OURS
+        stroke = RULE if fab else ACCENT
+        b += _box(x, 30, 92, 44, fill, stroke, f"{src} → {dst}", sub=kind, mono=True)
+        b += (
+            f'<text x="{x + 46}" y="22" {_FONT} font-size="8.5" fill="{FAINT}" '
+            f'text-anchor="middle">tick {i}</text>'
+        )
+        if i < len(steps):
+            b += _arrow(x + 92, 52, x + 106, 52)
+        x += 106
+    b += (
+        f'<text x="24" y="98" {_FONT} font-size="9" fill="{SOFT}">'
+        f'Ticks 1–3 enter frames built by task_create. Tick 4 is the first resume of a '
+        f'frame the handler saved —</text>'
+        f'<text x="24" y="112" {_FONT} font-size="9" fill="{SOFT}">'
+        f'the only mechanism that had never executed successfully, and where the defect '
+        f'surfaced.</text>'
+    )
+    return _wrap(580, 126, b)
+
+
+def loop_defect():
+    """Why the round robin returned the no-match fallback."""
+    b = _DEFS
+    rows = [
+        ("loop  a2, LEND", "LCOUNT = 3, body armed", False),
+        ("add.n a12, a4, a3", "candidate = i + g_current", False),
+        ("l32i.n a5, a5, 4", "read g_tasks[candidate].state", False),
+        ("beqi  a5, 1, exit", "MATCH → branch OUT, LCOUNT still non-zero", True),
+        ("addi.n a4, a4, 1", "i++", False),
+        ("or    a12, a3, a3", "LEND: next = g_current — the fallback", True),
+    ]
+    y = 16
+    for code, note, hot in rows:
+        b += _box(24, y, 190, 26, OURS if hot else PANEL, ACCENT if hot else RULE,
+                  code, mono=True)
+        b += (
+            f'<text x="226" y="{y + 17}" {_FONT} font-size="9.5" '
+            f'fill="{ACCENT if hot else SOFT}">{note}</text>'
+        )
+        y += 32
+    b += (
+        f'<text x="24" y="{y + 12}" {_FONT} font-size="9" fill="{SOFT}">'
+        f'The fallback instruction sits exactly at LEND. Reaching it writes '
+        f'next = g_current, which presents as</text>'
+        f'<text x="24" y="{y + 26}" {_FONT} font-size="9" fill="{SOFT}">'
+        f'a task switching to itself forever while the task table shows every task READY.'
+        f'</text>'
+    )
+    return _wrap(580, y + 40, b)
 
 
 def layer_stack():
@@ -183,6 +249,12 @@ FIGURES = {
                                "IRAM cannot serve unaligned reads."),
     "frame_layout": (frame_layout, "Saved-context frame. EPC3/EPS3 are what make a stack "
                                    "swap into an actual task switch."),
+    "switch_sequence": (switch_sequence, "The first five context switches on hardware. "
+                                         "Entering a fabricated frame and resuming a saved "
+                                         "one are different mechanisms."),
+    "loop_defect": (loop_defect, "The scheduler's round robin as GCC compiled it. The "
+                                 "no-match fallback occupies the LEND slot of a "
+                                 "zero-overhead hardware loop."),
     "layer_stack": (layer_stack, "Project scope by layer. Borrowing L1 costs one binary "
                                  "dependency and saves weeks of silicon bring-up."),
 }
