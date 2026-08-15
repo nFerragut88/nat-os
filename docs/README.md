@@ -41,7 +41,7 @@ true" is the difference between a working boot and a silent reboot.
 | [UM-CYDOS-016](UM-CYDOS-016-display-syscalls.md) | Display Syscalls, and a Total System Freeze | Per-application viewports, pointer discipline, measured containment, and a yield that stopped the clock |
 | [UM-CYDOS-017](UM-CYDOS-017-touch.md) | Touchscreen, and a Verification Method That Failed Three Times | XPT2046 over PENIRQ, the GPIO two-bank bug, calibration by controlled input, a capture that erased its own evidence, and input confinement |
 | [UM-CYDOS-018](UM-CYDOS-018-persistence.md) | Persistence, and a Read Defect That Looked Like the Wrong Thing | SPI flash driver, a checksummed record that survives a power cycle, the inherited clock divider that shifted every read by a bit, and two hypotheses tested against stale firmware |
-| [UM-CYDOS-019](UM-CYDOS-019-failure-handling.md) | Failure Handling, and Three Mechanisms That Had Never Fired | Stack guards enforced in the scheduler, the watchdog erasing its own panic reports, measured stack margins, and a UART receive path one byte behind |
+| [UM-CYDOS-019](UM-CYDOS-019-failure-handling.md) | Failure Handling, and Three Mechanisms That Had Never Fired | Stack guards enforced in the scheduler, the watchdog erasing its own panic reports, measured stack margins, a UART receive path one byte behind, and a fault reported to flash and to the panel |
 
 ## Reading order
 
@@ -81,6 +81,7 @@ Reproducing a build: **005** alone is sufficient.
 | Flash cache | **Enabled** — `.rodata` mapped from flash, UM-CYDOS-011 |
 | Persistence | **Live** — checksummed record in a flash sector at 2 MB; boot counter and a cumulative frame count survived 16 resets, UM-CYDOS-018 §6 |
 | Failure handling | **Enforced** — guards checked on every switch across all eight tasks; `hang`/`fault`/`smash` each trigger their path on demand, UM-CYDOS-019 §5 |
+| Fault reporting | **Three ways** — flash record read back by the next boot, UART report, and the reason drawn on the panel; ordered by decreasing reliability, UM-CYDOS-019 §6–7 |
 | Stack margins | **Measured** — worst task uses 444 B of 2,048; minimum margin 78%, UM-CYDOS-019 §3.1 |
 | Version control | **Initialised 2026-08-14** |
 | JTAG debug probe | Ordered, not in hand |
