@@ -1,0 +1,47 @@
+; Application PONG — receives PING's counter and shows it moving.
+;
+; Draws a block whose position is derived from the received value, erasing the
+; previous one, so the strip animates only while messages are actually
+; arriving. A stalled channel is therefore visible as a stopped block rather
+; than as a screen that merely looks plausible.
+;
+; PONG never learns anything about PING's memory: it is handed a copy of four
+; bytes and the sender's id, and nothing else.
+
+start:
+        ldi     r10, @buf
+        ldi     r13, 0              ; previous block x, for erasing
+
+loop:
+        mov     r0, r10
+        ldi     r1, 4
+        sys     recv                ; r0 = bytes received, r1 = sender id
+        brz     r0, loop
+
+        ldw     r5, r10, 0          ; the counter PING sent
+
+        ldi     r6, 29
+        mod     r7, r5, r6          ; 0..28
+        ldi     r8, 8
+        mul     r9, r7, r8          ; x = 8 * (value % 29)
+
+        mov     r0, r13             ; erase where it was
+        ldi     r1, 9
+        ldi     r2, 8
+        ldi     r3, 8
+        ldi     r4, 0x0000
+        sys     fill
+
+        mov     r0, r9              ; draw where it is
+        ldi     r1, 9
+        ldi     r2, 8
+        ldi     r3, 8
+        ldi     r4, 0x07FF          ; cyan
+        sys     fill
+
+        mov     r13, r9
+        jmp     loop
+
+        .align  4
+buf:
+        .word   0

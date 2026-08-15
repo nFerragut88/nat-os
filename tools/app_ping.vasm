@@ -1,0 +1,29 @@
+; Application PING — sends a counter to application 1, forever.
+;
+; The message body is four bytes in PING's own arena. It names the destination
+; by APPLICATION ID; there is no argument here that could denote memory
+; belonging to the receiver, so the message cannot be placed anywhere PING
+; chooses — only handed over.
+;
+; Most sends are refused, because the mailbox holds one message and PONG has not
+; drained it yet. That is expected and is what the refused counter measures.
+
+start:
+        ldi     r10, @buf
+        ldi     r11, 0              ; the value being sent
+        ldi     r12, 1
+
+loop:
+        add     r11, r11, r12
+        stw     r11, r10, 0         ; body: one 32-bit counter
+
+        ldi     r0, 1               ; destination application id
+        mov     r1, r10             ; arena offset of the body
+        ldi     r2, 4               ; length
+        sys     send                ; r0 = 1 delivered, 0 refused
+
+        jmp     loop
+
+        .align  4
+buf:
+        .word   0

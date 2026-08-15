@@ -66,7 +66,7 @@ OPS = {
 # device with VM_FAULT_SYSCALL.
 SYSCALLS = {
     "exit": 0, "putc": 1, "puts": 2, "putd": 3, "ticks": 4,
-    "fill": 5, "text": 6, "dims": 7, "touch": 8, "blit": 9,
+    "fill": 5, "text": 6, "dims": 7, "touch": 8, "blit": 9, "send": 10, "recv": 11,
 }
 
 ESCAPES = {"n": 10, "r": 13, "t": 9, "0": 0, "\\": 92, '"': 34, "'": 39}

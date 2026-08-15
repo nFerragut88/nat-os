@@ -128,7 +128,17 @@ enum {
      *   r3 = w, r4 = h
      * The first syscall to take a pointer AND a length from the program, so it
      * is the first where the size itself is attacker-controlled. */
-    VM_SYS_BLIT  = 9
+    VM_SYS_BLIT  = 9,    /* r0=offset r1=x r2=y r3=w r4=h              */
+
+    /* Messaging. A sender names a destination APPLICATION, never an address.
+     *   SEND: r0 = destination id, r1 = arena offset, r2 = length
+     *         r0 <- 1 delivered, 0 refused
+     *   RECV: r0 = arena offset, r1 = buffer size
+     *         r0 <- bytes received (0 if none), r1 <- sender id
+     * Messages are copied through a kernel mailbox, so no application ever
+     * holds a reference to another's memory. */
+    VM_SYS_SEND  = 10,
+    VM_SYS_RECV  = 11
 };
 
 /* Fault codes. VM_FAULT_NONE is the only non-terminal value. */
@@ -167,6 +177,11 @@ typedef struct {
     uint32_t vx, vy, vw, vh;
 
     int      arena;                     /* owning arena id              */
+
+    /* Which application this VM is. Messaging addresses applications, not
+     * arenas or tasks, so the identity has to be here. -1 for a VM the kernel
+     * hosts directly, which therefore cannot be sent to. */
+    int      app_id;
     uint32_t base;                      /* cached kernel address        */
     uint32_t size;                      /* cached arena length          */
 
@@ -194,6 +209,9 @@ int vm_init(vm_t *vm, int arena_id);
  * for an application — app.c narrows it. */
 void vm_set_viewport(vm_t *vm, uint32_t x, uint32_t y, uint32_t w, uint32_t h);
 
+/* Binds this VM to an application id, so messages can be addressed to it. */
+void vm_set_app_id(vm_t *vm, int id);
+
 /* Runs at most `quantum` instructions. Returns one of VM_RUN_*. Safe to call
  * again after VM_RUN_QUANTUM; calling after HALTED or FAULTED returns the same
  * result without executing anything. */
@@ -220,5 +238,9 @@ uint32_t vm_touch_withheld(void);
 
 /* Bitmaps accepted from applications. */
 uint32_t vm_blits(void);
+
+/* The VM's own view of messaging: attempts that never reached ipc.c because
+ * the buffer was outside the caller's arena. */
+uint32_t vm_ipc_bad_buffer(void);
 
 #endif /* CYDOS_VM_H */

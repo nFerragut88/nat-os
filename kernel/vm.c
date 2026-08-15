@@ -11,6 +11,7 @@
 #include "vm.h"
 #include "arena.h"
 #include "display.h"
+#include "ipc.h"
 #include "touch.h"
 #include "timer.h"
 #include "uart.h"
@@ -66,8 +67,11 @@ int vm_init(vm_t *vm, int arena_id)
     vm->vy = 0;
     vm->vw = DISP_W;
     vm->vh = DISP_H;
+    vm->app_id = -1;
     return 0;
 }
+
+void vm_set_app_id(vm_t *vm, int id) { vm->app_id = id; }
 
 void vm_set_viewport(vm_t *vm, uint32_t x, uint32_t y, uint32_t w, uint32_t h)
 {
@@ -181,10 +185,12 @@ static uint32_t g_vp_calls;
  * application may ever see those coordinates. */
 static uint32_t g_touch_given, g_touch_withheld;
 static uint32_t g_blits;
+static uint32_t g_ipc_bad_buffer;
 
 uint32_t vm_touch_given(void)    { return g_touch_given; }
 uint32_t vm_touch_withheld(void) { return g_touch_withheld; }
 uint32_t vm_blits(void)          { return g_blits; }
+uint32_t vm_ipc_bad_buffer(void) { return g_ipc_bad_buffer; }
 
 uint32_t vm_viewport_escapes(void) { return g_vp_escapes; }
 uint32_t vm_viewport_max_y(void)   { return g_vp_max_y; }
@@ -403,6 +409,45 @@ static int do_syscall(vm_t *vm, uint32_t num)
         g_blits++;
         vm->reg[0] = 1;
         vm->yield_now = 1;              /* milliseconds, not instructions */
+        return 0;
+    }
+
+    case VM_SYS_SEND: {
+        uint32_t dst = vm->reg[0];
+        uint32_t off = vm->reg[1];
+        uint32_t len = vm->reg[2];
+
+        /* The message body must lie inside the SENDER's arena. Checked here
+         * rather than in ipc.c, because only the VM knows which arena the
+         * offset belongs to — ipc.c is handed a kernel pointer and has no way
+         * to tell where it came from. */
+        if (len == 0u || len > IPC_MSG_MAX || !vm_in_bounds(vm, off, len)) {
+            g_ipc_bad_buffer++;
+            vm->reg[0] = 0;
+            return 0;
+        }
+
+        int ok = ipc_send(vm->app_id, (int)dst,
+                          (const uint8_t *)(vm->base + off), len);
+        vm->reg[0] = (ok == 0) ? 1u : 0u;
+        return 0;
+    }
+
+    case VM_SYS_RECV: {
+        uint32_t off = vm->reg[0];
+        uint32_t max = vm->reg[1];
+
+        if (max == 0u || max > IPC_MSG_MAX || !vm_in_bounds(vm, off, max)) {
+            g_ipc_bad_buffer++;
+            vm->reg[0] = 0;
+            vm->reg[1] = 0;
+            return 0;
+        }
+
+        int from = -1;
+        uint32_t n = ipc_recv(vm->app_id, (uint8_t *)(vm->base + off), max, &from);
+        vm->reg[0] = n;
+        vm->reg[1] = (n > 0u) ? (uint32_t)from : 0u;
         return 0;
     }
 

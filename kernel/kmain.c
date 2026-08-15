@@ -18,6 +18,7 @@
 #include "heap.h"
 #include "app.h"
 #include "console.h"
+#include "ipc.h"
 #include "display.h"
 #include "touch.h"
 #include "critical.h"
@@ -33,6 +34,8 @@
 #include "generated/app_gfx_rogue.h"
 #include "generated/app_paint.h"
 #include "generated/app_blit.h"
+#include "generated/app_ping.h"
+#include "generated/app_pong.h"
 #include "uart.h"
 #include "timer.h"
 #include "task.h"
@@ -271,6 +274,14 @@ static void task_report(void)
         uart_put_dec(g_shared_lock.errors);
         uart_puts(" skew=");
         uart_put_dec(bumps > shared ? bumps - shared : shared - bumps);
+        uart_puts("  | ipc s/d/r=");
+        uart_put_dec(ipc_sent());
+        uart_putc('/');
+        uart_put_dec(ipc_delivered());
+        uart_putc('/');
+        uart_put_dec(ipc_refused());
+        uart_puts(" badbuf=");
+        uart_put_dec(vm_ipc_bad_buffer());
         uart_puts("  | blits=");
         uart_put_dec(vm_blits());
         uart_puts("  | touch g/w=");
@@ -663,6 +674,8 @@ static const shell_program_t PROGRAMS[] = {
     { "gfxrogue", vm_app_gfx_rogue, VM_APP_GFX_ROGUE_LEN, 256u, 0u },
     { "paint",   vm_app_paint, VM_APP_PAINT_LEN, 512u, 0u },
     { "blit",    vm_app_blit,  VM_APP_BLIT_LEN,  512u, 0u },
+    { "ping",    vm_app_ping,  VM_APP_PING_LEN,  512u, 0u },
+    { "pong",    vm_app_pong,  VM_APP_PONG_LEN,  512u, 0u },
 };
 #define PROGRAM_COUNT ((int)(sizeof PROGRAMS / sizeof PROGRAMS[0]))
 
@@ -1081,6 +1094,7 @@ void kmain(void)
     uart_puts("\n");
 
     console_init();
+    ipc_init();
     mutex_init(&g_shared_lock);
 
     touch_init();
@@ -1124,8 +1138,10 @@ void kmain(void)
      * left for the operator to launch from the shell — it is a demonstration,
      * not something that should be running by default. */
     shell_register(PROGRAMS, PROGRAM_COUNT);
-    start_program("paint");
-    start_program("blit");
+    /* Order matters: ping addresses application 1, so pong must take that
+     * slot. Slots are handed out lowest-free-first. */
+    start_program("ping");
+    start_program("pong");
 
     id_report = task_create("report", task_report);
     id_a      = task_create("worker-a", task_a);

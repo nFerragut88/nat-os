@@ -3,6 +3,7 @@
 #include "app.h"
 #include "arena.h"
 #include "console.h"
+#include "ipc.h"
 #include "display.h"
 #include "uart.h"
 #include "vm.h"
@@ -39,6 +40,13 @@ static void retire(app_t *a, app_state_t why)
     /* Wipe the strip on the way out, so a dead application does not leave its
      * last frame on the panel looking like a live one. */
     display_fill_rect(a->vm.vx, a->vm.vy, a->vm.vw, a->vm.vh, COLOR_BLACK);
+
+    /* Undelivered mail dies with the recipient. */
+    for (int i = 0; i < APP_MAX; i++) {
+        if (&g_apps[i] == a) {
+            ipc_clear(i);
+        }
+    }
     a->base  = 0;
     a->state = why;
 }
@@ -83,6 +91,11 @@ int app_start(const char *name, const uint8_t *img, uint32_t len,
          * arena, applied to pixels. */
         vm_set_viewport(&a->vm, 0u, APP_VIEW_Y0 + (uint32_t)id * APP_VIEW_PITCH,
                         DISP_W, APP_VIEW_H);
+        vm_set_app_id(&a->vm, id);
+
+        /* A fresh application must not inherit mail addressed to whoever held
+         * this slot before it. */
+        ipc_clear(id);
 
         a->state       = APP_RUNNING;
         a->name        = name;
