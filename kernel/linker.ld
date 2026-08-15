@@ -82,7 +82,28 @@ SECTIONS
     . = ALIGN(4);
   } > iram
 
-  /* Read-only data now lives in flash rather than DRAM.
+  /* Read-only data that must survive a disabled flash cache.
+   *
+   * UM-CYDOS-011 §4 records the hazard: writing flash requires the cache to be
+   * turned off, and while it is off EVERY access to flash-mapped .rodata
+   * faults. That includes the panic handler's own message strings — a fault
+   * during a flash write would reach a panic handler that then faults trying to
+   * describe itself, which is the worst failure mode available to a kernel with
+   * no debugger.
+   *
+   * Selecting by object file rather than by attributing individual strings:
+   * string literals are awkward to place by hand, and a rule that catches an
+   * object's rodata wholesale cannot be defeated by someone adding a new
+   * message later and forgetting the annotation. */
+  .dram.rodata : ALIGN(4)
+  {
+    *panic.o(.rodata .rodata.*)
+    *uart.o(.rodata .rodata.*)
+    *watchdog.o(.rodata .rodata.*)
+    . = ALIGN(4);
+  } > dram
+
+  /* Everything else lives in flash rather than DRAM.
    *
    * It sat in DRAM because IRAM cannot serve the unaligned byte reads that
    * string handling performs. Flash mapped through the data cache has no such

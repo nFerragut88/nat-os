@@ -353,6 +353,10 @@ static void task_report(void)
         uart_put_dec(g_last_x);
         uart_putc(',');
         uart_put_dec(g_last_y);
+        uart_puts(" wdt f/s=");
+        uart_put_dec(watchdog_feeds());
+        uart_putc('/');
+        uart_put_dec(watchdog_starved());
         uart_puts("  states=");
         for (int i = 0; i < 7; i++) {
             uart_put_dec((unsigned int)task_state_of(i));
@@ -1327,6 +1331,12 @@ void kmain(void)
     uart_put_dec(TICK_INTERVAL_CYCLES);
     uart_puts(" cycles\n");
     uart_puts("  handing off to the scheduler — kmain does not return\n\n");
+
+    /* Armed last, immediately before the scheduler takes over. Arming earlier
+     * would have the single-threaded boot path - which never switches tasks and
+     * so never feeds - reset the board partway through its own self-tests. */
+    watchdog_arm(3000u);
+    uart_puts("  hang detector: armed, 3000 ms, fed on distinct task switches\n");
 
     timer_start(TICK_INTERVAL_CYCLES);
 

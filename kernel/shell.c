@@ -9,6 +9,7 @@
 #include "app.h"
 #include "heap.h"
 #include "raycast.h"
+#include "critical.h"
 #include "timer.h"
 #include "uart.h"
 #include "vm.h"
@@ -184,6 +185,19 @@ static void execute(char *line)
     else if (str_eq(line, "ps"))    { cmd_ps(); }
     else if (str_eq(line, "progs")) { cmd_progs(); }
     else if (str_eq(line, "mem"))   { cmd_mem(); }
+    else if (str_eq(line, "hang")) {
+        /* Deliberately wedge the system to prove the hang detector works.
+         *
+         * An armed watchdog that has never been observed to fire is worse than
+         * none: it is confidence without evidence. This masks interrupts and
+         * spins, which stops the tick, stops the scheduler, and therefore stops
+         * the distinct-task switches the watchdog feeds on. Recovery is the
+         * watchdog resetting the board, and nothing else. */
+        uart_puts("   wedging the kernel; the watchdog should reset in ~3 s\n");
+        crit_enter();
+        for (;;) {
+        }
+    }
     else if (str_eq(line, "fb")) {
         if (str_eq(arg, "on") || str_eq(arg, "off")) {
             int want = str_eq(arg, "on");

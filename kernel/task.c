@@ -16,6 +16,7 @@
 #include "timer.h"
 #include "uart.h"
 #include "critical.h"
+#include "watchdog.h"
 #include "xtensa.h"
 
 /* Written into the lowest stack word; if it changes, the task overflowed. */
@@ -285,6 +286,11 @@ uint32_t task_schedule(uint32_t current_sp)
     int fabricated = (g_tasks[next].switches == 0);
     int from = g_current;
 #endif
+
+    /* Liveness for the hang detector: a tick that resumes the SAME task is not
+     * evidence the system is healthy — it is exactly what a monopoly looks
+     * like. Only a switch between distinct tasks counts. */
+    watchdog_liveness(next != g_current);
 
     g_current = next;
     g_tasks[next].switches++;
