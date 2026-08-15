@@ -85,9 +85,18 @@ static void delay_ms(uint32_t ms)
 #define DPORT_PERIP_RST_EN 0x3FF000C4u
 #define DPORT_SPI2_BIT     (1u << 6)
 
-/* 80 MHz / 2. The panel tolerates more, but the practical limit is the flex and
- * the board layout, so the conservative divisor is taken first and a
- * measurement decides whether it can rise. */
+/* 80 MHz / 2. This is the ceiling on THIS board, established by trying the
+ * next step up and looking at the panel.
+ *
+ * Full APB (SPI_CLK_EQU_SYSCLK, 0x80000000) works electrically — the driver
+ * reports, the DMA completes, no timeouts, every self-test passes, and the
+ * full-screen fill drops from 44 ms to 29 ms. It also puts visible noise on the
+ * glass. Nothing in the kernel can see that: every counter says success while
+ * the pixels are wrong.
+ *
+ * That is the whole reason the conservative divisor was taken first. The limit
+ * here is the panel and the flex, not the controller, and the only instrument
+ * that can measure it is a person looking at the screen. */
 #define SPI2_CLKDIV        0x00001001u   /* pre=0 n=1 h=0 l=1 -> sysclk/2 */
 
 /* IOMUX function 1 is the HSPI peripheral on these pads; function 2 is plain

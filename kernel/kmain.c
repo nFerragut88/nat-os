@@ -1194,14 +1194,17 @@ static void task_display(void)
          * that by simply not asking for it. Scheduler ageing (task.h) bounds it
          * properly now, so the value is no longer load-bearing.
          *
-         * Left at 8 because shortening it BUYS NOTHING. With ageing in place and
-         * this at 2, the reporter recovered fully — but the frame rate stayed at
-         * 3.0 fps, identical to 8. So the renderer is not sleep-limited either,
-         * and a third cause is still unaccounted for: raycast.c holds the
-         * display lock across an entire frame, and applications draw into their
-         * viewports through that same lock. That is the next thing to measure,
-         * and until it is, a shorter sleep only spends CPU to no effect. */
-        task_sleep(8u);
+         * The value only started mattering once lock contention was fixed. While
+         * applications blocked on the draw lock, the renderer lost ~200 ms a
+         * frame to rescheduling and this constant was irrelevant — shortening it
+         * to 2 changed 3.0 fps into 3.2. With best-effort drawing in place the
+         * renderer became sleep-bound instead: 31 ms of work plus 80 ms of sleep
+         * is 111 ms, and 9.9 fps was measured against 9.0 predicted.
+         *
+         * So this is now the limiter, and it is safe to shorten for two reasons
+         * that did not hold before: scheduler ageing bounds the starvation it
+         * used to cause, and applications no longer block waiting for the panel. */
+        task_sleep(2u);
     }
 }
 
