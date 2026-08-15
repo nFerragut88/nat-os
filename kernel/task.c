@@ -43,6 +43,10 @@ static uint32_t g_stacks[TASK_MAX][TASK_STACK_WORDS];
  * cheaper than debugging it, and leaves one code path to be correct about. */
 static int g_current = -1;
 
+/* -1 until a task registers as idle. Kept out of the round robin and used only
+ * when nothing else can run. */
+static int g_idle_id = -1;
+
 int task_create(const char *name, task_entry_fn entry)
 {
     for (int id = 0; id < TASK_MAX; id++) {
@@ -200,14 +204,21 @@ uint32_t task_schedule(uint32_t current_sp)
 
     /* Round robin from the one after current, so no task can starve another.
      * With g_current == -1 the first candidate is 0, so the first switch enters
-     * whichever task was created first. */
-    int next = g_current;
+     * whichever task was created first.
+     *
+     * The idle task is skipped here and used only as a fallback below. Leaving
+     * it in the rotation would hand it an equal share of the CPU, which is a
+     * seventh of the machine spent deliberately doing nothing. */
+    int next = -1;
     /* Plain counted loop. GCC is free to emit a zero-overhead LOOP here, and
      * does; that is correct now that _handler_level3 clears PS.EXCM before
      * calling C. This loop previously needed a `volatile` counter to force
      * ordinary branches, which worked but treated the symptom. */
     for (int i = 1; i <= TASK_MAX; i++) {
         int candidate = (g_current + i) % TASK_MAX;
+        if (candidate == g_idle_id) {
+            continue;
+        }
 #if TRACE_SWITCHES > 0 && TRACE_PROBES
         if (g_trace_n < TRACE_SWITCHES) {
             uart_puts("\n   probe i=");
@@ -224,10 +235,20 @@ uint32_t task_schedule(uint32_t current_sp)
             break;
         }
     }
+    /* Nothing else runnable — fall back to idle. Resuming the interrupted task
+     * is NOT an acceptable answer once blocking exists: that task may be the
+     * one that just blocked, and running a blocked task defeats the whole
+     * mechanism. */
+    if (next < 0 && g_idle_id >= 0 && g_tasks[g_idle_id].state == TASK_READY) {
+        next = g_idle_id;
+    }
+
     if (next < 0) {
-        /* Nothing runnable at all. Returning the interrupted stack pointer is
-         * the only safe answer — resuming the boot context beats jumping to a
-         * fabricated frame that does not exist. */
+        /* No runnable task and no idle task. Before blocking existed this could
+         * only happen at boot; it can now also mean every task is blocked with
+         * nobody left to wake them, which is a deadlock the kernel cannot
+         * resolve. Resuming the interrupted context is the least-bad answer and
+         * at least keeps the console alive to say so. */
         return current_sp;
     }
 
@@ -281,6 +302,39 @@ uint32_t task_stack_headroom(int id)
         untouched++;
     }
     return untouched;
+}
+
+void task_set_idle(int id)
+{
+    if (id >= 0 && id < TASK_MAX) {
+        g_idle_id = id;
+    }
+}
+
+void task_block(void)
+{
+    if (g_current < 0) {
+        return;                     /* boot context has nothing to block */
+    }
+    g_tasks[g_current].state = TASK_BLOCKED;
+    /* Deliberately does NOT yield. The caller marks itself blocked while still
+     * holding a critical section — so the decision to block and the record of
+     * what it is waiting for cannot be split by a tick — then leaves the
+     * critical section and yields. Yielding here instead would either fire the
+     * tick with the wait-list half-updated, or be silently deferred until the
+     * caller's crit_exit(), which reads as a bug at the call site. */
+}
+
+int task_state_of(int id)
+{
+    return (id >= 0 && id < TASK_MAX) ? (int)g_tasks[id].state : (int)TASK_UNUSED;
+}
+
+void task_unblock(int id)
+{
+    if (id >= 0 && id < TASK_MAX && g_tasks[id].state == TASK_BLOCKED) {
+        g_tasks[id].state = TASK_READY;
+    }
 }
 
 void task_yield(void)

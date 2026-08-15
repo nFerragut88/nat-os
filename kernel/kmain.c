@@ -17,6 +17,9 @@
 #include "arena.h"
 #include "heap.h"
 #include "app.h"
+#include "console.h"
+#include "critical.h"
+#include "mutex.h"
 #include "shell.h"
 #include "vm.h"
 #include "generated/demo.h"
@@ -37,7 +40,49 @@ extern char _vecbase;
 static volatile uint32_t work_a_count, work_a_bad;
 static volatile uint32_t work_b_count, work_b_bad;
 
-static int id_report, id_a, id_b, id_vm, id_apps, id_shell;
+static int id_report, id_a, id_b, id_vm, id_apps, id_shell, id_idle;
+
+/* Defined below with the other self-tests, but called from the reporter, which
+ * is the only context where a running tick makes it meaningful. */
+static void m6_critical_test(void);
+
+/* Contention target. The workers hammer this from two tasks, and the reporter
+ * checks it against their own iteration counts. The read-modify-write below is
+ * deliberately slow and deliberately non-atomic: without the mutex it would be
+ * reliably corrupted rather than occasionally, which is what makes the result
+ * meaningful instead of lucky. */
+static mutex_t           g_shared_lock;
+static volatile uint32_t g_shared;
+static volatile uint32_t g_bumps_a, g_bumps_b;
+
+/* Contend every Nth iteration rather than every one. Taking the lock on every
+ * pass means a worker holds it for most of its iteration, so contention is
+ * near-certain and each handoff costs a full scheduling round-trip — measured
+ * at roughly a thirtyfold throughput collapse. That is a real property of a
+ * blocking lock, but it is a pathological workload, not a representative one. */
+#define BUMP_EVERY 32u
+
+static void shared_bump(void)
+{
+    mutex_lock(&g_shared_lock);
+    uint32_t v = g_shared;
+    for (volatile int i = 0; i < 6; i++) {
+        /* Widen the window between read and write. A tick landing here is the
+         * whole point: unprotected, the other worker's increment is lost. */
+    }
+    g_shared = v + 1;
+    mutex_unlock(&g_shared_lock);
+}
+
+/* Idle. Runs only when every other task is blocked. WAITI stops the core until
+ * an interrupt arrives, so an idle system draws less power than one spinning —
+ * and the tick is what wakes it. */
+static void task_idle(void)
+{
+    for (;;) {
+        __asm__ volatile ("waiti 0");
+    }
+}
 
 /* ---- the VM hosted as a native task ------------------------------------
  *
@@ -97,7 +142,8 @@ static uint32_t vm_counter(void)
  * the state a context switch must preserve. Registers are not pinned with
  * explicit __asm__("aN") bindings: that claims registers the compiler may
  * already be using, and writes then land on arbitrary memory. */
-static void worker(volatile uint32_t *count, volatile uint32_t *bad, uint32_t seed)
+static void worker(volatile uint32_t *count, volatile uint32_t *bad,
+                   volatile uint32_t *bumps, uint32_t seed)
 {
     uint32_t n     = 0;
     uint32_t magic = seed;
@@ -111,6 +157,11 @@ static void worker(volatile uint32_t *count, volatile uint32_t *bad, uint32_t se
         /* Barrier only — keeps the values live across a point where an
          * interrupt can land, without dictating where they live. */
         __asm__ volatile ("" : "+r"(n), "+r"(magic), "+r"(alt), "+r"(acc));
+
+        if ((n % BUMP_EVERY) == 0u) {
+            shared_bump();
+            (*bumps)++;
+        }
 
         if (magic != seed || alt != ~seed) {
             (*bad)++;
@@ -126,8 +177,8 @@ static void worker(volatile uint32_t *count, volatile uint32_t *bad, uint32_t se
  * worker-a, tick 3 enters worker-b, and tick 4 is the first time any task is
  * RESUMED from a frame the handler actually saved rather than one fabricated
  * by task_create — three different mechanisms that all fail as silence. */
-static void task_a(void) { uart_puts("  [task 1 entered]\n"); worker(&work_a_count, &work_a_bad, 0xA5A5A5A5u); }
-static void task_b(void) { uart_puts("  [task 2 entered]\n"); worker(&work_b_count, &work_b_bad, 0x5A5A5A5Au); }
+static void task_a(void) { uart_puts("  [task 1 entered]\n"); worker(&work_a_count, &work_a_bad, &g_bumps_a, 0xA5A5A5A5u); }
+static void task_b(void) { uart_puts("  [task 2 entered]\n"); worker(&work_b_count, &work_b_bad, &g_bumps_b, 0x5A5A5A5Au); }
 
 /* Reporter. A task like any other — it is suspended and resumed on the same
  * schedule as the workers, so the fact that its output stays coherent is
@@ -142,12 +193,19 @@ static void task_report(void)
      * indistinguishable, because both present as silence. */
     uart_puts("\n  [task 0 entered]\n");
 
+    /* Deferred until here: it needs a running tick to mean anything. */
+    m6_critical_test();
+
     for (;;) {
         uint32_t t = timer_ticks();
         if (t - reported < 200u) {
             continue;
         }
         reported = t;
+
+        /* One line, one holder. Without this the shell's echo lands in the
+         * middle of it — the problem this milestone exists to fix. */
+        console_lock();
 
         uart_puts("  t=");
         uart_put_dec(t);
@@ -185,7 +243,32 @@ static void task_report(void)
         uart_put_dec(vm_counter());
         uart_puts(" fault=");
         uart_puts(vm_fault_name(vm_fault(&g_vm)));
+
+        /* Mutual exclusion, measured. Each worker bumps g_shared once per
+         * iteration under the lock, so g_shared must track their combined
+         * counts. The residual is sampling skew — the three values are read at
+         * three different instants while both workers run — not lost updates. */
+        uint32_t bumps  = g_bumps_a + g_bumps_b;
+        uint32_t shared = g_shared;
+        uart_puts("\n        lock owner=");
+        uart_put_dec((unsigned int)mutex_owner(&g_shared_lock));
+        uart_puts(" waiters=");
+        uart_put_hex(g_shared_lock.waiters);
+        uart_puts(" acq=");
+        uart_put_dec(g_shared_lock.acquisitions);
+        uart_puts(" contended=");
+        uart_put_dec(g_shared_lock.contentions);
+        uart_puts(" err=");
+        uart_put_dec(g_shared_lock.errors);
+        uart_puts(" skew=");
+        uart_put_dec(bumps > shared ? bumps - shared : shared - bumps);
+        uart_puts("  states=");
+        for (int i = 0; i < 7; i++) {
+            uart_put_dec((unsigned int)task_state_of(i));
+        }
         uart_puts("\n");
+
+        console_unlock();
     }
 }
 
@@ -610,6 +693,89 @@ static void m5_selftest(void)
     uart_puts("\n");
 }
 
+/* ---- locking self-test -------------------------------------------------
+ *
+ * Single-threaded, before the scheduler starts. Contention itself cannot be
+ * tested here — that needs two tasks, and the reporter measures it at runtime.
+ * What CAN be established deterministically is that the primitives behave as
+ * specified, including the cases a caller gets wrong.
+ */
+static void m6_selftest(void)
+{
+    /* --- mutex semantics ------------------------------------------------- */
+    mutex_t m;
+    mutex_init(&m);
+
+    int free_at_start = (mutex_owner(&m) == MUTEX_FREE);
+
+    mutex_lock(&m);
+    int held      = (mutex_owner(&m) == task_current());
+    mutex_lock(&m);                     /* recursive — must not deadlock */
+    int recursed  = (m.depth == 2u);
+    mutex_unlock(&m);
+    int still_held = (mutex_owner(&m) == task_current()) && (m.depth == 1u);
+    mutex_unlock(&m);
+    int released  = (mutex_owner(&m) == MUTEX_FREE);
+
+    /* Unlocking something this context does not hold must be refused and
+     * counted, not acted on: clearing another owner would admit two holders. */
+    uint32_t err_before = m.errors;
+    m.owner = 99;                       /* pretend someone else holds it */
+    mutex_unlock(&m);
+    int refused = (m.errors == err_before + 1u) && (m.owner == 99);
+    m.owner = MUTEX_FREE;
+
+    int got  = mutex_try_lock(&m);
+    m.owner  = 99;                      /* now genuinely held elsewhere */
+    int denied = (mutex_try_lock(&m) == 0);
+    m.owner  = MUTEX_FREE;
+    m.depth  = 0;
+
+    int mutex_ok = free_at_start && held && recursed && still_held && released &&
+                   refused && got && denied;
+
+    uart_puts("  [6b] mutex    : ");
+    uart_puts(mutex_ok ? "PASS" : "FAIL");
+    uart_puts("  recursive depth, ownership, non-owner unlock refused (");
+    uart_put_dec(m.errors);
+    uart_puts("), try_lock both ways\n");
+}
+
+/* Runs from the reporter task, NOT from m6_selftest(). The first version was
+ * called before timer_start(), where timer_ticks() is 0 and stays 0 whatever
+ * masking does — a test that could only ever report PASS by accident. It has to
+ * run with the tick live to mean anything. */
+static void m6_critical_test(void)
+{
+    /* --- a critical section really does mask the tick -------------------- */
+    uint32_t t0 = timer_ticks();
+    uint32_t crit = crit_enter();
+    uint32_t start = xt_ccount();
+    while ((xt_ccount() - start) < (TICK_INTERVAL_CYCLES * 2u)) {
+        /* Two full tick periods. If masking does not work, g_ticks moves. */
+    }
+    uint32_t t_masked = timer_ticks();
+    crit_exit(crit);
+
+    /* The deadline passed while masked, so the interrupt is pending and fires
+     * as soon as the level drops. Waiting for it proves the tick was deferred
+     * rather than lost — masking that silently dropped ticks would keep the
+     * scheduler running but make every timeout wrong. */
+    uint32_t spin = xt_ccount();
+    while (timer_ticks() == t_masked && (xt_ccount() - spin) < TICK_INTERVAL_CYCLES * 4u) {
+    }
+    uint32_t t_after = timer_ticks();
+
+    int crit_ok = (t_masked == t0) && (t_after > t_masked);
+    uart_puts("  [6a] critical : ");
+    uart_puts(crit_ok ? "PASS" : "FAIL");
+    uart_puts("  ticks held at ");
+    uart_put_dec(t_masked);
+    uart_puts(" across 2 periods, resumed at ");
+    uart_put_dec(t_after);
+    uart_puts("\n");
+}
+
 /* Hosts every application. One native task drives the third scheduling level;
  * the applications inside it are preempted by their quantum, and this task is
  * itself preempted by the timer. */
@@ -650,9 +816,13 @@ void kmain(void)
     uart_put_hex(xt_get_vecbase());
     uart_puts("\n");
 
+    console_init();
+    mutex_init(&g_shared_lock);
+
     m3_selftest();
     m4_selftest();
     m5_selftest();
+    m6_selftest();
 
     /* The VM's arena is created here, on the boot path, because the heap has no
      * locking and this is the last moment at which exactly one context exists
@@ -687,6 +857,12 @@ void kmain(void)
     id_vm     = task_create("vm-host", task_vm);
     id_apps   = task_create("app-host", task_apps);
     id_shell  = task_create("shell", task_shell);
+
+    /* Created last and registered as idle, so it is outside the round robin and
+     * chosen only when every other task is blocked. Without it, a moment where
+     * all tasks are waiting has nothing to switch to. */
+    id_idle   = task_create("idle", task_idle);
+    task_set_idle(id_idle);
     uart_puts("  tasks        : report=");
     uart_put_dec((unsigned int)id_report);
     uart_puts(" a=");

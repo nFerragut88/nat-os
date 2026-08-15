@@ -1,7 +1,7 @@
 # cyd-os — Engineering Documentation
 
 **Used Medias LLC — Embedded Systems Division**
-Document set: `UM-CYDOS-001` … `UM-CYDOS-013`
+Document set: `UM-CYDOS-001` … `UM-CYDOS-014`
 Project: cyd-os — a from-scratch operating system for the ESP32 "Cheap Yellow Display"
 Last revised: 2026-08-14
 
@@ -36,6 +36,7 @@ true" is the difference between a working boot and a silent reboot.
 | [UM-CYDOS-011](UM-CYDOS-011-flash-cache.md) | Flash Cache and Read-Only Data Placement | Mapping `.rodata` into flash, the 0x20 page congruence, and the cache-off hazard |
 | [UM-CYDOS-012](UM-CYDOS-012-m4-verification.md) | Milestone 4 Verification Report | Register-based bytecode VM, the ISA, the assembler, and containment of malformed programs |
 | [UM-CYDOS-013](UM-CYDOS-013-m5-verification.md) | Milestone 5 Verification Report | Application table and lifecycle, three-level scheduling, the shell, and the escape attempt |
+| [UM-CYDOS-014](UM-CYDOS-014-locking.md) | Locking Primitives | Critical sections vs blocking mutex, task blocking and idle, and a measured starvation defect |
 
 ## Reading order
 
@@ -61,6 +62,8 @@ Reproducing a build: **005** alone is sufficient.
 | Full stack | **Running** — bytecode hosted in a preemptible native task, 3.3M instructions across 450 preemptions with zero accounting drift, UM-CYDOS-012 §6.6 |
 | Milestone 5 — multiple applications | **Complete, verified on hardware** — all three exit criteria |
 | Roadmap M0–M5 | **Complete.** Six native tasks, three scheduling levels, a shell, and an application deliberately written to escape its arena that could not |
+| Locking | **Complete** — critical sections and a blocking mutex; heap and console both arbitrated, UM-CYDOS-014 |
+| Task blocking | **Live** — `TASK_BLOCKED` plus an idle task using `WAITI`, UM-CYDOS-014 §3 |
 | DRAM budget | **Measured** — 167,680 B allocatable; a full framebuffer is unnecessary, UM-CYDOS-010 §7.2 |
 | Flash cache | **Enabled** — `.rodata` mapped from flash, UM-CYDOS-011 |
 | Version control | **Initialised 2026-08-14** |
