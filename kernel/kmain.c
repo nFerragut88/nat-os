@@ -16,6 +16,8 @@
 
 #include "arena.h"
 #include "heap.h"
+#include "flash.h"
+#include "store.h"
 #include "app.h"
 #include "console.h"
 #include "ipc.h"
@@ -1058,6 +1060,36 @@ static void task_display(void)
 
         frame++;
 
+        /* Fold the frame count into the persistent record periodically.
+         *
+         * Not every frame: a save is an erase plus a write, which is tens of
+         * milliseconds with interrupts masked and a flash-endurance cost besides.
+         * At roughly eight frames a second this writes about once every eight
+         * minutes, which is a few thousand cycles over a part rated for a
+         * hundred thousand.
+         *
+         * The count is cumulative ACROSS boots, which is what makes it a real
+         * test of persistence rather than a second boot counter: it can only be
+         * right if the previous value was read back correctly and added to.
+         *
+         * 256 frames, chosen from the measured rate rather than a guess: the
+         * renderer runs at 4.4 frames a second with the framebuffer on (81
+         * frames in 18.3 s), so this saves about once a minute. An earlier 512
+         * was picked assuming 8 fps and never fired inside a test window at all,
+         * which is the whole argument for measuring — an interval nobody
+         * exercises is an interval nobody has tested.
+         *
+         * Once a minute is a few thousand erases over a part rated for a
+         * hundred thousand, and the sector is used by nothing else. */
+#define STORE_EVERY_FRAMES 256u
+
+#if FLASH_ENABLE
+        if ((frame % STORE_EVERY_FRAMES) == 0u) {
+            store_set_frames(store_frames() + STORE_EVERY_FRAMES);
+            store_save();
+        }
+#endif
+
         task_sleep(8u);
     }
 }
@@ -1234,6 +1266,27 @@ void kmain(void)
     m4_selftest();
     m5_selftest();
     m6_selftest();
+
+    /* Persistence. Loaded before the scheduler starts so the boot count is
+     * settled before anything can race it, and saved immediately so a power
+     * cut a second later still records that this boot happened. */
+    extern void store_count_boot(void);
+#if FLASH_ENABLE
+    uart_puts("  flash id     : ");
+    uart_put_hex(flash_read_id());
+    uart_puts("\n  store        : ");
+    int found = (store_load() == 0);
+    store_count_boot();
+    int saved = (store_save() == 0);
+    uart_puts(found ? "loaded" : "initialised");
+    uart_puts(", boot #");
+    uart_put_dec(store_boots());
+    uart_puts(", frames ");
+    uart_put_dec(store_frames());
+    uart_puts(saved ? ", saved\n" : ", SAVE FAILED\n");
+#else
+    uart_puts("  store        : disabled, flash reads bit-shifted (flash.h)\n");
+#endif
 
     /* After the self-tests, not before: heap_init() runs inside m3_selftest(),
      * and the leak test there checks free memory returns to its baseline — an

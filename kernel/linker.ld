@@ -100,6 +100,11 @@ SECTIONS
     *panic.o(.rodata .rodata.*)
     *uart.o(.rodata .rodata.*)
     *watchdog.o(.rodata .rodata.*)
+
+    /* flash.o and store.o run with the flash chip busy: any flash-mapped read
+     * here would hit a chip that cannot answer. */
+    *flash.o(.rodata .rodata.*)
+    *store.o(.rodata .rodata.*)
     . = ALIGN(4);
   } > dram
 
