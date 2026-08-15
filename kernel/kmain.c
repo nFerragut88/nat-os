@@ -46,6 +46,11 @@ static volatile uint32_t work_b_count, work_b_bad;
 
 static int id_report, id_a, id_b, id_vm, id_apps, id_shell, id_idle, id_disp, id_touch;
 
+/* Last touch seen, latched so the reporter can show it whenever it happens to
+ * run. Without this, confirming a real touch needs a serial capture to coincide
+ * with a finger, which is not a test anyone can repeat reliably. */
+static volatile uint32_t g_last_rawx, g_last_rawy, g_last_x, g_last_y, g_last_z;
+
 /* Defined below with the other self-tests, but called from the reporter, which
  * is the only context where a running tick makes it meaningful. */
 static void m6_critical_test(void);
@@ -888,8 +893,6 @@ static void task_display(void)
  * the picture was being checked (UM-CYDOS-016 §3.4). Raw ADC values distinguish
  * "not answering" from "answering, mapped wrongly".
  */
-static volatile uint32_t g_last_rawx, g_last_rawy, g_last_x, g_last_y, g_last_z;
-
 static void task_touch(void)
 {
     touch_state_t t;
