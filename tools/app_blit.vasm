@@ -1,0 +1,46 @@
+; Application BLIT — builds an image in its own arena and draws it.
+;
+; Constructs an 8x8 RGB565 block of alternating yellow and blue columns by
+; storing 32-bit words (two pixels each), then blits that buffer wherever it is
+; told the pointer is.
+;
+; The image lives entirely inside the application's arena, and the offset it
+; hands to SYS BLIT is an arena offset like any other pointer. The kernel bounds
+; checks it against the arena AND clips the destination to the viewport, so
+; neither the source nor the destination can reach past what this program owns.
+
+start:
+        ldi     r12, @img           ; kept in a high register: the touch syscall
+                                    ; overwrites r0..r2 every iteration
+        ldi     r2, 0               ; byte offset into the image
+        ldi     r3, 128             ; 8 x 8 pixels x 2 bytes
+        ldi     r4, 0xFFE0          ; low half-word  -> first pixel, yellow
+        ldih    r4, 0x001F          ; high half-word -> second pixel, blue
+        ldi     r5, 4               ; one word = two pixels
+
+build:
+        add     r6, r12, r2
+        stw     r4, r6, 0
+        add     r2, r2, r5
+        sltu    r7, r2, r3
+        brnz    r7, build
+
+loop:
+        sys     touch               ; r0 = touched, r1 = x, r2 = y
+        brz     r0, loop
+
+        mov     r13, r1             ; save before the blit arguments overwrite
+        mov     r14, r2
+
+        mov     r0, r12             ; arena offset of the pixels
+        mov     r1, r13
+        mov     r2, r14
+        ldi     r3, 8
+        ldi     r4, 8
+        sys     blit
+
+        jmp     loop
+
+        .align  4
+img:
+        .space  128

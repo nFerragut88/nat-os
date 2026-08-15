@@ -120,7 +120,15 @@ enum {
      * application's viewport reports as no touch at all: an application must
      * not be able to observe input directed at its neighbours, any more than it
      * can read their memory or draw on their pixels. */
-    VM_SYS_TOUCH = 8
+    VM_SYS_TOUCH = 8,    /* r0 <- touched, r1 <- x, r2 <- y            */
+
+    /* Blit an image the application holds in its own arena.
+     *   r0 = arena offset of RGB565 pixels, row-major, no padding
+     *   r1 = x, r2 = y   (viewport-relative)
+     *   r3 = w, r4 = h
+     * The first syscall to take a pointer AND a length from the program, so it
+     * is the first where the size itself is attacker-controlled. */
+    VM_SYS_BLIT  = 9
 };
 
 /* Fault codes. VM_FAULT_NONE is the only non-terminal value. */
@@ -209,5 +217,8 @@ uint32_t vm_viewport_calls(void);
  * asking application's viewport. */
 uint32_t vm_touch_given(void);
 uint32_t vm_touch_withheld(void);
+
+/* Bitmaps accepted from applications. */
+uint32_t vm_blits(void);
 
 #endif /* CYDOS_VM_H */

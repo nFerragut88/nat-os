@@ -32,6 +32,7 @@
 #include "generated/app_draw.h"
 #include "generated/app_gfx_rogue.h"
 #include "generated/app_paint.h"
+#include "generated/app_blit.h"
 #include "uart.h"
 #include "timer.h"
 #include "task.h"
@@ -270,6 +271,8 @@ static void task_report(void)
         uart_put_dec(g_shared_lock.errors);
         uart_puts(" skew=");
         uart_put_dec(bumps > shared ? bumps - shared : shared - bumps);
+        uart_puts("  | blits=");
+        uart_put_dec(vm_blits());
         uart_puts("  | touch g/w=");
         uart_put_dec(vm_touch_given());
         uart_putc('/');
@@ -659,6 +662,7 @@ static const shell_program_t PROGRAMS[] = {
     { "draw",    vm_app_draw,  VM_APP_DRAW_LEN,  512u, VM_APP_DRAW_AT_NAME },
     { "gfxrogue", vm_app_gfx_rogue, VM_APP_GFX_ROGUE_LEN, 256u, 0u },
     { "paint",   vm_app_paint, VM_APP_PAINT_LEN, 512u, 0u },
+    { "blit",    vm_app_blit,  VM_APP_BLIT_LEN,  512u, 0u },
 };
 #define PROGRAM_COUNT ((int)(sizeof PROGRAMS / sizeof PROGRAMS[0]))
 
@@ -1121,7 +1125,7 @@ void kmain(void)
      * not something that should be running by default. */
     shell_register(PROGRAMS, PROGRAM_COUNT);
     start_program("paint");
-    start_program("draw");
+    start_program("blit");
 
     id_report = task_create("report", task_report);
     id_a      = task_create("worker-a", task_a);

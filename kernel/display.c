@@ -338,6 +338,26 @@ void display_fill_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint16_t 
     mutex_unlock(&g_lock);
 }
 
+void display_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h,
+                  const uint16_t *src, uint32_t src_stride)
+{
+    if (x >= DISP_W || y >= DISP_H || w == 0u || h == 0u || w > LINE_MAX) {
+        return;
+    }
+    if (w > DISP_W - x) { w = DISP_W - x; }
+    if (h > DISP_H - y) { h = DISP_H - y; }
+
+    mutex_lock(&g_lock);
+    set_window(x, y, x + w - 1u, y + h - 1u);
+    for (uint32_t row = 0; row < h; row++) {
+        /* push_pixels byte-swaps into the transmit buffer, so the source is
+         * never modified and need not be aligned to anything but a pixel. */
+        push_pixels(src + (uint32_t)row * src_stride, w);
+    }
+    push_end();
+    mutex_unlock(&g_lock);
+}
+
 void display_clear(uint16_t colour)
 {
     display_fill_rect(0, 0, DISP_W, DISP_H, colour);

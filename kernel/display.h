@@ -65,6 +65,13 @@ void display_fill_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint16_t 
 void display_text(uint32_t x, uint32_t y, const char *s, uint16_t fg, uint16_t bg,
                   uint32_t scale);
 
+/* Copies a caller-supplied RGB565 image to the panel. `src_stride` is the
+ * source row pitch in PIXELS, so a clipped blit can walk the original rows
+ * without the caller having to repack. Clipped to the panel; callers wanting a
+ * tighter boundary must clip before calling. */
+void display_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h,
+                  const uint16_t *src, uint32_t src_stride);
+
 /* Bytes pushed to the panel since init — the cheapest measure of whether the
  * driver is doing anything at all when nothing appears on screen. */
 uint32_t display_bytes_written(void);

@@ -180,9 +180,11 @@ static uint32_t g_vp_calls;
  * be non-zero whenever anyone touches elsewhere on the panel, and no
  * application may ever see those coordinates. */
 static uint32_t g_touch_given, g_touch_withheld;
+static uint32_t g_blits;
 
 uint32_t vm_touch_given(void)    { return g_touch_given; }
 uint32_t vm_touch_withheld(void) { return g_touch_withheld; }
+uint32_t vm_blits(void)          { return g_blits; }
 
 uint32_t vm_viewport_escapes(void) { return g_vp_escapes; }
 uint32_t vm_viewport_max_y(void)   { return g_vp_max_y; }
@@ -354,6 +356,53 @@ static int do_syscall(vm_t *vm, uint32_t num)
         vm->reg[0] = inside ? 1u : 0u;
         vm->reg[1] = inside ? dx : 0u;
         vm->reg[2] = inside ? dy : 0u;
+        return 0;
+    }
+
+    case VM_SYS_BLIT: {
+        uint32_t off = vm->reg[0];
+        uint32_t x   = vm->reg[1], y = vm->reg[2];
+        uint32_t w   = vm->reg[3], h = vm->reg[4];
+
+        /* Dimensions are bounded BEFORE they are multiplied. w*h*2 on
+         * unchecked 32-bit values overflows readily — 65536x65536 wraps to
+         * zero, which would pass a byte-length check and then blit whatever
+         * followed. This is the first syscall where the length is supplied by
+         * the program rather than implied by the operation. */
+        if (w == 0u || h == 0u || w > DISP_W || h > DISP_H) {
+            vm->reg[0] = 0;
+            return 0;
+        }
+
+        /* Pixels are 16-bit; an odd offset would mean unaligned loads. Faults
+         * rather than silently reading a shifted image. */
+        if (off & 1u) {
+            fault(vm, VM_FAULT_ALIGN, off);
+            return 1;
+        }
+
+        uint32_t bytes = w * h * 2u;            /* <= 240*320*2, cannot wrap */
+        if (!vm_in_bounds(vm, off, bytes)) {
+            fault(vm, VM_FAULT_BOUNDS, off);
+            return 1;
+        }
+
+        /* Clip to the viewport before drawing, exactly as vp_fill does. The
+         * source stride stays the ORIGINAL width so a clipped blit still walks
+         * the caller's rows correctly. */
+        if (x >= vm->vw || y >= vm->vh) {
+            vm->reg[0] = 0;
+            return 0;
+        }
+        uint32_t cw = (w > vm->vw - x) ? (vm->vw - x) : w;
+        uint32_t ch = (h > vm->vh - y) ? (vm->vh - y) : h;
+
+        display_blit(vm->vx + x, vm->vy + y, cw, ch,
+                     (const uint16_t *)(vm->base + off), w);
+
+        g_blits++;
+        vm->reg[0] = 1;
+        vm->yield_now = 1;              /* milliseconds, not instructions */
         return 0;
     }
 
