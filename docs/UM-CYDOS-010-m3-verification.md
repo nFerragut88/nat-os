@@ -190,6 +190,11 @@ The consequence is sharper than expected:
 applications cannot coexist in internal DRAM.** With one committed, 12.8 KB is
 left — a single small arena, with no room for a second application.
 
+§7.2 argues the framebuffer should not exist at all, which dissolves this
+conflict rather than resolving it. The table is retained because the figure is
+what rules the naive approach out, and because it is the number to check against
+if a future design reintroduces a local copy for compositing.
+
 This is a genuine constraint, not a tuning problem, and it lands on M5 (display)
 rather than here. The options, none yet chosen:
 
@@ -198,11 +203,72 @@ rather than here. The options, none yet chosen:
    complexity, keeps essentially the whole heap for applications.
 2. **Reduced colour depth.** 8bpp halves it to 76,800 B — still 46% of the heap.
 3. **Partial/dirty-region updates.** A buffer covering only the changed region.
-4. **External PSRAM.** Not present on this board variant; would require hardware
-   change and cache configuration work explicitly deferred in UM-CYDOS-004.
+4. **External PSRAM.** **Confirmed absent.** The chip reports as ESP32-D0WD-V3
+   rev 3.1 with features `WiFi, BT, Dual Core, 240MHz, VRef calibration in
+   efuse, Coding Scheme None` — no embedded PSRAM, and none on the module. This
+   option is closed without a hardware change.
 
 Option 1 is the only one that preserves the arena budget outright, and it should
 be treated as the default until measurement says otherwise.
+
+### 7.1 Why flash cannot hold the framebuffer
+
+The obvious question, given 4 MB of flash against 176 KB of DRAM. The answer is
+no, and for reasons of mechanism rather than capacity:
+
+- Flash is memory-mapped **read-only** at runtime. It can be read through the
+  cache; it cannot be the target of a store instruction.
+- Writing requires erasing a 4 KB sector and then programming pages. The erase
+  is mandatory — programming can only clear bits, not set them — and costs tens
+  of milliseconds, roughly three orders of magnitude more than a frame's budget.
+- Endurance is ~100,000 erase cycles per sector. A 153,600 B framebuffer spans
+  about 38 sectors; at 30 fps each is erased 30 times per second, exhausting
+  rated endurance in **under an hour**. At 1 fps it is about a day.
+- Flash writes require the cache to be disabled, stalling any code executing
+  from flash.
+
+Flash as framebuffer is therefore not slow-but-workable. It destroys the part.
+
+### 7.2 The framebuffer is not needed in the first place
+
+The premise deserves challenging rather than optimising. **The ILI9341 contains
+its own frame memory** — a GRAM of 240×320 at 18bpp, roughly 172,800 bytes —
+and drives the panel from it autonomously. Pixels written to the controller stay
+there; the host is not refreshing a surface continuously.
+
+The ESP32 therefore never requires a full local copy. It requires a *transfer*
+buffer: 480 B for one 240-pixel line at 16bpp, 2,048 B for a 32×32 tile. The
+153,600 B in §7 was never a hardware requirement — it is the cost of keeping a
+redundant second copy of something the display already stores.
+
+The one case that genuinely wants a local copy is read-modify-write rendering —
+alpha blending, scrolling, compositing — where the previous pixel value is an
+input. The ILI9341 does support pixel read-back over SPI, but it is slow and
+unreliable on boards of this class, so a dirty-region buffer sized to the area
+actually being composited is the appropriate middle ground.
+
+This strengthens option 1 from "the least bad choice" to "the correct one".
+
+### 7.3 What flash is genuinely worth using for
+
+Flash does not solve the framebuffer question, but it addresses what actually
+consumes DRAM today and will consume more later:
+
+| Candidate | Present cost | After moving to flash |
+|---|---|---|
+| `.rodata` | DRAM (see §2.4 and `linker.ld`) | 0 B DRAM, read via cache |
+| Fonts, sprites, UI bitmaps | Would be DRAM | 0 B DRAM |
+| Application bytecode | Would occupy an arena | Arena holds only app *data* |
+
+`.rodata` sits in DRAM today because IRAM cannot serve unaligned reads
+(UM-CYDOS-004). Memory-mapped flash has no such restriction, so the constraint
+that forced the current placement does not apply. Realising this requires
+enabling the flash cache — the work deferred in UM-CYDOS-004 §3 — and is
+therefore a prerequisite worth scheduling before the asset-heavy milestones
+rather than during them.
+
+Budget context: 4 MB of flash against a 6,720 B kernel image. Availability is
+not the constraint; cache configuration is.
 
 ## 8. What M3 does not establish
 
