@@ -45,9 +45,26 @@ New-Item -ItemType Directory -Force -Path $build | Out-Null
 $cflags = @(
     "-mabi=call0", "-mtext-section-literals", "-mlongcalls",
     "-ffreestanding", "-fno-builtin", "-fno-stack-protector",
+    # Stops GCC rewriting a hand-written copy loop into a call to memcpy —
+    # which, inside memcpy itself, is silent infinite recursion. See kstring.c.
+    "-fno-tree-loop-distribute-patterns",
     "-Os", "-Wall", "-Wextra", "-std=c11",
     "-I", "$root\kernel"
 )
+
+# Bytecode is assembled on the host: the VM on the device is a pure interpreter
+# and carries no assembler. Generated headers are build products, not sources.
+$gen = Join-Path $root "kernel\generated"
+New-Item -ItemType Directory -Force -Path $gen | Out-Null
+$vasm = Get-ChildItem "$root\tools\*.vasm" -ErrorAction SilentlyContinue
+if ($vasm) {
+    Write-Host "== assembling bytecode ==" -ForegroundColor Cyan
+    foreach ($src in $vasm) {
+        $hdr = Join-Path $gen ($src.BaseName + ".h")
+        & $python "$root\tools\vasm.py" $src.FullName -o $hdr --name ("vm_" + $src.BaseName)
+        if ($LASTEXITCODE -ne 0) { throw "vasm failed: $($src.Name)" }
+    }
+}
 
 Write-Host "== compiling ==" -ForegroundColor Cyan
 $objs = @()

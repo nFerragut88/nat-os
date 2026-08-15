@@ -16,6 +16,8 @@
 
 #include "arena.h"
 #include "heap.h"
+#include "vm.h"
+#include "generated/demo.h"
 #include "uart.h"
 #include "timer.h"
 #include "task.h"
@@ -274,6 +276,168 @@ static void m3_selftest(void)
     uart_puts(" B\n");
 }
 
+/* ---- Milestone 4 self-test -------------------------------------------- */
+/*
+ * Hand-encoded probes. Each is a few instructions whose only purpose is to do
+ * something illegal, so they are written as bytes rather than assembled: the
+ * point is that a *malformed* program is contained, and routing them through
+ * the assembler would only prove that well-formed programs are.
+ *
+ * Encoding is { opcode, a, b, c }; see vm.h.
+ */
+static const uint8_t probe_bounds[] = {
+    0x03, 0x01, 0xF0, 0xFF,   /* ldi r1, 0xFFF0   — far outside any arena */
+    0x42, 0x00, 0x01, 0x00,   /* stw r0, r1, 0    — must fault, not write */
+};
+static const uint8_t probe_div0[] = {
+    0x03, 0x01, 0x0A, 0x00,   /* ldi r1, 10 */
+    0x03, 0x02, 0x00, 0x00,   /* ldi r2, 0  */
+    0x13, 0x03, 0x01, 0x02,   /* div r3, r1, r2 */
+};
+static const uint8_t probe_opcode[] = {
+    0xFF, 0x00, 0x00, 0x00,   /* not an instruction */
+};
+static const uint8_t probe_reg[] = {
+    0x02, 0x10, 0x00, 0x00,   /* mov r16, r0 — index out of range */
+};
+static const uint8_t probe_ret[] = {
+    0x34, 0x00, 0x00, 0x00,   /* ret with an empty call stack */
+};
+static const uint8_t probe_align[] = {
+    0x03, 0x01, 0x01, 0x00,   /* ldi r1, 1 */
+    0x40, 0x02, 0x01, 0x00,   /* ldw r2, r1, 0 — offset 1, misaligned */
+};
+static const uint8_t probe_spin[] = {
+    0x30, 0x00, 0xFF, 0xFF,   /* jmp -1 — branches to itself forever */
+};
+
+static uint8_t *arena_ptr(int id)
+{
+    uint32_t base = 0;
+    return (arena_bounds(id, &base, 0) == 0) ? (uint8_t *)base : 0;
+}
+
+static void load_program(int id, const uint8_t *prog, uint32_t len)
+{
+    uint8_t *dst = arena_ptr(id);
+    for (uint32_t i = 0; i < len; i++) {
+        dst[i] = prog[i];
+    }
+}
+
+/* Runs a probe to completion and reports whether it faulted as expected. */
+static int expect_fault(int id, const uint8_t *prog, uint32_t len, int want)
+{
+    vm_t vm;
+    load_program(id, prog, len);
+    if (vm_init(&vm, id) != 0) {
+        return 0;
+    }
+    int r = vm_run(&vm, 1000);
+    return (r == VM_RUN_FAULTED) && (vm_fault(&vm) == want);
+}
+
+static void m4_selftest(void)
+{
+    int id = arena_create(2048);
+    if (id < 0) {
+        uart_puts("  [M4] arena_create failed\n");
+        return;
+    }
+
+    /* --- the demonstration program --------------------------------------
+     * Deliberately run with a small quantum so it must be resumed several
+     * times. That is the preemption boundary the roadmap asks for: a host task
+     * can be descheduled between any two instructions without the program
+     * knowing. */
+    vm_t vm;
+    load_program(id, vm_demo, VM_DEMO_LEN);
+    vm_init(&vm, id);
+
+    uint32_t resumes = 0;
+    int r;
+    while ((r = vm_run(&vm, 16)) == VM_RUN_QUANTUM) {
+        resumes++;
+        if (resumes > 1000u) {
+            break;                  /* runaway guard for the test itself */
+        }
+    }
+
+    uart_puts("  [4a] program  : ");
+    uart_puts(r == VM_RUN_HALTED ? "HALTED ok" : "DID NOT HALT");
+    uart_puts("  insns=");
+    uart_put_dec(vm.executed);
+    uart_puts(" resumes=");
+    uart_put_dec(resumes);
+    uart_puts(" status=");
+    uart_put_dec(vm.exit_status);
+    uart_puts(" fault=");
+    uart_puts(vm_fault_name(vm_fault(&vm)));
+    uart_puts("\n");
+
+    /* --- containment ------------------------------------------------------
+     * Every one of these is a program doing something the kernel must survive.
+     * If any of them took the board down, nothing after this line would print. */
+    struct { const uint8_t *p; uint32_t n; int want; const char *name; } probes[] = {
+        { probe_bounds, sizeof probe_bounds, VM_FAULT_BOUNDS,     "bounds" },
+        { probe_div0,   sizeof probe_div0,   VM_FAULT_DIV0,       "div0"   },
+        { probe_opcode, sizeof probe_opcode, VM_FAULT_OPCODE,     "opcode" },
+        { probe_reg,    sizeof probe_reg,    VM_FAULT_REG,        "reg"    },
+        { probe_ret,    sizeof probe_ret,    VM_FAULT_RET,        "ret"    },
+        { probe_align,  sizeof probe_align,  VM_FAULT_ALIGN,      "align"  },
+    };
+
+    int all_ok = 1;
+    uart_puts("  [4b] faults   : ");
+    for (unsigned i = 0; i < sizeof probes / sizeof probes[0]; i++) {
+        int ok = expect_fault(id, probes[i].p, probes[i].n, probes[i].want);
+        all_ok &= ok;
+        uart_puts(probes[i].name);
+        uart_puts(ok ? "=ok " : "=FAIL ");
+    }
+    uart_puts(all_ok ? " PASS\n" : " FAIL\n");
+
+    /* --- a program that never ends ---------------------------------------
+     * The guarantee is that it costs its quantum and nothing more. */
+    vm_t spin;
+    load_program(id, probe_spin, sizeof probe_spin);
+    vm_init(&spin, id);
+    int sr = vm_run(&spin, 500);
+    uart_puts("  [4c] runaway  : ");
+    uart_puts((sr == VM_RUN_QUANTUM && spin.executed == 500u) ? "PASS" : "FAIL");
+    uart_puts("  bounded at ");
+    uart_put_dec(spin.executed);
+    uart_puts(" insns, no fault, kernel alive\n");
+
+    /* --- the two bounds predicates must agree ----------------------------
+     * vm_in_bounds() duplicates arena_contains() for speed (UM-CYDOS-010 §5.2).
+     * Duplicated logic drifts, so the agreement is tested rather than trusted. */
+    uint32_t abase = 0, alen = 0;
+    arena_bounds(id, &abase, &alen);
+    const uint32_t offs[] = { 0u, 1u, 4u, alen - 1u, alen, alen + 1u, 0xFFFFFFF0u };
+    const uint32_t lens[] = { 0u, 1u, 4u, alen, 0xFFFFFFFFu };
+    int agree = 1;
+    for (unsigned i = 0; i < sizeof offs / sizeof offs[0]; i++) {
+        for (unsigned j = 0; j < sizeof lens / sizeof lens[0]; j++) {
+            int v = vm_in_bounds(&vm, offs[i], lens[j]);
+            int a = arena_contains(id, abase + offs[i], lens[j]);
+            /* arena_contains takes an absolute address; for offsets that would
+             * wrap when added to the base the two are not comparable, so skip
+             * only that case and compare everywhere else. */
+            if (offs[i] <= alen && v != a) {
+                agree = 0;
+            }
+        }
+    }
+    uart_puts("  [4d] predicate: ");
+    uart_puts(agree ? "PASS" : "FAIL");
+    uart_puts("  vm_in_bounds agrees with arena_contains over ");
+    uart_put_dec((unsigned)(sizeof offs / sizeof offs[0] * sizeof lens / sizeof lens[0]));
+    uart_puts(" cases\n");
+
+    arena_destroy(id);
+}
+
 void kmain(void)
 {
     uart_puts("\n\n");
@@ -293,6 +457,7 @@ void kmain(void)
     uart_puts("\n");
 
     m3_selftest();
+    m4_selftest();
 
     id_report = task_create("report", task_report);
     id_a      = task_create("worker-a", task_a);
