@@ -182,6 +182,71 @@ chosen to wrap the address space. All agree.
 M3 self-test passing in full. M2 workload unchanged: 3,418 ticks, switches
 1140/1139/1139, guards intact, `corrupt=0`.
 
+### 6.6 Running under the scheduler
+
+The VM now runs as a native task alongside the M2 workload rather than from the
+boot path, which is what makes the two preemption mechanisms observable
+together.
+
+```
+vm arena     : id=0 base=0x3ffb23f0 program=28 B
+tasks        : report=0 a=1 b=2 vm=3
+
+t=1801  switches r/a/b=451/450/450  work a/b=10585776/11610220  guards=ok
+        freew a/b=480/480  corrupt=0
+        | vm sw=450  insns=3291313  counter=1097103  fault=none
+```
+
+The hosted program increments a counter in its own arena forever, performing a
+bounds-checked store every iteration, so the isolation path is on the hot loop
+rather than exercised once at startup.
+
+**The two mechanisms compose.** The timer interrupt suspends the VM task
+wherever it happens to be — almost always somewhere inside the interpreter's own
+C code, mid-instruction from the bytecode's point of view — and `vm_run()`
+separately returns at a bytecode instruction boundary when its quantum expires.
+Neither is aware of the other, and the program cannot observe either.
+
+**The arithmetic is the proof.** The loop body is exactly three instructions
+(`add`, `stw`, `jmp`), so instructions retired must be three times the counter
+plus the three-instruction preamble:
+
+```
+1,097,103 × 3 + 3 = 3,291,312     observed 3,291,313
+```
+
+The residual of one is the sample being taken mid-iteration, between the
+increment and the store. Across **450 preemptions** and 3.29 million bytecode
+instructions, not one instruction was lost, replayed, or half-executed. A
+context switch that dropped or repeated an interpreter step would show here as
+drift, and there is none.
+
+**Scheduling is fair.** 451/450/450/450 across four tasks. The VM is an ordinary
+task with no special standing, and a program that never terminates costs exactly
+its share.
+
+### 6.7 Dispatch cost
+
+Derived from the same run, and worth recording because §9 previously listed it
+as unmeasured.
+
+Between consecutive reports 200 ticks apart, the VM retired 365,704
+instructions. 200 ticks is 160,000,000 CCOUNT cycles, of which the VM task
+receives roughly one quarter under an even four-way round robin:
+
+```
+40,000,000 cycles ÷ 365,704 instructions ≈ 109 cycles per bytecode instruction
+```
+
+That figure covers full dispatch, operand decode, register-range validation,
+and — for two of the three instructions in the loop — a bounds-checked memory
+access. It is a ceiling rather than a precise cost, since the quarter-share
+assumption ignores time spent in the interrupt handler itself.
+
+109 cycles is high enough that a computed-goto dispatch table would be worth
+measuring if the VM ever becomes the bottleneck, and low enough that nothing
+here justifies trading away the diagnosability of a `switch` today.
+
 ## 7. `kstring.c`, and a trap avoided
 
 The link failed on an undefined reference to `memcpy` from a function whose
@@ -211,7 +276,11 @@ unrelated code first copied a struct. The build now passes
 | Quantum resumptions during demo | 4 |
 | Fault classes exercised | 6 of 10 defined |
 | Bounds predicate cases cross-checked | 35 |
-| Image size | 10,144 B |
+| Bytecode instructions under the scheduler | 3,291,313 |
+| Preemptions survived | 450 |
+| Instruction-accounting drift | 1 (mid-iteration sample) |
+| Dispatch cost | ~109 cycles/instruction (ceiling) |
+| Image size | 10,560 B |
 
 ## 9. What M4 does not establish
 
@@ -222,14 +291,16 @@ unrelated code first copied a struct. The build now passes
 - **Only 6 of 10 fault classes are exercised.** `VM_FAULT_PC`,
   `VM_FAULT_CALL_DEPTH`, `VM_FAULT_SYSCALL` and `VM_FAULT_STRING` are
   implemented but untested on hardware.
-- **No performance measurement.** Dispatch cost per instruction is unmeasured.
-  The `switch` was chosen over a computed-goto table for diagnosability, and
-  that trade should be revisited only against a measurement.
-- **No VM task integration.** The VM runs from `kmain`'s self-test, not from a
-  native task under the scheduler. Wiring `vm_run()` into a task's loop is the
-  obvious next step and is not done.
+- **Dispatch cost is bounded, not precisely measured.** §6.7 derives ~109 cycles
+  per instruction from a quarter-share assumption that ignores time spent in the
+  interrupt handler, so it is a ceiling. A direct measurement would need CCOUNT
+  sampled either side of a `vm_run()` call.
 - **No multiple concurrent VMs.** One at a time, though nothing in the design
-  prevents more — `vm_t` carries all state.
+  prevents more — `vm_t` carries all state, and a second would need only a
+  second arena and task.
+- **The hosted program is not replaced when it stops.** A halted or faulted VM
+  yields its task forever rather than loading something else; there is no
+  program loader, only a copy into an arena at boot.
 - **Syscalls are unaudited for argument validation** beyond `PUTS`, which walks
   its string one bounds-checked byte at a time and faults on a missing
   terminator rather than reading past the end.
