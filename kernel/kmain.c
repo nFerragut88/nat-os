@@ -206,18 +206,6 @@ static void task_report(void)
         }
         reported = t;
 
-        /* Raw, deliberately OUTSIDE the console lock: if the stall is the lock
-         * itself, anything printed after taking it never appears. */
-        uart_puts("[dbg states=");
-        for (int i = 0; i < 8; i++) {
-            uart_put_dec((unsigned int)task_state_of(i));
-        }
-        uart_puts(" console=");
-        uart_put_dec((unsigned int)console_owner());
-        uart_puts(" disp=");
-        uart_put_dec((unsigned int)display_owner());
-        uart_puts("]\n");
-
         console_lock();
 
         uart_puts("  t=");
@@ -948,8 +936,8 @@ void kmain(void)
     shell_register(PROGRAMS, PROGRAM_COUNT);
     app_start(PROGRAMS[0].name, PROGRAMS[0].img, PROGRAMS[0].len,
               PROGRAMS[0].arena_bytes, PROGRAMS[0].publish_off);
-    app_start(PROGRAMS[1].name, PROGRAMS[1].img, PROGRAMS[1].len,
-              PROGRAMS[1].arena_bytes, PROGRAMS[1].publish_off);
+    app_start(PROGRAMS[3].name, PROGRAMS[3].img, PROGRAMS[3].len,
+              PROGRAMS[3].arena_bytes, PROGRAMS[3].publish_off);
 
     id_report = task_create("report", task_report);
     id_a      = task_create("worker-a", task_a);
