@@ -955,8 +955,6 @@ static void task_touch(void)
 {
     touch_state_t t;
     uint32_t traced = 0;
-    uint32_t last_x = 0, last_yy = 0;
-    int had = 0;
 
     for (;;) {
         int down = touch_read(&t);
@@ -1027,7 +1025,6 @@ static void task_touch(void)
              * through SYS TOUCH and SYS FILL, in its own coordinates and inside
              * its own viewport. That is the whole point of the syscall.
              */
-            had = 1;
         }
 
         /* Polled at roughly 30 Hz. Fast enough to track a finger, slow enough
