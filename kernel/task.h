@@ -16,7 +16,18 @@
 
 #include <stdint.h>
 
-#define TASK_MAX          8
+/* 12, not 8. The kernel creates nine tasks and TASK_MAX was 8, so the ninth —
+ * the idle task — failed to be created and nobody noticed: task_create()
+ * returns -1, task_set_idle(-1) quietly does nothing, and the return value was
+ * never checked or printed. The system ran without an idle task for as long as
+ * priorities have existed, which cost the WAITI power-saving path entirely and
+ * meant that with every task asleep the scheduler resumed a SLEEPING task
+ * rather than idling.
+ *
+ * The headroom is for the desktop and whatever follows it. The cost is
+ * TASK_STACK_WORDS * 4 bytes of DRAM per slot, which the measured margins in
+ * UM-CYDOS-019 §3.1 say is affordable. */
+#define TASK_MAX          12
 #define TASK_STACK_WORDS  512          /* 2 KB per task */
 #define TASK_NAME_MAX     12
 
@@ -107,6 +118,7 @@ uint32_t task_stack_headroom(int id);  /* untouched words remaining */
 int      task_stack_broken(void);      /* id of a task with a clobbered guard, or -1 */
 int      task_stack_tightest(void);    /* id with the least headroom */
 const char *task_name(int id);         /* creation name, or "?" */
+int      task_exists(int id);          /* slot is occupied by a real task */
 void     task_smash_guard(void);       /* test hook: break the running guard */
 
 /* Give up the rest of the current slice by bringing the tick forward.

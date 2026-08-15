@@ -351,6 +351,11 @@ void task_smash_guard(void)
     }
 }
 
+int task_exists(int id)
+{
+    return id >= 0 && id < TASK_MAX && g_tasks[id].state != TASK_UNUSED;
+}
+
 const char *task_name(int id)
 {
     if (id < 0 || id >= TASK_MAX || g_tasks[id].name == 0) {
