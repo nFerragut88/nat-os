@@ -57,6 +57,7 @@ typedef void (*task_entry_fn)(void);
 typedef enum {
     TASK_UNUSED = 0,
     TASK_READY,
+    TASK_BLOCKED,       /* waiting on something; the scheduler will not pick it */
 } task_state_t;
 
 typedef struct {
@@ -88,5 +89,29 @@ uint32_t task_stack_headroom(int id);  /* untouched words remaining */
  * Cooperative yield reusing the timer path rather than a second interrupt
  * source — crude, but it exercises exactly the same switch. */
 void task_yield(void);
+
+/* ---- blocking ----------------------------------------------------------
+ *
+ * task_block() marks the calling task not-runnable. It does NOT yield — the
+ * caller is expected to hold a critical section (critical.h) while blocking so
+ * that the decision to block and the record of what it is waiting for cannot be
+ * split by a tick, then to leave that section and call task_yield().
+ *
+ *     uint32_t s = crit_enter();
+ *     wait_list |= 1u << task_current();
+ *     task_block();
+ *     crit_exit(s);
+ *     task_yield();
+ *
+ * Nothing here knows what a task is waiting for. That belongs to whatever built
+ * the wait — see mutex.c. */
+void task_block(void);
+void task_unblock(int id);
+int  task_state_of(int id);
+
+/* Registers a task as the idle task: it is chosen only when nothing else is
+ * runnable, rather than taking an equal share of the round robin. Without one,
+ * a system where every task blocks has nothing to run. */
+void task_set_idle(int id);
 
 #endif /* CYDOS_TASK_H */

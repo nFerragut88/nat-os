@@ -2,6 +2,7 @@
 
 #include "app.h"
 #include "arena.h"
+#include "console.h"
 #include "uart.h"
 #include "vm.h"
 
@@ -102,6 +103,7 @@ void app_tick(uint32_t quantum)
             /* Diagnose before releasing: the arena is about to go back to the
              * heap, and the offending offset is only meaningful alongside the
              * size it exceeded. */
+            console_lock();
             uart_puts("\n  [app ");
             uart_put_dec((unsigned int)id);
             uart_puts(" '");
@@ -117,8 +119,10 @@ void app_tick(uint32_t quantum)
             uart_puts(", after ");
             uart_put_dec(a->vm.executed);
             uart_puts(" instructions\n");
+            console_unlock();
             retire(a, APP_FAULTED);
         } else {
+            console_lock();
             uart_puts("\n  [app ");
             uart_put_dec((unsigned int)id);
             uart_puts(" '");
@@ -128,6 +132,7 @@ void app_tick(uint32_t quantum)
             uart_puts(" after ");
             uart_put_dec(a->vm.executed);
             uart_puts(" instructions\n");
+            console_unlock();
             retire(a, APP_HALTED);
         }
     }

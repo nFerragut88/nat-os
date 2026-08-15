@@ -18,6 +18,7 @@
  */
 
 #include "heap.h"
+#include "critical.h"
 
 /* Magic values chosen to be implausible as data, and distinct from each other
  * so a block's state is unambiguous even in a raw memory dump. */
@@ -87,6 +88,13 @@ void *heap_alloc(uint32_t bytes)
 
     uint32_t want = align_up(bytes);
 
+    /* The free list is walked and rewritten here, and a tick landing mid-split
+     * would let another task observe — or allocate from — a half-linked block.
+     * A critical section rather than a mutex: these are a handful of memory
+     * operations, and a mutex would make the allocator depend on the scheduler
+     * that may itself want to allocate. */
+    uint32_t crit = crit_enter();
+
     for (block_t *b = g_first; b; b = b->next) {
         if (b->magic != BLK_FREE || b->size < want) {
             continue;
@@ -114,10 +122,12 @@ void *heap_alloc(uint32_t bytes)
         if (g_used > g_high_water) {
             g_high_water = g_used;
         }
+        crit_exit(crit);
         return payload_of(b);
     }
 
     g_fail++;
+    crit_exit(crit);
     return 0;
 }
 
@@ -159,10 +169,15 @@ void heap_free(void *p)
 
     block_t *b = (block_t *)((char *)p - HDR_BYTES);
 
+    uint32_t crit = crit_enter();
+
     /* A live allocation is the only thing that may be freed. Anything else —
-     * double free, interior pointer, wild pointer — is counted and refused. */
+     * double free, interior pointer, wild pointer — is counted and refused.
+     * Checked inside the section: two tasks freeing the same pointer must not
+     * both see BLK_USED. */
     if (b->magic != BLK_USED) {
         g_bad_free++;
+        crit_exit(crit);
         return;
     }
 
@@ -173,6 +188,8 @@ void heap_free(void *p)
     if (b->prev) {
         coalesce_with_next(b->prev);
     }
+
+    crit_exit(crit);
 }
 
 uint32_t heap_total(void)          { return g_total; }

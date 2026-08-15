@@ -5,6 +5,7 @@
  */
 
 #include "shell.h"
+#include "console.h"
 #include "app.h"
 #include "heap.h"
 #include "timer.h"
@@ -174,6 +175,9 @@ static void execute(char *line)
 
     char *arg = split(line);
 
+    /* One command, one uninterrupted response. */
+    console_lock();
+
     if (str_eq(line, "help"))       { cmd_help(); }
     else if (str_eq(line, "ps"))    { cmd_ps(); }
     else if (str_eq(line, "progs")) { cmd_progs(); }
@@ -197,6 +201,8 @@ static void execute(char *line)
         uart_puts(line);
         uart_puts("\n");
     }
+
+    console_unlock();
 }
 
 void shell_begin(void)
