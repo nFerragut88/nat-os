@@ -92,6 +92,25 @@ static volatile uint32_t g_bumps_a, g_bumps_b;
  * blocking lock, but it is a pathological workload, not a representative one. */
 #define BUMP_EVERY 32u
 
+/* How often each worker yields the CPU.
+ *
+ * These tasks are M2 artefacts: they prove a context switch preserves registers
+ * across arbitrary suspension, and they have now done so 460,800 times with
+ * corrupt=0. The claim is established; what remains is a REGRESSION CHECK, and
+ * a regression check does not need most of the machine.
+ *
+ * At 2048 they were consuming the CPU budget that would otherwise be frame
+ * rate — the renderer measured 31 ms of work inside a 320 ms frame, idle 90% of
+ * the time and waiting for a share it could not get. Sleeping far more often
+ * costs them iteration count and costs the invariant nothing: a worker that
+ * yields more frequently is preempted MORE times per unit of CPU, which is
+ * precisely the property under test.
+ *
+ * Deleting them was the alternative. Kept instead because guards=ok and
+ * corrupt=0 are the only continuous evidence that the scheduler still does what
+ * UM-CYDOS-009 says it does. */
+#define WORKER_SLEEP_EVERY 128u
+
 static void shared_bump(void)
 {
     mutex_lock(&g_shared_lock);
@@ -201,7 +220,7 @@ static void worker(volatile uint32_t *count, volatile uint32_t *bad,
          * more than half its frame rate and bought no extra evidence; sleeping
          * briefly every few thousand iterations still exercises thousands of
          * preemptions per second. */
-        if ((n % 2048u) == 0u) {
+        if ((n % WORKER_SLEEP_EVERY) == 0u) {
             task_sleep(1u);
         }
 
@@ -1135,6 +1154,22 @@ static void task_display(void)
         }
 #endif
 
+/* 8 ticks. Two independent attempts to shorten this both broke the
+         * system, in different ways, and neither was a graphics problem:
+         *
+         *   1 tick  -> watchdog reset (rst:0x7)
+         *   2 ticks -> kernel alive, touch alive, reporter task starved to
+         *              silence: 0 report lines in 20 s, no reset
+         *
+         * The renderer occupies 31 ms of a 320 ms frame — busy 10% of the
+         * time — so the frame rate is not limited by drawing. It is limited by
+         * how much of the machine the renderer may take before the rest of the
+         * system stops making progress, and this constant is the only thing
+         * currently enforcing that limit.
+         *
+         * Raising the frame rate therefore means giving the scheduler a real
+         * fairness policy, not tuning this number. Until then it stays where it
+         * has been measured to work. */
         task_sleep(8u);
     }
 }

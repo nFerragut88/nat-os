@@ -14,6 +14,7 @@
 #include "task.h"
 #include "sd.h"
 #include "touch.h"
+#include "desktop.h"
 #include "uart.h"
 #include "vm.h"
 
@@ -249,6 +250,11 @@ static void execute(char *line)
             uart_put_dec(task_stack_headroom(id) * 4u);
             uart_puts("\n");
         }
+    }
+    else if (str_eq(line, "3d")) {
+        int on = !str_eq(arg, "off");
+        desktop_set_active(!on);
+        uart_puts(on ? "   3D view\n" : "   launcher\n");
     }
     else if (str_eq(line, "taps")) {
         /* Dumps the press log. Exists because the same data printed live is

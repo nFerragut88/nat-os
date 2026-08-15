@@ -89,6 +89,12 @@ static int      g_msg_ok;
 static uint32_t g_msg_tick;
 
 int      desktop_active(void) { return g_active; }
+
+void desktop_set_active(int on)
+{
+    g_active = on ? 1 : 0;
+    g_dirty  = 1;
+}
 uint32_t desktop_taps(void)   { return g_taps; }
 uint32_t desktop_opens(void)  { return g_opens; }
 

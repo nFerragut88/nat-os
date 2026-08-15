@@ -69,6 +69,11 @@ void desktop_touch(uint32_t x, uint32_t y, int down);
  * and set again by a touch in the top-left corner, which is the way back. */
 int  desktop_active(void);
 
+/* Force the launcher on or off without touching the glass. Exists so the
+ * renderer can be measured from the console: with the launcher active the
+ * raycaster does not run at all, and its timers read zero. */
+void desktop_set_active(int on);
+
 /* Counters, for the reporter — a launcher that never sees a tap and a touch
  * path that never delivers one look identical on the glass. */
 uint32_t desktop_taps(void);
