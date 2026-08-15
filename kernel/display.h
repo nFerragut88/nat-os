@@ -64,6 +64,19 @@ void display_backlight(int on);
 void display_lock(void);
 void display_unlock(void);
 
+/* ---- panic mode --------------------------------------------------------
+ *
+ * Suspends the draw lock, DMA, and the unbounded wait for the SPI controller,
+ * so the panic handler can put a fault on the panel without depending on a
+ * scheduler that has stopped or a transfer that may never retire. One-way:
+ * nothing turns it off, because nothing after a panic needs it off.
+ *
+ * display_ready() reports whether display_init() ever completed. A panic
+ * before the panel exists must draw nothing rather than write to an
+ * unconfigured controller. */
+void display_enter_panic_mode(void);
+int  display_ready(void);
+
 /* Fills the whole panel. */
 void display_clear(uint16_t colour);
 

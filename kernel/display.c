@@ -137,7 +137,14 @@ typedef struct {
 
 static dma_desc_t g_desc __attribute__((aligned(4)));
 
-static int      g_dma_ok;           /* 0 disables DMA for the rest of the run */
+/* Set once by display_init(), so a panic before the panel exists draws nothing
+ * rather than writing to an unconfigured controller. */
+static int g_ready;
+
+/* One-way. See the panic-mode note further down. */
+static volatile int g_panic_mode;
+
+static int      g_dma_ok;     /* 0 disables DMA for the rest of the run */
 static uint32_t g_dma_timeouts;
 static uint32_t g_dma_transfers;
 
@@ -244,7 +251,16 @@ static void spi2_tx(const uint8_t *data, uint32_t n)
 
         GPIO_REG(SPI2_MOSI_DLEN) = chunk * 8u - 1u;
         GPIO_REG(SPI2_CMD)       = SPI_USR_BIT;
+
+        /* Bounded only in panic mode. A healthy controller retires a 64-byte
+         * transfer in microseconds, so the bound is never reached in normal
+         * operation and costs a comparison; in a panic an unretired transfer
+         * must not be allowed to consume the one chance to report a fault. */
+        uint32_t spins = 0;
         while (GPIO_REG(SPI2_CMD) & SPI_USR_BIT) {
+            if (g_panic_mode && ++spins > 4000000u) {
+                break;
+            }
         }
 
         data    += chunk;
@@ -291,7 +307,7 @@ static void spi_tx(const uint8_t *data, uint32_t n)
     /* Short transfers stay on the FIFO path: below roughly a FIFO's worth, the
      * descriptor setup costs more than it saves. Commands and their few
      * parameter bytes are all in that range. */
-    if (g_dma_ok && n > 64u) {
+    if (g_dma_ok && !g_panic_mode && n > 64u) {
         if (spi2_dma_tx(data, n)) {
             return;
         }
@@ -424,11 +440,47 @@ int display_init(void)
     g_last_fill_cycles = xt_ccount() - t0;
 
     gpio_set(PIN_BL);                   /* backlight on once the panel is clean */
+    g_ready = 1;
     return 0;
 }
 
 void display_lock(void)   { mutex_lock(&g_lock); }
 void display_unlock(void) { mutex_unlock(&g_lock); }
+
+/* ---- panic mode --------------------------------------------------------
+ *
+ * A panic cannot honour any of this driver's normal assumptions, so it
+ * suspends three of them at once and never restores them. The kernel is on
+ * its way to a halt; there is nothing to restore them for.
+ *
+ *   - THE LOCK. Blocking on a mutex means task_block() and a yield, and a
+ *     panic runs with the scheduler stopped. Waiting for a lock whose owner
+ *     will never run again is a hang, and a hang here costs the fault report.
+ *   - DMA. The descriptors may describe a transfer already in flight, or a
+ *     buffer belonging to whatever just died. The FIFO path touches nothing
+ *     but the controller.
+ *   - THE UNBOUNDED FIFO WAIT. spi2_tx() spins until the controller retires a
+ *     transfer, which is correct while the system is healthy and an infinite
+ *     loop once it is not.
+ *
+ * Deliberately one-way. There is no display_panic_clear(): a driver that can
+ * be talked back out of panic mode invites somebody to try. */
+static void draw_lock(void)
+{
+    if (!g_panic_mode) {
+        mutex_lock(&g_lock);
+    }
+}
+
+static void draw_unlock(void)
+{
+    if (!g_panic_mode) {
+        mutex_unlock(&g_lock);
+    }
+}
+
+void display_enter_panic_mode(void) { g_panic_mode = 1; }
+int  display_ready(void)            { return g_ready; }
 
 void display_backlight(int on)
 {
@@ -444,7 +496,7 @@ void display_fill_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint16_t 
     if (x >= DISP_W || y >= DISP_H || w == 0u || h == 0u) {
         return;
     }
-    mutex_lock(&g_lock);
+    draw_lock();
     if (x + w > DISP_W) { w = DISP_W - x; }
     if (y + h > DISP_H) { h = DISP_H - y; }
 
@@ -457,7 +509,7 @@ void display_fill_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint16_t 
         push_pixels(g_line, w);         /* one span at a time — no framebuffer */
     }
     push_end();
-    mutex_unlock(&g_lock);
+    draw_unlock();
 }
 
 void display_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h,
@@ -469,7 +521,7 @@ void display_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h,
     if (w > DISP_W - x) { w = DISP_W - x; }
     if (h > DISP_H - y) { h = DISP_H - y; }
 
-    mutex_lock(&g_lock);
+    draw_lock();
     set_window(x, y, x + w - 1u, y + h - 1u);
 
     if (src_stride == w) {
@@ -497,7 +549,7 @@ void display_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h,
     }
 
     push_end();
-    mutex_unlock(&g_lock);
+    draw_unlock();
 }
 
 void display_clear(uint16_t colour)
@@ -558,7 +610,7 @@ void display_text(uint32_t x, uint32_t y, const char *s, uint16_t fg, uint16_t b
         scale = 1u;
     }
 
-    mutex_lock(&g_lock);
+    draw_lock();
     for (; *s; s++) {
         uint32_t cw = GLYPH_W * scale;
         if (x >= DISP_W || cw > LINE_MAX) {
@@ -588,7 +640,7 @@ void display_text(uint32_t x, uint32_t y, const char *s, uint16_t fg, uint16_t b
 
         x += cw;
     }
-    mutex_unlock(&g_lock);
+    draw_unlock();
 }
 
 uint32_t display_bytes_written(void) { return g_bytes; }
