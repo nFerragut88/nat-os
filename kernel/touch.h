@@ -37,6 +37,10 @@ typedef struct {
                              * not answering returns 0 on both, which is what
                              * distinguishes a dead bus from an untouched
                              * panel. Both look like "no events". */
+    /* Individual conversions, not the average. Averaging a good reading with a
+     * garbage one yields a plausible-looking wrong answer, so the spread has to
+     * be visible to tell "noisy" from "not tracking position at all". */
+    uint32_t sx[4], sy[4];
 } touch_state_t;
 
 void touch_init(void);
@@ -47,6 +51,16 @@ int touch_read(touch_state_t *out);
 
 /* Total samples taken and touches seen, so "the driver is not running" is
  * distinguishable from "nobody has touched it". */
+/* Extremes of the pressure channels since boot. A finger should drive z1 well
+ * above zero and z2 well below its idle rail; if neither moves, the panel is
+ * not reaching the controller regardless of what the coordinates say. */
+uint32_t touch_max_z1(void);
+uint32_t touch_min_z2(void);
+uint32_t touch_max_z(void);
+
+/* Samples in which PENIRQ was asserted. */
+uint32_t touch_irq_lows(void);
+
 uint32_t touch_samples(void);
 uint32_t touch_events(void);
 

@@ -13,11 +13,24 @@
 
 /* Control bytes. Bit 7 starts a conversion; bits 6:4 select the channel; bit 3
  * clear selects 12-bit; bit 2 clear selects differential mode, which cancels
- * the supply variation that single-ended mode is sensitive to. */
-#define CMD_Y   0x90u
-#define CMD_X   0xD0u
-#define CMD_Z1  0xB0u
-#define CMD_Z2  0xC0u
+ * the supply variation single-ended mode is sensitive to.
+ *
+ * Bits 1:0 are PD1:PD0, the power-down mode, and they were the defect. With
+ * PD=00 the ADC and its reference power down between every conversion, and the
+ * first conversion after power-up is specified as inaccurate. Z1 is the first
+ * conversion after CS goes low on every single read, so the one channel that
+ * decides whether a touch exists was always the throwaway sample: z1 never
+ * exceeded 1 across 150 samples including a firm held press.
+ *
+ * PD=11 keeps the reference and ADC powered for the whole burst. The final
+ * command uses PD=00 to power down again and re-enable PENIRQ, which is what
+ * makes the IRQ line usable later. */
+#define PD_ON   0x03u
+#define CMD_Y   (0x90u | PD_ON)
+#define CMD_X   (0xD0u | PD_ON)
+#define CMD_Z1  (0xB0u | PD_ON)
+#define CMD_Z2  (0xC0u | PD_ON)
+#define CMD_IDLE 0x90u              /* PD=00: power down, PENIRQ back on */
 
 /* Vendor calibration for this board. Kept as the extremes of the usable ADC
  * range rather than as a scale factor, so the mapping stays readable and a
@@ -31,6 +44,23 @@
 
 static uint32_t g_samples;
 static uint32_t g_events;
+
+/* Extremes since boot. Confirming what the pressure channels do under a finger
+ * needs a capture to coincide with the press, which is not something that can
+ * be arranged reliably. Latching the extremes makes the question answerable at
+ * any later moment instead. */
+/* PENIRQ observations. The pin idles high and is pulled low by the panel
+ * itself when it is touched — no ADC involved, which is why it is trusted over
+ * the Z channels here. */
+static uint32_t g_irq_low;
+static uint32_t g_max_z1;
+static uint32_t g_min_z2 = 0xFFFFFFFFu;
+static uint32_t g_max_z;
+
+uint32_t touch_max_z1(void) { return g_max_z1; }
+uint32_t touch_min_z2(void) { return g_min_z2; }
+uint32_t touch_max_z(void)  { return g_max_z; }
+uint32_t touch_irq_lows(void) { return g_irq_low; }
 
 /* The controller is specified to about 2 MHz and a GPIO loop runs faster than
  * that, so each edge is held briefly. Cheaper and more predictable than tuning
@@ -103,7 +133,19 @@ int touch_read(touch_state_t *out)
 {
     g_samples++;
 
+    /* Read PENIRQ BEFORE asserting CS. The pin is only valid while the
+     * controller is idle and powered down; a conversion in progress drives it
+     * regardless of whether anything is touching. */
+    int pen = (gpio_read(PIN_IRQ) == 0u);
+    if (pen) {
+        g_irq_low++;
+    }
+
     gpio_clear(PIN_CS);
+
+    /* Throwaway. Powers the reference up and absorbs the inaccurate first
+     * conversion so it cannot land on a channel whose value is load-bearing. */
+    (void)convert(CMD_Z1);
 
     uint32_t z1 = convert(CMD_Z1);
     uint32_t z2 = convert(CMD_Z2);
@@ -119,20 +161,44 @@ int touch_read(touch_state_t *out)
     int answered = (z1 != 0u) || (z2 != 0u);
     uint32_t z = answered ? ((z1 + 4095u) - z2) : 0u;
 
-    /* Two samples per axis. The panel is noisy and a single reading regularly
-     * lands far from the others; averaging two is enough to stop a cursor
-     * jittering without pretending this is a filtered signal. */
-    uint32_t rx = (convert(CMD_X) + convert(CMD_X)) / 2u;
-    uint32_t ry = (convert(CMD_Y) + convert(CMD_Y)) / 2u;
+    /* Four conversions per axis, kept individually. */
+    uint32_t sx[4], sy[4];
+    for (int i = 0; i < 4; i++) {
+        sx[i] = convert(CMD_X);
+    }
+    for (int i = 0; i < 4; i++) {
+        sy[i] = convert(CMD_Y);
+    }
+    (void)convert(CMD_IDLE);        /* power down, re-enable PENIRQ */
+    uint32_t rx = (sx[1] + sx[2] + sx[3]) / 3u;   /* first discarded */
+    uint32_t ry = (sy[1] + sy[2] + sy[3]) / 3u;
 
     gpio_set(PIN_CS);
+
+    for (int i = 0; i < 4; i++) {
+        out->sx[i] = sx[i];
+        out->sy[i] = sy[i];
+    }
+    if (z1 > g_max_z1) { g_max_z1 = z1; }
+    if (z2 < g_min_z2) { g_min_z2 = z2; }
+    if (answered && z > g_max_z) { g_max_z = z; }
 
     out->raw_x = rx;
     out->raw_y = ry;
     out->z     = z;
     out->z1    = z1;
     out->z2    = z2;
-    out->down  = answered && (z > Z_THRESHOLD);
+    /* PENIRQ decides, not pressure.
+     *
+     * The Z channels were measured across 150 samples including a firm held
+     * press: z1 never exceeded 1 and the computed pressure peaked at 52 against
+     * a threshold of 300. Whatever those channels are reporting on this board,
+     * it is not contact. PENIRQ is a direct electrical indication from the
+     * panel and needs no calibration at all.
+     *
+     * Pressure is still recorded, because a value that never moves is itself
+     * evidence and hiding it would only make the next person repeat this. */
+    out->down  = pen;
 
     if (out->down) {
         g_events++;

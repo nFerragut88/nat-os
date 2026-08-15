@@ -281,6 +281,14 @@ static void task_report(void)
         uart_put_dec(touch_samples());
         uart_putc('/');
         uart_put_dec(touch_events());
+        uart_puts(" irq=");
+        uart_put_dec(touch_irq_lows());
+        uart_puts(" z1max=");
+        uart_put_dec(touch_max_z1());
+        uart_puts(" z2min=");
+        uart_put_dec(touch_min_z2());
+        uart_puts(" zmax=");
+        uart_put_dec(touch_max_z());
         uart_puts(" last=");
         uart_put_dec(g_last_rawx);
         uart_putc(',');
@@ -897,7 +905,7 @@ static void task_touch(void)
 {
     touch_state_t t;
     uint32_t traced = 0;
-    uint32_t last_x = 0, last_y = 0;
+    uint32_t last_x = 0;
     int had = 0;
 
     for (;;) {
@@ -931,7 +939,17 @@ static void task_touch(void)
             if (traced < 24u) {
                 traced++;
                 console_lock();
-                uart_puts("  [touch] raw=");
+                uart_puts("  [touch] X=");
+                for (int i = 0; i < 4; i++) {
+                    uart_put_dec(t.sx[i]);
+                    uart_putc(i == 3 ? ' ' : '/');
+                }
+                uart_puts(" Y=");
+                for (int i = 0; i < 4; i++) {
+                    uart_put_dec(t.sy[i]);
+                    uart_putc(i == 3 ? ' ' : '/');
+                }
+                uart_puts(" raw=");
                 uart_put_dec(t.raw_x);
                 uart_putc(',');
                 uart_put_dec(t.raw_y);
@@ -945,21 +963,25 @@ static void task_touch(void)
                 console_unlock();
             }
 
-            /* Erase the previous crosshair before drawing the new one; a full
-             * repaint would cost 387 ms and make the cursor lag the finger. */
-            if (had) {
-                display_fill_rect(last_x, 150u, 4u, 8u, COLOR_BLACK);
-            }
-            uint32_t cx = (t.x < DISP_W - 4u) ? t.x : DISP_W - 4u;
-            display_fill_rect(cx, 150u, 4u, 8u, COLOR_MAGENTA);
-            last_x = cx;
-            last_y = t.y;
+            /* Draw a dot where the touch was mapped, and deliberately do NOT
+             * erase it. A trail following a dragged finger is unambiguous:
+             * a wrong axis order draws it at right angles to the drag, and a
+             * flip draws it mirrored. A single dot could be coincidence; a
+             * track cannot. Calibration is judged this way on every
+             * touchscreen for the same reason.
+             *
+             * The dots overwrite whatever they land on. That is acceptable for
+             * a calibration pass and is why this is not left enabled. */
+            display_fill_rect(t.x, t.y, 3u, 3u, COLOR_MAGENTA);
+            last_x = t.x;
             had = 1;
+            (void)last_x;
+            (void)had;
         }
 
         /* Polled at roughly 30 Hz. Fast enough to track a finger, slow enough
          * that the panel is not being clocked continuously for nothing. */
-        uint32_t until = timer_ticks() + 3u;
+        uint32_t until = timer_ticks() + 1u;
         while (timer_ticks() < until) {
             task_yield();
         }
