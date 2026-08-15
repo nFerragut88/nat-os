@@ -27,6 +27,11 @@
 
 #include <stdint.h>
 
+/* 1 = SPI2 peripheral, 0 = bit-banged GPIO. The bit-banged path is retained
+ * because a wrong DPORT clock bit or IOMUX selection fails exactly like a
+ * wiring fault: a black screen with no diagnostic. */
+#define DISPLAY_USE_SPI2 1
+
 #define DISP_W 240u
 #define DISP_H 320u
 
@@ -67,6 +72,11 @@ uint32_t display_bytes_written(void);
 /* CCOUNT cycles taken by the full-screen clear during init — the driver's
  * throughput, measured on the real panel rather than estimated. */
 uint32_t display_fill_cycles(void);
+
+/* SPI2 registers as read back after configuration, for confirming the clock
+ * divisor and the peripheral clock gate actually took. */
+uint32_t display_spi_clock_reg(void);
+uint32_t display_dport_reg(void);
 
 /* Task id currently holding the draw lock, for deadlock diagnosis. */
 int display_owner(void);

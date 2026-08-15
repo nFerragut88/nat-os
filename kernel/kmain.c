@@ -1087,7 +1087,10 @@ void kmain(void)
     uart_put_dec(display_bytes_written());
     uart_puts(" fullscreen=");
     uart_put_dec(display_fill_cycles() / 80000u);
-    uart_puts(" ms");
+    uart_puts(" ms clk=");
+    uart_put_hex(display_spi_clock_reg());
+    uart_puts(" dport=");
+    uart_put_hex(display_dport_reg());
     uart_puts("\n");
 
     m3_selftest();

@@ -42,6 +42,111 @@ static void delay_ms(uint32_t ms)
     }
 }
 
+
+/* ---- SPI2 (HSPI) hardware backend ---------------------------------------
+ *
+ * The CYD's display pins are the ESP32's native HSPI pads, so IOMUX routes them
+ * directly: no GPIO matrix, and none of its 40 MHz ceiling. CS and DC stay
+ * ordinary GPIOs, because the driver holds CS asserted across a window command
+ * and its whole pixel stream, which is not a shape the peripheral's CS
+ * automation expresses.
+ *
+ * Kept alongside the bit-banged path rather than replacing it. A wrong DPORT
+ * clock bit or a wrong IOMUX selection produces a black screen, which is what a
+ * wiring fault or a bad init sequence also produces, so the known-good path
+ * stays one #define away (UM-CYDOS-015 section 3).
+ */
+#define SPI2_BASE          0x3FF64000u
+#define SPI2_CMD           (SPI2_BASE + 0x00u)
+#define SPI2_CTRL          (SPI2_BASE + 0x08u)
+#define SPI2_CTRL2         (SPI2_BASE + 0x14u)
+#define SPI2_CLOCK         (SPI2_BASE + 0x18u)
+#define SPI2_USER          (SPI2_BASE + 0x1Cu)
+#define SPI2_USER1         (SPI2_BASE + 0x20u)
+#define SPI2_USER2         (SPI2_BASE + 0x24u)
+#define SPI2_MOSI_DLEN     (SPI2_BASE + 0x28u)
+#define SPI2_PIN           (SPI2_BASE + 0x34u)
+#define SPI2_SLAVE         (SPI2_BASE + 0x38u)
+#define SPI2_W(n)          (SPI2_BASE + 0x80u + 4u * (n))
+
+#define SPI_USR_BIT        (1u << 18)   /* CMD: start; self-clears when done */
+#define SPI_USR_MOSI_BIT   (1u << 27)   /* USER: perform a write phase       */
+
+/* DPORT peripheral clock gating. SPI2 is bit 6. Bit 1 in the same register
+ * clocks the flash controller this code executes from, so the write is
+ * read-modify-write and never a plain store. */
+#define DPORT_PERIP_CLK_EN 0x3FF000C0u
+#define DPORT_PERIP_RST_EN 0x3FF000C4u
+#define DPORT_SPI2_BIT     (1u << 6)
+
+/* 80 MHz / 2. The panel tolerates more, but the practical limit is the flex and
+ * the board layout, so the conservative divisor is taken first and a
+ * measurement decides whether it can rise. */
+#define SPI2_CLKDIV        0x00001001u   /* pre=0 n=1 h=0 l=1 -> sysclk/2 */
+
+/* IOMUX function 1 is the HSPI peripheral on these pads; function 2 is plain
+ * GPIO, which is what every other pin in this kernel uses. */
+#define IO_MUX_HSPI_FUNC   ((1u << 12) | (2u << 10))
+
+static uint32_t g_spi2_clk_reg;
+static uint32_t g_spi2_dport;
+
+static void spi2_init(void)
+{
+    GPIO_REG(DPORT_PERIP_CLK_EN) |= DPORT_SPI2_BIT;
+    GPIO_REG(DPORT_PERIP_RST_EN) &= ~DPORT_SPI2_BIT;
+
+    GPIO_REG(IO_MUX_GPIO14) = IO_MUX_HSPI_FUNC;   /* SCLK */
+    GPIO_REG(IO_MUX_GPIO13) = IO_MUX_HSPI_FUNC;   /* MOSI */
+
+    GPIO_REG(SPI2_SLAVE) = 0;                     /* master                   */
+    GPIO_REG(SPI2_PIN)   = 0x7u;                  /* peripheral drives no CS  */
+    GPIO_REG(SPI2_USER)  = SPI_USR_MOSI_BIT;      /* write phase only, mode 0 */
+    GPIO_REG(SPI2_USER1) = 0;
+    GPIO_REG(SPI2_USER2) = 0;
+    GPIO_REG(SPI2_CTRL)  = 0;                     /* MSB first                */
+    GPIO_REG(SPI2_CTRL2) = 0;
+    GPIO_REG(SPI2_CLOCK) = SPI2_CLKDIV;
+
+    /* Read back rather than assume. A clock register that did not take, or a
+     * DPORT bit that did not stick, is the difference between a fast display
+     * and a black one. */
+    g_spi2_clk_reg = GPIO_REG(SPI2_CLOCK);
+    g_spi2_dport   = GPIO_REG(DPORT_PERIP_CLK_EN);
+}
+
+/* Up to 64 bytes per transaction: the sixteen W registers are the whole FIFO.
+ * Bytes leave in address order within a word, MSB first within a byte. */
+static void spi2_tx(const uint8_t *data, uint32_t n)
+{
+    while (n) {
+        uint32_t chunk = (n > 64u) ? 64u : n;
+
+        for (uint32_t w = 0; w < (chunk + 3u) / 4u; w++) {
+            uint32_t word = 0;
+            for (uint32_t b = 0; b < 4u; b++) {
+                uint32_t idx = w * 4u + b;
+                if (idx < chunk) {
+                    word |= (uint32_t)data[idx] << (8u * b);
+                }
+            }
+            GPIO_REG(SPI2_W(w)) = word;
+        }
+
+        GPIO_REG(SPI2_MOSI_DLEN) = chunk * 8u - 1u;
+        GPIO_REG(SPI2_CMD)       = SPI_USR_BIT;
+        while (GPIO_REG(SPI2_CMD) & SPI_USR_BIT) {
+        }
+
+        data    += chunk;
+        n       -= chunk;
+        g_bytes += chunk;
+    }
+}
+
+uint32_t display_spi_clock_reg(void) { return g_spi2_clk_reg; }
+uint32_t display_dport_reg(void)     { return g_spi2_dport; }
+
 /* ---- bit-banged SPI, mode 0 --------------------------------------------
  * Data is presented on MOSI while the clock is low and sampled by the panel on
  * the rising edge. No explicit delays: each GPIO write is a peripheral store
@@ -69,11 +174,24 @@ static void spi_write(uint8_t b)
     g_bytes++;
 }
 
+/* Single egress point. Both backends implement this and nothing else touches
+ * the transport, so switching them cannot leave a stray path behind. */
+static void spi_tx(const uint8_t *data, uint32_t n)
+{
+#if DISPLAY_USE_SPI2
+    spi2_tx(data, n);
+#else
+    for (uint32_t i = 0; i < n; i++) {
+        spi_write(data[i]);
+    }
+#endif
+}
+
 static void write_cmd(uint8_t c)
 {
     gpio_clear(PIN_DC);                 /* DC low = command */
     gpio_clear(PIN_CS);
-    spi_write(c);
+    spi_tx(&c, 1);
     gpio_set(PIN_CS);
 }
 
@@ -83,12 +201,10 @@ static void write_cmd_data(uint8_t c, const uint8_t *data, uint32_t n)
 {
     gpio_clear(PIN_DC);
     gpio_clear(PIN_CS);
-    spi_write(c);
+    spi_tx(&c, 1);
     if (n) {
         gpio_set(PIN_DC);
-        for (uint32_t i = 0; i < n; i++) {
-            spi_write(data[i]);
-        }
+        spi_tx(data, n);
     }
     gpio_set(PIN_CS);
 }
@@ -107,16 +223,23 @@ static void set_window(uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1)
 
     gpio_clear(PIN_DC);
     gpio_clear(PIN_CS);
-    spi_write(0x2C);                    /* RAMWR — memory write   */
+    static const uint8_t ramwr = 0x2C;
+    spi_tx(&ramwr, 1);                  /* RAMWR — memory write   */
     gpio_set(PIN_DC);                   /* everything after is data; CS stays low */
 }
+
+/* Byte-swapped copy of the span. RGB565 goes out high byte first, the opposite
+ * of how it sits in memory. Sent as one transfer: with a hardware FIFO the
+ * per-call overhead dominates if this is done a byte at a time. */
+static uint8_t g_txbuf[LINE_MAX * 2u];
 
 static void push_pixels(const uint16_t *px, uint32_t n)
 {
     for (uint32_t i = 0; i < n; i++) {
-        spi_write((uint8_t)(px[i] >> 8));
-        spi_write((uint8_t)px[i]);
+        g_txbuf[i * 2u]      = (uint8_t)(px[i] >> 8);
+        g_txbuf[i * 2u + 1u] = (uint8_t)px[i];
     }
+    spi_tx(g_txbuf, n * 2u);
 }
 
 static void push_end(void)
@@ -130,6 +253,9 @@ int display_init(void)
 
     gpio_out_init(PIN_MOSI, IO_MUX_GPIO13);
     gpio_out_init(PIN_SCLK, IO_MUX_GPIO14);
+#if DISPLAY_USE_SPI2
+    spi2_init();                        /* re-routes SCLK and MOSI to HSPI */
+#endif
     gpio_out_init(PIN_CS,   IO_MUX_GPIO15);
     gpio_out_init(PIN_DC,   IO_MUX_GPIO2);
     gpio_out_init(PIN_BL,   IO_MUX_GPIO21);
