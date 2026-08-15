@@ -1,4 +1,4 @@
-/* cyd-os — watchdog control.
+/* nat-os — watchdog control.
  *
  * The ESP32 has three watchdogs that matter at boot: one in the RTC controller
  * and one in each timer group. The second-stage bootloader arms the RTC
@@ -6,7 +6,7 @@
  * sitting dead. It expects the application to take ownership — feed it, or turn
  * it off.
  *
- * cyd-os did neither for three milestones. The consequence was RTCWDT_RTC_RESET
+ * nat-os did neither for three milestones. The consequence was RTCWDT_RTC_RESET
  * roughly every second once M2 kept the CPU busy, which presented as a "stuck
  * scheduler" and cost three build cycles chasing bugs that did not exist. The
  * reset reason said so on the first line of every boot.

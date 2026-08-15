@@ -1,4 +1,4 @@
-/* cyd-os — raw UART0 output.
+/* nat-os — raw UART0 output.
  *
  * Register-level, no ROM calls (ROM routines are windowed-ABI and this kernel
  * is call0). The ROM bootloader already configured UART0 at 115200 8N1 for its

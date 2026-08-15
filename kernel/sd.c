@@ -1,4 +1,4 @@
-/* cyd-os — microSD over SPI. See sd.h for the mode and pin reasoning. */
+/* nat-os — microSD over SPI. See sd.h for the mode and pin reasoning. */
 
 #include "sd.h"
 #include "gpio.h"

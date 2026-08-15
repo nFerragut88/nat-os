@@ -1,4 +1,4 @@
-/* cyd-os — entry stub.
+/* nat-os — entry stub.
  *
  * The first instruction of the OS. Runs with whatever state the bootloader
  * left behind, so it establishes its own stack before touching C.

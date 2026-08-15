@@ -1,4 +1,4 @@
-/* cyd-os — Milestone 0 link map.
+/* nat-os — Milestone 0 link map.
  *
  * Everything lives in internal RAM. The 2nd-stage bootloader reads the image
  * header, copies each segment to the address named here, and jumps to ENTRY.
@@ -84,7 +84,7 @@ SECTIONS
 
   /* Read-only data that must survive a disabled flash cache.
    *
-   * UM-CYDOS-011 §4 records the hazard: writing flash requires the cache to be
+   * UM-NATOS-011 §4 records the hazard: writing flash requires the cache to be
    * turned off, and while it is off EVERY access to flash-mapped .rodata
    * faults. That includes the panic handler's own message strings — a fault
    * during a flash write would reach a panic handler that then faults trying to
@@ -113,7 +113,7 @@ SECTIONS
    * It sat in DRAM because IRAM cannot serve the unaligned byte reads that
    * string handling performs. Flash mapped through the data cache has no such
    * restriction, so the constraint that forced the original placement does not
-   * apply here (UM-CYDOS-010 §7.3).
+   * apply here (UM-NATOS-010 §7.3).
    *
    * Literal pools are deliberately NOT moved. `-mtext-section-literals` keeps
    * them beside the code in IRAM because `l32r` addresses backwards within

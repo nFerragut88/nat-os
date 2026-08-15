@@ -1,4 +1,4 @@
-/* cyd-os — exception and interrupt vectors.
+/* nat-os — exception and interrupt vectors.
  *
  * The CPU dispatches to fixed offsets from VECBASE. Each slot is only 64 bytes,
  * so every vector immediately jumps to a real handler in .text. A plain `j` is

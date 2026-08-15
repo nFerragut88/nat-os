@@ -1,7 +1,7 @@
-/* cyd-os — inter-application messaging.
+/* nat-os — inter-application messaging.
  *
  * Applications have no shared memory and will not be given any. An arena is the
- * unit of isolation (UM-CYDOS-013 §5.2), and mapping one arena into another
+ * unit of isolation (UM-NATOS-013 §5.2), and mapping one arena into another
  * would dissolve the single property everything above it depends on.
  *
  * So messages are COPIED, twice: out of the sender's arena into a kernel
@@ -21,8 +21,8 @@
  * would decide that policy. Refusing is the honest placeholder.
  */
 
-#ifndef CYDOS_IPC_H
-#define CYDOS_IPC_H
+#ifndef NATOS_IPC_H
+#define NATOS_IPC_H
 
 #include <stdint.h>
 
@@ -49,4 +49,4 @@ uint32_t ipc_sent(void);
 uint32_t ipc_delivered(void);
 uint32_t ipc_refused(void);
 
-#endif /* CYDOS_IPC_H */
+#endif /* NATOS_IPC_H */

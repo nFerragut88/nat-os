@@ -1,4 +1,4 @@
-/* cyd-os — inter-application messaging. See ipc.h for why messages are copied
+/* nat-os — inter-application messaging. See ipc.h for why messages are copied
  * rather than shared. */
 
 #include "ipc.h"

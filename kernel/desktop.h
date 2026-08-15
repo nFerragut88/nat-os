@@ -1,4 +1,4 @@
-/* cyd-os — a touch-driven launcher.
+/* nat-os — a touch-driven launcher.
  *
  * The first thing in this kernel that exists for a user rather than for a test.
  * Everything before it was verified by reading serial output; this is verified
@@ -8,7 +8,7 @@
  *
  * It is a LAUNCHER: an icon grid, a cursor, and double-tap to start a program.
  * It is not a window manager. Applications still render into the fixed
- * horizontal strips app.c assigns by slot index (UM-CYDOS-016 §2), because
+ * horizontal strips app.c assigns by slot index (UM-NATOS-016 §2), because
  * there is no focus model, no z-order, and no way for an application to own the
  * screen and give it back.
  *
@@ -31,8 +31,8 @@
  * and corrects. Neither has to be told which mode they are in.
  */
 
-#ifndef CYDOS_DESKTOP_H
-#define CYDOS_DESKTOP_H
+#ifndef NATOS_DESKTOP_H
+#define NATOS_DESKTOP_H
 
 #include <stdint.h>
 
@@ -90,4 +90,4 @@ int      desktop_last_cell(void);
 int      desktop_sel(void);
 uint32_t desktop_opens(void);
 
-#endif /* CYDOS_DESKTOP_H */
+#endif /* NATOS_DESKTOP_H */

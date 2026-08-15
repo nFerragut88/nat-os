@@ -1,7 +1,7 @@
-/* cyd-os — watchdog control. See watchdog.c for why these are disabled
+/* nat-os — watchdog control. See watchdog.c for why these are disabled
  * rather than fed, and what has to change before re-enabling them. */
-#ifndef CYDOS_WATCHDOG_H
-#define CYDOS_WATCHDOG_H
+#ifndef NATOS_WATCHDOG_H
+#define NATOS_WATCHDOG_H
 
 /* Disable the RTC watchdog and both timer-group watchdogs. Call early in
  * kmain, before anything that might take longer than the boot watchdog's
@@ -16,7 +16,7 @@ unsigned int watchdog_rtc_config(void);
  *
  * Arms TIMG0's watchdog to reset the system after `ms` without a feed.
  *
- * UM-CYDOS-009 §8 planned to feed this from the idle task. That plan is no
+ * UM-NATOS-009 §8 planned to feed this from the idle task. That plan is no
  * longer sound: with priorities, idle is only selected when nothing else is
  * runnable, and the application host never sleeps — so idle may never run on a
  * perfectly healthy system, and feeding from there would reset a working
@@ -48,4 +48,4 @@ void watchdog_liveness(int switched);
 unsigned int watchdog_feeds(void);
 unsigned int watchdog_starved(void);
 
-#endif /* CYDOS_WATCHDOG_H */
+#endif /* NATOS_WATCHDOG_H */

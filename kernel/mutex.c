@@ -1,4 +1,4 @@
-/* cyd-os — blocking mutex. See mutex.h for the design rationale. */
+/* nat-os — blocking mutex. See mutex.h for the design rationale. */
 
 #include "mutex.h"
 #include "critical.h"

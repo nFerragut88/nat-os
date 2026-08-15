@@ -1,4 +1,4 @@
-/* cyd-os — Milestone 2: preemptive task switching.
+/* nat-os — Milestone 2: preemptive task switching.
  *
  * M1 proved the kernel can be interrupted and resume with its registers intact.
  * M2 uses that: the same interrupt saves the full context, asks the scheduler
@@ -108,7 +108,7 @@ static volatile uint32_t g_bumps_a, g_bumps_b;
  *
  * Deleting them was the alternative. Kept instead because guards=ok and
  * corrupt=0 are the only continuous evidence that the scheduler still does what
- * UM-CYDOS-009 says it does. */
+ * UM-NATOS-009 says it does. */
 #define WORKER_SLEEP_EVERY 128u
 
 static void shared_bump(void)
@@ -147,7 +147,7 @@ static void task_idle(void)
  *     own regardless of what the program does — including never terminating.
  *
  * The arena is created in kmain BEFORE the scheduler starts, not here. The heap
- * has no locking (UM-CYDOS-010 §8) and allocating from task context would be
+ * has no locking (UM-NATOS-010 §8) and allocating from task context would be
  * the first thing to break that. */
 #define VM_TASK_QUANTUM 2000u
 
@@ -456,7 +456,7 @@ static void task_report(void)
 /*
  * Runs single-threaded before the tick is armed, so nothing here can be
  * disturbed by a context switch and a failure cannot be blamed on M2.
- * Each block corresponds to one exit criterion in UM-CYDOS-007 §5.
+ * Each block corresponds to one exit criterion in UM-NATOS-007 §5.
  */
 
 #define LEAK_ITERS 10000u
@@ -743,7 +743,7 @@ static void m4_selftest(void)
     uart_puts(" insns, no fault, kernel alive\n");
 
     /* --- the two bounds predicates must agree ----------------------------
-     * vm_in_bounds() duplicates arena_contains() for speed (UM-CYDOS-010 §5.2).
+     * vm_in_bounds() duplicates arena_contains() for speed (UM-NATOS-010 §5.2).
      * Duplicated logic drifts, so the agreement is tested rather than trusted. */
     uint32_t abase = 0, alen = 0;
     arena_bounds(id, &abase, &alen);
@@ -777,7 +777,7 @@ static void m4_selftest(void)
  * deterministic and a failure cannot be blamed on task switching. The live,
  * interactive version of the same thing runs afterwards under the shell.
  *
- * Each block is one exit criterion from UM-CYDOS-007 §7.
+ * Each block is one exit criterion from UM-NATOS-007 §7.
  */
 
 static const shell_program_t PROGRAMS[] = {
@@ -1003,7 +1003,7 @@ static void m6_critical_test(void)
  *
  * The bars started as a diagnostic and keep that job: distinct colours prove
  * the pixel format is right, and their ORDER is what confirms red and blue are
- * not transposed (UM-CYDOS-015 §6). At full blend the bars are still there
+ * not transposed (UM-NATOS-015 §6). At full blend the bars are still there
  * underneath — the crossfade passes through them once per cycle, so the check
  * remains available to anyone watching rather than being traded away for the
  * effect.
@@ -1082,7 +1082,7 @@ static void spectrum_region(uint32_t y, uint32_t h, uint32_t frame, uint32_t ske
 /* The whole backdrop: header, the status area behind the labels, and the strip
  * along the bottom. The application viewports at 168..280 are deliberately
  * skipped — those pixels belong to the applications, and the kernel painting
- * over them is the ownership mistake removed in UM-CYDOS-017 §8.4. */
+ * over them is the ownership mistake removed in UM-NATOS-017 §8.4. */
 static void spectrum_backdrop(uint32_t frame)
 {
     spectrum_region(0u,      22u,     frame, 0u);
@@ -1093,7 +1093,7 @@ static void spectrum_backdrop(uint32_t frame)
 /* ---- status display -----------------------------------------------------
  * Draws what the kernel knows about itself onto the panel. Everything is drawn
  * through a 480-byte span buffer; there is no framebuffer anywhere in the
- * system (UM-CYDOS-010 §7.2).
+ * system (UM-NATOS-010 §7.2).
  *
  * Redrawing only the value fields rather than the whole screen keeps each
  * update to a few hundred spans instead of 76,800 pixels, which matters when
@@ -1217,7 +1217,7 @@ static void task_display(void)
  * The UART trace is the actual verification. A crosshair in the wrong place and
  * a controller returning nothing look identical on the glass, and the display
  * driver already cost three commits to a defect that was invisible because only
- * the picture was being checked (UM-CYDOS-016 §3.4). Raw ADC values distinguish
+ * the picture was being checked (UM-NATOS-016 §3.4). Raw ADC values distinguish
  * "not answering" from "answering, mapped wrongly".
  */
 static void task_touch(void)
@@ -1357,7 +1357,7 @@ void kmain(void)
 {
     uart_puts("\n\n");
     uart_puts("=====================================\n");
-    uart_puts(" cyd-os  milestone 2 — task switching\n");
+    uart_puts(" nat-os  milestone 2 — task switching\n");
     uart_puts("=====================================\n");
 
     /* Before anything can take long enough to trip it. The bootloader arms the
@@ -1478,7 +1478,7 @@ void kmain(void)
 
     /* The VM's arena is created here, on the boot path, because the heap has no
      * locking and this is the last moment at which exactly one context exists
-     * (UM-CYDOS-010 §8). The task only ever runs an already-initialised VM. */
+     * (UM-NATOS-010 §8). The task only ever runs an already-initialised VM. */
     g_vm_arena = arena_create(1024);
     if (g_vm_arena >= 0 && arena_bounds(g_vm_arena, &g_vm_base, 0) == 0) {
         load_program(g_vm_arena, vm_spin, VM_SPIN_LEN);

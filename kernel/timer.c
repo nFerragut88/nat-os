@@ -1,4 +1,4 @@
-/* cyd-os — periodic tick from the core's CCOMPARE1 comparator.
+/* nat-os — periodic tick from the core's CCOMPARE1 comparator.
  *
  * CCOUNT is a free-running cycle counter; when it equals CCOMPARE1 the core
  * raises internal interrupt 15 (level 3). This source was chosen over the

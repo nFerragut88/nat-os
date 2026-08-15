@@ -1,8 +1,19 @@
-# cyd-os
+# nat-os
 
-An operating system written from scratch for the ESP32 "Cheap Yellow Display"
-board. No ESP-IDF, no Arduino, no FreeRTOS, no C library — the kernel owns
-scheduling, memory, drivers and application execution.
+An operating system written from scratch for the ESP32. No ESP-IDF, no Arduino,
+no FreeRTOS, no C library — the kernel owns scheduling, memory, drivers and
+application execution.
+
+Developed and verified on the ESP32-2432S028R, the board commonly sold as the
+"Cheap Yellow Display", and that is the only hardware any measurement in these
+documents was taken on. Nothing above the drivers is specific to it: the
+scheduler, heap, arena model, bytecode VM and application model assume an ESP32
+and nothing more. The board-specific parts are the pin maps and the panel and
+touch controllers, and they are confined to their own files.
+
+The project was called `cyd-os` until the drivers stopped being the interesting
+part. Document numbering is unchanged, so `UM-CYDOS-014` in an older commit
+message is `UM-NATOS-014` here.
 
 Only the second-stage bootloader and partition table are borrowed, and both are
 replaceable. Every instruction from the image entry point onward is project
@@ -48,7 +59,7 @@ Requires PlatformIO installed — for its toolchain only, not as a build system.
 
 Boot output is best captured with the port opened *before* reset; the kernel
 prints within milliseconds of the jump and attaching afterwards loses the
-banner. See UM-CYDOS-005 §8.
+banner. See UM-NATOS-005 §8.
 
 ## Layout
 
@@ -68,7 +79,7 @@ build.ps1      compile, link, package, flash
 
 ## Documentation
 
-`docs/` holds the engineering report set (UM-CYDOS-001 … 008). Start with
+`docs/` holds the engineering report set (UM-NATOS-001 … 008). Start with
 `docs/README.md` for the index and reading order.
 
 Reports separate **measured** from **assumed**. On a from-scratch kernel the

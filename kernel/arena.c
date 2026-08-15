@@ -1,4 +1,4 @@
-/* cyd-os — VM application arenas. See arena.h for the isolation rationale. */
+/* nat-os — VM application arenas. See arena.h for the isolation rationale. */
 
 #include "arena.h"
 #include "heap.h"

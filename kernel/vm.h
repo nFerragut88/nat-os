@@ -1,4 +1,4 @@
-/* cyd-os — bytecode virtual machine.
+/* nat-os — bytecode virtual machine.
  *
  * A register machine with 16 general registers and fixed 4-byte instructions.
  * Register-based was chosen over stack-based: dispatch is the inner loop of
@@ -7,7 +7,7 @@
  * slightly larger encoding many times over.
  *
  * THE VM IS THE ISOLATION MECHANISM. The ESP32 has no MMU paging, so there is
- * no hardware that can confine an application (UM-CYDOS-001 §4.2). Every memory
+ * no hardware that can confine an application (UM-NATOS-001 §4.2). Every memory
  * access a program makes is bounds-checked against its arena in software, on
  * every instruction, and that check is not optional and must never be compiled
  * out for speed. If it is removed, this kernel has no isolation of any kind.
@@ -25,12 +25,12 @@
  *
  * Execution is bounded by an instruction quantum rather than run to completion,
  * so a task hosting a VM can be preempted at an instruction boundary — the
- * safe-boundary preemption model of UM-CYDOS-001 §4.2. A program that never
+ * safe-boundary preemption model of UM-NATOS-001 §4.2. A program that never
  * terminates costs its quantum and no more.
  */
 
-#ifndef CYDOS_VM_H
-#define CYDOS_VM_H
+#ifndef NATOS_VM_H
+#define NATOS_VM_H
 
 #include <stdint.h>
 
@@ -246,4 +246,4 @@ uint32_t vm_draw_skipped(void);
  * the buffer was outside the caller's arena. */
 uint32_t vm_ipc_bad_buffer(void);
 
-#endif /* CYDOS_VM_H */
+#endif /* NATOS_VM_H */

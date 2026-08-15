@@ -1,8 +1,8 @@
-/* cyd-os — VM application arenas.
+/* nat-os — VM application arenas.
  *
  * An arena is a contiguous block of DRAM with a recorded base and length. It is
  * the unit of memory an application owns, and its bounds are what the bytecode
- * interpreter will check every load and store against (UM-CYDOS-001 §4.2).
+ * interpreter will check every load and store against (UM-NATOS-001 §4.2).
  *
  * This is the ONLY isolation mechanism this kernel will have. The ESP32 has no
  * MMU paging, so there is no hardware that can be asked to enforce these
@@ -16,8 +16,8 @@
  * that is told its size once.
  */
 
-#ifndef CYDOS_ARENA_H
-#define CYDOS_ARENA_H
+#ifndef NATOS_ARENA_H
+#define NATOS_ARENA_H
 
 #include <stdint.h>
 
@@ -46,4 +46,4 @@ uint32_t arena_count(void);
 uint32_t arena_bytes_committed(void);
 uint32_t arena_reject_count(void);
 
-#endif /* CYDOS_ARENA_H */
+#endif /* NATOS_ARENA_H */

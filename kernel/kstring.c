@@ -1,4 +1,4 @@
-/* cyd-os — the memory routines the compiler is entitled to call.
+/* nat-os — the memory routines the compiler is entitled to call.
  *
  * These are not here because kernel code calls them by name. They are here
  * because GCC synthesises calls to memcpy/memset from ordinary C — a byte-copy

@@ -1,6 +1,6 @@
-/* cyd-os — fault reporting. See panic.c. */
-#ifndef CYDOS_PANIC_H
-#define CYDOS_PANIC_H
+/* nat-os — fault reporting. See panic.c. */
+#ifndef NATOS_PANIC_H
+#define NATOS_PANIC_H
 
 /* Called from the exception vectors with the fault state already extracted.
  * Does not return. */
@@ -15,4 +15,4 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps);
  * not be available. */
 void kernel_panic_msg(const char *why, unsigned int detail);
 
-#endif /* CYDOS_PANIC_H */
+#endif /* NATOS_PANIC_H */

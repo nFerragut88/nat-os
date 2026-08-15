@@ -1,4 +1,4 @@
-/* cyd-os — touch-driven launcher. See desktop.h for what this is and is not. */
+/* nat-os — touch-driven launcher. See desktop.h for what this is and is not. */
 
 #include "desktop.h"
 #include "display.h"
@@ -124,7 +124,7 @@ static int cell_at(uint32_t x, uint32_t y)
 }
 
 /* An arrow, drawn as a stack of horizontal runs. Deliberately not a bitmap:
- * there is still no asset pipeline (UM-CYDOS-011 §6), and eight fill_rect calls
+ * there is still no asset pipeline (UM-NATOS-011 §6), and eight fill_rect calls
  * cost less than inventing one for a single glyph. */
 static void draw_cursor(uint32_t x, uint32_t y)
 {

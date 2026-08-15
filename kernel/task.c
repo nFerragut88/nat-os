@@ -1,4 +1,4 @@
-/* cyd-os — native task control and round-robin scheduling.
+/* nat-os — native task control and round-robin scheduling.
  *
  * Switching happens inside the level-3 timer interrupt. The handler saves the
  * full context onto the interrupted task's own stack, hands the stack pointer

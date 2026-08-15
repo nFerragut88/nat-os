@@ -1,4 +1,4 @@
-/* cyd-os — console arbitration. See console.h. */
+/* nat-os — console arbitration. See console.h. */
 
 #include "console.h"
 #include "mutex.h"

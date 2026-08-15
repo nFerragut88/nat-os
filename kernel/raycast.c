@@ -1,4 +1,4 @@
-/* cyd-os — grid raycaster. See raycast.h for the camera-plane argument. */
+/* nat-os — grid raycaster. See raycast.h for the camera-plane argument. */
 
 #include "raycast.h"
 #include "display.h"
@@ -159,7 +159,7 @@ void raycast_frame(void)
      * panel, and only the blit is now inside the lock.
      *
      * Without a framebuffer the loop blits per column, so the lock has to span
-     * the whole loop — that is UM-CYDOS-014 §5.2's fix, replacing 240
+     * the whole loop — that is UM-NATOS-014 §5.2's fix, replacing 240
      * acquisitions with one, and it still applies to that path.
      *
      * The general rule this project keeps relearning: a lock should cover the

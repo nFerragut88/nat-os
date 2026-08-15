@@ -1,4 +1,4 @@
-/* cyd-os — console arbitration.
+/* nat-os — console arbitration.
  *
  * UART0 has several writers: the reporter task, the shell, and the application
  * host announcing terminations. Without arbitration a report lands in the
@@ -18,8 +18,8 @@
  *     possible failure mode for a kernel with no debugger.
  */
 
-#ifndef CYDOS_CONSOLE_H
-#define CYDOS_CONSOLE_H
+#ifndef NATOS_CONSOLE_H
+#define NATOS_CONSOLE_H
 
 void console_init(void);
 
@@ -30,4 +30,4 @@ void console_unlock(void);
 unsigned int console_contentions(void);
 int console_owner(void);
 
-#endif /* CYDOS_CONSOLE_H */
+#endif /* NATOS_CONSOLE_H */

@@ -1,10 +1,10 @@
-/* cyd-os — SPI flash read/erase/write.
+/* nat-os — SPI flash read/erase/write.
  *
  * The first thing in this kernel that survives a power cycle.
  *
  * ---- the cache hazard ---------------------------------------------------
  *
- * `.rodata` is mapped from flash through the data cache (UM-CYDOS-011). A flash
+ * `.rodata` is mapped from flash through the data cache (UM-NATOS-011). A flash
  * chip cannot serve reads while it is erasing or programming, so any cache miss
  * during an operation would read a busy chip. That is why ESP-IDF disables the
  * cache around flash writes.
@@ -35,8 +35,8 @@
  * failure recoverable over serial rather than requiring a full erase.
  */
 
-#ifndef CYDOS_FLASH_H
-#define CYDOS_FLASH_H
+#ifndef NATOS_FLASH_H
+#define NATOS_FLASH_H
 
 #include <stdint.h>
 
@@ -58,4 +58,4 @@ int flash_write(uint32_t addr, const void *src, uint32_t len);
  * a bus that is not working returns 0x000000 or 0xFFFFFF. */
 uint32_t flash_read_id(void);
 
-#endif /* CYDOS_FLASH_H */
+#endif /* NATOS_FLASH_H */

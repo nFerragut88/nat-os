@@ -1,4 +1,4 @@
-/* cyd-os — kernel heap.
+/* nat-os — kernel heap.
  *
  * Design: an address-ordered doubly-linked list of blocks covering the entire
  * heap region with no gaps. Every block carries a 16-byte header holding its
@@ -13,7 +13,7 @@
  *
  * The magic word is the reason a double free or a wild pointer is reported
  * instead of silently linking garbage into the list. On a kernel with no memory
- * protection (UM-CYDOS-001 §4.2) that distinction is most of the debugging
+ * protection (UM-NATOS-001 §4.2) that distinction is most of the debugging
  * budget.
  */
 

@@ -1,4 +1,4 @@
-/* cyd-os — bytecode virtual machine. See vm.h for the ISA and the isolation
+/* nat-os — bytecode virtual machine. See vm.h for the ISA and the isolation
  * rationale.
  *
  * The dispatch loop is a switch. A computed-goto table would be faster, but it
@@ -162,7 +162,7 @@ static int store_u8(vm_t *vm, uint32_t off, uint32_t v)
  * other application's output and the kernel's status area with it.
  *
  * Arithmetic is in the offset domain for the same reason arena_contains() is
- * (UM-CYDOS-010 §5.2). Coordinates arrive as uint32_t, so a program passing a
+ * (UM-NATOS-010 §5.2). Coordinates arrive as uint32_t, so a program passing a
  * "negative" value hands over something near 0xFFFFFFFF; comparing it against
  * the viewport width rejects it, whereas computing x + w first would wrap and
  * admit it.

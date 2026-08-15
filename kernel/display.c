@@ -1,4 +1,4 @@
-/* cyd-os — ILI9341 driver. See display.h for the pin map and the reasoning. */
+/* nat-os — ILI9341 driver. See display.h for the pin map and the reasoning. */
 
 #include "display.h"
 #include "gpio.h"
@@ -12,7 +12,7 @@
 #define PIN_DC    2u
 #define PIN_BL   21u
 
-/* Derived in UM-CYDOS-008 §5.2 from the measured tick rate. Only used for the
+/* Derived in UM-NATOS-008 §5.2 from the measured tick rate. Only used for the
  * panel's reset and sleep-out delays, where being wrong by a factor of three
  * still leaves them long enough. */
 #define CPU_HZ 80000000u
@@ -60,7 +60,7 @@ static void delay_ms(uint32_t ms)
  * Kept alongside the bit-banged path rather than replacing it. A wrong DPORT
  * clock bit or a wrong IOMUX selection produces a black screen, which is what a
  * wiring fault or a bad init sequence also produces, so the known-good path
- * stays one #define away (UM-CYDOS-015 section 3).
+ * stays one #define away (UM-NATOS-015 section 3).
  */
 #define SPI2_BASE          0x3FF64000u
 #define SPI2_CMD           (SPI2_BASE + 0x00u)
@@ -110,7 +110,7 @@ static uint32_t g_spi2_dport;
 /* ---- SPI2 DMA -----------------------------------------------------------
  *
  * The CPU-driven path costs 2,560 transactions per full screen because the FIFO
- * holds 64 bytes (UM-CYDOS-015 §5.3). DMA takes a whole 480-byte span in one,
+ * holds 64 bytes (UM-NATOS-015 §5.3). DMA takes a whole 480-byte span in one,
  * so a screen becomes 320 transfers instead.
  *
  * Everything here is guarded three ways, because a DMA engine that never
@@ -662,7 +662,7 @@ void display_clear(uint16_t colour)
  * bit 0 at the top. A sixth blank column separates characters. Only 32..126 are
  * present; anything else prints as a space.
  *
- * It lives in .rodata, which since UM-CYDOS-011 is mapped from flash and costs
+ * It lives in .rodata, which since UM-NATOS-011 is mapped from flash and costs
  * no DRAM at all.
  */
 static const uint8_t FONT5X8[95][5] = {

@@ -1,4 +1,4 @@
-/* cyd-os — critical sections.
+/* nat-os — critical sections.
  *
  * Raises PS.INTLEVEL to mask the scheduler tick, so a short sequence completes
  * without being preempted. On a single core with no other bus master, that is
@@ -15,8 +15,8 @@
  * re-enable interrupts on the way out.
  */
 
-#ifndef CYDOS_CRITICAL_H
-#define CYDOS_CRITICAL_H
+#ifndef NATOS_CRITICAL_H
+#define NATOS_CRITICAL_H
 
 #include <stdint.h>
 #include "xtensa.h"
@@ -36,4 +36,4 @@ static inline void crit_exit(uint32_t saved_level)
     xt_set_intlevel(saved_level);
 }
 
-#endif /* CYDOS_CRITICAL_H */
+#endif /* NATOS_CRITICAL_H */

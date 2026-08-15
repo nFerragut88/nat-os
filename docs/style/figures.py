@@ -72,7 +72,7 @@ def boot_chain():
     stages = [
         ("L0  ROM bootloader", "in silicon · reads flash @ 0x1000", BORROWED),
         ("L1  second-stage bootloader", "borrowed · 17,536 B · parses image header", BORROWED),
-        ("L2  cyd-os kernel", "ours · entry 0x4008000C", OURS),
+        ("L2  nat-os kernel", "ours · entry 0x4008000C", OURS),
     ]
     for i, (label, sub, fill) in enumerate(stages):
         stroke = ACCENT if fill == OURS else RULE

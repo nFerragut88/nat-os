@@ -1,4 +1,4 @@
-/* cyd-os — ILI9341 display driver for the CYD 2.8".
+/* nat-os — ILI9341 display driver for the CYD 2.8".
  *
  * 240x320, 16-bit colour, driven over SPI. Pin assignment is the board's, taken
  * from the vendor project's TFT_eSPI setup:
@@ -8,7 +8,7 @@
  *     the panel can only be reset in software (0x01 SWRESET).
  *
  * NO FRAMEBUFFER. The ILI9341 holds the image in its own GRAM and drives the
- * glass from it, so the host never needs a second copy. UM-CYDOS-010 §7.2
+ * glass from it, so the host never needs a second copy. UM-NATOS-010 §7.2
  * measured what one would cost: 153,600 B, 92% of the heap. Everything here
  * renders through a small line buffer instead — 480 B for a full-width span.
  *
@@ -22,8 +22,8 @@
  * peripheral can replace it later without anything above this file changing.
  */
 
-#ifndef CYDOS_DISPLAY_H
-#define CYDOS_DISPLAY_H
+#ifndef NATOS_DISPLAY_H
+#define NATOS_DISPLAY_H
 
 #include <stdint.h>
 
@@ -60,7 +60,7 @@ void display_backlight(int on);
  * about FREQUENCY. A caller issuing hundreds of small primitives pays a full
  * scheduling round-trip per contended acquisition — a raycaster taking the lock
  * once per column spent 25 seconds per frame on 37 ms of work. Holding it for
- * the batch turns that into one acquisition. UM-CYDOS-014 §5.2. */
+ * the batch turns that into one acquisition. UM-NATOS-014 §5.2. */
 /* Non-blocking. Returns non-zero if the lock was taken; the caller must then
  * display_unlock(). For drawing that is better skipped than waited for — see
  * the note in display.c. */
@@ -140,4 +140,4 @@ uint32_t display_dma_timeouts(void);
 /* Task id currently holding the draw lock, for deadlock diagnosis. */
 int display_owner(void);
 
-#endif /* CYDOS_DISPLAY_H */
+#endif /* NATOS_DISPLAY_H */

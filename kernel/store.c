@@ -1,4 +1,4 @@
-/* cyd-os — the persistent record. See store.h. */
+/* nat-os — the persistent record. See store.h. */
 
 #include "store.h"
 #include "flash.h"

@@ -1,4 +1,4 @@
-/* cyd-os — fault reporting.
+/* nat-os — fault reporting.
  *
  * Entered from the exception vectors when something the kernel did not plan
  * for happens. Until a JTAG probe is available this is the only way a fault
@@ -31,7 +31,7 @@ static int g_panic_has_b;
 /* Puts the fault on the panel.
  *
  * The device is standalone. Everything else in this file assumes a serial cable
- * that is usually not attached, and UM-CYDOS-018's record only answers the
+ * that is usually not attached, and UM-NATOS-018's record only answers the
  * question on the NEXT boot. Between the fault and that reboot the user is
  * looking at a frozen screen with no indication anything is wrong — which is
  * indistinguishable from the renderer having simply stopped.

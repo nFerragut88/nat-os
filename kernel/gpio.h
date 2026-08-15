@@ -1,4 +1,4 @@
-/* cyd-os — minimal GPIO.
+/* nat-os — minimal GPIO.
  *
  * Only what the display needs: drive a pin high or low, and read one back.
  * No interrupts, no pull-ups, no analogue, no pins above 31 — the CYD's display
@@ -16,8 +16,8 @@
  * exactly like a broken display.
  */
 
-#ifndef CYDOS_GPIO_H
-#define CYDOS_GPIO_H
+#ifndef NATOS_GPIO_H
+#define NATOS_GPIO_H
 
 #include <stdint.h>
 
@@ -121,4 +121,4 @@ static inline uint32_t gpio_read(uint32_t pin)
     return (GPIO_REG(GPIO_IN1_REG) >> (pin - 32u)) & 1u;
 }
 
-#endif /* CYDOS_GPIO_H */
+#endif /* NATOS_GPIO_H */

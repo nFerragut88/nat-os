@@ -1,6 +1,6 @@
 ; Application GFX-ROGUE — deliberately tries to paint the entire panel.
 ;
-; UM-CYDOS-013 §5.2 established that an application cannot reach another's
+; UM-NATOS-013 §5.2 established that an application cannot reach another's
 ; MEMORY. This is the same question asked of the SCREEN: given a syscall that
 ; draws, can a program scribble over the kernel's status area, the colour strip,
 ; or a neighbour's output?

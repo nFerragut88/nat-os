@@ -1,4 +1,4 @@
-/* cyd-os — application table and lifecycle.
+/* nat-os — application table and lifecycle.
  *
  * An application is a bytecode program, an arena it is confined to, and a VM
  * executing it. This layer owns their lifecycle: starting one allocates an
@@ -21,8 +21,8 @@
  * an address outside its own arena is not merely refused, it is inexpressible.
  */
 
-#ifndef CYDOS_APP_H
-#define CYDOS_APP_H
+#ifndef NATOS_APP_H
+#define NATOS_APP_H
 
 #include <stdint.h>
 
@@ -61,4 +61,4 @@ int         app_fault(int id);
 uint32_t    app_fault_detail(int id);
 int         app_live_count(void);
 
-#endif /* CYDOS_APP_H */
+#endif /* NATOS_APP_H */

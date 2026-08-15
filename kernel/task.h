@@ -1,9 +1,9 @@
-/* cyd-os — native task control.
+/* nat-os — native task control.
  *
  * These are kernel-level tasks: drivers, the eventual VM host, and any work
  * that must run as real machine code. Applications will NOT be tasks of this
  * kind — they run inside the bytecode interpreter, which schedules them at
- * instruction boundaries (UM-CYDOS-001 §4.2). The number of native tasks is
+ * instruction boundaries (UM-NATOS-001 §4.2). The number of native tasks is
  * expected to stay small.
  *
  * There is no memory protection between them. The ESP32 has no MMU paging, so
@@ -11,8 +11,8 @@
  * (overflow) but nothing catches a wild pointer.
  */
 
-#ifndef CYDOS_TASK_H
-#define CYDOS_TASK_H
+#ifndef NATOS_TASK_H
+#define NATOS_TASK_H
 
 #include <stdint.h>
 
@@ -26,7 +26,7 @@
  *
  * The headroom is for the desktop and whatever follows it. The cost is
  * TASK_STACK_WORDS * 4 bytes of DRAM per slot, which the measured margins in
- * UM-CYDOS-019 §3.1 say is affordable. */
+ * UM-NATOS-019 §3.1 say is affordable. */
 #define TASK_MAX          12
 #define TASK_STACK_WORDS  512          /* 2 KB per task */
 #define TASK_NAME_MAX     12
@@ -192,4 +192,4 @@ void task_unboost(int id);
  * actually gets the CPU. */
 void task_sleep(uint32_t ticks);
 
-#endif /* CYDOS_TASK_H */
+#endif /* NATOS_TASK_H */

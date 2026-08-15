@@ -1,4 +1,4 @@
-/* cyd-os — Xtensa special-register access and interrupt primitives.
+/* nat-os — Xtensa special-register access and interrupt primitives.
  *
  * Thin inline wrappers, no abstraction: kernel code that touches these needs to
  * see exactly which register it is hitting. Special registers are read/written
@@ -13,8 +13,8 @@
  * they are baked into the accessors rather than left to call sites.
  */
 
-#ifndef CYDOS_XTENSA_H
-#define CYDOS_XTENSA_H
+#ifndef NATOS_XTENSA_H
+#define NATOS_XTENSA_H
 
 #include <stdint.h>
 
@@ -102,4 +102,4 @@ static inline uint32_t xt_get_vecbase(void)
 #define XT_TIMER1_INTERRUPT   15u
 #define XT_TIMER1_LEVEL        3u
 
-#endif /* CYDOS_XTENSA_H */
+#endif /* NATOS_XTENSA_H */

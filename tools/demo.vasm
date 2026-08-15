@@ -1,4 +1,4 @@
-; cyd-os — M4 demonstration program.
+; nat-os — M4 demonstration program.
 ;
 ; Exercises every mechanism the milestone claims: arithmetic, a counted loop,
 ; a bounds-checked store and reload, a call/return through the kernel-side

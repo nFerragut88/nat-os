@@ -1,4 +1,4 @@
-/* cyd-os — XPT2046 touchscreen. See touch.h for the pin map and rationale. */
+/* nat-os — XPT2046 touchscreen. See touch.h for the pin map and rationale. */
 
 #include "touch.h"
 #include "display.h"
@@ -50,7 +50,7 @@
  * ---- why the original calibration passed ----------------------------------
  *
  * This axis has been backwards since the touch driver was written, and the
- * calibration in UM-CYDOS-017 §7 did not catch it — but NOT because it ignored
+ * calibration in UM-NATOS-017 §7 did not catch it — but NOT because it ignored
  * direction. It tested direction explicitly, and concluded the opposite:
  *
  *     "the horizontal drag ended at rx=3527 against a maximum of 3536,
@@ -283,7 +283,7 @@ int touch_read(touch_state_t *out)
      *
      * Both are now required, and the reason is not that PENIRQ was wrong.
      *
-     * UM-CYDOS-017 §4 chose PENIRQ over pressure with pressure working fine —
+     * UM-NATOS-017 §4 chose PENIRQ over pressure with pressure working fine —
      * it measured a peak of 2065 against a threshold of 300 — on the grounds
      * that PENIRQ is a direct electrical signal needing no ADC, no threshold
      * and no calibration. That reasoning is still correct for the question it

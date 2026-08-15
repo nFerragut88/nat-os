@@ -1,4 +1,4 @@
-/* cyd-os — the persistent record.
+/* nat-os — the persistent record.
  *
  * One sector holding kernel state that should outlive a power cycle. Written
  * whole and validated whole: a checksum over the payload, so a record torn by a
@@ -10,8 +10,8 @@
  * produced by a variable that stayed in RAM.
  */
 
-#ifndef CYDOS_STORE_H
-#define CYDOS_STORE_H
+#ifndef NATOS_STORE_H
+#define NATOS_STORE_H
 
 #include <stdint.h>
 
@@ -65,4 +65,4 @@ uint32_t store_frames(void);
 void     store_set_frames(uint32_t f);
 int      store_valid(void);
 
-#endif /* CYDOS_STORE_H */
+#endif /* NATOS_STORE_H */

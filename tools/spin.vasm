@@ -1,4 +1,4 @@
-; cyd-os — a long-running program, for hosting inside a native task.
+; nat-os — a long-running program, for hosting inside a native task.
 ;
 ; Increments a counter held in its own arena, forever. Every iteration performs
 ; a bounds-checked store, so the isolation path is on the hot loop rather than

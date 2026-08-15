@@ -1,4 +1,4 @@
-/* cyd-os — application table and lifecycle. See app.h for the layering. */
+/* nat-os — application table and lifecycle. See app.h for the layering. */
 
 #include "app.h"
 #include "arena.h"

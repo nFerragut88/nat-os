@@ -1,4 +1,4 @@
-/* cyd-os — minimal console shell. See shell.h.
+/* nat-os — minimal console shell. See shell.h.
  *
  * String handling is hand-rolled: there is no libc, and the three primitives
  * this needs are shorter than the argument for pulling one in.
@@ -436,7 +436,7 @@ static void execute(char *line)
 
 void shell_begin(void)
 {
-    uart_puts("\n  cyd-os shell — 'help' for commands\n> ");
+    uart_puts("\n  nat-os shell — 'help' for commands\n> ");
 }
 
 void shell_poll(void)

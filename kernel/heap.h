@@ -1,7 +1,7 @@
-/* cyd-os — kernel heap.
+/* nat-os — kernel heap.
  *
  * A first-fit free list over the DRAM left between .bss and the boot stack.
- * Predictability matters more than throughput here (UM-CYDOS-007 §5): this
+ * Predictability matters more than throughput here (UM-NATOS-007 §5): this
  * allocator serves arena creation and a small number of kernel structures, not
  * a workload with millions of short-lived objects.
  *
@@ -10,8 +10,8 @@
  * the free list would need locking that the kernel has no primitive for yet.
  */
 
-#ifndef CYDOS_HEAP_H
-#define CYDOS_HEAP_H
+#ifndef NATOS_HEAP_H
+#define NATOS_HEAP_H
 
 #include <stdint.h>
 
@@ -48,4 +48,4 @@ uint32_t heap_bad_free_count(void);
  * accounting, and physical adjacency. Returns 0 if consistent. */
 int heap_check(void);
 
-#endif /* CYDOS_HEAP_H */
+#endif /* NATOS_HEAP_H */

@@ -1,4 +1,4 @@
-/* cyd-os — microSD over SPI.
+/* nat-os — microSD over SPI.
  *
  * The first storage in this project that a person can remove, carry away, and
  * fill on another machine. Flash holds what the kernel was built with; this
@@ -18,7 +18,7 @@
  *
  * ---- bit-banged first ------------------------------------------------------
  *
- * As with the display (UM-CYDOS-015 §3), the first version bit-bangs. Card
+ * As with the display (UM-NATOS-015 §3), the first version bit-bangs. Card
  * initialisation is a one-time cost measured in milliseconds and is required to
  * run at 400 kHz or slower, which no hardware peripheral makes easier. Sector
  * reads can move to SPI3 once something is proven to be reading the right
@@ -33,8 +33,8 @@
  * failed rather than a single boolean.
  */
 
-#ifndef CYDOS_SD_H
-#define CYDOS_SD_H
+#ifndef NATOS_SD_H
+#define NATOS_SD_H
 
 #include <stdint.h>
 
@@ -83,4 +83,4 @@ sd_type_t sd_type(void);
 uint32_t sd_last_r1(void);
 uint32_t sd_init_attempts(void);
 
-#endif /* CYDOS_SD_H */
+#endif /* NATOS_SD_H */

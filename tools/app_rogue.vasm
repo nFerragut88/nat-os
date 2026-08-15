@@ -1,6 +1,6 @@
 ; Application ROGUE — deliberately written to escape its arena.
 ;
-; UM-CYDOS-007 §7 names this as the milestone's principal risk: "an application
+; UM-NATOS-007 §7 names this as the milestone's principal risk: "an application
 ; deliberately written to escape its arena must fail to do so."
 ;
 ; It walks a store upward through memory four bytes at a time, starting above

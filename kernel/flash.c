@@ -1,4 +1,4 @@
-/* cyd-os — SPI flash read/erase/write. See flash.h for the cache argument. */
+/* nat-os — SPI flash read/erase/write. See flash.h for the cache argument. */
 
 #include "flash.h"
 #include "critical.h"

@@ -1,4 +1,4 @@
-# cyd-os build — compile, link, and package a bootable image.
+# nat-os build — compile, link, and package a bootable image.
 #
 # The kernel is entirely our own code; only the 2nd-stage bootloader and the
 # partition table are borrowed (from the CYD PlatformIO project) so we don't
@@ -77,13 +77,13 @@ foreach ($src in (Get-ChildItem "$root\kernel" -Include *.c,*.S -Recurse)) {
 }
 
 Write-Host "== linking ==" -ForegroundColor Cyan
-$elf = Join-Path $build "cydos.elf"
+$elf = Join-Path $build "natos.elf"
 # Quote every -Wl,... argument: PowerShell otherwise reads the comma as an
 # array separator and the parser dies before gcc is ever invoked.
 $ldflags = @(
     "-mabi=call0", "-nostdlib", "-nostartfiles",
     "-Wl,--gc-sections",
-    "-Wl,-Map,$build\cydos.map",
+    "-Wl,-Map,$build\natos.map",
     "-T", "$root\kernel\linker.ld"
 )
 & $gcc @ldflags -o $elf @objs
@@ -92,7 +92,7 @@ if ($LASTEXITCODE -ne 0) { throw "link failed" }
 & $size $elf
 
 Write-Host "== packaging image ==" -ForegroundColor Cyan
-$bin = Join-Path $build "cydos.bin"
+$bin = Join-Path $build "natos.bin"
 & $python $esptool --chip esp32 elf2image --flash_mode dio --flash_freq 40m --flash_size 4MB -o $bin $elf
 if ($LASTEXITCODE -ne 0) { throw "elf2image failed" }
 Write-Host ("  image: {0:N0} bytes" -f (Get-Item $bin).Length)

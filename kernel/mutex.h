@@ -1,4 +1,4 @@
-/* cyd-os — blocking mutex.
+/* nat-os — blocking mutex.
  *
  * For sections too long to hold with interrupts masked. A task that cannot
  * acquire the lock blocks and is removed from the scheduler's rotation, so
@@ -30,8 +30,8 @@
  * critical section instead (critical.h).
  */
 
-#ifndef CYDOS_MUTEX_H
-#define CYDOS_MUTEX_H
+#ifndef NATOS_MUTEX_H
+#define NATOS_MUTEX_H
 
 #include <stdint.h>
 
@@ -59,4 +59,4 @@ int  mutex_try_lock(mutex_t *m);
 
 int  mutex_owner(const mutex_t *m);
 
-#endif /* CYDOS_MUTEX_H */
+#endif /* NATOS_MUTEX_H */

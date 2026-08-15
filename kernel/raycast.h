@@ -1,8 +1,8 @@
-/* cyd-os — grid raycaster.
+/* nat-os — grid raycaster.
  *
  * Renders a first-person view of a tile map as vertical columns, which is the
  * shape this display driver is already good at: no framebuffer, one composed
- * column blitted per screen x (UM-CYDOS-015 §4).
+ * column blitted per screen x (UM-NATOS-015 §4).
  *
  * Camera-plane formulation. A ray is dir + plane * cameraX, where dir is a unit
  * vector and plane is perpendicular to it, so the distance marched along that
@@ -16,8 +16,8 @@
  * instruction; 64-bit arithmetic is avoided rather than emulated.
  */
 
-#ifndef CYDOS_RAYCAST_H
-#define CYDOS_RAYCAST_H
+#ifndef NATOS_RAYCAST_H
+#define NATOS_RAYCAST_H
 
 #include <stdint.h>
 
@@ -34,7 +34,7 @@ void raycast_init(void);
  *
  * On: columns are composed into DRAM and the view goes out as ONE window.
  *
- * Both paths stay live deliberately. UM-CYDOS-010 §7.2 argued against a
+ * Both paths stay live deliberately. UM-NATOS-010 §7.2 argued against a
  * framebuffer, and that argument is sound for the UI — the panel already holds
  * that image, so a host copy is redundant. It does not transfer to a renderer
  * that composes every pixel from scratch each frame, because there is no
@@ -64,4 +64,4 @@ uint32_t raycast_us_blit(void);
 uint32_t raycast_frames(void);
 uint32_t raycast_columns(void);
 
-#endif /* CYDOS_RAYCAST_H */
+#endif /* NATOS_RAYCAST_H */

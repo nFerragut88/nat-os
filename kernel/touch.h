@@ -1,4 +1,4 @@
-/* cyd-os — XPT2046 resistive touchscreen.
+/* nat-os — XPT2046 resistive touchscreen.
  *
  * Pins are the board's, from the vendor driver, and are deliberately NOT the
  * display's:
@@ -23,8 +23,8 @@
  * tells the two apart.
  */
 
-#ifndef CYDOS_TOUCH_H
-#define CYDOS_TOUCH_H
+#ifndef NATOS_TOUCH_H
+#define NATOS_TOUCH_H
 
 #include <stdint.h>
 
@@ -95,4 +95,4 @@ uint32_t           touch_log_count(void);
 const touch_log_t *touch_log_entry(uint32_t i);
 void               touch_log_clear(void);
 
-#endif /* CYDOS_TOUCH_H */
+#endif /* NATOS_TOUCH_H */

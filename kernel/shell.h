@@ -1,4 +1,4 @@
-/* cyd-os — minimal console shell.
+/* nat-os — minimal console shell.
  *
  * Runs as an ordinary native task and polls UART0. It holds no privileges the
  * rest of the kernel lacks; it is a front end to app_start() and app_kill().
@@ -7,8 +7,8 @@
  * shell has no dependency on which images exist or how they are generated.
  */
 
-#ifndef CYDOS_SHELL_H
-#define CYDOS_SHELL_H
+#ifndef NATOS_SHELL_H
+#define NATOS_SHELL_H
 
 #include <stdint.h>
 
@@ -39,4 +39,4 @@ void shell_begin(void);
  * task stays preemptible and a user holding a key cannot starve the system. */
 void shell_poll(void);
 
-#endif /* CYDOS_SHELL_H */
+#endif /* NATOS_SHELL_H */
