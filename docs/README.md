@@ -34,10 +34,10 @@ true" is the difference between a working boot and a silent reboot.
 | [UM-CYDOS-009](UM-CYDOS-009-m2-verification.md) | Milestone 2 Verification Report | Task model, context frame, scheduler, the zero-overhead `LOOP` defect, watchdog correction |
 | [UM-CYDOS-010](UM-CYDOS-010-m3-verification.md) | Milestone 3 Verification Report | Heap allocator, arena model and bounds checking, and the measured DRAM budget |
 | [UM-CYDOS-011](UM-CYDOS-011-flash-cache.md) | Flash Cache and Read-Only Data Placement | Mapping `.rodata` into flash, the 0x20 page congruence, and the cache-off hazard |
-| [UM-CYDOS-012](UM-CYDOS-012-m4-verification.md) | Milestone 4 Verification Report | Register-based bytecode VM, the ISA, the assembler, and containment of malformed programs |
-| [UM-CYDOS-013](UM-CYDOS-013-m5-verification.md) | Milestone 5 Verification Report | Application table and lifecycle, three-level scheduling, the shell, and the escape attempt |
+| [UM-CYDOS-012](UM-CYDOS-012-m4-verification.md) | Milestone 4 Verification Report | Register-based bytecode VM, the ISA, the assembler, containment of malformed programs, and the syscalls added since |
+| [UM-CYDOS-013](UM-CYDOS-013-m5-verification.md) | Milestone 5 Verification Report | Application table and lifecycle, three-level scheduling, the shell, the escape attempt, and messaging without shared memory |
 | [UM-CYDOS-014](UM-CYDOS-014-locking.md) | Locking Primitives | Critical sections vs blocking mutex, task blocking and idle, and a measured starvation defect |
-| [UM-CYDOS-015](UM-CYDOS-015-display.md) | Display Driver | ILI9341, span rendering with no framebuffer, and the move from bit-banged SPI to the SPI2 peripheral |
+| [UM-CYDOS-015](UM-CYDOS-015-display.md) | Display Driver | ILI9341, span rendering with no framebuffer, and the path from bit-banged SPI to SPI2 with DMA |
 | [UM-CYDOS-016](UM-CYDOS-016-display-syscalls.md) | Display Syscalls, and a Total System Freeze | Per-application viewports, pointer discipline, measured containment, and a yield that stopped the clock |
 | [UM-CYDOS-017](UM-CYDOS-017-touch.md) | Touchscreen, and a Verification Method That Failed Three Times | XPT2046 over PENIRQ, the GPIO two-bank bug, calibration by controlled input, a capture that erased its own evidence, and input confinement |
 
@@ -67,10 +67,12 @@ Reproducing a build: **005** alone is sufficient.
 | Roadmap M0–M5 | **Complete.** Six native tasks, three scheduling levels, a shell, and an application deliberately written to escape its arena that could not |
 | Locking | **Complete** — critical sections and a blocking mutex; heap and console both arbitrated, UM-CYDOS-014 |
 | Task blocking | **Live** — `TASK_BLOCKED` plus an idle task using `WAITI`, UM-CYDOS-014 §3 |
-| Display | **Working on hardware** — ILI9341, no framebuffer, **78 ms** full-screen fill via SPI2, colour order confirmed, UM-CYDOS-015 |
+| Display | **Working on hardware** — ILI9341, no framebuffer, **43 ms** full-screen fill via SPI2 + DMA, UM-CYDOS-015 §5.5 |
 | Application graphics | **Live** — `FILL`/`TEXT`/`DIMS` confined to per-application viewports; 0 escapes across 136 audited fills, UM-CYDOS-016 §5 |
 | Touch | **Working on hardware** — XPT2046 via PENIRQ, both axes calibrated by measurement, UM-CYDOS-017 |
 | Application input | **Live** — `SYS TOUCH` confined to the asking application's viewport; 81 delivered, 109,211 withheld, 0 confinement failures, UM-CYDOS-017 §8 |
+| Application messaging | **Live** — copied through a kernel mailbox, never shared memory; 278 sent / 277 delivered / 0 bad buffers, UM-CYDOS-013 §8 |
+| Application bitmaps | **Live** — `SYS BLIT`, arena-bounded source and viewport-clipped destination, UM-CYDOS-012 §10 |
 | DRAM budget | **Measured** — 158,000 B allocatable today (167,680 before `TASK_MAX` rose to 8); a full framebuffer is unnecessary, UM-CYDOS-010 §7.2 |
 | Flash cache | **Enabled** — `.rodata` mapped from flash, UM-CYDOS-011 |
 | Version control | **Initialised 2026-08-14** |

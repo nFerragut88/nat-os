@@ -1,7 +1,7 @@
 # UM-CYDOS-012 — Milestone 4 Verification Report
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.0 · 2026-08-14 · Status: **PASS** — all exit criteria met on hardware
+Revision 1.1 · 2026-08-15 · Status: **PASS** — all exit criteria met on hardware; §10 added, seven syscalls since
 
 ---
 
@@ -301,11 +301,61 @@ unrelated code first copied a struct. The build now passes
 - **The hosted program is not replaced when it stops.** A halted or faulted VM
   yields its task forever rather than loading something else; there is no
   program loader, only a copy into an arena at boot.
-- **Syscalls are unaudited for argument validation** beyond `PUTS`, which walks
-  its string one bounds-checked byte at a time and faults on a missing
-  terminator rather than reading past the end.
+- **Syscall argument validation is per-call, not systematic.** Every syscall
+  added since checks its own arguments (§10.1), and each was reasoned about
+  individually. Nothing enforces that a future one will, and there is no shared
+  harness that would catch an unchecked length in a new service.
 
-## 10. References
+## 10. Syscalls added after M4
+
+Revision 1.1. M4 shipped five syscalls, all of them producing UART output or
+returning a scalar. Seven more have been added since, and they fall into three
+groups by what they hand across the boundary.
+
+| Syscall | Added in | Crosses the boundary |
+|---|---|---|
+| `EXIT` `PUTC` `PUTS` `PUTD` `TICKS` | M4 | Scalars, and one string read out of the arena |
+| `FILL` `TEXT` `DIMS` | UM-CYDOS-016 | Coordinates, clipped to a viewport |
+| `TOUCH` | UM-CYDOS-017 §8 | Coordinates, *inward*, filtered by viewport |
+| `BLIT` | UM-CYDOS-016 | A pointer **and a length**, both program-supplied |
+| `SEND` `RECV` | UM-CYDOS-013 §8 | A buffer, copied through a kernel mailbox |
+
+The ISA itself is unchanged: `SYS` is still one opcode of 35, and every addition
+is a service number rather than an instruction. That was the point of spending an
+opcode on a dispatch number instead of encoding services directly — the
+instruction set has not had to move since it was fixed.
+
+### 10.1 Each group needed a different check
+
+**Coordinates** are clipped in the offset domain, so a value near `0xFFFFFFFF` —
+which is what a program passing a negative number actually sends — fails the
+comparison rather than wrapping into range.
+
+**`BLIT` is the first syscall taking a pointer and a length together**, so it is
+the first where the size is program-controlled. `w * h * 2` on unchecked 32-bit
+values overflows readily; 65536×65536 wraps to zero, which would satisfy a
+byte-length check and then copy whatever followed the buffer. The dimensions are
+therefore each bounded against the panel *before* they are multiplied, after
+which the product provably cannot wrap.
+
+**`SEND` and `RECV` check the buffer in `vm.c`, not in `ipc.c`.** Only the VM
+knows which arena an offset belongs to; the messaging layer receives a kernel
+pointer and has no way to tell where it came from. Putting the check where the
+information is, rather than where the operation happens, is the whole reason
+that split exists.
+
+### 10.2 The quantum distinction
+
+`FILL`, `TEXT` and `BLIT` end the caller's time slice; `TOUCH`, `SEND` and `RECV`
+do not.
+
+The rule is the cost of the work rather than the fact of being a syscall. A fill
+is one instruction and milliseconds of SPI, so without ending the slice a
+2,000-instruction quantum becomes minutes of drawing (§5). `TOUCH` reads a
+snapshot the polling task already published and costs nothing, so charging it a
+slice would only make an application slower for asking.
+
+## 11. References
 
 - UM-CYDOS-001 §4.2 — isolation model and safe-boundary preemption
 - UM-CYDOS-007 §6 — M4 deliverable and the ISA decision recorded as pending

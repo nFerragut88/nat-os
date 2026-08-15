@@ -1,7 +1,7 @@
 # UM-CYDOS-013 — Milestone 5 Verification Report
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.0 · 2026-08-14 · Status: **PASS** — all three exit criteria met on hardware
+Revision 1.1 · 2026-08-15 · Status: **PASS** — all three exit criteria met on hardware; §8 added, applications can now communicate
 
 ---
 
@@ -187,8 +187,9 @@ That is a deliberate trade: six concurrent tasks needed the slots.
   them, exactly as before. A driver bug can still corrupt the kernel.
 - **No per-application CPU accounting or priority.** Every application gets the
   same quantum, and there is no way to say one matters more.
-- **Applications cannot communicate.** No IPC, no shared arenas, no channels.
-  Isolation is currently total, which is simple but not ultimately useful.
+- **Messaging is one slot deep and unidirectional per send.** §8 adds
+  point-to-point messages, but there is no broadcast, no queue, and no way to
+  wait for a message — a receiver polls.
 - **No program loading from storage.** Images are compiled into the kernel.
   There is no filesystem, so "install an application" has no meaning yet.
 - **The shell has no history, editing beyond backspace, or completion.**
@@ -199,7 +200,57 @@ That is a deliberate trade: six concurrent tasks needed the slots.
   cosmetic, but it is the first thing that would need a lock or a mutex — and
   the kernel has neither.
 
-## 8. References
+## 8. Applications can now communicate
+
+Revision 1.1. This report originally recorded that applications had no way to
+talk to each other at all, and called that "simple but not ultimately useful".
+Messaging was added afterwards without weakening anything in §5.
+
+```
+ipc s/d/r = 278/277/157957      badbuf = 0
+```
+
+278 sent and 277 delivered — every accepted message reached its recipient, one
+in flight when sampled. No application ever offered a buffer outside its own
+arena.
+
+### 8.1 Copied, never shared
+
+Applications have no shared memory and were not given any. An arena is the unit
+of isolation (§5.2), and mapping one into another would dissolve the single
+property the rest of the system is built on.
+
+Messages are therefore copied **twice**: out of the sender's arena into a kernel
+mailbox, and later out of that mailbox into the receiver's arena. Two copies of
+at most 64 bytes is the price; what it buys is that neither application holds a
+reference to the other's memory, and neither can learn the other's layout.
+
+A sender names a **destination application**, never an address. As with the
+arena, the viewport and the pointer, the unwanted operation is not refused — it
+cannot be expressed.
+
+### 8.2 Refusal over queueing
+
+One mailbox per application, holding one message. A second message to an
+occupied mailbox is refused and counted.
+
+The 157,957 refusals are not a fault: the sender writes in a tight loop while the
+receiver drains occasionally. Queueing would need a policy for what to drop when
+the queue fills, and no consumer exists yet whose requirements would settle that
+policy. Refusing is the honest placeholder, and the counter makes the back
+pressure visible rather than hiding it in a buffer.
+
+### 8.3 Mail that must not outlive its context
+
+Two cases, both of which would otherwise create a channel nobody asked for:
+
+- **Sending to a slot that is not running is refused.** Otherwise the message
+  waits for whoever occupies that slot next — two applications connected without
+  either having agreed to it.
+- **Retiring an application clears its mailbox**, so a successor in the same
+  slot cannot read its predecessor's mail.
+
+## 9. References
 
 - UM-CYDOS-007 §7 — M5 deliverable, principal risk, and exit criteria
 - UM-CYDOS-012 — the VM and its resumable-quantum design, which made level 3 cheap

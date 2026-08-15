@@ -1,7 +1,7 @@
 # UM-CYDOS-015 — Display Driver
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.1 · 2026-08-15 · Status: **Complete, verified on hardware** — §5 added, driver moved to the SPI2 peripheral
+Revision 1.2 · 2026-08-15 · Status: **Complete, verified on hardware** — §5.5 added, DMA takes the fill to 43 ms
 
 ---
 
@@ -167,6 +167,42 @@ either number alone, which is why both are recorded.
 board layout rather than the controller, so raising it is a change to make
 against a measurement rather than on spec-sheet optimism.
 
+### 5.5 DMA
+
+Revision 1.2. The FIFO path costs 2,560 transactions per full screen (§5.3).
+DMA takes a whole 480-byte span in one, so a screen becomes 320 transfers.
+
+```
+387 ms   bit-banged GPIO
+ 78 ms   SPI2, CPU-driven FIFO
+ 43 ms   SPI2 + DMA          dma=320/0
+~31 ms   theoretical floor at 40 MHz
+```
+
+320 transfers and zero timeouts is exactly one per row, which confirms every
+span went through a descriptor rather than falling back.
+
+Written so that failure is diagnosable rather than fatal. A DMA engine that never
+asserts completion would hang the display task forever and take the system with
+it — the failure mode this project has already paid for twice, in the
+`task_yield` freeze (UM-CYDOS-016 §3) and the zero-overhead `LOOP` defect
+(UM-CYDOS-009 §6), both of which presented as a stopped kernel. So:
+
+- every wait is bounded by `CCOUNT` and counted, never a bare `while`
+- a timeout **disables DMA permanently** and falls through to the FIFO path. An
+  engine that missed one completion has no claim on the next, and a degraded
+  display beats a stopped one
+- the configuration registers are read back and reported beside the counters
+
+Descriptors are written as explicit words rather than C bitfields, whose bit
+order is implementation-defined while this layout belongs to the silicon. The
+descriptor and the transmit buffer are both in `.bss`, which the linker places
+in DRAM — a buffer in IRAM would be silently unreachable by the DMA engine.
+
+Transfers under about a FIFO's worth stay on the CPU path, where descriptor
+setup would cost more than it saves. Commands and their parameter bytes are all
+in that range.
+
 ## 6. Verification
 
 Visual confirmation on the panel: the status screen renders, values update, and
@@ -209,9 +245,9 @@ self-tests all still passing.
 | Framebuffer | none |
 | Span buffer | 480 B |
 | Font | 475 B, in flash |
-| Full-screen fill | **78 ms** via SPI2 (387 ms bit-banged) |
+| Full-screen fill | **43 ms** via SPI2 + DMA (78 ms FIFO, 387 ms bit-banged) |
 | SPI clock | 40 MHz (`sysclk/2`); ~3.2 MHz bit-banged |
-| Transactions per full screen | 2,560 (64-byte FIFO) |
+| Transfers per full screen | 320 with DMA (2,560 on the 64-byte FIFO) |
 | Theoretical floor at 40 MHz | ~31 ms |
 | Bytes for init + clear | 153,634 |
 | Native tasks | 8 |
@@ -219,9 +255,9 @@ self-tests all still passing.
 
 ## 8. What this does not establish
 
-- **No DMA.** 2,560 CPU-driven transactions per full screen account for most
-  of the remaining time (§5.3). DMA would remove them and is the next real
-  speedup available.
+- **No descriptor chaining.** Each span is a single descriptor started and
+  waited on individually. Chaining whole frames would remove the remaining
+  per-span synchronisation, which is most of the gap to the 31 ms floor.
 - **No 80 MHz.** One register bit, but unmeasured against this board's flex and
   layout (§5.4).
 - **No read phase.** The driver is write-only; `MISO` is wired but unused, so
