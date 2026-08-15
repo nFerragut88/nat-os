@@ -39,7 +39,7 @@ true" is the difference between a working boot and a silent reboot.
 | [UM-CYDOS-014](UM-CYDOS-014-locking.md) | Locking Primitives | Critical sections vs blocking mutex, task blocking and idle, and a measured starvation defect |
 | [UM-CYDOS-015](UM-CYDOS-015-display.md) | Display Driver | ILI9341 over bit-banged SPI, span rendering with no framebuffer, and measured throughput |
 | [UM-CYDOS-016](UM-CYDOS-016-display-syscalls.md) | Display Syscalls, and a Total System Freeze | Per-application viewports, pointer discipline, measured containment, and a yield that stopped the clock |
-| [UM-CYDOS-017](UM-CYDOS-017-touch.md) | Touchscreen, and a Verification Method That Failed Three Times | XPT2046 over PENIRQ, the GPIO two-bank bug, calibration by controlled input, and a capture that erased its own evidence |
+| [UM-CYDOS-017](UM-CYDOS-017-touch.md) | Touchscreen, and a Verification Method That Failed Three Times | XPT2046 over PENIRQ, the GPIO two-bank bug, calibration by controlled input, a capture that erased its own evidence, and input confinement |
 
 ## Reading order
 
@@ -70,6 +70,7 @@ Reproducing a build: **005** alone is sufficient.
 | Display | **Working on hardware** — ILI9341, no framebuffer, 387 ms full-screen fill, colour order confirmed, UM-CYDOS-015 |
 | Application graphics | **Live** — `FILL`/`TEXT`/`DIMS` confined to per-application viewports; 0 escapes across 136 audited fills, UM-CYDOS-016 §5 |
 | Touch | **Working on hardware** — XPT2046 via PENIRQ, both axes calibrated by measurement, UM-CYDOS-017 |
+| Application input | **Live** — `SYS TOUCH` confined to the asking application's viewport; 81 delivered, 109,211 withheld, 0 confinement failures, UM-CYDOS-017 §8 |
 | DRAM budget | **Measured** — 158,000 B allocatable today (167,680 before `TASK_MAX` rose to 8); a full framebuffer is unnecessary, UM-CYDOS-010 §7.2 |
 | Flash cache | **Enabled** — `.rodata` mapped from flash, UM-CYDOS-011 |
 | Version control | **Initialised 2026-08-14** |

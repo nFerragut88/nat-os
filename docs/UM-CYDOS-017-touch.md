@@ -1,7 +1,7 @@
 # UM-CYDOS-017 — Touchscreen, and a Verification Method That Failed Three Times
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.0 · 2026-08-15 · Status: **Complete, verified on hardware**
+Revision 1.1 · 2026-08-15 · Status: **Complete, verified on hardware** — §8 added, applications now read the pointer
 
 ---
 
@@ -9,7 +9,9 @@ Revision 1.0 · 2026-08-15 · Status: **Complete, verified on hardware**
 
 The CYD's XPT2046 resistive touchscreen works: contact is detected through the
 controller's PENIRQ line, and both axes are mapped to panel coordinates by
-measurement rather than by reasoning.
+measurement rather than by reasoning. **§8 (revision 1.1)** carries it up to the
+applications: bytecode can now read the pointer, confined to its own viewport,
+which makes the system interactive for the first time.
 
 The driver took four attempts, and only one of the four failures was in the
 driver. Two were in `gpio.h`, and the fourth — the one worth reading this report
@@ -187,7 +189,82 @@ The original code had the axes transposed, on the reasoning that a portrait
 display must swap a landscape-calibrated panel. **That reasoning was wrong**, and
 no amount of looking at the screen would have said so.
 
-## 8. Metrics
+## 8. Input reaches applications
+
+Added in revision 1.1. `SYS TOUCH` (8) returns `r0 = touched, r1 = x, r2 = y`.
+
+### 8.1 Confinement
+
+Coordinates are **viewport-relative**, and a touch anywhere else on the panel is
+reported to the asking application as **no touch at all**.
+
+That is stronger than refusing to answer. An application is never told where its
+viewport sits — `SYS DIMS` returns size only — so it cannot reconstruct an
+absolute position even from a touch it is permitted to see, and it has no way to
+learn that a touch happened elsewhere. Input joins memory and pixels as
+something a program cannot observe outside its own allocation:
+
+| Resource | Confined by | Outside its allocation |
+|---|---|---|
+| Memory | Arena bounds check | Unrepresentable — an address outside the arena cannot be formed |
+| Pixels | Viewport clipping | Clipped before it exists |
+| Input | Viewport test on delivery | Reported as no touch |
+
+Comparison is in the offset domain, like `arena_contains()` and `vp_fill()`, so a
+touch above or left of the viewport underflows to a huge unsigned value and is
+rejected rather than wrapping into range.
+
+### 8.2 Measured
+
+```
+touch g/w = 81/109211        last = ...->191,174
+```
+
+**81 touches delivered** to the paint application and **109,211 withheld** for
+landing outside its 168–194 strip, with the last accepted touch at y=174 —
+inside it.
+
+Both halves matter. Delivery alone would not show confinement, and withholding
+alone would be indistinguishable from a broken syscall. The withheld count is
+large because the application polls continuously: it asked for the pointer tens
+of thousands of times while a finger was demonstrably on the glass elsewhere,
+and was told there was none every time.
+
+### 8.3 A snapshot, not the bus
+
+The syscall reads a state published by the polling task rather than driving the
+controller itself. Doing its own SPI would cost milliseconds per call and
+contend with the touch task for the bus.
+
+It is therefore cheap, and unlike `FILL` and `TEXT` it does **not** end the time
+slice (UM-CYDOS-016 §2.4). The distinction is the cost of the work, not whether
+it is a syscall.
+
+### 8.4 Two defects this exposed
+
+**Launching by index.** `PROGRAMS` grew from three entries to six, and a
+hard-coded `PROGRAMS[4]` silently stopped meaning `paint` and started meaning
+`gfxrogue` — so boot launched the panel-flooding rogue instead of the
+interactive application. The symptom was a strip flickering red and white, with
+no visible connection to an array index. Boot now launches **by name**.
+
+The user's description — *"touching in the red/white thing was making black
+dots"* — identified both the wrong application and the cursor artefact, and was
+a faster route to the cause than the counters, which correctly reported
+`g/w = 0/0` without indicating why.
+
+**The kernel was scribbling on application viewports.** A kernel-drawn touch
+cursor painted over whatever strip the finger was in — exactly what the kernel
+forbids applications from doing to each other. Not unsafe, since the kernel is
+trusted, but wrong about ownership: those pixels belong to whoever owns the
+strip. It also destroyed what it drew over, replacing an application's output
+with the black squares it left while erasing its own previous position.
+
+The cursor is removed. An application that wants pointer feedback draws it
+itself, through `SYS TOUCH` and `SYS FILL`, in its own coordinates and inside
+its own viewport — which is the entire point of the syscall.
+
+## 9. Metrics
 
 | Quantity | Value |
 |---|---|
@@ -204,8 +281,11 @@ no amount of looking at the screen would have said so.
 | Image size | 21,888 B |
 | Attempts before working | 4 |
 | Conclusions retracted | 2 |
+| Touches delivered to an application | 81 |
+| Touches withheld as out-of-viewport | 109,211 |
+| Confinement failures | 0 |
 
-## 9. What this does not establish
+## 10. What this does not establish
 
 - **No multi-touch.** A resistive panel cannot report two points; a second
   finger produces a reading somewhere between them.
@@ -213,9 +293,12 @@ no amount of looking at the screen would have said so.
   so would let the system idle until touched instead of sampling at 100 Hz.
 - **No debounce or gesture recognition.** Every sample is independent; there is
   no tap, hold, drag or double-tap concept.
-- **No touch access from applications.** There is no syscall, so bytecode cannot
-  read the pointer. That is the natural counterpart to the display syscalls of
-  UM-CYDOS-016 and would make applications interactive.
+- **No pointer-up event.** An application sees only that a touch is or is not
+  present. There is no press, release or tap, so it cannot distinguish a held
+  finger from a rapid sequence of contacts.
+- **One pointer, shared.** All applications read the same snapshot. Two
+  applications whose viewports overlapped would both see the same touch; nothing
+  arbitrates focus, because nothing yet needs to.
 - **Calibration is the vendor's, not this board's.** The extremes were taken
   from the vendor driver and the measured spans are consistent with them, but no
   per-unit calibration pass has been run.
@@ -224,7 +307,7 @@ no amount of looking at the screen would have said so.
   hardware does not reliably support, or damage tracking the display layer does
   not have.
 
-## 10. References
+## 11. References
 
 - UM-CYDOS-015 — the display driver, and the shared-bus problem avoided here
 - UM-CYDOS-016 §3.4 — the frozen marker, the first instance of the §6 pattern
