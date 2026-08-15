@@ -283,6 +283,8 @@ static void task_report(void)
         uart_put_dec(ipc_refused());
         uart_puts(" badbuf=");
         uart_put_dec(vm_ipc_bad_buffer());
+        uart_puts("  | fb=");
+        uart_puts(raycast_framebuffer() ? "on" : "off");
         uart_puts("  | ray us m/c/b=");
         uart_put_dec(raycast_us_march());
         uart_putc('/');
@@ -1222,6 +1224,14 @@ void kmain(void)
     m4_selftest();
     m5_selftest();
     m6_selftest();
+
+    /* After the self-tests, not before: heap_init() runs inside m3_selftest(),
+     * and the leak test there checks free memory returns to its baseline — an
+     * 80 KB allocation made earlier would fail for want of a heap and, once the
+     * ordering was fixed, would break the baseline instead. */
+    if (raycast_set_framebuffer(1) != 0) {
+        uart_puts("  raycast fb   : allocation failed, using direct columns\n");
+    }
 
     /* The VM's arena is created here, on the boot path, because the heap has no
      * locking and this is the last moment at which exactly one context exists

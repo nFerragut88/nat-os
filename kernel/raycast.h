@@ -26,6 +26,28 @@
 
 void raycast_init(void);
 
+/* ---- framebuffer, switchable at runtime --------------------------------
+ *
+ * Off: each column is blitted as it is computed — 120 address-window setups per
+ * frame, and the window overhead measured at roughly five times the pixel data
+ * it carried.
+ *
+ * On: columns are composed into DRAM and the view goes out as ONE window.
+ *
+ * Both paths stay live deliberately. UM-CYDOS-010 §7.2 argued against a
+ * framebuffer, and that argument is sound for the UI — the panel already holds
+ * that image, so a host copy is redundant. It does not transfer to a renderer
+ * that composes every pixel from scratch each frame, because there is no
+ * existing copy for it to duplicate. Keeping the switch means the difference
+ * stays a measurement rather than an assertion, and the claim can be rechecked
+ * whenever the display path changes underneath it.
+ *
+ * The buffer is 240x168x2 = 80,640 B, allocated from the heap on enable and
+ * released on disable. Returns 0 on success. */
+int  raycast_set_framebuffer(int on);
+int  raycast_framebuffer(void);
+uint32_t raycast_fb_bytes(void);
+
 /* Advances the camera one step and draws one frame. Walks forward until a wall
  * is close, then turns until clear. */
 void raycast_frame(void);

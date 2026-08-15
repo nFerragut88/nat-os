@@ -2,6 +2,7 @@
 
 #include "raycast.h"
 #include "display.h"
+#include "heap.h"
 #include "xtensa.h"
 #include "generated/sintab.h"
 
@@ -57,6 +58,9 @@ static uint32_t g_us_march, g_us_compose, g_us_blit;
 
 static uint16_t g_col[RAY_VIEW_H * RAY_COLW];
 
+/* NULL when the direct path is in use. */
+static uint16_t *g_fb;
+
 static int32_t fsin(uint32_t a) { return SIN_TAB[a & (SIN_N - 1u)]; }
 static int32_t fcos(uint32_t a) { return SIN_TAB[(a + 64u) & (SIN_N - 1u)]; }
 
@@ -76,6 +80,22 @@ void raycast_init(void)
     g_py = (1 * ONE) + (ONE / 2);
     g_angle = 0;
     g_frames = g_columns = 0;
+}
+
+int raycast_framebuffer(void)   { return g_fb != 0; }
+uint32_t raycast_fb_bytes(void) { return g_fb ? (RAY_VIEW_W * RAY_VIEW_H * 2u) : 0u; }
+
+int raycast_set_framebuffer(int on)
+{
+    if (on && !g_fb) {
+        g_fb = (uint16_t *)heap_alloc(RAY_VIEW_W * RAY_VIEW_H * 2u);
+        return g_fb ? 0 : -1;
+    }
+    if (!on && g_fb) {
+        heap_free(g_fb);
+        g_fb = 0;
+    }
+    return 0;
 }
 
 void raycast_turn(int32_t units)
@@ -211,17 +231,35 @@ void raycast_frame(void)
                 uint32_t s = 20u + (uint32_t)(below * 50) / (span > 0 ? span : 1);
                 px = RGB(s, s / 2u, s / 3u);
             }
-            g_col[y * RAY_COLW]      = px;
-            g_col[y * RAY_COLW + 1u] = px;
+            if (g_fb) {
+                /* Row-major, so the finished view is one contiguous stream. */
+                uint16_t *row = g_fb + (uint32_t)y * RAY_VIEW_W + x;
+                row[0] = px;
+                row[1] = px;
+            } else {
+                g_col[y * RAY_COLW]      = px;
+                g_col[y * RAY_COLW + 1u] = px;
+            }
         }
 
         t_compose += xt_ccount() - t0;
 
-        /* Stride equals width, so the whole column is one contiguous stream. */
-        t0 = xt_ccount();
-        display_blit(x, 0, RAY_COLW, RAY_VIEW_H, g_col, RAY_COLW);
-        t_blit += xt_ccount() - t0;
+        /* Direct path only: with a framebuffer the whole view goes out once,
+         * after every column has been composed. */
+        if (!g_fb) {
+            t0 = xt_ccount();
+            display_blit(x, 0, RAY_COLW, RAY_VIEW_H, g_col, RAY_COLW);
+            t_blit += xt_ccount() - t0;
+        }
         g_columns++;
+    }
+
+    if (g_fb) {
+        /* One window for the entire view. Stride equals width, so this takes
+         * the contiguous path and streams 80,640 bytes without another setup. */
+        t0 = xt_ccount();
+        display_blit(0, 0, RAY_VIEW_W, RAY_VIEW_H, g_fb, RAY_VIEW_W);
+        t_blit += xt_ccount() - t0;
     }
 
     display_unlock();

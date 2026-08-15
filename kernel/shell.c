@@ -8,6 +8,7 @@
 #include "console.h"
 #include "app.h"
 #include "heap.h"
+#include "raycast.h"
 #include "timer.h"
 #include "uart.h"
 #include "vm.h"
@@ -76,6 +77,7 @@ void shell_register(const shell_program_t *table, int count)
 static void cmd_help(void)
 {
     uart_puts("  commands:\n"
+              "    fb [on|off]   framebuffer for the 3D view\n"
               "    ps            list applications\n"
               "    progs         list loadable programs\n"
               "    run <name>    start a program\n"
@@ -182,6 +184,21 @@ static void execute(char *line)
     else if (str_eq(line, "ps"))    { cmd_ps(); }
     else if (str_eq(line, "progs")) { cmd_progs(); }
     else if (str_eq(line, "mem"))   { cmd_mem(); }
+    else if (str_eq(line, "fb")) {
+        if (str_eq(arg, "on") || str_eq(arg, "off")) {
+            int want = str_eq(arg, "on");
+            if (raycast_set_framebuffer(want) != 0) {
+                uart_puts("   cannot allocate framebuffer\n");
+            }
+        }
+        uart_puts("   framebuffer ");
+        uart_puts(raycast_framebuffer() ? "on" : "off");
+        uart_puts(", ");
+        uart_put_dec(raycast_fb_bytes());
+        uart_puts(" B, heap free ");
+        uart_put_dec(heap_free_bytes());
+        uart_puts("\n");
+    }
     else if (str_eq(line, "run"))   { cmd_run(arg); }
     else if (str_eq(line, "kill")) {
         int id = parse_int(arg);
