@@ -1,7 +1,7 @@
 # UM-CYDOS-009 — Milestone 2 Verification Report
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.1 · 2026-08-14 · Status: **PASS** — exit criteria met on hardware; the §6 defect is root-caused and fixed at source
+Revision 1.2 · 2026-08-15 · Status: **PASS** — exit criteria met on hardware; §11 added, the scheduler has gained blocking, sleeping and priorities
 
 ---
 
@@ -76,6 +76,10 @@ restoring them before `RFI` is what converts a stack swap into a task switch.
 Selection scans forward from the current task and takes the first `READY` one.
 No priorities, no sleeping, no blocking — none of those have a consumer yet, and
 each would be an untested mechanism in the one code path that must be correct.
+
+> All three exist now; see §11. Each arrived when something needed it — a mutex
+> needed blocking, priorities needed sleeping — which is the order this section
+> was holding out for.
 
 ## 4. Implementation
 
@@ -307,12 +311,14 @@ feeding it, at which point it becomes a genuine hang detector.
 - **No memory protection.** The ESP32 has no MMU paging. A native task can
   corrupt any other; guards catch overflow, nothing catches a wild pointer.
   Isolation arrives only with the bytecode VM (UM-CYDOS-001 §4.2).
-- **No blocking.** Tasks cannot sleep or wait. `TASK_READY` is the only live
-  state, so a task with nothing to do burns its full slice.
-- **No priorities.** Strict round robin.
+- ~~No blocking.~~ Superseded by §11: `TASK_BLOCKED` and `TASK_SLEEPING` both
+  exist. What remains missing is any wait other than a lock or a deadline —
+  there is no way to wait for an event.
+- ~~No priorities.~~ Superseded by §11. What remains is that LOW starves
+  absolutely: there is no aging and no anti-starvation of any kind.
 - **Fixed ceiling.** `TASK_MAX = 4`, 2 KB stacks, statically allocated.
-- **No idle task.** With every task busy this has not mattered; it will as soon
-  as blocking exists.
+- ~~No idle task.~~ Added with blocking, and it executes `WAITI` rather than
+  spinning.
 - **Single core.** APP_CPU is untouched.
 - **No audit of other `EXCM` consequences.** §6.3 establishes that hardware
   loops were degraded while `EXCM` was set, and clearing it fixes that. Whether
@@ -337,7 +343,63 @@ feeding it, at which point it becomes a genuine hang detector.
 | Wrong hypotheses recorded | 3 |
 | Instructions in the fix | 5 |
 
-## 11. References
+## 11. The scheduler since M2
+
+Revision 1.2. M2 shipped a strict round robin over ready tasks. Three things
+have been added, and the order matters: each was forced by the one before it.
+
+### 11.1 Blocking, then sleeping, then priorities
+
+**`TASK_BLOCKED`** arrived with the mutex (UM-CYDOS-014 §3). A blocked task is
+skipped by the scheduler, which also required an idle task — without one, a
+moment where every task is waiting has nothing to switch to, and the old
+fallback of resuming the interrupted task would have run a task that had just
+blocked.
+
+**`TASK_SLEEPING`** arrived with priorities, and is what makes them usable.
+A sleeping task carries a tick deadline; the scheduler wakes expired sleepers on
+every tick, so a sleep resolves to one tick.
+
+**Priorities** are three levels, strictly ordered, round-robin among equals. The
+implementation is one loop: the scan starts past the current task and takes a
+candidate only on *strictly* greater priority, which yields both properties at
+once — among equals the first one met wins, and the scan begins somewhere
+different each time.
+
+### 11.2 Strict priority is only safe because tasks sleep
+
+A high-priority task that spins starves everything beneath it absolutely. This
+kernel's own `while (timer_ticks() < until) task_yield();` idiom would have done
+exactly that, and every such wait is now a sleep.
+
+That is not a hypothetical. The demonstration workers were first placed at LOW
+and performed **exactly zero iterations** — the NORMAL band never empties,
+because the application host never sleeps. The failure was quiet in the worst
+way: `corrupt=0` continued to be reported, and means nothing when no work is
+being done. An instrument reading healthy because its subject had stopped is the
+same shape as §6 and as UM-CYDOS-017 §6.
+
+**LOW starves absolutely and there is no aging.** Anything placed there must be
+genuinely discardable.
+
+### 11.3 Measured
+
+```
+renderer alone at HIGH:     2 fps -> 8.5 fps
+with a busy NORMAL band:    ~3 fps
+workers: 821,248 iterations each, exactly equal, corrupt=0
+```
+
+Everything except the renderer shares NORMAL: the speedup comes from the
+renderer being HIGH, not from anything being LOW.
+
+The workers additionally sleep one tick per 2,048 iterations. They exist to
+prove the switch preserves registers across arbitrary suspension, which needs
+them running *continuously*, not *constantly*. Spinning flat out bought no extra
+evidence, cost the renderer half its frame rate, and — because it ended the
+mutex thrash between them — sleeping raised their own throughput almost tenfold.
+
+## 12. References
 
 - UM-CYDOS-001 §4.2 — isolation model and why native tasks are not applications
 - UM-CYDOS-003 — `call0` ABI selection; why register windows are absent

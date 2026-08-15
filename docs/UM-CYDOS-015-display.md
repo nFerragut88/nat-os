@@ -1,7 +1,7 @@
 # UM-CYDOS-015 — Display Driver
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.2 · 2026-08-15 · Status: **Complete, verified on hardware** — §5.5 added, DMA takes the fill to 43 ms
+Revision 1.3 · 2026-08-15 · Status: **Complete, verified on hardware** — §5.6–5.7 added, a renderer exposed two defects and disproved a framebuffer
 
 ---
 
@@ -203,6 +203,56 @@ Transfers under about a FIFO's worth stay on the CPU path, where descriptor
 setup would cost more than it saves. Commands and their parameter bytes are all
 in that range.
 
+### 5.6 Two defects a renderer exposed
+
+Revision 1.3. Driving the display from a raycaster rather than a status screen
+put a very different load on this layer and found two things.
+
+**`display_blit` drew row by row.** A 1-pixel-wide column therefore became 168
+separate two-byte transfers. When the source is contiguous the whole rectangle
+is one linear stream, because the panel walks the address window itself — the
+blitter now detects `stride == width` and streams it. The row-by-row path
+remains for genuinely strided sources.
+
+**Every drawing call locks, and that is about frequency, not correctness.** A
+frame taking the display mutex once per column acquired it 240 times while the
+applications were also drawing, and each contended acquisition costs a full
+scheduling round-trip:
+
+```
+blit time   25,075,460 us  ->  129,000 us      194x
+```
+
+That is UM-CYDOS-014 §5.2 exactly — *a blocking mutex is the wrong instrument
+for a lock contended at high frequency* — rediscovered by walking into it after
+writing it down. `display_lock()` and `display_unlock()` now let a caller hold
+across a batch.
+
+### 5.7 A framebuffer that does not pay
+
+A framebuffer for the view region was added on the reasoning that 120 address
+windows per frame must dominate. It is switchable at runtime, and the switch is
+what settled it:
+
+```
+fb off:  blit 126,650 us
+fb on:   blit 131,411 us
+```
+
+**No measurable difference.** 80,640 B for nothing, so it is implemented, kept,
+and defaulted **off**.
+
+The reasoning behind it was wrong twice over. `xt_ccount()` deltas taken across
+preemptible code measure **wall clock**, including every moment the task spent
+descheduled — so the "450 us per window" that motivated the framebuffer was
+mostly other tasks running. Killing the applications moved the frame rate from 8
+per 6 s to 19, a 2.4× change from freeing CPU alone, which located the real
+limit: the frame is about 37 ms of work and the display task's share of the CPU
+decides everything else.
+
+Keeping the switch means the claim can be rechecked whenever the display path
+changes underneath it, rather than being inherited as folklore.
+
 ## 6. Verification
 
 Visual confirmation on the panel: the status screen renders, values update, and
@@ -268,7 +318,8 @@ self-tests all still passing.
 - **No clipping of text.** A string running past the right edge stops at the
   panel boundary rather than wrapping.
 - **No damage tracking.** Callers decide what to redraw; nothing computes dirty
-  regions.
+  regions. §5.7 makes this the interesting gap: the frame cost is dominated by
+  redrawing everything every frame, not by the transport.
 - **No display access from applications.** There is no syscall for drawing, so
   bytecode cannot reach the screen. That is the obvious next step and would be
   the first VM syscall to carry a pointer, which needs the same bounds

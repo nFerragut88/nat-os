@@ -1,7 +1,7 @@
 # UM-CYDOS-014 — Locking Primitives
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.0 · 2026-08-14 · Status: **Complete, verified on hardware**
+Revision 1.1 · 2026-08-15 · Status: **Complete, verified on hardware** — §9 added, priority inheritance
 
 ---
 
@@ -214,9 +214,9 @@ headroom 449 words.
 
 ## 8. What this does not establish
 
-- **No priority inheritance.** There are no priorities, so priority inversion
-  cannot occur — but it will the moment priorities are added, and this mutex has
-  no answer for it.
+- ~~No priority inheritance.~~ Superseded by §9. What remains is that a boost
+  is dropped on the first release, so nested holds of two boosted mutexes lose
+  it early.
 - **No deadlock detection.** Two tasks taking two mutexes in opposite orders
   will hang, and the kernel will not say so. The idle task will simply run.
 - **No timeouts.** `mutex_lock()` waits forever.
@@ -230,7 +230,46 @@ headroom 449 words.
 - **Untested against an ISR.** The mutex is documented as unusable from an
   interrupt handler and nothing enforces that.
 
-## 9. References
+## 9. Priority inheritance
+
+Revision 1.1. §8 recorded that there was no priority inheritance, on the grounds
+that without priorities there could be no inversion. Priorities now exist
+(UM-CYDOS-009 §11), so the hazard became real the same day.
+
+### 9.1 Why it was needed immediately
+
+The renderer runs at HIGH and takes the display lock. The applications beneath
+it run at NORMAL and take the same lock. A NORMAL task holding it while the
+renderer waits can be preempted by any other NORMAL task, so the renderer waits
+not for the critical section but for the whole NORMAL band to drain.
+
+That is classical priority inversion, and it appeared the moment there was
+anything to invert.
+
+### 9.2 What it does
+
+A task blocking on a held mutex raises the owner to its own priority, bounding
+the wait to the length of the critical section rather than to the scheduler's
+behaviour. The boost is dropped when the lock is released or handed on.
+
+Release restores the **base** priority rather than tracking nested holds, so a
+task holding two boosted mutexes loses the boost on the first release. Recorded
+rather than solved: nothing in this kernel holds two, and inventing a nesting
+scheme with no consumer would be guessing at requirements.
+
+### 9.3 Frequency still matters more
+
+Inheritance bounds the *cost of waiting*. It does nothing about §5.2's lesson,
+which is about the *number of waits* — and that lesson was rediscovered
+afterwards by walking into it. A raycaster took the display lock once per column
+and spent 25 seconds per frame on 37 ms of work; holding it once per frame
+instead was a **194×** improvement.
+
+Inheritance would not have helped there at all. The fix for a lock contended at
+high frequency is to contend less often, and `display_lock()`/`display_unlock()`
+now exist so a caller can hold across a batch.
+
+## 10. References
 
 - UM-CYDOS-010 §8 — the heap's task-context-only limitation, closed here
 - UM-CYDOS-013 §7 — console interleaving, closed here

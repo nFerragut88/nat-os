@@ -66,7 +66,9 @@ Reproducing a build: **005** alone is sufficient.
 | Milestone 5 — multiple applications | **Complete, verified on hardware** — all three exit criteria |
 | Roadmap M0–M5 | **Complete.** Six native tasks, three scheduling levels, a shell, and an application deliberately written to escape its arena that could not |
 | Locking | **Complete** — critical sections and a blocking mutex; heap and console both arbitrated, UM-CYDOS-014 |
-| Task blocking | **Live** — `TASK_BLOCKED` plus an idle task using `WAITI`, UM-CYDOS-014 §3 |
+| Task blocking | **Live** — `TASK_BLOCKED`, `TASK_SLEEPING` and an idle task using `WAITI`, UM-CYDOS-009 §11 |
+| Scheduling | **Priorities** — three levels, strict, with `task_sleep()` and priority inheritance; renderer 2 fps → 8.5 fps, UM-CYDOS-009 §11 |
+| 3D renderer | **Running** — grid raycaster, no framebuffer (measured not to help), UM-CYDOS-015 §5.7 |
 | Display | **Working on hardware** — ILI9341, no framebuffer, **43 ms** full-screen fill via SPI2 + DMA, UM-CYDOS-015 §5.5 |
 | Application graphics | **Live** — `FILL`/`TEXT`/`DIMS` confined to per-application viewports; 0 escapes across 136 audited fills, UM-CYDOS-016 §5 |
 | Touch | **Working on hardware** — XPT2046 via PENIRQ, both axes calibrated by measurement, UM-CYDOS-017 |
