@@ -18,11 +18,13 @@
 #include "heap.h"
 #include "flash.h"
 #include "store.h"
+#include "sd.h"
 #include "app.h"
 #include "console.h"
 #include "ipc.h"
 #include "display.h"
 #include "raycast.h"
+#include "desktop.h"
 #include "touch.h"
 #include "critical.h"
 #include "mutex.h"
@@ -43,6 +45,7 @@
 #include "timer.h"
 #include "task.h"
 #include "watchdog.h"
+#include "panic.h"
 #include "xtensa.h"
 
 #define TICK_INTERVAL_CYCLES  800000u   /* ~10 ms at the measured ~80 MHz */
@@ -62,6 +65,16 @@ static volatile uint32_t g_last_rawx, g_last_rawy, g_last_x, g_last_y, g_last_z;
 /* Defined below with the other self-tests, but called from the reporter, which
  * is the only context where a running tick makes it meaningful. */
 static void m6_critical_test(void);
+
+/* Creates a task or stops the kernel. See the note at the first call site. */
+static int must_create(const char *name, task_entry_fn entry)
+{
+    int id = task_create(name, entry);
+    if (id < 0) {
+        kernel_panic_msg("task table full — raise TASK_MAX", 0);
+    }
+    return id;
+}
 
 /* Contention target. The workers hammer this from two tasks, and the reporter
  * checks it against their own iteration counts. The read-modify-write below is
@@ -315,6 +328,13 @@ static void task_report(void)
         uart_put_dec(raycast_columns());
         uart_puts("  | blits=");
         uart_put_dec(vm_blits());
+        uart_puts("  | desk act/tap/open=");
+        uart_put_dec((unsigned int)desktop_active());
+        uart_putc('/');
+        uart_put_dec(desktop_taps());
+        uart_putc('/');
+        uart_put_dec(desktop_opens());
+
         uart_puts("  | touch g/w=");
         uart_put_dec(vm_touch_given());
         uart_putc('/');
@@ -1059,7 +1079,14 @@ static void task_display(void)
         /* The dungeon view owns the top 168 rows. The status text that used to
          * live here is gone from the panel — it is all still on the UART, and a
          * first-person view with numbers pasted over it reads as neither. */
-        raycast_frame();
+        /* One owner at a time. The launcher repaints only when something
+         * changed, so an idle desktop pushes no pixels at all; the raycaster
+         * repaints unconditionally because every frame differs. */
+        if (desktop_active()) {
+            desktop_frame();
+        } else {
+            raycast_frame();
+        }
         spectrum_region(SPEC_Y, SPEC_H, frame, 96u);
 
         frame++;
@@ -1136,7 +1163,11 @@ static void task_touch(void)
             console_unlock();
         }
 
-        if (down) {
+        /* Routed on every sample, pressed or not: a double-tap is two
+         * press-RELEASE pairs, so the launcher needs to see the releases. */
+        desktop_touch(t.x, t.y, down);
+
+        if (down && !desktop_active()) {
             /* Steer only from touches in the view itself, so the application
              * strips below keep their own input. */
             if (t.y < RAY_VIEW_H) {
@@ -1249,6 +1280,26 @@ void kmain(void)
     touch_init();
 
     raycast_init();
+    desktop_init();
+
+    /* Probe the card at boot, so storage is ready before anything asks for it
+     * and so an absent card is reported once rather than discovered later by
+     * whatever needed it. A failure here is not fatal: the slot is normally
+     * empty, and every wait inside sd_init() is bounded for exactly that
+     * reason. */
+    uart_puts("  sd           : ");
+    {
+        int sd_rc = sd_init();
+        if (sd_rc == SD_OK) {
+            uart_puts(sd_type() == SD_TYPE_SDHC ? "SDHC ready" : "SDSC ready");
+        } else if (sd_rc == SD_ERR_IDLE) {
+            uart_puts("no card");
+        } else {
+            uart_puts("present but init failed at stage ");
+            uart_put_dec((unsigned int)(-sd_rc));
+        }
+        uart_puts("\n");
+    }
 
     uart_puts("  display      : ");
     display_init();
@@ -1354,19 +1405,25 @@ void kmain(void)
     start_program("ping");
     start_program("pong");
 
-    id_report = task_create("report", task_report);
-    id_a      = task_create("worker-a", task_a);
-    id_b      = task_create("worker-b", task_b);
-    id_vm     = task_create("vm-host", task_vm);
-    id_apps   = task_create("app-host", task_apps);
-    id_shell  = task_create("shell", task_shell);
+    /* Checked, because the unchecked version cost this kernel its idle task.
+     * task_create() returns -1 when the table is full, kmain made nine calls
+     * against a TASK_MAX of 8, and the ninth failed silently for months: the
+     * return value was assigned to id_idle, passed to task_set_idle(), which
+     * bounds-checks and ignores it, and never printed. A creation that cannot
+     * fail quietly is worth the four lines. */
+    id_report = must_create("report", task_report);
+    id_a      = must_create("worker-a", task_a);
+    id_b      = must_create("worker-b", task_b);
+    id_vm     = must_create("vm-host", task_vm);
+    id_apps   = must_create("app-host", task_apps);
+    id_shell  = must_create("shell", task_shell);
 
     /* Created last and registered as idle, so it is outside the round robin and
      * chosen only when every other task is blocked. Without it, a moment where
      * all tasks are waiting has nothing to switch to. */
-    id_disp   = task_create("display", task_display);
-    id_touch  = task_create("touch", task_touch);
-    id_idle   = task_create("idle", task_idle);
+    id_disp   = must_create("display", task_display);
+    id_touch  = must_create("touch", task_touch);
+    id_idle   = must_create("idle", task_idle);
     task_set_idle(id_idle);
 
     /* Priorities. The renderer is the only HIGH task: it wakes, draws a frame,

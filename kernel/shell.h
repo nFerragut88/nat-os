@@ -22,6 +22,16 @@ typedef struct {
 
 void shell_register(const shell_program_t *table, int count);
 
+/* Starts a registered program by name. Returns the application id, or -1 if the
+ * name is unknown or no slot is free.
+ *
+ * Exists so the desktop launches through the SAME table the shell does. An
+ * earlier launcher indexed the table directly and silently started a different
+ * program than the one it named, because the table had been reordered — the
+ * defect that made a `rogue` icon run `gfxrogue`. A name lookup cannot drift
+ * out of step with the table it reads. */
+int shell_launch(const char *name);
+
 /* Prints the banner and prompt. Call once before the first shell_poll(). */
 void shell_begin(void);
 

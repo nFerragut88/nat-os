@@ -12,6 +12,7 @@
 #include "critical.h"
 #include "timer.h"
 #include "task.h"
+#include "sd.h"
 #include "uart.h"
 #include "vm.h"
 
@@ -87,6 +88,9 @@ static void cmd_help(void)
               "    mem           heap statistics\n"
               "    stacks        per-task stack headroom\n"
               "    fault         take an illegal instruction (panics)\n"
+              "    smash         break this task's stack guard (panics)\n"
+              "    sd            probe the microSD card\n"
+              "    sdread <lba>  read and dump one 512 B block\n"
               "    help          this\n");
 }
 
@@ -134,6 +138,17 @@ static void cmd_progs(void)
         uart_put_dec(g_progs[i].arena_bytes);
         uart_puts(" B arena\n");
     }
+}
+
+int shell_launch(const char *name)
+{
+    for (int i = 0; i < g_prog_count; i++) {
+        if (str_eq(g_progs[i].name, name)) {
+            return app_start(g_progs[i].name, g_progs[i].img, g_progs[i].len,
+                             g_progs[i].arena_bytes, g_progs[i].publish_off);
+        }
+    }
+    return -1;
 }
 
 static void cmd_run(const char *name)
@@ -222,7 +237,7 @@ static void execute(char *line)
     else if (str_eq(line, "stacks")) {
         uart_puts("   id  name        free B  of 2048\n");
         for (int id = 0; id < TASK_MAX; id++) {
-            if (task_stack_headroom(id) == 0 && !task_stack_intact(id)) {
+            if (!task_exists(id)) {
                 continue;
             }
             uart_puts("   ");
@@ -232,6 +247,115 @@ static void execute(char *line)
             uart_puts("   ");
             uart_put_dec(task_stack_headroom(id) * 4u);
             uart_puts("\n");
+        }
+    }
+    else if (str_eq(line, "sd")) {
+        int rc = sd_init();
+        uart_puts("   sd_init ");
+        uart_puts(rc == 0 ? "OK" : "FAILED");
+        uart_puts("  type=");
+        uart_puts(sd_type() == SD_TYPE_SDHC ? "SDHC" :
+                  sd_type() == SD_TYPE_SDSC ? "SDSC" : "none");
+        uart_puts("  last R1=");
+        uart_put_hex(sd_last_r1());
+        uart_puts("\n");
+        if (rc != 0) {
+            /* Name the stage that failed. "It did not work" is not a diagnosis,
+             * and the stage says whether to suspect an empty slot, the wiring,
+             * or the card itself. */
+            uart_puts("   stage: ");
+            if (rc == SD_ERR_IDLE) {
+                uart_puts("CMD0 - no card, or MISO/CS/SCK wrong\n");
+            } else if (rc == SD_ERR_IFCOND) {
+                uart_puts("CMD8 - pre-2.0 card, or a noisy bus\n");
+            } else if (rc == SD_ERR_READY) {
+                uart_puts("ACMD41 - card never finished initialising\n");
+            } else if (rc == SD_ERR_OCR) {
+                uart_puts("CMD58 - addressing mode unknown\n");
+            } else if (rc == SD_ERR_BLOCKLEN) {
+                uart_puts("CMD16 - block length refused\n");
+            } else {
+                uart_puts("read\n");
+            }
+        }
+    }
+    else if (str_eq(line, "sdread")) {
+        int lba = parse_int(arg);
+        if (lba < 0) {
+            uart_puts("   usage: sdread <lba>\n");
+        } else {
+            static uint8_t blk[SD_BLOCK_SIZE];
+            int rc = sd_read_block((uint32_t)lba, blk);
+            if (rc != 0) {
+                uart_puts("   read failed, R1=");
+                uart_put_hex(sd_last_r1());
+                uart_puts("\n");
+            } else {
+                for (uint32_t r = 0; r < 4u; r++) {
+                    uart_puts("   ");
+                    for (uint32_t c = 0; c < 16u; c++) {
+                        uart_put_hex(blk[r * 16u + c]);
+                        uart_putc(' ');
+                    }
+                    uart_puts("\n");
+                }
+                /* A FAT-formatted card's block 0 ends 0x55 0xAA. Checking that
+                 * verifies the read without depending on what the user chose
+                 * to put on the card. */
+                uart_puts("   signature=");
+                uart_put_hex(blk[510]);
+                uart_putc(' ');
+                uart_put_hex(blk[511]);
+                uart_puts((blk[510] == 0x55u && blk[511] == 0xAAu)
+                          ? "  (valid boot sector)\n" : "  (NOT a boot sector)\n");
+
+                /* Decode the MBR partition table.
+                 *
+                 * This is also the only test that proves the ADDRESSING MODE is
+                 * right. Block 0 is byte 0 on a byte-addressed card and block 0
+                 * on a block-addressed one, so reading it succeeds either way
+                 * and discriminates nothing. A partition starting thousands of
+                 * blocks in does discriminate: get the mode wrong and the read
+                 * lands 512 times too far into the card, returning something
+                 * that is not a filesystem header. */
+                if (lba == 0 && blk[510] == 0x55u && blk[511] == 0xAAu) {
+                    for (uint32_t p = 0; p < 4u; p++) {
+                        const uint8_t *e = &blk[446u + p * 16u];
+                        if (e[4] == 0u) {
+                            continue;               /* unused entry */
+                        }
+                        uint32_t start = (uint32_t)e[8] | ((uint32_t)e[9] << 8) |
+                                         ((uint32_t)e[10] << 16) | ((uint32_t)e[11] << 24);
+                        uint32_t count = (uint32_t)e[12] | ((uint32_t)e[13] << 8) |
+                                         ((uint32_t)e[14] << 16) | ((uint32_t)e[15] << 24);
+                        uart_puts("   partition ");
+                        uart_put_dec(p);
+                        uart_puts(": type=");
+                        uart_put_hex(e[4]);
+                        uart_puts(" start=");
+                        uart_put_dec(start);
+                        uart_puts(" sectors=");
+                        uart_put_dec(count);
+                        uart_puts("  -> try 'sdread ");
+                        uart_put_dec(start);
+                        uart_puts("'\n");
+                    }
+                }
+
+                /* A FAT volume boot record names its type in ASCII, at 0x36 for
+                 * FAT12/16 and 0x52 for FAT32. Finding it at a non-zero LBA is
+                 * the end-to-end proof: pins, clock, addressing and block
+                 * framing all have to be right at once for this to appear. */
+                if (lba != 0 && blk[510] == 0x55u && blk[511] == 0xAAu) {
+                    uart_puts("   fs type: ");
+                    const uint8_t *t = (blk[0x52] == 'F') ? &blk[0x52] : &blk[0x36];
+                    for (uint32_t i = 0; i < 8u; i++) {
+                        char c = (char)t[i];
+                        uart_putc((c >= 32 && c < 127) ? c : '.');
+                    }
+                    uart_puts("\n");
+                }
+            }
         }
     }
     else if (str_eq(line, "fb")) {
