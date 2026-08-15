@@ -147,8 +147,11 @@ int display_init(void)
     static const uint8_t pwctr2[]  = { 0x10 };
     static const uint8_t vmctr1[]  = { 0x3E, 0x28 };
     static const uint8_t vmctr2[]  = { 0x86 };
-    /* MADCTL 0x48: column order flipped, BGR panel — the CYD's ribbon is wired
-     * so this is the orientation whose origin is the top-left as seen. */
+    /* MADCTL 0x48: column order flipped, BGR panel. CONFIRMED on hardware by
+     * the colour strip rendering red-leftmost. Had the BGR bit been wrong, red
+     * and blue would be transposed system-wide and every screen would still
+     * look entirely plausible in isolation — only the strip's known ORDER
+     * catches it. */
     static const uint8_t madctl[]  = { 0x48 };
     static const uint8_t pixfmt[]  = { 0x55 };   /* 16 bits per pixel */
     static const uint8_t frmctr1[] = { 0x00, 0x18 };

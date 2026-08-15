@@ -108,6 +108,14 @@ in a known order make a pixel-format or byte-order fault immediately visible; a
 garbled or monochrome strip would have said which of the two was wrong, without
 inference from a photograph.
 
+**Colour order confirmed.** Red renders leftmost, matching the intended
+`RED, GREEN, BLUE, YELLOW, CYAN, MAGENTA, WHITE, GREY`. That validates the BGR
+bit in `MADCTL 0x48`: had the panel's red and blue channels been transposed, the
+strip would have read blue-first and every colour in the system would have been
+mirrored while still looking entirely plausible in isolation. Distinct primaries
+alone would not have caught it — only their **order** does, which is why the
+strip is drawn in a known sequence rather than as arbitrary swatches.
+
 The advancing marker block is the same idea applied to liveness: a display whose
 numbers all look plausible but never change is otherwise indistinguishable from
 a working one.
@@ -154,10 +162,8 @@ self-tests all still passing.
   bytecode cannot reach the screen. That is the obvious next step and would be
   the first VM syscall to carry a pointer, which needs the same bounds
   discipline as everything else in UM-CYDOS-012 §3.
-- **Colour bar order not independently confirmed.** The strip renders with
-  distinct primaries, which rules out a format fault, but whether red appears
-  leftmost — confirming the BGR bit in MADCTL — has not been checked against the
-  intended order.
+- **No gamma correction.** The gamma tables (`0xE0`/`0xE1`) are left at panel
+  defaults, so colours are correct in channel but not calibrated in response.
 
 ## 8. References
 
