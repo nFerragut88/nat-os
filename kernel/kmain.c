@@ -19,6 +19,7 @@
 #include "app.h"
 #include "console.h"
 #include "display.h"
+#include "touch.h"
 #include "critical.h"
 #include "mutex.h"
 #include "shell.h"
@@ -43,7 +44,7 @@ extern char _vecbase;
 static volatile uint32_t work_a_count, work_a_bad;
 static volatile uint32_t work_b_count, work_b_bad;
 
-static int id_report, id_a, id_b, id_vm, id_apps, id_shell, id_idle, id_disp;
+static int id_report, id_a, id_b, id_vm, id_apps, id_shell, id_idle, id_disp, id_touch;
 
 /* Defined below with the other self-tests, but called from the reporter, which
  * is the only context where a running tick makes it meaningful. */
@@ -271,6 +272,18 @@ static void task_report(void)
         uart_put_dec(vm_viewport_max_y());
         uart_puts("/");
         uart_put_dec(DISP_H);
+        uart_puts("  touch s/e=");
+        uart_put_dec(touch_samples());
+        uart_putc('/');
+        uart_put_dec(touch_events());
+        uart_puts(" last=");
+        uart_put_dec(g_last_rawx);
+        uart_putc(',');
+        uart_put_dec(g_last_rawy);
+        uart_puts("->");
+        uart_put_dec(g_last_x);
+        uart_putc(',');
+        uart_put_dec(g_last_y);
         uart_puts("  states=");
         for (int i = 0; i < 7; i++) {
             uart_put_dec((unsigned int)task_state_of(i));
@@ -863,6 +876,93 @@ static void task_display(void)
     }
 }
 
+
+/* ---- touch -------------------------------------------------------------
+ *
+ * Reports every reading over UART for the first few touches and draws a
+ * crosshair where it thinks the finger is.
+ *
+ * The UART trace is the actual verification. A crosshair in the wrong place and
+ * a controller returning nothing look identical on the glass, and the display
+ * driver already cost three commits to a defect that was invisible because only
+ * the picture was being checked (UM-CYDOS-016 §3.4). Raw ADC values distinguish
+ * "not answering" from "answering, mapped wrongly".
+ */
+static volatile uint32_t g_last_rawx, g_last_rawy, g_last_x, g_last_y, g_last_z;
+
+static void task_touch(void)
+{
+    touch_state_t t;
+    uint32_t traced = 0;
+    uint32_t last_x = 0, last_y = 0;
+    int had = 0;
+
+    for (;;) {
+        int down = touch_read(&t);
+
+        /* Trace the first few samples whether or not anything is touching.
+         * "no events" is produced both by an untouched panel and by a bus that
+         * never answers, and only the raw channels tell them apart. */
+        if (traced < 4u) {
+            traced++;
+            console_lock();
+            uart_puts("  [touch probe] z1=");
+            uart_put_dec(t.z1);
+            uart_puts(" z2=");
+            uart_put_dec(t.z2);
+            uart_puts(" rawx=");
+            uart_put_dec(t.raw_x);
+            uart_puts(" rawy=");
+            uart_put_dec(t.raw_y);
+            uart_puts(down ? "  DOWN\n" : "  up\n");
+            console_unlock();
+        }
+
+        if (down) {
+            g_last_rawx = t.raw_x;
+            g_last_rawy = t.raw_y;
+            g_last_x    = t.x;
+            g_last_y    = t.y;
+            g_last_z    = t.z;
+
+            if (traced < 24u) {
+                traced++;
+                console_lock();
+                uart_puts("  [touch] raw=");
+                uart_put_dec(t.raw_x);
+                uart_putc(',');
+                uart_put_dec(t.raw_y);
+                uart_puts("  z=");
+                uart_put_dec(t.z);
+                uart_puts("  ->  x=");
+                uart_put_dec(t.x);
+                uart_putc(',');
+                uart_put_dec(t.y);
+                uart_puts("\n");
+                console_unlock();
+            }
+
+            /* Erase the previous crosshair before drawing the new one; a full
+             * repaint would cost 387 ms and make the cursor lag the finger. */
+            if (had) {
+                display_fill_rect(last_x, 150u, 4u, 8u, COLOR_BLACK);
+            }
+            uint32_t cx = (t.x < DISP_W - 4u) ? t.x : DISP_W - 4u;
+            display_fill_rect(cx, 150u, 4u, 8u, COLOR_MAGENTA);
+            last_x = cx;
+            last_y = t.y;
+            had = 1;
+        }
+
+        /* Polled at roughly 30 Hz. Fast enough to track a finger, slow enough
+         * that the panel is not being clocked continuously for nothing. */
+        uint32_t until = timer_ticks() + 3u;
+        while (timer_ticks() < until) {
+            task_yield();
+        }
+    }
+}
+
 /* Hosts every application. One native task drives the third scheduling level;
  * the applications inside it are preempted by their quantum, and this task is
  * itself preempted by the timer. */
@@ -905,6 +1005,8 @@ void kmain(void)
 
     console_init();
     mutex_init(&g_shared_lock);
+
+    touch_init();
 
     uart_puts("  display      : ");
     display_init();
@@ -958,6 +1060,7 @@ void kmain(void)
      * chosen only when every other task is blocked. Without it, a moment where
      * all tasks are waiting has nothing to switch to. */
     id_disp   = task_create("display", task_display);
+    id_touch  = task_create("touch", task_touch);
     id_idle   = task_create("idle", task_idle);
     task_set_idle(id_idle);
     uart_puts("  tasks        : report=");
@@ -974,6 +1077,8 @@ void kmain(void)
     uart_put_dec((unsigned int)id_shell);
     uart_puts(" disp=");
     uart_put_dec((unsigned int)id_disp);
+    uart_puts(" touch=");
+    uart_put_dec((unsigned int)id_touch);
     uart_puts("\n");
 
     uart_puts("  tick every   : ");
