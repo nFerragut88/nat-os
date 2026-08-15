@@ -987,7 +987,14 @@ static void m6_critical_test(void)
     int crit_ok = (t_masked == t0) && (t_after > t_masked);
     uart_puts("  [6a] critical : ");
     uart_puts(crit_ok ? "PASS" : "FAIL");
-    uart_puts("  ticks held at ");
+    /* t0 is printed too, because without it the two halves of this assertion
+     * are indistinguishable in the output. "held at 31, resumed at 31" can mean
+     * masking worked and the tick never resumed, or masking failed and the
+     * second spin found nothing left to wait for — opposite faults, identical
+     * line. That ambiguity cost a bisect. */
+    uart_puts("  entered at ");
+    uart_put_dec(t0);
+    uart_puts(", held at ");
     uart_put_dec(t_masked);
     uart_puts(" across 2 periods, resumed at ");
     uart_put_dec(t_after);

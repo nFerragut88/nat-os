@@ -37,7 +37,27 @@ void timer_isr(void)
      * a storm of immediate re-entries trying to catch up. Counted, because a
      * rising value means the tick rate is too aggressive for the work being
      * done in the handler. */
-    if ((int32_t)(g_next - xt_ccount()) <= 0) {
+    /* The deadline must end up within one interval of now, in BOTH directions.
+     *
+     * Too late was the only case this handled, and it is the obvious one. Too
+     * EARLY is the one that actually bit: task_yield() ends a slice by pulling
+     * CCOMPARE1 back to ccount+64 without telling this file, so g_next still
+     * holds the original deadline. The handler then fires 64 cycles later and
+     * adds a WHOLE interval to a deadline that was already a whole interval
+     * away — and every yield pushes the tick further into the future.
+     *
+     * Measured after the display task's sleep was shortened, which multiplied
+     * the yield rate: CCOMPARE1 ended up 14,630,119 cycles — 18 tick periods,
+     * 183 ms — ahead of ccount, and the tick simply stopped for that long. The
+     * self-test that caught it asserts a tick resumes promptly after a critical
+     * section; it had been passing only because yields were rarer.
+     *
+     * Nothing else showed a symptom, which is the uncomfortable part. Sleeps
+     * were silently running long, timeouts were silently loose, and the frame
+     * rate this session spent so long measuring was taken against a clock that
+     * intermittently stalled. */
+    int32_t ahead = (int32_t)(g_next - xt_ccount());
+    if (ahead <= 0 || ahead > (int32_t)g_interval) {
         g_next = xt_ccount() + g_interval;
         g_late++;
     }
