@@ -248,14 +248,18 @@ static void task_report(void)
         uart_putc('/');
         uart_put_dec(work_b_count);
 
-        uart_puts("  guards=");
-        uart_puts(task_stack_intact(id_report) && task_stack_intact(id_a) &&
-                  task_stack_intact(id_b) ? "ok" : "BROKEN");
-
-        uart_puts("  freew a/b=");
-        uart_put_dec(task_stack_headroom(id_a));
-        uart_putc('/');
-        uart_put_dec(task_stack_headroom(id_b));
+        /* Guards are enforced in the scheduler now, so reaching this line at
+         * all means every guard is intact — a broken one panics rather than
+         * printing. What is worth reporting is the MARGIN, and specifically the
+         * margin on the worst task rather than on the two that were easiest to
+         * name. The old line covered three of the eight and omitted the display
+         * task, which carries the deepest call chain in the kernel. */
+        int tight = task_stack_tightest();
+        uart_puts("  tightest stack=");
+        uart_puts(task_name(tight));
+        uart_putc(' ');
+        uart_put_dec(task_stack_headroom(tight) * 4u);
+        uart_puts("/2048 B free");
 
         uart_puts("  corrupt=");
         uart_put_dec(work_a_bad + work_b_bad);

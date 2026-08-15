@@ -88,6 +88,15 @@ void watchdog_arm(unsigned int ms)
 #endif
 }
 
+void watchdog_disarm(void)
+{
+#if WATCHDOG_ENABLE
+    REG(TIMG0_WDTWPROTECT) = WDT_WKEY;
+    REG(TIMG0_WDTCONFIG0)  = 0;
+    REG(TIMG0_WDTWPROTECT) = 0;
+#endif
+}
+
 void watchdog_feed(void)
 {
 #if WATCHDOG_ENABLE

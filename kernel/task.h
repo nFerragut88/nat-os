@@ -104,6 +104,10 @@ int      task_current(void);
 uint32_t task_switch_count(int id);
 int      task_stack_intact(int id);    /* guard word still present? */
 uint32_t task_stack_headroom(int id);  /* untouched words remaining */
+int      task_stack_broken(void);      /* id of a task with a clobbered guard, or -1 */
+int      task_stack_tightest(void);    /* id with the least headroom */
+const char *task_name(int id);         /* creation name, or "?" */
+void     task_smash_guard(void);       /* test hook: break the running guard */
 
 /* Give up the rest of the current slice by bringing the tick forward.
  * Cooperative yield reusing the timer path rather than a second interrupt

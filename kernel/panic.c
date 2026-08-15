@@ -14,6 +14,37 @@
 
 #include "panic.h"
 #include "uart.h"
+#include "watchdog.h"
+
+/* Shared ending for both entry points. Spins rather than resetting so the
+ * evidence stays on the terminal.
+ *
+ * The watchdog is disarmed first, and that is a deliberate reversal. It is armed
+ * to recover a system that has stopped making progress, and a halted panic looks
+ * exactly like one — so without this, the board resets a few seconds in and
+ * scrolls away the report this handler exists to produce. A hang the kernel
+ * cannot explain should be recovered automatically; a fault it CAN explain
+ * should be left on screen for someone to read. */
+static void halt_forever(void)
+{
+    watchdog_disarm();
+
+    uart_puts("\n  halted. reset the board to continue.\n");
+
+    for (;;) {
+    }
+}
+
+void kernel_panic_msg(const char *why, unsigned int detail)
+{
+    uart_puts("\n\n*** KERNEL PANIC ***\n\n");
+    uart_puts("  reason   : ");
+    uart_puts(why);
+    uart_puts("\n  detail   : ");
+    uart_put_dec(detail);
+    uart_puts("\n");
+    halt_forever();
+}
 
 /* Xtensa EXCCAUSE values worth naming. The rest print as a bare number rather
  * than carrying a table that would be mostly dead weight. */
@@ -54,10 +85,5 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
     uart_put_hex(ps);
     uart_puts("\n");
 
-    uart_puts("\n  halted. reset the board to continue.\n");
-
-    for (;;) {
-        /* Deliberately spin rather than reset: a reset loop would scroll the
-         * evidence off the terminal. */
-    }
+    halt_forever();
 }

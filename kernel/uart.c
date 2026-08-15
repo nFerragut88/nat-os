@@ -29,6 +29,21 @@
 #define UART_RXFIFO_CNT_SHIFT  0
 #define UART_RXFIFO_CNT_MASK   0xFFu
 
+/* The RX FIFO is read through its AHB alias, not through the APB address used
+ * for transmit.
+ *
+ * Measured, not inherited from documentation: with the APB address, the receive
+ * path ran exactly one byte behind. Writing "mem\r" echoed `mem` and did
+ * nothing; a single further byte then delivered the `\r` and the command ran.
+ * Sending "mem\r\n" appeared to work, which is why this survived — every test
+ * of the shell had been run from a sender that emitted both.
+ *
+ * The consequence was worse than a test artefact. A person at a terminal
+ * presses Enter and sees nothing happen, because the Enter itself is the byte
+ * left waiting. The shell has never been usable interactively, and nothing
+ * caught it: it was verified by reading its banner rather than by using it. */
+#define UART_FIFO_AHB_REG      0x60000000u
+
 #define REG(addr) (*(volatile unsigned int *)(addr))
 
 static unsigned int tx_fifo_used(void)
@@ -97,5 +112,5 @@ int uart_getc_nb(void)
     if (!uart_rx_ready()) {
         return -1;
     }
-    return (int)(REG(UART_FIFO_REG) & 0xFFu);
+    return (int)(REG(UART_FIFO_AHB_REG) & 0xFFu);
 }

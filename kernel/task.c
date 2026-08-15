@@ -17,6 +17,7 @@
 #include "uart.h"
 #include "critical.h"
 #include "watchdog.h"
+#include "panic.h"
 #include "xtensa.h"
 
 /* Written into the lowest stack word; if it changes, the task overflowed. */
@@ -292,6 +293,18 @@ uint32_t task_schedule(uint32_t current_sp)
      * like. Only a switch between distinct tasks counts. */
     watchdog_liveness(next != g_current);
 
+    /* A broken guard is fatal, not cosmetic.
+     *
+     * It used to print "BROKEN" beside the telemetry and carry on, which means
+     * continuing to schedule tasks whose stacks have already written into a
+     * neighbour's. Every number printed after that point is suspect, including
+     * the ones that would be used to diagnose it. Stopping at the switch that
+     * noticed keeps the damage bounded and the report honest. */
+    int broken = task_stack_broken();
+    if (broken >= 0) {
+        kernel_panic_msg("stack guard overwritten", (unsigned int)broken);
+    }
+
     g_current = next;
     g_tasks[next].switches++;
 
@@ -319,6 +332,60 @@ int task_stack_intact(int id)
         return 1;   /* no stack of ours to check */
     }
     return g_tasks[id].stack_base[0] == STACK_GUARD;
+}
+
+/* First task whose guard word has been overwritten, or -1 if all are intact.
+ *
+ * Checked on every context switch rather than by the reporter, because the
+ * reporter only covered three of the eight tasks and a broken guard means the
+ * damage has ALREADY happened — a check that runs seconds later reports a
+ * corruption whose cause is long gone. Eight word loads per tick is not a cost
+ * worth optimising against that. */
+/* Test hook: clobber the running task's guard word so the next context switch
+ * finds it. Exists for the same reason `hang` and `fault` do — an enforcement
+ * path that has never been seen to fire is an assumption, not a mechanism. */
+void task_smash_guard(void)
+{
+    if (g_current >= 0 && g_tasks[g_current].stack_base) {
+        g_tasks[g_current].stack_base[0] = 0xDEADBEEFu;
+    }
+}
+
+const char *task_name(int id)
+{
+    if (id < 0 || id >= TASK_MAX || g_tasks[id].name == 0) {
+        return "?";
+    }
+    return g_tasks[id].name;
+}
+
+int task_stack_broken(void)
+{
+    for (int id = 0; id < TASK_MAX; id++) {
+        if (g_tasks[id].stack_base && g_tasks[id].stack_base[0] != STACK_GUARD) {
+            return id;
+        }
+    }
+    return -1;
+}
+
+/* The task closest to overflowing. Reported so the margin is a number somebody
+ * has seen, rather than an assumption that 2 KB was enough. */
+int task_stack_tightest(void)
+{
+    int worst = -1;
+    uint32_t least = 0xFFFFFFFFu;
+    for (int id = 0; id < TASK_MAX; id++) {
+        if (!g_tasks[id].stack_base) {
+            continue;
+        }
+        uint32_t free_words = task_stack_headroom(id);
+        if (free_words < least) {
+            least = free_words;
+            worst = id;
+        }
+    }
+    return worst;
 }
 
 uint32_t task_stack_headroom(int id)

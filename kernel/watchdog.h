@@ -36,6 +36,11 @@ unsigned int watchdog_rtc_config(void);
 void watchdog_arm(unsigned int ms);
 void watchdog_feed(void);
 
+/* Stops the hang detector. Used by the panic path: a halted kernel is
+ * indistinguishable from a hung one to this mechanism, and resetting the board
+ * would erase the fault report rather than recover anything. */
+void watchdog_disarm(void);
+
 /* Called from the scheduler once per tick. Feeds only if the system has
  * switched between distinct tasks since the last check. */
 void watchdog_liveness(int switched);

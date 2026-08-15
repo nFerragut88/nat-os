@@ -11,6 +11,7 @@
 #include "raycast.h"
 #include "critical.h"
 #include "timer.h"
+#include "task.h"
 #include "uart.h"
 #include "vm.h"
 
@@ -84,6 +85,8 @@ static void cmd_help(void)
               "    run <name>    start a program\n"
               "    kill <id>     stop an application, releasing its arena\n"
               "    mem           heap statistics\n"
+              "    stacks        per-task stack headroom\n"
+              "    fault         take an illegal instruction (panics)\n"
               "    help          this\n");
 }
 
@@ -196,6 +199,39 @@ static void execute(char *line)
         uart_puts("   wedging the kernel; the watchdog should reset in ~3 s\n");
         crit_enter();
         for (;;) {
+        }
+    }
+    else if (str_eq(line, "fault")) {
+        /* Take a real exception, to exercise the panic path deliberately.
+         *
+         * `hang` proved the watchdog fires; this proves what happens when the
+         * kernel stops on purpose rather than by accident. The two interact:
+         * a halted panic and a hung kernel look identical to a detector that
+         * watches for task switches, so the panic path disarms the watchdog
+         * before spinning. Without an easy way to trigger a fault, that
+         * interaction stays theoretical. */
+        uart_puts("   executing an illegal instruction\n");
+        __asm__ volatile ("ill");
+    }
+    else if (str_eq(line, "smash")) {
+        uart_puts("   clobbering this task's guard word; the next switch should panic\n");
+        task_smash_guard();
+        for (;;) {
+        }
+    }
+    else if (str_eq(line, "stacks")) {
+        uart_puts("   id  name        free B  of 2048\n");
+        for (int id = 0; id < TASK_MAX; id++) {
+            if (task_stack_headroom(id) == 0 && !task_stack_intact(id)) {
+                continue;
+            }
+            uart_puts("   ");
+            uart_put_dec((unsigned int)id);
+            uart_puts("   ");
+            uart_puts(task_name(id));
+            uart_puts("   ");
+            uart_put_dec(task_stack_headroom(id) * 4u);
+            uart_puts("\n");
         }
     }
     else if (str_eq(line, "fb")) {
