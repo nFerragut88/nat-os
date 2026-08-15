@@ -1,0 +1,49 @@
+; cyd-os — M4 demonstration program.
+;
+; Exercises every mechanism the milestone claims: arithmetic, a counted loop,
+; a bounds-checked store and reload, a call/return through the kernel-side
+; return stack, and syscalls that produce UART output.
+;
+; Computes sum(1..10) = 55, round-trips it through arena memory so the load and
+; store paths are actually used rather than assumed, and prints it.
+
+start:
+        ldi     r1, 0               ; sum
+        ldi     r2, 1               ; i
+        ldi     r3, 11              ; limit (exclusive)
+        ldi     r9, 1               ; a constant 1 to add with
+
+loop:
+        slt     r4, r2, r3          ; r4 = i < limit
+        brz     r4, done
+        add     r1, r1, r2          ; sum += i
+        add     r2, r2, r9          ; i++
+        jmp     loop
+
+done:
+        ; Round-trip through memory. @total is a byte offset into the arena, so
+        ; both of these go through the bounds check like any other access.
+        ldi     r5, @total
+        stw     r1, r5, 0
+        ldi     r6, 0
+        ldw     r6, r5, 0
+
+        ldi     r0, @msg
+        sys     puts
+        mov     r0, r6
+        call    print_num           ; return address lives in kernel memory
+        ldi     r0, 10              ; '\n'
+        sys     putc
+
+        ldi     r0, 0
+        sys     exit
+
+print_num:
+        sys     putd
+        ret
+
+        .align  4
+total:
+        .word   0
+msg:
+        .string "  vm says sum(1..10) = "
