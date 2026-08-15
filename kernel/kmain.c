@@ -350,6 +350,15 @@ static void task_report(void)
         /* Compact: the first/last cell pair is what distinguishes a bad touch
          * reading from sampling at the wrong moment, and it costs two numbers
          * to keep that question answerable without another build. */
+        uart_puts("  | dlock w/h ms=");
+        uart_put_dec(display_lock_wait_ms());
+        uart_putc('/');
+        uart_put_dec(display_lock_hold_ms());
+        uart_puts(" takes=");
+        uart_put_dec(display_lock_takes());
+        uart_puts(" cont=");
+        uart_put_dec(display_lock_contentions());
+
         uart_puts("  | fair maxwait=");
         uart_put_dec(task_max_wait());
         uart_puts(" rescues=");

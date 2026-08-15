@@ -74,6 +74,15 @@ void display_unlock(void);
  * display_ready() reports whether display_init() ever completed. A panic
  * before the panel exists must draw nothing rather than write to an
  * unconfigured controller. */
+/* Lock timing. Cumulative milliseconds spent waiting for and holding the draw
+ * lock, and the number of outermost acquisitions. Present because the mutex's
+ * own counters say how OFTEN the lock is taken and never how long it is held,
+ * and hold time is what a stalled renderer is made of. */
+uint32_t display_lock_wait_ms(void);
+uint32_t display_lock_hold_ms(void);
+uint32_t display_lock_takes(void);
+uint32_t display_lock_contentions(void);
+
 void display_enter_panic_mode(void);
 int  display_ready(void);
 

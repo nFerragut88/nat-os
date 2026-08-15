@@ -27,6 +27,11 @@ static uint16_t g_line[LINE_MAX];       /* 480 B — the whole "framebuffer" */
  * because display_clear() draws through display_fill_rect(). */
 static mutex_t g_lock;
 
+/* Defined further down, next to the panic-mode note that explains why they
+ * exist at all. Declared here because display_lock() is defined above them. */
+static void draw_lock(void);
+static void draw_unlock(void);
+
 static void delay_us(uint32_t us)
 {
     uint32_t start = xt_ccount();
@@ -444,8 +449,11 @@ int display_init(void)
     return 0;
 }
 
-void display_lock(void)   { mutex_lock(&g_lock); }
-void display_unlock(void) { mutex_unlock(&g_lock); }
+/* Public batch lock, routed through the instrumented helpers so a caller
+ * holding it across many primitives is measured the same as one that does
+ * not — the raycaster is exactly such a caller. */
+void display_lock(void)   { draw_lock(); }
+void display_unlock(void) { draw_unlock(); }
 
 /* ---- panic mode --------------------------------------------------------
  *
@@ -465,19 +473,52 @@ void display_unlock(void) { mutex_unlock(&g_lock); }
  *
  * Deliberately one-way. There is no display_panic_clear(): a driver that can
  * be talked back out of panic mode invites somebody to try. */
+/* Lock timing.
+ *
+ * The mutex already counts acquisitions and contentions, which answers "how
+ * often" and not "for how long" — and a renderer that is promptly scheduled,
+ * not sleeping, and still delivering three frames a second is a question about
+ * duration.
+ *
+ * Only the OUTERMOST acquisition is timed. The lock is recursive by design
+ * (display_clear draws through display_fill_rect), so counting every nested
+ * take would measure the nesting rather than the hold. Depth reaching 1 is the
+ * moment the lock actually changed hands. */
+static uint32_t g_lock_wait_cy;     /* cycles spent waiting to acquire  */
+static uint32_t g_lock_hold_cy;     /* cycles spent holding             */
+static uint32_t g_lock_takes;       /* outermost acquisitions           */
+static uint32_t g_hold_start;
+
 static void draw_lock(void)
 {
-    if (!g_panic_mode) {
-        mutex_lock(&g_lock);
+    if (g_panic_mode) {
+        return;
+    }
+    uint32_t t0 = xt_ccount();
+    mutex_lock(&g_lock);
+    uint32_t t1 = xt_ccount();
+    if (g_lock.depth == 1u) {
+        g_lock_wait_cy += t1 - t0;
+        g_lock_takes++;
+        g_hold_start = t1;
     }
 }
 
 static void draw_unlock(void)
 {
-    if (!g_panic_mode) {
-        mutex_unlock(&g_lock);
+    if (g_panic_mode) {
+        return;
     }
+    if (g_lock.depth == 1u) {
+        g_lock_hold_cy += xt_ccount() - g_hold_start;
+    }
+    mutex_unlock(&g_lock);
 }
+
+uint32_t display_lock_wait_ms(void)     { return g_lock_wait_cy / 80000u; }
+uint32_t display_lock_hold_ms(void)     { return g_lock_hold_cy / 80000u; }
+uint32_t display_lock_takes(void)       { return g_lock_takes; }
+uint32_t display_lock_contentions(void) { return g_lock.contentions; }
 
 void display_enter_panic_mode(void) { g_panic_mode = 1; }
 int  display_ready(void)            { return g_ready; }
