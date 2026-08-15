@@ -38,7 +38,7 @@ true" is the difference between a working boot and a silent reboot.
 | [UM-NATOS-006](UM-NATOS-006-m0-verification.md) | Milestone 0 Verification Report | Test method, captured output, pass/fail per assertion |
 | [UM-NATOS-007](UM-NATOS-007-roadmap.md) | Development Roadmap M1–M5 | Each milestone, its risks, and its exit criteria |
 | [UM-NATOS-008](UM-NATOS-008-m1-verification.md) | Milestone 1 Verification Report | Vectors, timer source and level choice, interrupt entry/exit, measured results, and a second writer to the comparator that stalled the tick for 183 ms |
-| [UM-NATOS-009](UM-NATOS-009-m2-verification.md) | Milestone 2 Verification Report | Task model, context frame, scheduler, the zero-overhead `LOOP` defect, watchdog correction |
+| [UM-NATOS-009](UM-NATOS-009-m2-verification.md) | Milestone 2 Verification Report | Task model, context frame, scheduler, the zero-overhead `LOOP` defect, watchdog correction, and ageing to bound the starvation strict priority allows |
 | [UM-NATOS-010](UM-NATOS-010-m3-verification.md) | Milestone 3 Verification Report | Heap allocator, arena model and bounds checking, and the measured DRAM budget |
 | [UM-NATOS-011](UM-NATOS-011-flash-cache.md) | Flash Cache and Read-Only Data Placement | Mapping `.rodata` into flash, the 0x20 page congruence, and the cache-off hazard |
 | [UM-NATOS-012](UM-NATOS-012-m4-verification.md) | Milestone 4 Verification Report | Register-based bytecode VM, the ISA, the assembler, containment of malformed programs, and the syscalls added since |
@@ -78,7 +78,7 @@ Reproducing a build: **005** alone is sufficient.
 | Roadmap M0–M5 | **Complete.** Six native tasks, three scheduling levels, a shell, and an application deliberately written to escape its arena that could not |
 | Locking | **Complete** — critical sections and a blocking mutex; heap and console both arbitrated, UM-NATOS-014 |
 | Task blocking | **Live** — `TASK_BLOCKED`, `TASK_SLEEPING` and an idle task using `WAITI`, UM-NATOS-009 §11 |
-| Scheduling | **Priorities** — three levels, strict, with `task_sleep()` and priority inheritance; renderer 2 fps → 8.5 fps, UM-NATOS-009 §11 |
+| Scheduling | **Priorities with ageing** — three levels plus ageing credit, so a ready task reaches the front within ~600 ms whatever sits above it; `task_sleep()` and priority inheritance, UM-NATOS-009 §11.4 |
 | 3D renderer | **Running** — grid raycaster, no framebuffer (measured not to help), UM-NATOS-015 §5.7 |
 | Display | **Working on hardware** — ILI9341, no framebuffer, **43 ms** full-screen fill via SPI2 + DMA, UM-NATOS-015 §5.5 |
 | Application graphics | **Live** — `FILL`/`TEXT`/`DIMS` confined to per-application viewports; 0 escapes across 136 audited fills, UM-NATOS-016 §5 |

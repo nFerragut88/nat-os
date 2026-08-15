@@ -1,7 +1,7 @@
 # UM-NATOS-009 — Milestone 2 Verification Report
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.2 · 2026-08-15 · Status: **PASS** — exit criteria met on hardware; §11 added, the scheduler has gained blocking, sleeping and priorities
+Revision 1.3 · 2026-08-15 · Status: **PASS** — §11.4 added, ageing bounds the starvation strict priority allows
 
 ---
 
@@ -342,11 +342,17 @@ feeding it, at which point it becomes a genuine hang detector.
 | Build cycles spent on §6 | 12 |
 | Wrong hypotheses recorded | 3 |
 | Instructions in the fix | 5 |
+| Priority levels | 3, plus ageing credit up to 3 |
+| Ageing threshold | 30 ticks per level, capped at 3 |
+| Worst-case wait for a ready task | ~600 ms, bounded |
+| Longest wait observed under stress | 35 ticks (350 ms) |
+| Ageing rescues at shipped settings | 0 — inert, as intended for a backstop |
 
 ## 11. The scheduler since M2
 
-Revision 1.2. M2 shipped a strict round robin over ready tasks. Three things
-have been added, and the order matters: each was forced by the one before it.
+M2 shipped a strict round robin over ready tasks. Four things have been added,
+and the order matters: each was forced by the one before it, and the fourth was
+forced by a failure the third made possible.
 
 ### 11.1 Blocking, then sleeping, then priorities
 
@@ -382,6 +388,12 @@ same shape as §6 and as UM-NATOS-017 §6.
 **LOW starves absolutely and there is no aging.** Anything placed there must be
 genuinely discardable.
 
+> *Revision 1.3: the second sentence of that claim is no longer true.* Ageing was
+> added after strict priority starved a task to complete silence — see §11.4.
+> The first sentence still holds as a design intent: LOW means "run only when
+> nothing else wants the CPU", and ageing bounds the wait rather than abolishing
+> the ordering.
+
 ### 11.3 Measured
 
 ```
@@ -389,6 +401,12 @@ renderer alone at HIGH:     2 fps -> 8.5 fps
 with a busy NORMAL band:    ~3 fps
 workers: 821,248 iterations each, exactly equal, corrupt=0
 ```
+
+> *Revision 1.3: these frame rates were computed as frames per TICK, and the
+> tick was later found to stall for up to 183 ms at a time (UM-NATOS-008 §8).
+> The comparison is still valid — both figures came from the same clock — but
+> the absolute values are not trustworthy. The renderer measured 16.0 fps once
+> the clock was corrected.*
 
 Everything except the renderer shares NORMAL: the speedup comes from the
 renderer being HIGH, not from anything being LOW.
@@ -398,6 +416,81 @@ prove the switch preserves registers across arbitrary suspension, which needs
 them running *continuously*, not *constantly*. Spinning flat out bought no extra
 evidence, cost the renderer half its frame rate, and — because it ended the
 mutex thrash between them — sleeping raised their own throughput almost tenfold.
+
+### 11.4 Ageing, because sleeping was not enough
+
+*Revision 1.3.*
+
+§11.2 argues that strict priority is safe **because tasks sleep**. That argument
+is sound and it is not a guarantee — it depends on every high-priority task
+being written to yield often enough, and nothing enforces it.
+
+It failed the first time a task was made hungrier. Shortening the display task's
+sleep from 8 ticks to 2 left it ready roughly 61% of the time, and the reporter
+task stopped being scheduled at all:
+
+```
+reporter lines in 20 s     0
+crash                      none
+watchdog reset             none
+```
+
+Nothing was wrong that any existing mechanism could see. **The hang detector
+asks whether ANY distinct switch happened, not whether every ready task got a
+turn** (UM-NATOS-019 §2), and switches were happening constantly between the
+display task and its neighbours. The only reason the starvation was noticed at
+all is that the starved task happened to be the one that prints. A quieter
+victim would have produced no symptom.
+
+#### The policy
+
+A ready task gains effective priority the longer it is passed over:
+
+```c
+effective = base + min(waiting / TASK_AGE_TICKS, TASK_AGE_MAX)
+```
+
+Three properties are deliberate:
+
+- **Ageing is a property of the SELECTION, not of the task.** The base priority
+  is never modified, so a task that finally runs returns to its declared
+  priority automatically. That is what keeps this distinct from priority
+  inheritance (UM-NATOS-014 §9), where the priority genuinely changes and
+  genuinely has to be undone. A mechanism that must remember to restore
+  something is a mechanism that can forget.
+- **Only READY tasks earn credit.** A task waiting on a deadline or a mutex is
+  not being treated unfairly by the scheduler; crediting it would let it barge
+  ahead the moment it became runnable.
+- **The bound is a latency, not a throughput guarantee.** `TASK_AGE_TICKS × 2`
+  is 600 ms at the shipped values — a ready task reaches the front within that
+  regardless of what sits above it. A task that is aged in and then immediately
+  blocks still makes no progress, and that is the caller's problem.
+
+#### Measured
+
+Re-running the configuration that caused the starvation:
+
+```
+reporter lines in 20 s     0  ->  8
+fair maxwait               35 ticks (350 ms), bounded as designed
+fair rescues               114 decisions changed by ageing
+```
+
+At the shipped sleep value it reads `rescues=0, maxwait=15`: **inert in normal
+operation**, which is correct for a backstop. Both numbers are reported anyway,
+because a fairness policy nobody measures is a fairness policy nobody has, and
+`rescues=0` is the only thing that distinguishes "never needed" from "never
+working".
+
+#### What it did not do
+
+It did not raise the frame rate. With ageing in place *and* the display sleep
+shortened, the renderer still ran at 3.0 fps — identical to before. The frame
+rate was bounded by lock contention (UM-NATOS-014 §10), which is a different
+problem that ageing does not touch.
+
+Ageing fixed a class of silent failure. It is not a performance feature and is
+not recorded as one.
 
 ## 12. References
 
