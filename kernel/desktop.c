@@ -105,6 +105,26 @@ void desktop_init(void)
     g_dirty = 1;
 }
 
+/* Full comparison, not a first-character test.
+ *
+ * This compared app_name(id)[0] against ic->prog[0], which is wrong on the
+ * current table rather than merely fragile: paint, ping and pong all begin with
+ * 'p', so running any one of them put the running-marker on all three. Found by
+ * writing the documentation, not by looking at the screen — the marker is four
+ * pixels and three of them being wrong looks like a rendering artefact. */
+static int name_eq(const char *a, const char *b)
+{
+    if (!a || !b) {
+        return 0;
+    }
+    while (*a && *b) {
+        if (*a++ != *b++) {
+            return 0;
+        }
+    }
+    return *a == *b;
+}
+
 static uint32_t cell_x(int i) { return ((uint32_t)i % COLS) * CELL_W; }
 static uint32_t cell_y(int i) { return ((uint32_t)i / COLS) * CELL_H; }
 
@@ -166,8 +186,8 @@ static void draw_icon(int i)
     int running = 0;
     if (ic->prog) {
         for (int id = 0; id < APP_MAX; id++) {
-            if (app_state(id) == APP_RUNNING && app_name(id) &&
-                app_name(id)[0] == ic->prog[0]) {
+            if (app_state(id) == APP_RUNNING &&
+                name_eq(app_name(id), ic->prog)) {
                 running = 1;
                 break;
             }

@@ -471,6 +471,50 @@ def stack_margins():
     return _wrap(600, y + 44, b)
 
 
+def sd_init_stages():
+    """Card bring-up as a chain, with the error code each stage answers to."""
+    b = _DEFS
+    rows = [
+        ("74+ clocks, CS high", "let the card power up", None, "no answer possible yet"),
+        ("CMD0  GO_IDLE", "enter SPI mode, expect 0x01", "SD_ERR_IDLE",
+         "empty slot, or CS/SCK/MISO wrong"),
+        ("CMD8  SEND_IF_COND", "declare voltage, echo 0x1AA", "SD_ERR_IFCOND",
+         "pre-2.0 card, or a noisy bus"),
+        ("ACMD41 x N", "wait for the card to leave idle", "SD_ERR_READY",
+         "present, talking, will not initialise"),
+        ("CMD58 READ_OCR", "CCS bit: block or byte addressed", "SD_ERR_OCR",
+         "addressing mode unknown"),
+        ("CMD16 SET_BLOCKLEN", "512 bytes, byte-addressed cards only", "SD_ERR_BLOCKLEN",
+         "block length refused"),
+    ]
+    y = 26
+    b += (f'<text x="24" y="16" {_FONT} font-size="10" font-weight="600" '
+          f'fill="{INK}">stage</text>'
+          f'<text x="250" y="16" {_FONT} font-size="10" font-weight="600" '
+          f'fill="{INK}">fails as</text>'
+          f'<text x="384" y="16" {_FONT} font-size="10" font-weight="600" '
+          f'fill="{INK}">which means</text>')
+    for label, what, err, means in rows:
+        hot = err is not None
+        b += _box(24, y, 200, 24, OURS if hot else PANEL,
+                  ACCENT if hot else RULE, label, mono=True)
+        b += (f'<text x="24" y="{y + 36}" {_FONT} font-size="8.5" '
+              f'fill="{FAINT}">{what}</text>')
+        if err:
+            b += (f'<text x="250" y="{y + 16}" {_MONO} font-size="8.5" '
+                  f'fill="{ACCENT}">{err}</text>')
+        b += (f'<text x="384" y="{y + 16}" {_FONT} font-size="9" '
+              f'fill="{SOFT}">{means}</text>')
+        y += 46
+    b += (f'<text x="24" y="{y + 8}" {_FONT} font-size="9" fill="{SOFT}">'
+          f'One code per stage, not one boolean. An empty slot, a wrong pin map '
+          f'and a card that will not initialise are three</text>'
+          f'<text x="24" y="{y + 22}" {_FONT} font-size="9" fill="{SOFT}">'
+          f'different problems, and the slot is normally EMPTY — so every wait '
+          f'is bounded and a failed probe costs a delay, not the kernel.</text>')
+    return _wrap(600, y + 36, b)
+
+
 FIGURES = {
     "boot_chain": (boot_chain, "The four boot stages. Only L2 upward is project code; "
                                "the interface to L1 is the image header alone."),
@@ -500,6 +544,10 @@ FIGURES = {
                                      "itself. Recovery and evidence are in direct "
                                      "conflict, and the watchdog silently won until "
                                      "the conflict was measured."),
+    "sd_init_stages": (sd_init_stages, "Card bring-up, and the error code each stage "
+                                       "answers to. An empty slot and a wrong pin map "
+                                       "produce identical silence, so the stage that "
+                                       "failed is the diagnosis."),
     "stack_margins": (stack_margins, "Measured stack use across all eight tasks. The "
                                      "tightest is not the one that was assumed, which "
                                      "is the argument for measuring all of them."),

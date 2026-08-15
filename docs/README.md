@@ -1,7 +1,7 @@
 # nat-os — Engineering Documentation
 
 **Used Medias LLC — Embedded Systems Division**
-Document set: `UM-NATOS-001` … `UM-NATOS-019`
+Document set: `UM-NATOS-001` … `UM-NATOS-021`
 Project: nat-os — a from-scratch operating system for the ESP32
 Hardware: developed and verified on the ESP32-2432S028R ("Cheap Yellow Display")
 Last revised: 2026-08-15
@@ -49,6 +49,8 @@ true" is the difference between a working boot and a silent reboot.
 | [UM-NATOS-017](UM-NATOS-017-touch.md) | Touchscreen, and a Verification Method That Failed Three Times | XPT2046 over PENIRQ, the GPIO two-bank bug, calibration by controlled input, a capture that erased its own evidence, input confinement, and an axis that was inverted for three months because the direction test read its own worst sample |
 | [UM-NATOS-018](UM-NATOS-018-persistence.md) | Persistence, and a Read Defect That Looked Like the Wrong Thing | SPI flash driver, a checksummed record that survives a power cycle, the inherited clock divider that shifted every read by a bit, and two hypotheses tested against stale firmware |
 | [UM-NATOS-019](UM-NATOS-019-failure-handling.md) | Failure Handling, and Three Mechanisms That Had Never Fired | Stack guards enforced in the scheduler, the watchdog erasing its own panic reports, measured stack margins, a UART receive path one byte behind, and a fault reported to flash and to the panel |
+| [UM-NATOS-020](UM-NATOS-020-sdcard.md) | microSD over SPI, and a Pad Table That Is Not in Pin Order | SPI mode and why, per-stage error codes, the IO_MUX entry that is the UART's receive pad, and a cross-check whose samples could not have caught it |
+| [UM-NATOS-021](UM-NATOS-021-launcher.md) | The Launcher, and Four Defects It Found by Existing | Icon grid and hybrid cursor, launch by name, status text that lied about state, selection read at the worst moment, and the missing idle task |
 
 ## Reading order
 
@@ -89,6 +91,8 @@ Reproducing a build: **005** alone is sufficient.
 | Persistence | **Live** — checksummed record in a flash sector at 2 MB; boot counter and a cumulative frame count survived 16 resets, UM-NATOS-018 §6 |
 | Failure handling | **Enforced** — guards checked on every switch across all eight tasks; `hang`/`fault`/`smash` each trigger their path on demand, UM-NATOS-019 §5 |
 | Fault reporting | **Three ways** — flash record read back by the next boot, UART report, and the reason drawn on the panel; ordered by decreasing reliability, UM-NATOS-019 §6–7 |
+| microSD | **Reading** — SPI mode, per-stage errors, bounded on an empty slot; FAT16 header read at LBA 240, UM-NATOS-020 §5.2 |
+| Launcher | **Live** — 3×3 icon grid, hybrid cursor, double-tap to launch by name; zero SPI cost when idle, UM-NATOS-021 |
 | Stack margins | **Measured** — worst task uses 444 B of 2,048; minimum margin 78%, UM-NATOS-019 §3.1 |
 | Version control | **Initialised 2026-08-14** |
 | JTAG debug probe | Ordered, not in hand |
@@ -170,3 +174,11 @@ Reproducing a build: **005** alone is sufficient.
 > blocked on it. Narrowing the hold by 25% changed the outcome by nothing. The
 > levers are batching (fewer takes) or not blocking at all (`try_lock`) —
 > shortening holds, the intuitive move, does nothing. UM-NATOS-014 §10.5.
+
+> **Standing rule for cross-checks — a check only tests what its samples can
+> distinguish.** The SD pin map was verified against four IO_MUX entries already
+> in the tree. All four confirmed the indexing, and all four sat below the
+> anomaly, so every one of them agreed with the wrong answer: GPIO23 was read
+> from the UART's receive pad. The check was real, it was performed, and it
+> could not have failed. Samples must STRADDLE the thing being verified, not
+> merely agree with it. UM-NATOS-020 §4.2.
