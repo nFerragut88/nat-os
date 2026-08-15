@@ -185,6 +185,14 @@ static uint32_t g_vp_calls;
  * application may ever see those coordinates. */
 static uint32_t g_touch_given, g_touch_withheld;
 static uint32_t g_blits;
+
+/* Drawing primitives dropped because the panel was busy. Counted, not hidden:
+ * a best-effort policy that silently discards work is indistinguishable from a
+ * broken one, and the ratio of skipped to drawn is the only thing that says
+ * whether the policy is reasonable or is starving applications of the screen. */
+static uint32_t g_draw_skipped;
+
+uint32_t vm_draw_skipped(void) { return g_draw_skipped; }
 static uint32_t g_ipc_bad_buffer;
 
 uint32_t vm_touch_given(void)    { return g_touch_given; }
@@ -222,7 +230,15 @@ static void vp_fill(vm_t *vm, uint32_t x, uint32_t y, uint32_t w, uint32_t h,
         g_vp_max_y = ay + h;
     }
 
+    /* Best effort. See display_try_lock(): an application that blocks here
+     * costs the whole system a scheduling round trip, and the pixel it wanted
+     * to draw is worth far less than that. */
+    if (!display_try_lock()) {
+        g_draw_skipped++;
+        return;
+    }
     display_fill_rect(ax, ay, w, h, colour);
+    display_unlock();
 }
 
 #define VM_STR_MAX 48
@@ -277,7 +293,12 @@ static void vp_text(vm_t *vm, uint32_t x, uint32_t y, const char *s,
     if (i == 0u) {
         return;
     }
+    if (!display_try_lock()) {
+        g_draw_skipped++;
+        return;
+    }
     display_text(vm->vx + x, vm->vy + y, buf, fg, bg, scale);
+    display_unlock();
 }
 
 /* ---- syscalls ----------------------------------------------------------- */
@@ -403,8 +424,17 @@ static int do_syscall(vm_t *vm, uint32_t num)
         uint32_t cw = (w > vm->vw - x) ? (vm->vw - x) : w;
         uint32_t ch = (h > vm->vh - y) ? (vm->vh - y) : h;
 
+        /* A skipped blit is not a fault: the program asked for something legal
+         * and the panel was busy. It returns success with nothing drawn, the
+         * same contract as a blit clipped entirely outside the viewport above. */
+        if (!display_try_lock()) {
+            g_draw_skipped++;
+            vm->reg[0] = 0;
+            return 0;
+        }
         display_blit(vm->vx + x, vm->vy + y, cw, ch,
                      (const uint16_t *)(vm->base + off), w);
+        display_unlock();
 
         g_blits++;
         vm->reg[0] = 1;

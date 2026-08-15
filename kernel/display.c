@@ -3,6 +3,7 @@
 #include "display.h"
 #include "gpio.h"
 #include "mutex.h"
+#include "task.h"
 #include "xtensa.h"
 
 #define PIN_MOSI 13u
@@ -484,6 +485,15 @@ void display_unlock(void) { draw_unlock(); }
  * (display_clear draws through display_fill_rect), so counting every nested
  * take would measure the nesting rather than the hold. Depth reaching 1 is the
  * moment the lock actually changed hands. */
+/* Wait attributed per task.
+ *
+ * The aggregate says the renderer is blocked; it cannot say blocked BY WHOM,
+ * and the two readings suggest opposite fixes. Making application draws
+ * non-blocking helps only if applications are the ones waiting; shortening
+ * application holds helps only if the renderer is. Guessing between them has
+ * already been wrong three times this session. */
+static uint32_t g_wait_by_task[TASK_MAX];
+
 static uint32_t g_lock_wait_cy;     /* cycles spent waiting to acquire  */
 static uint32_t g_lock_hold_cy;     /* cycles spent holding             */
 static uint32_t g_lock_takes;       /* outermost acquisitions           */
@@ -501,6 +511,11 @@ static void draw_lock(void)
         g_lock_wait_cy += t1 - t0;
         g_lock_takes++;
         g_hold_start = t1;
+
+        int me = task_current();
+        if (me >= 0 && me < TASK_MAX) {
+            g_wait_by_task[me] += (t1 - t0) / 80000u;   /* ms */
+        }
     }
 }
 
@@ -519,6 +534,30 @@ uint32_t display_lock_wait_ms(void)     { return g_lock_wait_cy / 80000u; }
 uint32_t display_lock_hold_ms(void)     { return g_lock_hold_cy / 80000u; }
 uint32_t display_lock_takes(void)       { return g_lock_takes; }
 uint32_t display_lock_contentions(void) { return g_lock.contentions; }
+
+/* Non-blocking acquisition, for callers whose drawing is optional.
+ *
+ * Blocking on this mutex is expensive out of all proportion to the lock:
+ * measured, a contended acquisition costs ~63 ms while the lock itself is only
+ * held ~24 ms, because the blocked task is descheduled and must be selected
+ * again. The renderer and the applications were each blocked most of the time
+ * waiting for a lock that was actually free 91% of the time.
+ *
+ * An application that cannot draw right now should skip the primitive, not
+ * stop. A dropped fill costs one frame of one application; a blocked task costs
+ * the whole system a scheduling round trip. */
+int display_try_lock(void)
+{
+    if (g_panic_mode) {
+        return 1;
+    }
+    return mutex_try_lock(&g_lock);
+}
+
+uint32_t display_lock_wait_of(int task_id)
+{
+    return (task_id >= 0 && task_id < TASK_MAX) ? g_wait_by_task[task_id] : 0;
+}
 
 void display_enter_panic_mode(void) { g_panic_mode = 1; }
 int  display_ready(void)            { return g_ready; }

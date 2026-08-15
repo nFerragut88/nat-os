@@ -150,8 +150,23 @@ void raycast_frame(void)
      * which this kernel does not link (-nostdlib), so the multiply is scaled
      * down instead. It costs eight bits of fraction — about 1/256 of a cell,
      * far below one pixel at any distance drawn here. */
-    /* One acquisition for the whole frame instead of 240. */
-    display_lock();
+    /* The lock covers only what actually needs it.
+     *
+     * With a framebuffer, marching and composing write to g_fb — private to
+     * this file, touching no shared hardware and no shared buffer. Holding the
+     * draw lock across them served nothing except to block every application
+     * for an extra 7.8 ms per frame, measured. Only the blit talks to the
+     * panel, and only the blit is now inside the lock.
+     *
+     * Without a framebuffer the loop blits per column, so the lock has to span
+     * the whole loop — that is UM-CYDOS-014 §5.2's fix, replacing 240
+     * acquisitions with one, and it still applies to that path.
+     *
+     * The general rule this project keeps relearning: a lock should cover the
+     * shared thing, not the whole operation that happens to use it. */
+    if (!g_fb) {
+        display_lock();
+    }
 
     int32_t planeX = (-dirY / 256) * (PLANE_SCALE / 256);
     int32_t planeY = ( dirX / 256) * (PLANE_SCALE / 256);
@@ -258,11 +273,13 @@ void raycast_frame(void)
         /* One window for the entire view. Stride equals width, so this takes
          * the contiguous path and streams 80,640 bytes without another setup. */
         t0 = xt_ccount();
+        display_lock();
         display_blit(0, 0, RAY_VIEW_W, RAY_VIEW_H, g_fb, RAY_VIEW_W);
+        display_unlock();
         t_blit += xt_ccount() - t0;
+    } else {
+        display_unlock();
     }
-
-    display_unlock();
 
     /* Walk forward; turn when something is close ahead. Probing half a cell in
      * front rather than at the feet stops the camera burying itself in a wall

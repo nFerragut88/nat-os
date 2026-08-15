@@ -239,6 +239,9 @@ uint32_t vm_touch_withheld(void);
 /* Bitmaps accepted from applications. */
 uint32_t vm_blits(void);
 
+/* Drawing primitives dropped because the panel was busy. See vm.c. */
+uint32_t vm_draw_skipped(void);
+
 /* The VM's own view of messaging: attempts that never reached ipc.c because
  * the buffer was outside the caller's arena. */
 uint32_t vm_ipc_bad_buffer(void);

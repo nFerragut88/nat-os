@@ -61,6 +61,11 @@ void display_backlight(int on);
  * scheduling round-trip per contended acquisition — a raycaster taking the lock
  * once per column spent 25 seconds per frame on 37 ms of work. Holding it for
  * the batch turns that into one acquisition. UM-CYDOS-014 §5.2. */
+/* Non-blocking. Returns non-zero if the lock was taken; the caller must then
+ * display_unlock(). For drawing that is better skipped than waited for — see
+ * the note in display.c. */
+int  display_try_lock(void);
+
 void display_lock(void);
 void display_unlock(void);
 
@@ -82,6 +87,11 @@ uint32_t display_lock_wait_ms(void);
 uint32_t display_lock_hold_ms(void);
 uint32_t display_lock_takes(void);
 uint32_t display_lock_contentions(void);
+
+/* Milliseconds a specific task has spent waiting for the draw lock. Aggregate
+ * wait says the system is blocked; this says on whom, which is what decides
+ * which end to fix. */
+uint32_t display_lock_wait_of(int task_id);
 
 void display_enter_panic_mode(void);
 int  display_ready(void);
