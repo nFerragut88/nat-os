@@ -342,6 +342,21 @@ void task_yield(void)
     /* Bring the comparator deadline forward so the tick — and therefore the
      * switch — happens almost immediately. Reuses the preemption path exactly
      * instead of introducing a second way to switch, which would be a second
-     * thing that can be subtly wrong. */
-    xt_set_ccompare1(xt_ccount() + 64u);
+     * thing that can be subtly wrong.
+     *
+     * ONLY EVER EARLIER, NEVER LATER. Writing ccount + 64 unconditionally means
+     * a loop that yields faster than 64 cycles pushes the deadline ahead of
+     * CCOUNT on every pass, so the comparator is never reached and the timer
+     * interrupt stops firing altogether. That is not a slowdown — it is a total
+     * system freeze, because the tick is what drives every context switch, and
+     * the task doing the yielding spins forever waiting for a clock it is
+     * itself preventing.
+     *
+     * It cost a full debugging session: `while (timer_ticks() < until)
+     * task_yield();` in the display task halted the entire kernel, and looked
+     * exactly like a hung display driver. */
+    uint32_t soon = xt_ccount() + 64u;
+    if ((int32_t)(soon - xt_get_ccompare1()) < 0) {
+        xt_set_ccompare1(soon);
+    }
 }
