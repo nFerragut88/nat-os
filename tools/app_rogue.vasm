@@ -1,0 +1,31 @@
+; Application ROGUE — deliberately written to escape its arena.
+;
+; UM-CYDOS-007 §7 names this as the milestone's principal risk: "an application
+; deliberately written to escape its arena must fail to do so."
+;
+; It walks a store upward through memory four bytes at a time, starting above
+; its own code so it does not destroy the loop doing the walking. Every store
+; inside the arena succeeds; the first store past the end must fault, and the
+; reported offset should equal the arena size exactly — which makes this a test
+; of WHERE the boundary is, not merely that one exists.
+;
+; Note what it cannot do. A VM address is an offset into its own arena, so there
+; is no value it could load into r5 that names another application's memory. The
+; escape is not refused, it is unrepresentable.
+start:
+        ldi     r1, @counter
+        ldi     r2, 0
+        ldi     r9, 1
+        ldi     r5, 128             ; start probing well above this program
+        ldi     r6, 4
+
+probe:
+        add     r2, r2, r9
+        stw     r2, r1, 0           ; keep publishing so progress is visible
+        stw     r2, r5, 0           ; the probe — succeeds until it does not
+        add     r5, r5, r6
+        jmp     probe
+
+        .align  4
+counter:
+        .word   0

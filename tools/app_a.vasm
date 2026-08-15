@@ -1,0 +1,13 @@
+; Application A — counts. Three instructions per iteration.
+start:
+        ldi     r1, @counter
+        ldi     r2, 0
+        ldi     r9, 1
+loop:
+        add     r2, r2, r9
+        stw     r2, r1, 0           ; publish progress where the kernel can see it
+        jmp     loop
+
+        .align  4
+counter:
+        .word   0

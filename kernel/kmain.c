@@ -16,9 +16,14 @@
 
 #include "arena.h"
 #include "heap.h"
+#include "app.h"
+#include "shell.h"
 #include "vm.h"
 #include "generated/demo.h"
 #include "generated/spin.h"
+#include "generated/app_a.h"
+#include "generated/app_b.h"
+#include "generated/app_rogue.h"
 #include "uart.h"
 #include "timer.h"
 #include "task.h"
@@ -32,7 +37,7 @@ extern char _vecbase;
 static volatile uint32_t work_a_count, work_a_bad;
 static volatile uint32_t work_b_count, work_b_bad;
 
-static int id_report, id_a, id_b, id_vm;
+static int id_report, id_a, id_b, id_vm, id_apps, id_shell;
 
 /* ---- the VM hosted as a native task ------------------------------------
  *
@@ -503,6 +508,130 @@ static void m4_selftest(void)
     arena_destroy(id);
 }
 
+/* ---- Milestone 5 self-test -------------------------------------------- */
+/*
+ * Runs single-threaded before the scheduler starts, so the results are
+ * deterministic and a failure cannot be blamed on task switching. The live,
+ * interactive version of the same thing runs afterwards under the shell.
+ *
+ * Each block is one exit criterion from UM-CYDOS-007 §7.
+ */
+
+static const shell_program_t PROGRAMS[] = {
+    { "counter", vm_app_a,     VM_APP_A_LEN,     512u, VM_APP_A_AT_COUNTER  },
+    { "squares", vm_app_b,     VM_APP_B_LEN,     512u, VM_APP_B_AT_SQUARE   },
+    { "rogue",   vm_app_rogue, VM_APP_ROGUE_LEN, 256u, VM_APP_ROGUE_AT_COUNTER },
+};
+#define PROGRAM_COUNT ((int)(sizeof PROGRAMS / sizeof PROGRAMS[0]))
+
+static void m5_selftest(void)
+{
+    uint32_t base_free = heap_free_bytes();
+
+    /* --- Criterion 1: two applications interleave ------------------------ */
+    int a = app_start(PROGRAMS[0].name, PROGRAMS[0].img, PROGRAMS[0].len,
+                      PROGRAMS[0].arena_bytes, PROGRAMS[0].publish_off);
+    int b = app_start(PROGRAMS[1].name, PROGRAMS[1].img, PROGRAMS[1].len,
+                      PROGRAMS[1].arena_bytes, PROGRAMS[1].publish_off);
+
+    for (int i = 0; i < 200; i++) {
+        app_tick(300);
+    }
+
+    uint32_t ia = app_instructions(a), ib = app_instructions(b);
+    uint32_t pa = app_published(a),    pb = app_published(b);
+
+    /* Both must have run, and both must have run the SAME amount: app_tick
+     * hands out an identical quantum to each. Equal instruction counts with
+     * unequal published values is exactly right — B does more work per
+     * iteration, so it advances more slowly in its own terms. */
+    int c1 = (app_state(a) == APP_RUNNING) && (app_state(b) == APP_RUNNING) &&
+             (ia == ib) && (ia > 0u) && (pa > 0u) && (pb > 0u) && (pa != pb);
+
+    uart_puts("  [1] interleave: ");
+    uart_puts(c1 ? "PASS" : "FAIL");
+    uart_puts("  a insns=");
+    uart_put_dec(ia);
+    uart_puts(" count=");
+    uart_put_dec(pa);
+    uart_puts("  |  b insns=");
+    uart_put_dec(ib);
+    uart_puts(" square=");
+    uart_put_dec(pb);
+    uart_puts("\n");
+
+    /* --- Criterion 2: a rogue application is terminated, alone ----------- */
+    uint32_t a_before = app_published(a), b_before = app_published(b);
+
+    int rg = app_start(PROGRAMS[2].name, PROGRAMS[2].img, PROGRAMS[2].len,
+                       PROGRAMS[2].arena_bytes, PROGRAMS[2].publish_off);
+
+    for (int i = 0; i < 100 && app_state(rg) == APP_RUNNING; i++) {
+        app_tick(300);
+    }
+    for (int i = 0; i < 50; i++) {
+        app_tick(300);      /* let the survivors keep running afterwards */
+    }
+
+    /* The rogue must be gone, its neighbours must be untouched and still
+     * advancing, and the fault must name the arena boundary exactly. */
+    int c2 = (app_state(rg) == APP_FAULTED) &&
+             (app_fault(rg) == VM_FAULT_BOUNDS) &&
+             (app_fault_detail(rg) == PROGRAMS[2].arena_bytes) &&
+             (app_state(a) == APP_RUNNING) && (app_state(b) == APP_RUNNING) &&
+             (app_published(a) > a_before) && (app_published(b) > b_before);
+
+    uart_puts("  [2] isolation : ");
+    uart_puts(c2 ? "PASS" : "FAIL");
+    uart_puts("  rogue ");
+    uart_puts(app_state_name(rg));
+    uart_puts(" at offset ");
+    uart_put_dec(app_fault_detail(rg));
+    uart_puts(" = arena size; neighbours still running and advancing\n");
+
+    /* --- Criterion 3: termination releases the arena completely ---------- */
+    app_kill(a);
+    app_kill(b);
+
+    uint32_t after = heap_free_bytes();
+    int c3 = (after == base_free) && (heap_check() == 0) &&
+             (app_live_count() == 0);
+
+    uart_puts("  [3] release   : ");
+    uart_puts(c3 ? "PASS" : "FAIL");
+    uart_puts("  heap ");
+    uart_put_dec(after);
+    uart_puts("/");
+    uart_put_dec(base_free);
+    uart_puts(" B, live=");
+    uart_put_dec((unsigned int)app_live_count());
+    uart_puts(", check=");
+    uart_put_dec((unsigned int)heap_check());
+    uart_puts("\n");
+}
+
+/* Hosts every application. One native task drives the third scheduling level;
+ * the applications inside it are preempted by their quantum, and this task is
+ * itself preempted by the timer. */
+static void task_apps(void)
+{
+    for (;;) {
+        app_tick(2000);
+        if (app_live_count() == 0) {
+            task_yield();       /* nothing to run — do not spin at full tilt */
+        }
+    }
+}
+
+static void task_shell(void)
+{
+    shell_begin();
+    for (;;) {
+        shell_poll();
+        task_yield();
+    }
+}
+
 void kmain(void)
 {
     uart_puts("\n\n");
@@ -523,6 +652,7 @@ void kmain(void)
 
     m3_selftest();
     m4_selftest();
+    m5_selftest();
 
     /* The VM's arena is created here, on the boot path, because the heap has no
      * locking and this is the last moment at which exactly one context exists
@@ -542,10 +672,21 @@ void kmain(void)
     uart_put_dec(VM_SPIN_LEN);
     uart_puts(" B\n");
 
+    /* Start the two well-behaved applications for the live system. The rogue is
+     * left for the operator to launch from the shell — it is a demonstration,
+     * not something that should be running by default. */
+    shell_register(PROGRAMS, PROGRAM_COUNT);
+    app_start(PROGRAMS[0].name, PROGRAMS[0].img, PROGRAMS[0].len,
+              PROGRAMS[0].arena_bytes, PROGRAMS[0].publish_off);
+    app_start(PROGRAMS[1].name, PROGRAMS[1].img, PROGRAMS[1].len,
+              PROGRAMS[1].arena_bytes, PROGRAMS[1].publish_off);
+
     id_report = task_create("report", task_report);
     id_a      = task_create("worker-a", task_a);
     id_b      = task_create("worker-b", task_b);
     id_vm     = task_create("vm-host", task_vm);
+    id_apps   = task_create("app-host", task_apps);
+    id_shell  = task_create("shell", task_shell);
     uart_puts("  tasks        : report=");
     uart_put_dec((unsigned int)id_report);
     uart_puts(" a=");
@@ -554,6 +695,10 @@ void kmain(void)
     uart_put_dec((unsigned int)id_b);
     uart_puts(" vm=");
     uart_put_dec((unsigned int)id_vm);
+    uart_puts(" apps=");
+    uart_put_dec((unsigned int)id_apps);
+    uart_puts(" shell=");
+    uart_put_dec((unsigned int)id_shell);
     uart_puts("\n");
 
     uart_puts("  tick every   : ");

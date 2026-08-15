@@ -21,6 +21,14 @@
 #define UART_TXFIFO_CNT_MASK   0xFFu
 #define UART_TXFIFO_DEPTH      127u
 
+/* Receive. The same STATUS register reports the RX FIFO occupancy in its low
+ * byte, and reading FIFO_REG pops a byte. Polled rather than interrupt-driven:
+ * the shell is the only consumer, it runs as an ordinary task, and a console
+ * that loses a keystroke under load is a better outcome than another interrupt
+ * source competing with the scheduler tick. */
+#define UART_RXFIFO_CNT_SHIFT  0
+#define UART_RXFIFO_CNT_MASK   0xFFu
+
 #define REG(addr) (*(volatile unsigned int *)(addr))
 
 static unsigned int tx_fifo_used(void)
@@ -72,4 +80,22 @@ void uart_put_dec(unsigned int value)
     while (i-- > 0) {
         uart_putc(buf[i]);
     }
+}
+
+static unsigned int rx_fifo_used(void)
+{
+    return (REG(UART_STATUS_REG) >> UART_RXFIFO_CNT_SHIFT) & UART_RXFIFO_CNT_MASK;
+}
+
+int uart_rx_ready(void)
+{
+    return rx_fifo_used() != 0u;
+}
+
+int uart_getc_nb(void)
+{
+    if (!uart_rx_ready()) {
+        return -1;
+    }
+    return (int)(REG(UART_FIFO_REG) & 0xFFu);
 }
