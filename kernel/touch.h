@@ -45,6 +45,9 @@ typedef struct {
 
 void touch_init(void);
 
+/* Most recent reading, without touching the bus. */
+void touch_latest(touch_state_t *out);
+
 /* Samples the controller. Returns non-zero if a touch is present. Cheap enough
  * to call from a task loop; takes roughly 100 us. */
 int touch_read(touch_state_t *out);

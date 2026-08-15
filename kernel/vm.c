@@ -11,6 +11,7 @@
 #include "vm.h"
 #include "arena.h"
 #include "display.h"
+#include "touch.h"
 #include "timer.h"
 #include "uart.h"
 
@@ -174,6 +175,15 @@ static uint32_t g_vp_escapes;
 static uint32_t g_vp_max_y;     /* highest absolute row any app has painted */
 static uint32_t g_vp_calls;
 
+/* Touches offered to an application, and touches withheld because they landed
+ * outside its viewport. The second number is the containment evidence: it must
+ * be non-zero whenever anyone touches elsewhere on the panel, and no
+ * application may ever see those coordinates. */
+static uint32_t g_touch_given, g_touch_withheld;
+
+uint32_t vm_touch_given(void)    { return g_touch_given; }
+uint32_t vm_touch_withheld(void) { return g_touch_withheld; }
+
 uint32_t vm_viewport_escapes(void) { return g_vp_escapes; }
 uint32_t vm_viewport_max_y(void)   { return g_vp_max_y; }
 uint32_t vm_viewport_calls(void)   { return g_vp_calls; }
@@ -319,6 +329,31 @@ static int do_syscall(vm_t *vm, uint32_t num)
         vp_text(vm, vm->reg[1], vm->reg[2], buf,
                 (uint16_t)vm->reg[3], (uint16_t)vm->reg[4], vm->reg[5]);
         vm->yield_now = 1;
+        return 0;
+    }
+
+    case VM_SYS_TOUCH: {
+        touch_state_t t;
+        touch_latest(&t);
+
+        /* Absolute panel coordinates translated into this viewport, in the
+         * offset domain so a touch above or left of the viewport underflows to
+         * a huge value and is rejected rather than wrapping into range. */
+        uint32_t dx = t.x - vm->vx;
+        uint32_t dy = t.y - vm->vy;
+        int inside  = t.down && (t.x >= vm->vx) && (t.y >= vm->vy) &&
+                      (dx < vm->vw) && (dy < vm->vh);
+
+        if (t.down && !inside) {
+            g_touch_withheld++;
+        }
+        if (inside) {
+            g_touch_given++;
+        }
+
+        vm->reg[0] = inside ? 1u : 0u;
+        vm->reg[1] = inside ? dx : 0u;
+        vm->reg[2] = inside ? dy : 0u;
         return 0;
     }
 

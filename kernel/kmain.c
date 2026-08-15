@@ -31,6 +31,7 @@
 #include "generated/app_rogue.h"
 #include "generated/app_draw.h"
 #include "generated/app_gfx_rogue.h"
+#include "generated/app_paint.h"
 #include "uart.h"
 #include "timer.h"
 #include "task.h"
@@ -269,6 +270,10 @@ static void task_report(void)
         uart_put_dec(g_shared_lock.errors);
         uart_puts(" skew=");
         uart_put_dec(bumps > shared ? bumps - shared : shared - bumps);
+        uart_puts("  | touch g/w=");
+        uart_put_dec(vm_touch_given());
+        uart_putc('/');
+        uart_put_dec(vm_touch_withheld());
         uart_puts("  | vp calls=");
         uart_put_dec(vm_viewport_calls());
         uart_puts(" escapes=");
@@ -653,8 +658,41 @@ static const shell_program_t PROGRAMS[] = {
     { "rogue",   vm_app_rogue, VM_APP_ROGUE_LEN, 256u, VM_APP_ROGUE_AT_COUNTER },
     { "draw",    vm_app_draw,  VM_APP_DRAW_LEN,  512u, VM_APP_DRAW_AT_NAME },
     { "gfxrogue", vm_app_gfx_rogue, VM_APP_GFX_ROGUE_LEN, 256u, 0u },
+    { "paint",   vm_app_paint, VM_APP_PAINT_LEN, 512u, 0u },
 };
 #define PROGRAM_COUNT ((int)(sizeof PROGRAMS / sizeof PROGRAMS[0]))
+
+static int str_same(const char *a, const char *b)
+{
+    while (*a && *b) {
+        if (*a++ != *b++) {
+            return 0;
+        }
+    }
+    return *a == *b;
+}
+
+/* Start a registered program by NAME.
+ *
+ * The table is indexed by position everywhere else and that is exactly how the
+ * paint application failed to launch: PROGRAMS grew from three entries to six,
+ * a hard-coded [4] silently became gfxrogue instead of paint, and the symptom
+ * was a screen flickering red and white with no obvious connection to the
+ * indexing. A name cannot drift when the table is reordered. */
+static int start_program(const char *name)
+{
+    for (int i = 0; i < PROGRAM_COUNT; i++) {
+        if (str_same(PROGRAMS[i].name, name)) {
+            return app_start(PROGRAMS[i].name, PROGRAMS[i].img, PROGRAMS[i].len,
+                             PROGRAMS[i].arena_bytes, PROGRAMS[i].publish_off);
+        }
+    }
+    uart_puts("  [boot] no such program: ");
+    uart_puts(name);
+    uart_puts("\n");
+    return -1;
+}
+
 
 static void m5_selftest(void)
 {
@@ -975,23 +1013,20 @@ static void task_touch(void)
                 console_unlock();
             }
 
-            /* A single cursor, erased before it moves. The persistent trail
-             * this replaces was a calibration aid: a track following a dragged
-             * finger distinguishes a swapped axis from a flipped one, which a
-             * single dot cannot. Both axes are now measured, so the trail has
-             * done its job and the scribbling over everything else is no longer
-             * worth paying for.
+            /* No cursor. The kernel used to draw one here, which meant it
+             * was painting over application viewports — exactly what it
+             * forbids applications from doing to each other. Not unsafe, since
+             * the kernel is trusted, but wrong about ownership: those pixels
+             * belong to whoever owns that strip.
              *
-             * Erasing to black leaves a dark square where the cursor has been,
-             * because nothing records what was underneath. Restoring that needs
-             * either a read-back the panel does not reliably support, or damage
-             * tracking the display layer does not have. */
-            if (had) {
-                display_fill_rect(last_x, last_yy, 4u, 4u, COLOR_BLACK);
-            }
-            display_fill_rect(t.x, t.y, 4u, 4u, COLOR_MAGENTA);
-            last_yy = t.y;
-            last_x = t.x;
+             * It also destroyed what it drew over. An application's yellow dots
+             * were being replaced by the black squares this cursor left behind
+             * as it erased its own previous position.
+             *
+             * An application that wants pointer feedback now draws it itself,
+             * through SYS TOUCH and SYS FILL, in its own coordinates and inside
+             * its own viewport. That is the whole point of the syscall.
+             */
             had = 1;
         }
 
@@ -1085,10 +1120,8 @@ void kmain(void)
      * left for the operator to launch from the shell — it is a demonstration,
      * not something that should be running by default. */
     shell_register(PROGRAMS, PROGRAM_COUNT);
-    app_start(PROGRAMS[0].name, PROGRAMS[0].img, PROGRAMS[0].len,
-              PROGRAMS[0].arena_bytes, PROGRAMS[0].publish_off);
-    app_start(PROGRAMS[3].name, PROGRAMS[3].img, PROGRAMS[3].len,
-              PROGRAMS[3].arena_bytes, PROGRAMS[3].publish_off);
+    start_program("paint");
+    start_program("draw");
 
     id_report = task_create("report", task_report);
     id_a      = task_create("worker-a", task_a);

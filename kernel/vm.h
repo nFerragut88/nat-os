@@ -113,7 +113,14 @@ enum {
      * resize a viewport; that is the kernel's to assign. */
     VM_SYS_FILL  = 5,    /* r0=x r1=y r2=w r3=h r4=colour              */
     VM_SYS_TEXT  = 6,    /* r0=str offset r1=x r2=y r3=fg r4=bg r5=scale */
-    VM_SYS_DIMS  = 7     /* r0 <- (width << 16) | height               */
+    VM_SYS_DIMS  = 7,    /* r0 <- (width << 16) | height               */
+
+    /* Pointer input, viewport-relative like everything else an application
+     * sees. Returns r0 = touched, r1 = x, r2 = y. A touch outside this
+     * application's viewport reports as no touch at all: an application must
+     * not be able to observe input directed at its neighbours, any more than it
+     * can read their memory or draw on their pixels. */
+    VM_SYS_TOUCH = 8
 };
 
 /* Fault codes. VM_FAULT_NONE is the only non-terminal value. */
@@ -197,5 +204,10 @@ int vm_in_bounds(const vm_t *vm, uint32_t off, uint32_t len);
 uint32_t vm_viewport_escapes(void);
 uint32_t vm_viewport_max_y(void);
 uint32_t vm_viewport_calls(void);
+
+/* Touches handed to applications, and touches withheld for landing outside the
+ * asking application's viewport. */
+uint32_t vm_touch_given(void);
+uint32_t vm_touch_withheld(void);
 
 #endif /* CYDOS_VM_H */

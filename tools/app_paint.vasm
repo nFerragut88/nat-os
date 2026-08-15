@@ -1,0 +1,40 @@
+; Application PAINT — the first interactive program.
+;
+; Fills its own viewport with a solid colour at startup so the touchable area is
+; unmistakable, then paints a dot wherever it is told the pointer is.
+;
+; It asks the kernel how big its canvas is and is never told where that canvas
+; sits. Every coordinate it receives is relative to its own viewport, and a
+; touch anywhere else on the panel is reported as no touch at all — so it cannot
+; observe input aimed at its neighbours, nor reconstruct an absolute position
+; from one it is allowed to see.
+
+start:
+        sys     dims                ; r0 = (width << 16) | height
+        ldi     r8, 16
+        shr     r6, r0, r8          ; r6 = width
+        ldi     r9, 0xFFFF
+        and     r7, r0, r9          ; r7 = height
+
+        ldi     r0, 0               ; paint the whole canvas: "touch here"
+        ldi     r1, 0
+        mov     r2, r6
+        mov     r3, r7
+        ldi     r4, 0x001F          ; blue
+        sys     fill
+
+loop:
+        sys     touch               ; r0 = touched, r1 = x, r2 = y
+        brz     r0, loop
+
+        mov     r10, r1             ; the syscall results are about to be
+        mov     r11, r2             ; overwritten by the fill arguments
+
+        mov     r0, r10
+        mov     r1, r11
+        ldi     r2, 5
+        ldi     r3, 5
+        ldi     r4, 0xFFE0          ; yellow
+        sys     fill
+
+        jmp     loop

@@ -42,6 +42,13 @@
 
 #define Z_THRESHOLD 300u
 
+/* Latest reading, published for consumers that must not touch the bus
+ * themselves. A syscall doing its own SPI would cost milliseconds per call and
+ * contend with the polling task for the controller. */
+static touch_state_t g_latest;
+
+void touch_latest(touch_state_t *out) { *out = g_latest; }
+
 static uint32_t g_samples;
 static uint32_t g_events;
 
@@ -242,6 +249,7 @@ int touch_read(touch_state_t *out)
         out->y = 0;
     }
 
+    g_latest = *out;
     return out->down;
 }
 
