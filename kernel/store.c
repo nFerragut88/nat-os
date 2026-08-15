@@ -4,7 +4,7 @@
 #include "flash.h"
 
 #define STORE_MAGIC   0x59444F53u      /* "SODY" little-endian */
-#define STORE_VERSION 1u
+#define STORE_VERSION 2u   /* 2 adds the fault fields */
 
 static store_t g_rec;
 static int     g_valid;
@@ -15,7 +15,9 @@ static int     g_valid;
  * be worse than the simple version. */
 static uint32_t checksum(const store_t *r)
 {
-    return r->magic + r->version + r->boots + r->frames + 0x9E3779B9u;
+    return r->magic + r->version + r->boots + r->frames +
+           r->fault_kind + r->fault_detail + r->fault_epc + r->fault_boot +
+           0x9E3779B9u;
 }
 
 int store_load(void)
@@ -40,8 +42,12 @@ int store_load(void)
 defaults:
     g_rec.magic   = STORE_MAGIC;
     g_rec.version = STORE_VERSION;
-    g_rec.boots   = 0;
-    g_rec.frames  = 0;
+    g_rec.boots        = 0;
+    g_rec.frames       = 0;
+    g_rec.fault_kind   = STORE_FAULT_NONE;
+    g_rec.fault_detail = 0;
+    g_rec.fault_epc    = 0;
+    g_rec.fault_boot   = 0;
     return -1;
 }
 
@@ -60,6 +66,24 @@ uint32_t store_frames(void) { return g_rec.frames; }
 int      store_valid(void)  { return g_valid; }
 
 void store_set_frames(uint32_t f) { g_rec.frames = f; }
+
+uint32_t store_fault_kind(void)   { return g_rec.fault_kind; }
+uint32_t store_fault_detail(void) { return g_rec.fault_detail; }
+uint32_t store_fault_epc(void)    { return g_rec.fault_epc; }
+uint32_t store_fault_boot(void)   { return g_rec.fault_boot; }
+
+/* Runs inside a panic, so it assumes as little as possible about the state of
+ * the system. It does not read the existing record first: g_rec already holds
+ * what was loaded at boot, and re-reading flash here would add a failure mode
+ * to a path that exists precisely because something has already gone wrong. */
+int store_record_fault(uint32_t kind, uint32_t detail, uint32_t epc)
+{
+    g_rec.fault_kind   = kind;
+    g_rec.fault_detail = detail;
+    g_rec.fault_epc    = epc;
+    g_rec.fault_boot   = g_rec.boots;
+    return store_save();
+}
 
 /* Bumped by kmain once the record has been loaded. Kept here so the only code
  * that writes the counter is the code that owns it. */

@@ -1288,6 +1288,33 @@ void kmain(void)
     uart_puts(", frames ");
     uart_put_dec(store_frames());
     uart_puts(saved ? ", saved\n" : ", SAVE FAILED\n");
+
+    /* Report a fault recorded by a previous boot.
+     *
+     * This is the only way a fault becomes visible on a board with nothing
+     * attached. The panel freezes, the user power-cycles it, and this line is
+     * what tells them why — a question that previously had no answer unless
+     * someone happened to have a serial cable connected at the moment it died.
+     *
+     * Deliberately not cleared after printing. A fault stays on the record
+     * until a different one replaces it, so power-cycling past this message
+     * does not destroy it. `fault_boot` says which boot it happened on, which
+     * is what stops an old fault from reading as a new one. */
+    if (store_fault_kind() != STORE_FAULT_NONE) {
+        uart_puts("  LAST FAULT   : ");
+        if (store_fault_kind() == STORE_FAULT_GUARD) {
+            uart_puts("stack guard overwritten, task ");
+            uart_put_dec(store_fault_detail());
+        } else {
+            uart_puts("exception, exccause ");
+            uart_put_dec(store_fault_detail());
+            uart_puts(", epc ");
+            uart_put_hex(store_fault_epc());
+        }
+        uart_puts("  (boot #");
+        uart_put_dec(store_fault_boot());
+        uart_puts(")\n");
+    }
 #else
     uart_puts("  store        : disabled, flash reads bit-shifted (flash.h)\n");
 #endif
