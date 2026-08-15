@@ -68,4 +68,7 @@ uint32_t display_bytes_written(void);
  * throughput, measured on the real panel rather than estimated. */
 uint32_t display_fill_cycles(void);
 
+/* Task id currently holding the draw lock, for deadlock diagnosis. */
+int display_owner(void);
+
 #endif /* CYDOS_DISPLAY_H */

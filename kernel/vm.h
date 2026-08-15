@@ -105,7 +105,15 @@ enum {
     VM_SYS_PUTC  = 1,    /* r0 = character                             */
     VM_SYS_PUTS  = 2,    /* r0 = offset of a NUL-terminated string     */
     VM_SYS_PUTD  = 3,    /* r0 = value, printed as unsigned decimal    */
-    VM_SYS_TICKS = 4     /* r0 <- timer_ticks()                        */
+    VM_SYS_TICKS = 4,    /* r0 <- timer_ticks()                        */
+
+    /* Display. Coordinates are VIEWPORT-relative and clipped to it, so an
+     * application cannot name a pixel outside its own region — the same
+     * property arenas give it for memory. There is no syscall to move or
+     * resize a viewport; that is the kernel's to assign. */
+    VM_SYS_FILL  = 5,    /* r0=x r1=y r2=w r3=h r4=colour              */
+    VM_SYS_TEXT  = 6,    /* r0=str offset r1=x r2=y r3=fg r4=bg r5=scale */
+    VM_SYS_DIMS  = 7     /* r0 <- (width << 16) | height               */
 };
 
 /* Fault codes. VM_FAULT_NONE is the only non-terminal value. */
@@ -139,6 +147,10 @@ typedef struct {
     uint32_t call[VM_CALL_DEPTH];
     uint32_t call_sp;
 
+    /* Viewport, in panel coordinates. Assigned by the kernel; the program can
+     * read its size but never its position, and cannot draw outside it. */
+    uint32_t vx, vy, vw, vh;
+
     int      arena;                     /* owning arena id              */
     uint32_t base;                      /* cached kernel address        */
     uint32_t size;                      /* cached arena length          */
@@ -147,6 +159,13 @@ typedef struct {
     uint32_t fault_pc;                  /* pc of the faulting insn      */
     uint32_t fault_detail;              /* offending offset, opcode, …  */
 
+    /* Set by a syscall whose cost is measured in milliseconds rather than
+     * instructions. The quantum bounds INSTRUCTIONS; a display fill is one
+     * instruction and ~31 ms of bit-banged SPI, so without this a 2,000
+     * instruction budget can be minutes of drawing inside a single vm_run()
+     * and the preemption guarantee is worthless. */
+    int      yield_now;
+
     uint32_t executed;                  /* instructions retired         */
     uint32_t exit_status;
 } vm_t;
@@ -154,6 +173,11 @@ typedef struct {
 /* Binds a VM to an arena and resets it. Returns 0, or non-zero if the arena id
  * is unknown. Does not load a program — copy one in before running. */
 int vm_init(vm_t *vm, int arena_id);
+
+/* Confines this VM's drawing to a rectangle of the panel. vm_init() defaults to
+ * the whole panel, which is right for a VM the kernel hosts directly and wrong
+ * for an application — app.c narrows it. */
+void vm_set_viewport(vm_t *vm, uint32_t x, uint32_t y, uint32_t w, uint32_t h);
 
 /* Runs at most `quantum` instructions. Returns one of VM_RUN_*. Safe to call
  * again after VM_RUN_QUANTUM; calling after HALTED or FAULTED returns the same

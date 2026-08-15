@@ -3,6 +3,7 @@
 #include "app.h"
 #include "arena.h"
 #include "console.h"
+#include "display.h"
 #include "uart.h"
 #include "vm.h"
 
@@ -18,6 +19,12 @@ typedef struct {
 
 static app_t g_apps[APP_MAX];
 
+/* Where applications may draw. Above this the kernel keeps its status area;
+ * below it the colour strip. Neither is reachable from an application. */
+#define APP_VIEW_Y0    168u
+#define APP_VIEW_PITCH 28u
+#define APP_VIEW_H     26u
+
 /* Releases the arena and records why the application stopped. Kept in one place
  * because "terminating an application releases its arena completely" is an exit
  * criterion, and three separate paths reach it — halt, fault, and kill. Three
@@ -28,6 +35,10 @@ static void retire(app_t *a, app_state_t why)
         arena_destroy(a->arena);
         a->arena = -1;
     }
+
+    /* Wipe the strip on the way out, so a dead application does not leave its
+     * last frame on the panel looking like a live one. */
+    display_fill_rect(a->vm.vx, a->vm.vy, a->vm.vw, a->vm.vh, COLOR_BLACK);
     a->base  = 0;
     a->state = why;
 }
@@ -65,6 +76,13 @@ int app_start(const char *name, const uint8_t *img, uint32_t len,
             arena_destroy(arena);
             return -1;
         }
+
+        /* One horizontal strip per slot. Assigned by the kernel and never by
+         * the application: a program can ask how large its canvas is, but the
+         * only coordinates it can express are inside it. Same property as its
+         * arena, applied to pixels. */
+        vm_set_viewport(&a->vm, 0u, APP_VIEW_Y0 + (uint32_t)id * APP_VIEW_PITCH,
+                        DISP_W, APP_VIEW_H);
 
         a->state       = APP_RUNNING;
         a->name        = name;

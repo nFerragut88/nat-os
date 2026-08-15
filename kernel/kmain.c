@@ -28,6 +28,8 @@
 #include "generated/app_a.h"
 #include "generated/app_b.h"
 #include "generated/app_rogue.h"
+#include "generated/app_draw.h"
+#include "generated/app_gfx_rogue.h"
 #include "uart.h"
 #include "timer.h"
 #include "task.h"
@@ -204,8 +206,18 @@ static void task_report(void)
         }
         reported = t;
 
-        /* One line, one holder. Without this the shell's echo lands in the
-         * middle of it — the problem this milestone exists to fix. */
+        /* Raw, deliberately OUTSIDE the console lock: if the stall is the lock
+         * itself, anything printed after taking it never appears. */
+        uart_puts("[dbg states=");
+        for (int i = 0; i < 8; i++) {
+            uart_put_dec((unsigned int)task_state_of(i));
+        }
+        uart_puts(" console=");
+        uart_put_dec((unsigned int)console_owner());
+        uart_puts(" disp=");
+        uart_put_dec((unsigned int)display_owner());
+        uart_puts("]\n");
+
         console_lock();
 
         uart_puts("  t=");
@@ -605,6 +617,8 @@ static const shell_program_t PROGRAMS[] = {
     { "counter", vm_app_a,     VM_APP_A_LEN,     512u, VM_APP_A_AT_COUNTER  },
     { "squares", vm_app_b,     VM_APP_B_LEN,     512u, VM_APP_B_AT_SQUARE   },
     { "rogue",   vm_app_rogue, VM_APP_ROGUE_LEN, 256u, VM_APP_ROGUE_AT_COUNTER },
+    { "draw",    vm_app_draw,  VM_APP_DRAW_LEN,  512u, VM_APP_DRAW_AT_NAME },
+    { "gfxrogue", vm_app_gfx_rogue, VM_APP_GFX_ROGUE_LEN, 256u, 0u },
 };
 #define PROGRAM_COUNT ((int)(sizeof PROGRAMS / sizeof PROGRAMS[0]))
 
@@ -828,7 +842,7 @@ static void task_display(void)
     const uint16_t bars[] = { COLOR_RED, COLOR_GREEN, COLOR_BLUE, COLOR_YELLOW,
                               COLOR_CYAN, COLOR_MAGENTA, COLOR_WHITE, COLOR_GREY };
     for (uint32_t i = 0; i < 8; i++) {
-        display_fill_rect(i * 30u, DISP_H - 40u, 30u, 40u, bars[i]);
+        display_fill_rect(i * 30u, DISP_H - 32u, 30u, 32u, bars[i]);
     }
 
     uint32_t frame = 0;
