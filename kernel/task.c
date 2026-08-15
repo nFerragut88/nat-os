@@ -50,6 +50,16 @@ static int g_current = -1;
  * when nothing else can run. */
 static int g_idle_id = -1;
 
+/* Fairness telemetry. g_max_wait is the worst wait ever observed by a task that
+ * eventually ran, in ticks; g_age_rescues counts decisions that went to a task
+ * only because ageing had lifted it. If the second is zero the policy is inert,
+ * which is itself worth knowing. */
+static uint32_t g_max_wait;
+static uint32_t g_age_rescues;
+
+uint32_t task_max_wait(void)    { return g_max_wait; }
+uint32_t task_age_rescues(void) { return g_age_rescues; }
+
 /* Wakes any sleeping task whose deadline has passed. Called from the scheduler,
  * which runs every tick, so a sleep resolves to one tick. */
 static void wake_sleepers(void)
@@ -100,6 +110,7 @@ int task_create(const char *name, task_entry_fn entry)
         g_tasks[id].base_prio  = TASK_PRIO_NORMAL;
         g_tasks[id].wake_tick  = 0;
         g_tasks[id].switches   = 0;
+        g_tasks[id].waiting    = 0;
         g_tasks[id].name       = name;
         g_tasks[id].stack_base = stack;
         return id;
@@ -236,6 +247,12 @@ uint32_t task_schedule(uint32_t current_sp)
      * on STRICTLY greater priority gives both at once: among equals the first
      * one met wins, and because the scan starts past the current task, that is
      * a different task each time. */
+    /* Effective priority = base + ageing credit, computed per candidate below.
+     * The base priority is never modified: ageing is a property of the
+     * SELECTION, not of the task, so a task that finally runs returns to its
+     * declared priority automatically rather than needing to be restored. That
+     * distinction is what keeps this separate from priority inheritance, which
+     * really does change a task's priority and really does have to undo it. */
     int next = -1;
     int best = -1;
     /* Plain counted loop. GCC is free to emit a zero-overhead LOOP here, and
@@ -258,10 +275,16 @@ uint32_t task_schedule(uint32_t current_sp)
             uart_puts(g_tasks[candidate].state == TASK_READY ? " MATCH" : " skip");
         }
 #endif
-        if (g_tasks[candidate].state == TASK_READY &&
-            (int)g_tasks[candidate].prio > best) {
-            best = (int)g_tasks[candidate].prio;
-            next = candidate;
+        if (g_tasks[candidate].state == TASK_READY) {
+            uint32_t credit = g_tasks[candidate].waiting / TASK_AGE_TICKS;
+            if (credit > TASK_AGE_MAX) {
+                credit = TASK_AGE_MAX;
+            }
+            int eff = (int)g_tasks[candidate].prio + (int)credit;
+            if (eff > best) {
+                best = eff;
+                next = candidate;
+            }
         }
     }
     /* Nothing else runnable — fall back to idle. Resuming the interrupted task
@@ -291,6 +314,29 @@ uint32_t task_schedule(uint32_t current_sp)
     /* Liveness for the hang detector: a tick that resumes the SAME task is not
      * evidence the system is healthy — it is exactly what a monopoly looks
      * like. Only a switch between distinct tasks counts. */
+    /* Ageing bookkeeping, done once the decision is final.
+     *
+     * Every READY task that was NOT chosen waits one more tick; the chosen one
+     * resets. Sleeping and blocked tasks are untouched — a task waiting on a
+     * deadline or a mutex is not being treated unfairly by the scheduler, and
+     * crediting it would let it barge ahead the moment it becomes runnable. */
+    for (int i = 0; i < TASK_MAX; i++) {
+        if (g_tasks[i].state != TASK_READY) {
+            continue;
+        }
+        if (i == next) {
+            if (g_tasks[i].waiting > g_max_wait) {
+                g_max_wait = g_tasks[i].waiting;
+            }
+            if (g_tasks[i].waiting >= TASK_AGE_TICKS) {
+                g_age_rescues++;    /* it only ran because ageing lifted it */
+            }
+            g_tasks[i].waiting = 0;
+        } else {
+            g_tasks[i].waiting++;
+        }
+    }
+
     watchdog_liveness(next != g_current);
 
     /* A broken guard is fatal, not cosmetic.

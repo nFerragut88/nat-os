@@ -350,6 +350,11 @@ static void task_report(void)
         /* Compact: the first/last cell pair is what distinguishes a bad touch
          * reading from sampling at the wrong moment, and it costs two numbers
          * to keep that question answerable without another build. */
+        uart_puts("  | fair maxwait=");
+        uart_put_dec(task_max_wait());
+        uart_puts(" rescues=");
+        uart_put_dec(task_age_rescues());
+
         uart_puts("  | desk sel=");
         uart_put_dec((unsigned int)desktop_sel());
         uart_puts(" cell f/l=");
@@ -1154,22 +1159,27 @@ static void task_display(void)
         }
 #endif
 
-/* 8 ticks. Two independent attempts to shorten this both broke the
-         * system, in different ways, and neither was a graphics problem:
+        /* 2 ticks.
          *
-         *   1 tick  -> watchdog reset (rst:0x7)
-         *   2 ticks -> kernel alive, touch alive, reporter task starved to
-         *              silence: 0 report lines in 20 s, no reset
+         * This was 8, and shortening it used to break the system: at 1 tick the
+         * watchdog reset the board, and at 2 the kernel stayed up, touch stayed
+         * up, and the reporter task was starved to complete silence — twenty
+         * seconds, no output, no reset, because the hang detector asks whether
+         * ANY distinct switch happened rather than whether every ready task got
+         * a turn.
          *
-         * The renderer occupies 31 ms of a 320 ms frame — busy 10% of the
-         * time — so the frame rate is not limited by drawing. It is limited by
-         * how much of the machine the renderer may take before the rest of the
-         * system stops making progress, and this constant is the only thing
-         * currently enforcing that limit.
+         * The constant was never the problem. It was the only thing bounding
+         * how much of the machine a HIGH-priority task could take, and it did
+         * that by simply not asking for it. Scheduler ageing (task.h) bounds it
+         * properly now, so the value is no longer load-bearing.
          *
-         * Raising the frame rate therefore means giving the scheduler a real
-         * fairness policy, not tuning this number. Until then it stays where it
-         * has been measured to work. */
+         * Left at 8 because shortening it BUYS NOTHING. With ageing in place and
+         * this at 2, the reporter recovered fully — but the frame rate stayed at
+         * 3.0 fps, identical to 8. So the renderer is not sleep-limited either,
+         * and a third cause is still unaccounted for: raycast.c holds the
+         * display lock across an entire frame, and applications draw into their
+         * viewports through that same lock. That is the next thing to measure,
+         * and until it is, a shorter sleep only spends CPU to no effect. */
         task_sleep(8u);
     }
 }

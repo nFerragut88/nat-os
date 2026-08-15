@@ -88,6 +88,29 @@ typedef enum {
 #define TASK_PRIO_HIGH   2
 #define TASK_PRIO_LEVELS 3
 
+/* ---- fairness by ageing --------------------------------------------------
+ *
+ * Strict priority has no upper bound on how long a ready task may wait. The
+ * display task runs at HIGH, and shortening its sleep so it was ready ~61% of
+ * the time starved the reporter to complete silence — twenty seconds, no
+ * output, no crash, and no watchdog reset, because the hang detector asks
+ * whether ANY distinct switch happened, not whether every ready task got a
+ * turn. A quieter victim would have produced no symptom at all.
+ *
+ * Ageing bounds it. A ready task that is passed over gains effective priority
+ * with time, so any runnable task reaches the front within a known interval
+ * regardless of what sits above it. Priority still decides who runs FIRST;
+ * ageing decides that "later" is finite.
+ *
+ * TASK_AGE_TICKS is the wait that buys one level. At 10 ms per tick and two
+ * levels available above NORMAL, the worst case for a ready NORMAL task behind
+ * a permanently-ready HIGH task is TASK_AGE_TICKS * 2 — currently 600 ms. That
+ * is a latency, not a guarantee of throughput: a task that is aged in and then
+ * immediately blocks still makes no progress, and that is the caller's
+ * problem, not the scheduler's. */
+#define TASK_AGE_TICKS  30u
+#define TASK_AGE_MAX    3u      /* cap, so ageing cannot invert LOW past HIGH twice over */
+
 typedef struct {
     uint32_t      sp;                  /* saved stack pointer when not running */
     task_state_t  state;
@@ -95,6 +118,7 @@ typedef struct {
     uint8_t       base_prio;           /* as created                           */
     uint32_t      wake_tick;           /* deadline while TASK_SLEEPING         */
     uint32_t      switches;            /* times this task has been resumed */
+    uint32_t      waiting;             /* ticks READY but not selected      */
     const char   *name;
     uint32_t     *stack_base;          /* for guard checking; NULL for boot task */
 } task_t;
@@ -116,6 +140,12 @@ uint32_t task_switch_count(int id);
 int      task_stack_intact(int id);    /* guard word still present? */
 uint32_t task_stack_headroom(int id);  /* untouched words remaining */
 int      task_stack_broken(void);      /* id of a task with a clobbered guard, or -1 */
+
+/* Longest any ready task has waited without being scheduled, in ticks, and the
+ * number of times ageing changed the decision. Reported because a fairness
+ * policy nobody measures is a fairness policy nobody has. */
+uint32_t task_max_wait(void);
+uint32_t task_age_rescues(void);
 int      task_stack_tightest(void);    /* id with the least headroom */
 const char *task_name(int id);         /* creation name, or "?" */
 int      task_exists(int id);          /* slot is occupied by a real task */
