@@ -1,0 +1,38 @@
+; Application GFX-ROGUE — deliberately tries to paint the entire panel.
+;
+; UM-CYDOS-013 §5.2 established that an application cannot reach another's
+; MEMORY. This is the same question asked of the SCREEN: given a syscall that
+; draws, can a program scribble over the kernel's status area, the colour strip,
+; or a neighbour's output?
+;
+; It asks for a 240x320 fill — the whole display — in red, forever. If viewport
+; clipping works, only its own 26-pixel strip turns red and everything else is
+; untouched. If it does not, the entire panel goes red and the failure is
+; impossible to miss.
+;
+; It also tries a wildly out-of-range origin, which arrives at the kernel as a
+; huge unsigned number. That is the case offset-domain clipping exists for.
+
+start:
+        ldi     r0, 0
+        ldi     r1, 0
+        ldi     r2, 240             ; full panel width
+        ldi     r3, 320             ; full panel height
+        ldi     r4, 0xF800          ; red
+        sys     fill
+
+        ldi     r0, 0
+        ldi     r1, 0
+        ldi     r2, 240
+        ldi     r3, 320
+        ldi     r4, 0xFFFF          ; and again in white, so it flickers if it escapes
+        sys     fill
+
+        ldi     r0, 60000           ; an origin far outside any viewport
+        ldi     r1, 60000
+        ldi     r2, 240
+        ldi     r3, 320
+        ldi     r4, 0x001F          ; blue
+        sys     fill
+
+        jmp     start

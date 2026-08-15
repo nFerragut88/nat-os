@@ -28,5 +28,6 @@ void console_lock(void);
 void console_unlock(void);
 
 unsigned int console_contentions(void);
+int console_owner(void);
 
 #endif /* CYDOS_CONSOLE_H */
