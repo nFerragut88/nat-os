@@ -91,6 +91,113 @@ static void delay_ms(uint32_t ms)
 static uint32_t g_spi2_clk_reg;
 static uint32_t g_spi2_dport;
 
+
+/* ---- SPI2 DMA -----------------------------------------------------------
+ *
+ * The CPU-driven path costs 2,560 transactions per full screen because the FIFO
+ * holds 64 bytes (UM-CYDOS-015 §5.3). DMA takes a whole 480-byte span in one,
+ * so a screen becomes 320 transfers instead.
+ *
+ * Everything here is guarded three ways, because a DMA engine that never
+ * asserts completion would hang the display task forever and take the system
+ * with it — the failure mode this project has already paid for twice:
+ *
+ *   1. every wait is bounded and counted, never a bare `while`
+ *   2. a timeout permanently disables DMA and falls back to the FIFO path, so
+ *      the display degrades instead of stopping
+ *   3. the configuration registers are read back and reported
+ *
+ * Descriptors and buffers must live in DRAM. g_txbuf and g_desc are in .bss,
+ * which the linker places in DRAM; a buffer in IRAM would be silently
+ * unreachable by the DMA engine.
+ */
+#define SPI2_DMA_CONF      (SPI2_BASE + 0x100u)
+#define SPI2_DMA_OUT_LINK  (SPI2_BASE + 0x104u)
+#define SPI2_DMA_INT_CLR   (SPI2_BASE + 0x11Cu)
+
+#define DMA_OUT_RST        (1u << 2)
+#define DMA_AHBM_FIFO_RST  (1u << 4)
+#define DMA_AHBM_RST       (1u << 5)
+#define DMA_OUTDSCR_BURST  (1u << 11)
+#define DMA_OUT_DATA_BURST (1u << 12)
+#define DMA_OUTLINK_START  (1u << 30)
+
+/* Which DMA channel serves which SPI peripheral. Bits 2:3 are SPI2's. */
+#define DPORT_SPI_DMA_CHAN_SEL 0x3FF005A8u
+#define DPORT_SPI_DMA_CLK_EN   (1u << 22)
+
+/* Hardware descriptor. Written as explicit words rather than bitfields: the bit
+ * order of a C bitfield is implementation-defined, and this layout is the
+ * silicon's. */
+typedef struct {
+    uint32_t flags;     /* size:12 | length:12 | offset:5 | sosf:1 | eof:1 | owner:1 */
+    uint32_t buf;
+    uint32_t next;
+} dma_desc_t;
+
+static dma_desc_t g_desc __attribute__((aligned(4)));
+
+static int      g_dma_ok;           /* 0 disables DMA for the rest of the run */
+static uint32_t g_dma_timeouts;
+static uint32_t g_dma_transfers;
+
+static void spi2_dma_init(void)
+{
+    GPIO_REG(DPORT_PERIP_CLK_EN) |= DPORT_SPI_DMA_CLK_EN;
+
+    /* Channel 1 for SPI2. */
+    uint32_t sel = GPIO_REG(DPORT_SPI_DMA_CHAN_SEL);
+    sel &= ~(3u << 2);
+    sel |=  (1u << 2);
+    GPIO_REG(DPORT_SPI_DMA_CHAN_SEL) = sel;
+
+    /* Pulse the resets, then leave burst mode enabled. */
+    GPIO_REG(SPI2_DMA_CONF) |= DMA_OUT_RST | DMA_AHBM_FIFO_RST | DMA_AHBM_RST;
+    GPIO_REG(SPI2_DMA_CONF) &= ~(DMA_OUT_RST | DMA_AHBM_FIFO_RST | DMA_AHBM_RST);
+    GPIO_REG(SPI2_DMA_CONF) |= DMA_OUTDSCR_BURST | DMA_OUT_DATA_BURST;
+
+    g_dma_ok = 1;
+}
+
+/* Returns 1 if the transfer completed, 0 if it timed out. A timeout disables
+ * DMA permanently rather than retrying: a DMA engine that missed one completion
+ * has no reason to be trusted with the next, and the FIFO path still works. */
+static int spi2_dma_tx(const uint8_t *data, uint32_t n)
+{
+    GPIO_REG(SPI2_DMA_INT_CLR) = 0xFFFFFFFFu;
+
+    g_desc.flags = (n & 0xFFFu)              /* size   */
+                 | ((n & 0xFFFu) << 12)      /* length */
+                 | (1u << 30)                /* eof    */
+                 | (1u << 31);               /* owned by the DMA engine */
+    g_desc.buf   = (uint32_t)data;
+    g_desc.next  = 0;
+
+    GPIO_REG(SPI2_DMA_OUT_LINK) = ((uint32_t)&g_desc & 0xFFFFFu) | DMA_OUTLINK_START;
+
+    GPIO_REG(SPI2_MOSI_DLEN) = n * 8u - 1u;
+    GPIO_REG(SPI2_CMD)       = SPI_USR_BIT;
+
+    /* Bounded wait. 2,000,000 cycles is ~25 ms at 80 MHz, far beyond the ~100 us
+     * a 480-byte transfer needs, and short enough that a stuck engine costs one
+     * frame rather than the system. */
+    uint32_t start = xt_ccount();
+    while (GPIO_REG(SPI2_CMD) & SPI_USR_BIT) {
+        if ((xt_ccount() - start) > 2000000u) {
+            g_dma_timeouts++;
+            g_dma_ok = 0;
+            return 0;
+        }
+    }
+
+    g_dma_transfers++;
+    g_bytes += n;
+    return 1;
+}
+
+uint32_t display_dma_transfers(void) { return g_dma_transfers; }
+uint32_t display_dma_timeouts(void)  { return g_dma_timeouts; }
+
 static void spi2_init(void)
 {
     GPIO_REG(DPORT_PERIP_CLK_EN) |= DPORT_SPI2_BIT;
@@ -111,6 +218,8 @@ static void spi2_init(void)
     /* Read back rather than assume. A clock register that did not take, or a
      * DPORT bit that did not stick, is the difference between a fast display
      * and a black one. */
+    spi2_dma_init();
+
     g_spi2_clk_reg = GPIO_REG(SPI2_CLOCK);
     g_spi2_dport   = GPIO_REG(DPORT_PERIP_CLK_EN);
 }
@@ -179,6 +288,16 @@ static void spi_write(uint8_t b)
 static void spi_tx(const uint8_t *data, uint32_t n)
 {
 #if DISPLAY_USE_SPI2
+    /* Short transfers stay on the FIFO path: below roughly a FIFO's worth, the
+     * descriptor setup costs more than it saves. Commands and their few
+     * parameter bytes are all in that range. */
+    if (g_dma_ok && n > 64u) {
+        if (spi2_dma_tx(data, n)) {
+            return;
+        }
+        /* Fell through: DMA timed out and is now disabled. The FIFO path
+         * below still works, so the display degrades rather than stopping. */
+    }
     spi2_tx(data, n);
 #else
     for (uint32_t i = 0; i < n; i++) {

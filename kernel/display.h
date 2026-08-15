@@ -85,6 +85,11 @@ uint32_t display_fill_cycles(void);
 uint32_t display_spi_clock_reg(void);
 uint32_t display_dport_reg(void);
 
+/* DMA transfers completed, and transfers abandoned on timeout. A non-zero
+ * timeout count means DMA disabled itself and the FIFO path took over. */
+uint32_t display_dma_transfers(void);
+uint32_t display_dma_timeouts(void);
+
 /* Task id currently holding the draw lock, for deadlock diagnosis. */
 int display_owner(void);
 

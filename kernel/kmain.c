@@ -1109,6 +1109,10 @@ void kmain(void)
     uart_put_hex(display_spi_clock_reg());
     uart_puts(" dport=");
     uart_put_hex(display_dport_reg());
+    uart_puts(" dma=");
+    uart_put_dec(display_dma_transfers());
+    uart_puts("/");
+    uart_put_dec(display_dma_timeouts());
     uart_puts("\n");
 
     m3_selftest();
