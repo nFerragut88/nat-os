@@ -17,9 +17,9 @@
  * matrix routing, and every mistake in either produces the same symptom as a
  * wiring fault or a bad init sequence — a black screen. Bit-banging needs only
  * the GPIO registers, so a failure here can only be the panel, the pins, or the
- * commands. A full-screen fill costs about 150 ms, which is slow but entirely
- * usable for a status display, and the peripheral can replace it later without
- * anything above this file changing.
+ * commands. A full-screen fill costs a measured 387 ms — 2.6 screens per
+ * second, ample for a status display and far too slow for animation — and the
+ * peripheral can replace it later without anything above this file changing.
  */
 
 #ifndef CYDOS_DISPLAY_H
@@ -63,5 +63,9 @@ void display_text(uint32_t x, uint32_t y, const char *s, uint16_t fg, uint16_t b
 /* Bytes pushed to the panel since init — the cheapest measure of whether the
  * driver is doing anything at all when nothing appears on screen. */
 uint32_t display_bytes_written(void);
+
+/* CCOUNT cycles taken by the full-screen clear during init — the driver's
+ * throughput, measured on the real panel rather than estimated. */
+uint32_t display_fill_cycles(void);
 
 #endif /* CYDOS_DISPLAY_H */
