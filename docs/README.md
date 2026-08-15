@@ -36,7 +36,7 @@ true" is the difference between a working boot and a silent reboot.
 | [UM-CYDOS-011](UM-CYDOS-011-flash-cache.md) | Flash Cache and Read-Only Data Placement | Mapping `.rodata` into flash, the 0x20 page congruence, and the cache-off hazard |
 | [UM-CYDOS-012](UM-CYDOS-012-m4-verification.md) | Milestone 4 Verification Report | Register-based bytecode VM, the ISA, the assembler, containment of malformed programs, and the syscalls added since |
 | [UM-CYDOS-013](UM-CYDOS-013-m5-verification.md) | Milestone 5 Verification Report | Application table and lifecycle, three-level scheduling, the shell, the escape attempt, and messaging without shared memory |
-| [UM-CYDOS-014](UM-CYDOS-014-locking.md) | Locking Primitives | Critical sections vs blocking mutex, task blocking and idle, and a measured starvation defect |
+| [UM-CYDOS-014](UM-CYDOS-014-locking.md) | Locking Primitives | Critical sections vs blocking mutex, task blocking and idle, a measured starvation defect, and why contention cost is the number of blocking events rather than the time held |
 | [UM-CYDOS-015](UM-CYDOS-015-display.md) | Display Driver | ILI9341, span rendering with no framebuffer, and the path from bit-banged SPI to SPI2 with DMA |
 | [UM-CYDOS-016](UM-CYDOS-016-display-syscalls.md) | Display Syscalls, and a Total System Freeze | Per-application viewports, pointer discipline, measured containment, and a yield that stopped the clock |
 | [UM-CYDOS-017](UM-CYDOS-017-touch.md) | Touchscreen, and a Verification Method That Failed Three Times | XPT2046 over PENIRQ, the GPIO two-bank bug, calibration by controlled input, a capture that erased its own evidence, input confinement, and an axis that was inverted for three months because the direction test read its own worst sample |
@@ -145,3 +145,12 @@ Reproducing a build: **005** alone is sufficient.
 > months behind exactly that. Calibrate from labelled points, each a known
 > position paired with a reading, and let direction fall out of comparing labels.
 > UM-CYDOS-017 §7.1.
+
+> **Standing rule for lock contention — the cost is the NUMBER of blocking
+> events, not the time the lock is held.** Each one costs a scheduling
+> round-trip whether the lock was held for 24 ms or 24 µs: the blocked task is
+> descheduled and must be selected again. Measured here at 63 ms per contention
+> against a 24 ms hold, with the lock free 88% of the time while two tasks sat
+> blocked on it. Narrowing the hold by 25% changed the outcome by nothing. The
+> levers are batching (fewer takes) or not blocking at all (`try_lock`) —
+> shortening holds, the intuitive move, does nothing. UM-CYDOS-014 §10.5.

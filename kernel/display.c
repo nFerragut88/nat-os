@@ -501,9 +501,20 @@ void display_unlock(void) { draw_unlock(); }
  * non-blocking helps only if applications are the ones waiting; shortening
  * application holds helps only if the renderer is. Guessing between them has
  * already been wrong three times this session. */
-static uint32_t g_wait_by_task[TASK_MAX];
+static uint32_t g_blocked_by_task[TASK_MAX];
 
-static uint32_t g_lock_wait_cy;     /* cycles spent waiting to acquire  */
+/* Named "blocked", not "wait", and the distinction is the finding.
+  *
+  * This is measured from asking for the lock to holding it, and a task that
+  * cannot have it is DESCHEDULED for the interval. So the number includes the
+  * time after the lock became free but before the scheduler picked this task up
+  * again — which turned out to be most of it: 63 ms per contention against a
+  * 24 ms hold.
+  *
+  * Calling it "lock wait" would say the panel was busy for 63 ms, which is
+  * false and would send the next person to shorten holds. Shortening the hold
+  * 25% moved this number by 0%. */
+static uint32_t g_lock_blocked_cy;     /* cycles between asking and holding */
 static uint32_t g_lock_hold_cy;     /* cycles spent holding             */
 static uint32_t g_lock_takes;       /* outermost acquisitions           */
 static uint32_t g_hold_start;
@@ -517,13 +528,13 @@ static void draw_lock(void)
     mutex_lock(&g_lock);
     uint32_t t1 = xt_ccount();
     if (g_lock.depth == 1u) {
-        g_lock_wait_cy += t1 - t0;
+        g_lock_blocked_cy += t1 - t0;
         g_lock_takes++;
         g_hold_start = t1;
 
         int me = task_current();
         if (me >= 0 && me < TASK_MAX) {
-            g_wait_by_task[me] += (t1 - t0) / 80000u;   /* ms */
+            g_blocked_by_task[me] += (t1 - t0) / 80000u;   /* ms */
         }
     }
 }
@@ -539,7 +550,7 @@ static void draw_unlock(void)
     mutex_unlock(&g_lock);
 }
 
-uint32_t display_lock_wait_ms(void)     { return g_lock_wait_cy / 80000u; }
+uint32_t display_lock_blocked_ms(void)     { return g_lock_blocked_cy / 80000u; }
 uint32_t display_lock_hold_ms(void)     { return g_lock_hold_cy / 80000u; }
 uint32_t display_lock_takes(void)       { return g_lock_takes; }
 uint32_t display_lock_contentions(void) { return g_lock.contentions; }
@@ -563,9 +574,9 @@ int display_try_lock(void)
     return mutex_try_lock(&g_lock);
 }
 
-uint32_t display_lock_wait_of(int task_id)
+uint32_t display_lock_blocked_of(int task_id)
 {
-    return (task_id >= 0 && task_id < TASK_MAX) ? g_wait_by_task[task_id] : 0;
+    return (task_id >= 0 && task_id < TASK_MAX) ? g_blocked_by_task[task_id] : 0;
 }
 
 void display_enter_panic_mode(void) { g_panic_mode = 1; }

@@ -79,19 +79,24 @@ void display_unlock(void);
  * display_ready() reports whether display_init() ever completed. A panic
  * before the panel exists must draw nothing rather than write to an
  * unconfigured controller. */
-/* Lock timing. Cumulative milliseconds spent waiting for and holding the draw
- * lock, and the number of outermost acquisitions. Present because the mutex's
- * own counters say how OFTEN the lock is taken and never how long it is held,
- * and hold time is what a stalled renderer is made of. */
-uint32_t display_lock_wait_ms(void);
+/* Lock timing.
+ *
+ * "Blocked" is time from asking for the lock to holding it. It is NOT time the
+ * lock was busy: a task that cannot have it is descheduled, so the figure also
+ * covers being selected again afterwards, and measurement showed that is the
+ * larger part — 63 ms blocked against a 24 ms hold. The name matters, because
+ * "wait" would imply the panel was the bottleneck and send the next person to
+ * shorten holds, which was tried and changed nothing. */
+uint32_t display_lock_blocked_ms(void);
 uint32_t display_lock_hold_ms(void);
 uint32_t display_lock_takes(void);
 uint32_t display_lock_contentions(void);
 
-/* Milliseconds a specific task has spent waiting for the draw lock. Aggregate
- * wait says the system is blocked; this says on whom, which is what decides
- * which end to fix. */
-uint32_t display_lock_wait_of(int task_id);
+/* Milliseconds a specific task has spent blocked on the draw lock. The
+ * aggregate says the system is blocked; this says which task, which is what
+ * decided the fix — both the renderer and the applications were blocked most of
+ * the time, on a lock that was free 91% of it. */
+uint32_t display_lock_blocked_of(int task_id);
 
 void display_enter_panic_mode(void);
 int  display_ready(void);

@@ -353,17 +353,17 @@ static void task_report(void)
         uart_puts("  | drawskip=");
         uart_put_dec(vm_draw_skipped());
 
-        uart_puts("  | dwait disp/apps/touch/shell=");
-        uart_put_dec(display_lock_wait_of(id_disp));
+        uart_puts("  | dblk disp/apps/touch/shell=");
+        uart_put_dec(display_lock_blocked_of(id_disp));
         uart_putc('/');
-        uart_put_dec(display_lock_wait_of(id_apps));
+        uart_put_dec(display_lock_blocked_of(id_apps));
         uart_putc('/');
-        uart_put_dec(display_lock_wait_of(id_touch));
+        uart_put_dec(display_lock_blocked_of(id_touch));
         uart_putc('/');
-        uart_put_dec(display_lock_wait_of(id_shell));
+        uart_put_dec(display_lock_blocked_of(id_shell));
 
-        uart_puts("  | dlock w/h ms=");
-        uart_put_dec(display_lock_wait_ms());
+        uart_puts("  | dlock blk/hold ms=");
+        uart_put_dec(display_lock_blocked_ms());
         uart_putc('/');
         uart_put_dec(display_lock_hold_ms());
         uart_puts(" takes=");

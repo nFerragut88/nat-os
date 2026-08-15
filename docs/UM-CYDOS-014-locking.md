@@ -1,7 +1,7 @@
 # UM-CYDOS-014 — Locking Primitives
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.1 · 2026-08-15 · Status: **Complete, verified on hardware** — §9 added, priority inheritance
+Revision 1.2 · 2026-08-15 · Status: **Complete, verified on hardware** — §10 added, the same defect from the other side
 
 ---
 
@@ -20,6 +20,13 @@ scheduler.
 
 The blocking mutex needed three attempts. The second was correct and starved a
 task to a standstill; §5 is that measurement.
+
+Revision 1.2 adds §10. The batching fix in §5.2 held, and the same defect
+returned from the opposite direction once applications began drawing: they took
+the lock per primitive against a renderer holding it per frame. Measuring it
+required distinguishing **blocked** time from **lock-busy** time, which are not
+the same and differed here by a factor of three — the lock was free 88% of the
+time while two tasks were blocked on it.
 
 ## 2. Two primitives
 
@@ -211,6 +218,11 @@ headroom 449 words.
 | Throughput, pathological contention | ~2,060 iterations |
 | Throughput, 1-in-32 contention | ~50,143 iterations |
 | Image size | 16,256 B |
+| Draw lock held, applications running | 12% of wall clock |
+| Blocked per contention | 63 ms, against a 24 ms hold |
+| Effect of narrowing the hold 25% | none |
+| Frames/s, blocking → best-effort drawing | 3.0 → 9.9 |
+| Primitives skipped under best-effort | 3.4% |
 
 ## 8. What this does not establish
 
@@ -229,6 +241,17 @@ headroom 449 words.
   enforces how long one is held; a long one silently degrades scheduling.
 - **Untested against an ISR.** The mutex is documented as unusable from an
   interrupt handler and nothing enforces that.
+
+- **Best-effort drawing has no fairness of its own.** A skipped primitive is
+  simply lost; nothing retries it, and nothing guarantees an application gets
+  the panel eventually. At 3.4% that is invisible, but the policy contains no
+  bound on how unlucky one application can be.
+- **The skip ratio is measured under one workload.** Four small test programs
+  drawing into strips. An application doing sustained full-viewport blits would
+  contend far harder, and nothing here says what its skip rate would be.
+- **`try_lock` does not compose with batching.** An application wanting several
+  primitives drawn atomically has no way to ask for that, and would see them
+  skipped independently.
 
 ## 9. Priority inheritance
 
@@ -269,7 +292,117 @@ Inheritance would not have helped there at all. The fix for a lock contended at
 high frequency is to contend less often, and `display_lock()`/`display_unlock()`
 now exist so a caller can hold across a batch.
 
-## 10. References
+## 10. The same defect, from the other side
+
+*Added in revision 1.2, after the renderer was measured at 3 frames a second.*
+
+§5.2 established that a blocking mutex is the wrong instrument for a lock
+contended at high frequency, and fixed the raycaster by batching: one
+acquisition per frame instead of 240. That fix held. What it did not anticipate
+is that the **other** party would arrive later and reintroduce the same shape
+from the opposite direction.
+
+Applications draw through `vm.c`, which took the draw lock **per primitive** —
+exactly what the raycaster used to do to itself. The renderer holds the lock for
+a whole frame; the applications interrupt it constantly with short takes.
+
+### 10.1 Blocked time is not lock-busy time
+
+The mutex counted acquisitions and contentions from the beginning. Neither is a
+duration, and the question here was a duration, so `display.c` was instrumented
+to time both the hold and the interval between asking for the lock and getting
+it. Measured over 8.08 s with applications running:
+
+| quantity | value |
+|---|---|
+| lock held | 979 ms — **12% of wall clock** |
+| aggregate blocked | 13,051 ms — 1.6 tasks blocked at all times |
+| acquisitions | 100 |
+| contentions | 202 — two blocked waiters per acquisition |
+
+**The lock was free 88% of the time**, and thirteen seconds of blocking
+accumulated in eight seconds of wall clock. That is only possible because
+"blocked" is not "lock busy": a task that cannot have the lock is descheduled,
+and the interval includes being selected again afterwards. 13,051 ms across 202
+contentions is **63 ms per contention against a 24 ms hold** — most of it spent
+getting back onto the CPU.
+
+The accessors are named `display_lock_blocked_*` for this reason. Calling them
+`wait` would assert the panel was busy for 63 ms, which is false, and would
+point the next person at hold duration.
+
+### 10.2 The obvious fix, and why it failed
+
+Which is exactly where it pointed this one. Composition writes to a private
+buffer and touches no shared hardware, so the lock was narrowed to cover only
+the blit:
+
+| | before | after |
+|---|---|---|
+| lock held | 979 ms | **734 ms** (−25%, as designed) |
+| blocked | 13,051 ms | **13,085 ms** (unchanged) |
+| frames/s | 3.0 | 3.2 |
+
+The change did precisely what it was built to do and moved the outcome by
+nothing. **Hold duration was never the cost.** The narrowed hold was kept anyway,
+because a lock should cover the shared thing rather than the whole operation
+that happens to use it — but it is not an optimisation and is not recorded as
+one.
+
+### 10.3 Attribution decided the fix
+
+The aggregate says the system is blocked and cannot say on whom, and the two
+readings imply opposite remedies: making application draws non-blocking helps
+only if applications are waiting; shortening application holds helps only if the
+renderer is. Per-task attribution answered it:
+
+```
+blocked, display task    3,880 ms    65% of wall clock
+blocked, application host 5,894 ms    98% of wall clock
+```
+
+**Both, mutually** — contending not for the panel, which was idle, but for the
+CPU afterwards.
+
+### 10.4 Stop blocking
+
+`vp_fill`, `vp_text` and `SYS BLIT` now take the lock with `display_try_lock()`
+and skip the primitive when it is busy. A dropped fill costs one frame of one
+application; a blocked task costs the whole system a scheduling round-trip.
+
+| | before | after |
+|---|---|---|
+| frames/s | 3.0 | **9.9** |
+| blocked, applications | 5,894 ms | **0** |
+| contentions | 202 per 8 s | 10 total |
+| primitives skipped | — | 45 of 1,325 = **3.4%** |
+
+Within 11% of the 11.1 fps measured with every application killed, so nearly all
+the lost frame rate is recovered with the applications still running.
+
+Skips are counted rather than hidden. A best-effort policy that silently
+discards work is indistinguishable from a broken one, and the ratio is the only
+thing that distinguishes "reasonable" from "starving applications of the
+screen".
+
+### 10.5 What §5.2 got right, and what it left out
+
+§5.2's conclusion — *"a blocking mutex is the wrong instrument for a lock
+contended at high frequency"* — is correct and this is another instance of it.
+What it left implicit is **why frequency and not duration**, and that turns out
+to be the actionable half:
+
+> The cost of a contended blocking lock is dominated by the **number of blocking
+> events**, not the time the lock is held. Each one costs a scheduling
+> round-trip whether the lock was held for 24 ms or 24 µs. So the levers are
+> batching (fewer takes) or not blocking at all (`try_lock`) — and shortening
+> holds, the intuitive move, does nothing.
+
+§5.2 reached for the first lever. §10.4 reaches for the second, because the
+renderer and the applications cannot be batched together: they are different
+tasks with no common boundary to batch across.
+
+## 11. References
 
 - UM-CYDOS-010 §8 — the heap's task-context-only limitation, closed here
 - UM-CYDOS-013 §7 — console interleaving, closed here
