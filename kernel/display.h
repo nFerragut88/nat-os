@@ -1,0 +1,67 @@
+/* cyd-os — ILI9341 display driver for the CYD 2.8".
+ *
+ * 240x320, 16-bit colour, driven over SPI. Pin assignment is the board's, taken
+ * from the vendor project's TFT_eSPI setup:
+ *
+ *     SCLK 14   MOSI 13   MISO 12   CS 15   DC 2   BL 21 (active high)
+ *     RST is not wired to a GPIO — it follows the ESP32's own reset line, so
+ *     the panel can only be reset in software (0x01 SWRESET).
+ *
+ * NO FRAMEBUFFER. The ILI9341 holds the image in its own GRAM and drives the
+ * glass from it, so the host never needs a second copy. UM-CYDOS-010 §7.2
+ * measured what one would cost: 153,600 B, 92% of the heap. Everything here
+ * renders through a small line buffer instead — 480 B for a full-width span.
+ *
+ * SPI is bit-banged rather than driven by the SPI2 peripheral. That is a
+ * deliberate first step: hardware SPI needs DPORT clock-enable bits and GPIO
+ * matrix routing, and every mistake in either produces the same symptom as a
+ * wiring fault or a bad init sequence — a black screen. Bit-banging needs only
+ * the GPIO registers, so a failure here can only be the panel, the pins, or the
+ * commands. A full-screen fill costs about 150 ms, which is slow but entirely
+ * usable for a status display, and the peripheral can replace it later without
+ * anything above this file changing.
+ */
+
+#ifndef CYDOS_DISPLAY_H
+#define CYDOS_DISPLAY_H
+
+#include <stdint.h>
+
+#define DISP_W 240u
+#define DISP_H 320u
+
+/* RGB565, the panel's native format. */
+#define RGB(r, g, b) ((uint16_t)((((r) & 0xF8u) << 8) | (((g) & 0xFCu) << 3) | ((b) >> 3)))
+
+#define COLOR_BLACK   0x0000u
+#define COLOR_WHITE   0xFFFFu
+#define COLOR_RED     0xF800u
+#define COLOR_GREEN   0x07E0u
+#define COLOR_BLUE    0x001Fu
+#define COLOR_YELLOW  0xFFE0u
+#define COLOR_CYAN    0x07FFu
+#define COLOR_MAGENTA 0xF81Fu
+#define COLOR_GREY    0x8410u
+
+/* Brings up the panel: pins, software reset, init sequence, backlight on.
+ * Returns 0 on success. Must be called before anything else here. */
+int  display_init(void);
+
+void display_backlight(int on);
+
+/* Fills the whole panel. */
+void display_clear(uint16_t colour);
+
+/* Axis-aligned rectangle, clipped to the panel. */
+void display_fill_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint16_t colour);
+
+/* 6x8 text, one byte per glyph column plus a blank spacer. `scale` multiplies
+ * both axes. Characters outside 32..126 print as a blank. */
+void display_text(uint32_t x, uint32_t y, const char *s, uint16_t fg, uint16_t bg,
+                  uint32_t scale);
+
+/* Bytes pushed to the panel since init — the cheapest measure of whether the
+ * driver is doing anything at all when nothing appears on screen. */
+uint32_t display_bytes_written(void);
+
+#endif /* CYDOS_DISPLAY_H */

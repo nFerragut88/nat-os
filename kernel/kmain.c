@@ -18,6 +18,7 @@
 #include "heap.h"
 #include "app.h"
 #include "console.h"
+#include "display.h"
 #include "critical.h"
 #include "mutex.h"
 #include "shell.h"
@@ -40,7 +41,7 @@ extern char _vecbase;
 static volatile uint32_t work_a_count, work_a_bad;
 static volatile uint32_t work_b_count, work_b_bad;
 
-static int id_report, id_a, id_b, id_vm, id_apps, id_shell, id_idle;
+static int id_report, id_a, id_b, id_vm, id_apps, id_shell, id_idle, id_disp;
 
 /* Defined below with the other self-tests, but called from the reporter, which
  * is the only context where a running tick makes it meaningful. */
@@ -776,6 +777,82 @@ static void m6_critical_test(void)
     uart_puts("\n");
 }
 
+
+/* ---- status display -----------------------------------------------------
+ * Draws what the kernel knows about itself onto the panel. Everything is drawn
+ * through a 480-byte span buffer; there is no framebuffer anywhere in the
+ * system (UM-CYDOS-010 §7.2).
+ *
+ * Redrawing only the value fields rather than the whole screen keeps each
+ * update to a few hundred spans instead of 76,800 pixels, which matters when
+ * the SPI is bit-banged.
+ */
+static void draw_num(uint32_t x, uint32_t y, uint32_t v, uint16_t fg)
+{
+    char buf[12];
+    int  i = 0;
+    if (v == 0u) {
+        buf[i++] = '0';
+    }
+    while (v > 0u && i < 11) {
+        buf[i++] = (char)('0' + (v % 10u));
+        v /= 10u;
+    }
+    char out[12];
+    int  n = 0;
+    while (i-- > 0) {
+        out[n++] = buf[i];
+    }
+    while (n < 10) {
+        out[n++] = ' ';         /* pad, so a shrinking number leaves no residue */
+    }
+    out[n] = 0;
+    display_text(x, y, out, fg, COLOR_BLACK, 1);
+}
+
+static void task_display(void)
+{
+    display_fill_rect(0, 0, DISP_W, 22, COLOR_BLUE);
+    display_text(6, 7, "cyd-os", COLOR_WHITE, COLOR_BLUE, 2);
+
+    display_text(6,  40, "ticks",  COLOR_GREY, COLOR_BLACK, 1);
+    display_text(6,  56, "tasks",  COLOR_GREY, COLOR_BLACK, 1);
+    display_text(6,  72, "apps",   COLOR_GREY, COLOR_BLACK, 1);
+    display_text(6,  88, "heap",   COLOR_GREY, COLOR_BLACK, 1);
+    display_text(6, 104, "bytecode", COLOR_GREY, COLOR_BLACK, 1);
+    display_text(6, 120, "locks",  COLOR_GREY, COLOR_BLACK, 1);
+
+    /* A strip of the panel's colour primaries. If these are wrong, the pixel
+     * format or the byte order is wrong, and that is worth seeing immediately
+     * rather than inferring from a garbled photograph later. */
+    const uint16_t bars[] = { COLOR_RED, COLOR_GREEN, COLOR_BLUE, COLOR_YELLOW,
+                              COLOR_CYAN, COLOR_MAGENTA, COLOR_WHITE, COLOR_GREY };
+    for (uint32_t i = 0; i < 8; i++) {
+        display_fill_rect(i * 30u, DISP_H - 40u, 30u, 40u, bars[i]);
+    }
+
+    uint32_t frame = 0;
+    for (;;) {
+        draw_num(90,  40, timer_ticks(),        COLOR_WHITE);
+        draw_num(90,  56, (uint32_t)7,          COLOR_WHITE);
+        draw_num(90,  72, (uint32_t)app_live_count(), COLOR_WHITE);
+        draw_num(90,  88, heap_free_bytes(),    COLOR_WHITE);
+        draw_num(90, 104, g_vm.executed,        COLOR_GREEN);
+        draw_num(90, 120, g_shared_lock.acquisitions, COLOR_CYAN);
+
+        /* A marker that moves every frame, so a frozen display is obvious even
+         * when every number happens to look plausible. */
+        display_fill_rect((frame % 12u) * 20u, 150u, 20u, 6u, COLOR_YELLOW);
+        display_fill_rect(((frame + 11u) % 12u) * 20u, 150u, 20u, 6u, COLOR_BLACK);
+        frame++;
+
+        uint32_t until = timer_ticks() + 25u;
+        while (timer_ticks() < until) {
+            task_yield();
+        }
+    }
+}
+
 /* Hosts every application. One native task drives the third scheduling level;
  * the applications inside it are preempted by their quantum, and this task is
  * itself preempted by the timer. */
@@ -819,6 +896,12 @@ void kmain(void)
     console_init();
     mutex_init(&g_shared_lock);
 
+    uart_puts("  display      : ");
+    display_init();
+    uart_puts("init ok, bytes=");
+    uart_put_dec(display_bytes_written());
+    uart_puts("\n");
+
     m3_selftest();
     m4_selftest();
     m5_selftest();
@@ -861,6 +944,7 @@ void kmain(void)
     /* Created last and registered as idle, so it is outside the round robin and
      * chosen only when every other task is blocked. Without it, a moment where
      * all tasks are waiting has nothing to switch to. */
+    id_disp   = task_create("display", task_display);
     id_idle   = task_create("idle", task_idle);
     task_set_idle(id_idle);
     uart_puts("  tasks        : report=");
@@ -875,6 +959,8 @@ void kmain(void)
     uart_put_dec((unsigned int)id_apps);
     uart_puts(" shell=");
     uart_put_dec((unsigned int)id_shell);
+    uart_puts(" disp=");
+    uart_put_dec((unsigned int)id_disp);
     uart_puts("\n");
 
     uart_puts("  tick every   : ");
