@@ -1,7 +1,7 @@
 # UM-NATOS-008 — Milestone 1 Verification Report
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.0 · 2026-08-14 · Status: **PASS** — all exit criteria met on hardware
+Revision 1.1 · 2026-08-15 · Status: **PASS** — §9 added, a second writer to the comparator
 
 ---
 
@@ -52,6 +52,11 @@ CCOMPARE has no auto-reload. The handler must recompute and rewrite the next
 deadline, and **that write is also the interrupt acknowledgement** — there is no
 separate acknowledge step. Forgetting it produces immediate re-entry rather
 than a missed tick, which is a loud failure and therefore an acceptable one.
+
+**Revision 1.1 note.** This section is correct and incomplete. It reasons about
+the handler forgetting to rewrite the deadline, and concludes the failure would
+be loud. It does not consider a **second writer** to the same register, which
+arrived with the scheduler two milestones later and failed silently. §8.
 
 ### 2.4 Panic handler — added beyond the milestone
 
@@ -235,11 +240,118 @@ changes. It also explains the apparent slowness of the M0 spin-loop heartbeat.
 | `.data` | 4 B | 4 B |
 | `.bss` | 4 B | 544 B (panic stack) |
 | Image | 1,216 B | 3,424 B |
+| Comparator overrun before the fix | 14,630,119 cycles = 18 tick periods |
+| Longest observed tick stall | 183 ms |
+| Milestones the defect survived | 3 |
+| Self-tests that noticed | 1 of 11 |
 
 Growth of ~2.2 KB for the vector table, interrupt entry/exit, timer driver and
 panic handler.
 
-## 8. References
+## 8. A second writer to the comparator
+
+*Added in revision 1.1, after the tick was found stalling for 183 ms at a time.*
+
+§2.3 records that CCOMPARE has no auto-reload, so the handler recomputes the
+deadline and that write doubles as the acknowledgement. It analyses one failure —
+the handler forgetting to write — and correctly calls it loud.
+
+The failure that actually occurred needs two parties, and M1 had only one.
+
+### 8.1 Two writers, one of them keeping state
+
+`task_yield()` (UM-NATOS-009 §11) ends a slice early by pulling CCOMPARE1 back
+to `ccount + 64`. It writes the hardware register directly and does not tell
+`timer.c`, which keeps its own `g_next` shadow of what the deadline should be.
+
+So the handler fires 64 cycles after a yield, sees no reason to think anything
+unusual happened, and executes:
+
+```c
+g_next += g_interval;
+```
+
+adding a **whole interval** to a deadline that was already a whole interval
+away. Each yield pushes the tick one interval further into the future. With
+enough yields the comparator runs away from the clock entirely.
+
+Measured at the moment of failure:
+
+```
+ccount     0x04672eab
+ccompare1  0x05433b92     14,630,119 cycles ahead
+                          = 18 tick periods = 183 ms
+```
+
+### 8.2 The guard existed and faced the wrong way
+
+The handler already had a correction:
+
+```c
+if ((int32_t)(g_next - xt_ccount()) <= 0) {   /* deadline in the PAST */
+    g_next = xt_ccount() + g_interval;
+    g_late++;
+}
+```
+
+That is the direction anyone reasons about: the handler was delayed, the
+deadline slipped behind, catch up rather than storm. It is right, it was
+exercised, and `g_late` counted it.
+
+Nothing guarded the other direction, because a deadline arriving *too early*
+has no obvious cause — until a second writer exists. The fix bounds it both
+ways:
+
+```c
+int32_t ahead = (int32_t)(g_next - xt_ccount());
+if (ahead <= 0 || ahead > (int32_t)g_interval) { ... }
+```
+
+### 8.3 Why it stayed hidden for three milestones
+
+The rate is self-correcting on average. A yield defers the tick; the next
+handler still advances `g_next` by one interval; nothing accumulates unless
+yields outpace ticks. For most of this project they did not.
+
+Shortening the display task's sleep from 8 ticks to 2 multiplied the yield rate
+until they did. That commit is where the symptom appears in a bisect, and it did
+not introduce the defect — it removed the margin that had been concealing it.
+
+**Nothing else showed a symptom.** Sleeps ran long, timeouts were loose, and
+frame-rate figures computed as frames-per-tick were taken against a clock that
+intermittently stopped. Only the M6 critical-section self-test noticed, because
+it is the one test that asserts something about the tick *resuming* rather than
+about work getting done.
+
+### 8.4 The standing rule was followed
+
+UM-NATOS-009 §11 established: *a routine adjusting a scheduler deadline must
+only ever move it earlier.* `task_yield()` obeys that rule exactly, and this
+defect happened anyway.
+
+The rule constrains the **writer**. The defect was in the other party's
+**bookkeeping**: `timer.c` maintained a shadow of a register it did not
+exclusively own, and a shadow is only as good as its exclusivity. Moving the
+deadline earlier is safe for the deadline and quietly invalidates every
+assumption anyone else has cached about it.
+
+> A shared hardware register with a software shadow has exactly one safe shape:
+> either one writer, or every writer maintains the shadow. Two writers and one
+> shadow is a defect waiting for enough traffic to surface.
+
+### 8.5 Recovered
+
+With the deadline bounded in both directions:
+
+```
+[6a] critical : PASS  entered at 31, held at 31 across 2 periods, resumed at 62
+frames/s      12.4 -> 16.0
+```
+
+The frame rate improved because `task_sleep(2)` had been waiting on ticks that
+were not arriving. Eleven self-tests pass, zero fail.
+
+## 9. References
 
 - UM-NATOS-003 §6 — why the context save is short under call0
 - UM-NATOS-004 — memory map; `.vectors` now leads the IRAM region

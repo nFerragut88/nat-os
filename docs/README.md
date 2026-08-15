@@ -37,7 +37,7 @@ true" is the difference between a working boot and a silent reboot.
 | [UM-NATOS-005](UM-NATOS-005-build-pipeline.md) | Build and Flash Pipeline | Toolchain, flags and why each one, reproducing a build, why not PlatformIO |
 | [UM-NATOS-006](UM-NATOS-006-m0-verification.md) | Milestone 0 Verification Report | Test method, captured output, pass/fail per assertion |
 | [UM-NATOS-007](UM-NATOS-007-roadmap.md) | Development Roadmap M1–M5 | Each milestone, its risks, and its exit criteria |
-| [UM-NATOS-008](UM-NATOS-008-m1-verification.md) | Milestone 1 Verification Report | Vectors, timer source and level choice, interrupt entry/exit, measured results |
+| [UM-NATOS-008](UM-NATOS-008-m1-verification.md) | Milestone 1 Verification Report | Vectors, timer source and level choice, interrupt entry/exit, measured results, and a second writer to the comparator that stalled the tick for 183 ms |
 | [UM-NATOS-009](UM-NATOS-009-m2-verification.md) | Milestone 2 Verification Report | Task model, context frame, scheduler, the zero-overhead `LOOP` defect, watchdog correction |
 | [UM-NATOS-010](UM-NATOS-010-m3-verification.md) | Milestone 3 Verification Report | Heap allocator, arena model and bounds checking, and the measured DRAM budget |
 | [UM-NATOS-011](UM-NATOS-011-flash-cache.md) | Flash Cache and Read-Only Data Placement | Mapping `.rodata` into flash, the 0x20 page congruence, and the cache-off hazard |
@@ -104,6 +104,15 @@ Reproducing a build: **005** alone is sufficient.
 > handler** — drivers and the VM interpreter included, not just the scheduler
 > where it was found. `_handler_level3` now clears it; any future handler must
 > do the same. UM-NATOS-009 §6.
+
+> **Standing rule for shared registers — a hardware register with a software
+> shadow has one safe shape: either one writer, or every writer maintains the
+> shadow.** `timer.c` kept `g_next` as its idea of the comparator deadline while
+> `task_yield()` wrote CCOMPARE1 directly. The handler then added a whole
+> interval to a deadline that was only 64 cycles old, so every yield pushed the
+> tick further out — 18 tick periods, 183 ms, before anything noticed. The rule
+> below was obeyed exactly and did not prevent it, because it constrains the
+> WRITER and the defect was in the other party's bookkeeping. UM-NATOS-008 §8.
 
 > **Standing rule for the scheduler — a yield must never defer the clock it
 > depends on.** `task_yield()` originally wrote `CCOMPARE1 = ccount + 64`
