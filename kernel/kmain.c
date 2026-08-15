@@ -917,7 +917,7 @@ static void task_touch(void)
 {
     touch_state_t t;
     uint32_t traced = 0;
-    uint32_t last_x = 0;
+    uint32_t last_x = 0, last_yy = 0;
     int had = 0;
 
     for (;;) {
@@ -975,20 +975,24 @@ static void task_touch(void)
                 console_unlock();
             }
 
-            /* Draw a dot where the touch was mapped, and deliberately do NOT
-             * erase it. A trail following a dragged finger is unambiguous:
-             * a wrong axis order draws it at right angles to the drag, and a
-             * flip draws it mirrored. A single dot could be coincidence; a
-             * track cannot. Calibration is judged this way on every
-             * touchscreen for the same reason.
+            /* A single cursor, erased before it moves. The persistent trail
+             * this replaces was a calibration aid: a track following a dragged
+             * finger distinguishes a swapped axis from a flipped one, which a
+             * single dot cannot. Both axes are now measured, so the trail has
+             * done its job and the scribbling over everything else is no longer
+             * worth paying for.
              *
-             * The dots overwrite whatever they land on. That is acceptable for
-             * a calibration pass and is why this is not left enabled. */
-            display_fill_rect(t.x, t.y, 3u, 3u, COLOR_MAGENTA);
+             * Erasing to black leaves a dark square where the cursor has been,
+             * because nothing records what was underneath. Restoring that needs
+             * either a read-back the panel does not reliably support, or damage
+             * tracking the display layer does not have. */
+            if (had) {
+                display_fill_rect(last_x, last_yy, 4u, 4u, COLOR_BLACK);
+            }
+            display_fill_rect(t.x, t.y, 4u, 4u, COLOR_MAGENTA);
+            last_yy = t.y;
             last_x = t.x;
             had = 1;
-            (void)last_x;
-            (void)had;
         }
 
         /* Polled at roughly 30 Hz. Fast enough to track a finger, slow enough
