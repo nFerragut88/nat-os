@@ -1,7 +1,7 @@
 # cyd-os — Engineering Documentation
 
 **Used Medias LLC — Embedded Systems Division**
-Document set: `UM-CYDOS-001` … `UM-CYDOS-015`
+Document set: `UM-CYDOS-001` … `UM-CYDOS-016`
 Project: cyd-os — a from-scratch operating system for the ESP32 "Cheap Yellow Display"
 Last revised: 2026-08-14
 
@@ -38,6 +38,7 @@ true" is the difference between a working boot and a silent reboot.
 | [UM-CYDOS-013](UM-CYDOS-013-m5-verification.md) | Milestone 5 Verification Report | Application table and lifecycle, three-level scheduling, the shell, and the escape attempt |
 | [UM-CYDOS-014](UM-CYDOS-014-locking.md) | Locking Primitives | Critical sections vs blocking mutex, task blocking and idle, and a measured starvation defect |
 | [UM-CYDOS-015](UM-CYDOS-015-display.md) | Display Driver | ILI9341 over bit-banged SPI, span rendering with no framebuffer, and measured throughput |
+| [UM-CYDOS-016](UM-CYDOS-016-display-syscalls.md) | Display Syscalls, and a Total System Freeze | Per-application viewports, pointer discipline, measured containment, and a yield that stopped the clock |
 
 ## Reading order
 
@@ -66,6 +67,7 @@ Reproducing a build: **005** alone is sufficient.
 | Locking | **Complete** — critical sections and a blocking mutex; heap and console both arbitrated, UM-CYDOS-014 |
 | Task blocking | **Live** — `TASK_BLOCKED` plus an idle task using `WAITI`, UM-CYDOS-014 §3 |
 | Display | **Working on hardware** — ILI9341, no framebuffer, 387 ms full-screen fill, colour order confirmed, UM-CYDOS-015 |
+| Application graphics | **Live** — `FILL`/`TEXT`/`DIMS` confined to per-application viewports; 0 escapes across 136 audited fills, UM-CYDOS-016 §5 |
 | DRAM budget | **Measured** — 158,000 B allocatable today (167,680 before `TASK_MAX` rose to 8); a full framebuffer is unnecessary, UM-CYDOS-010 §7.2 |
 | Flash cache | **Enabled** — `.rodata` mapped from flash, UM-CYDOS-011 |
 | Version control | **Initialised 2026-08-14** |
@@ -82,3 +84,11 @@ Reproducing a build: **005** alone is sufficient.
 > handler** — drivers and the VM interpreter included, not just the scheduler
 > where it was found. `_handler_level3` now clears it; any future handler must
 > do the same. UM-CYDOS-009 §6.
+
+> **Standing rule for the scheduler — a yield must never defer the clock it
+> depends on.** `task_yield()` originally wrote `CCOMPARE1 = ccount + 64`
+> unconditionally, so any loop yielding faster than 64 cycles pushed the
+> deadline ahead of `CCOUNT` forever, the timer interrupt stopped firing, and
+> the whole kernel froze — the tick is what drives every context switch. Any
+> routine adjusting a scheduler deadline must only ever move it **earlier**.
+> UM-CYDOS-016 §3.
