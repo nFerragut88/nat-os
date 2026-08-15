@@ -1,0 +1,17 @@
+; Application B — publishes squares. Four instructions per iteration, so it
+; advances at a visibly different rate from A under the same quantum. Two
+; applications sharing a core should not advance in lockstep, and the differing
+; rates make that observable rather than assumed.
+start:
+        ldi     r1, @square
+        ldi     r2, 0
+        ldi     r9, 1
+loop:
+        add     r2, r2, r9
+        mul     r4, r2, r2
+        stw     r4, r1, 0
+        jmp     loop
+
+        .align  4
+square:
+        .word   0

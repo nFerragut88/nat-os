@@ -16,7 +16,7 @@
 
 #include <stdint.h>
 
-#define TASK_MAX          4
+#define TASK_MAX          8
 #define TASK_STACK_WORDS  512          /* 2 KB per task */
 #define TASK_NAME_MAX     12
 
