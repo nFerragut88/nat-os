@@ -263,6 +263,14 @@ static void task_report(void)
         uart_put_dec(g_shared_lock.errors);
         uart_puts(" skew=");
         uart_put_dec(bumps > shared ? bumps - shared : shared - bumps);
+        uart_puts("  | vp calls=");
+        uart_put_dec(vm_viewport_calls());
+        uart_puts(" escapes=");
+        uart_put_dec(vm_viewport_escapes());
+        uart_puts(" maxy=");
+        uart_put_dec(vm_viewport_max_y());
+        uart_puts("/");
+        uart_put_dec(DISP_H);
         uart_puts("  states=");
         for (int i = 0; i < 7; i++) {
             uart_put_dec((unsigned int)task_state_of(i));

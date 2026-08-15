@@ -162,6 +162,22 @@ static int store_u8(vm_t *vm, uint32_t off, uint32_t v)
  * the viewport width rejects it, whereas computing x + w first would wrap and
  * admit it.
  */
+/* Containment, measured rather than observed.
+ *
+ * Whether a hostile program's drawing stays inside its viewport is visible on
+ * the panel, but "it looks right" is a judgement and this is the claim the
+ * whole design turns on. These counters make it a number: every rectangle that
+ * actually reaches the driver is re-checked against the viewport it came from,
+ * and g_vp_escapes counts any that would fall outside. It must stay at zero no
+ * matter what an application asks for. */
+static uint32_t g_vp_escapes;
+static uint32_t g_vp_max_y;     /* highest absolute row any app has painted */
+static uint32_t g_vp_calls;
+
+uint32_t vm_viewport_escapes(void) { return g_vp_escapes; }
+uint32_t vm_viewport_max_y(void)   { return g_vp_max_y; }
+uint32_t vm_viewport_calls(void)   { return g_vp_calls; }
+
 static void vp_fill(vm_t *vm, uint32_t x, uint32_t y, uint32_t w, uint32_t h,
                     uint16_t colour)
 {
@@ -173,7 +189,22 @@ static void vp_fill(vm_t *vm, uint32_t x, uint32_t y, uint32_t w, uint32_t h,
     if (w == 0u || h == 0u) {
         return;
     }
-    display_fill_rect(vm->vx + x, vm->vy + y, w, h, colour);
+    /* Re-derive the absolute rectangle and confirm it lies wholly inside the
+     * viewport. This duplicates the clipping above on purpose: the check that
+     * matters is on what actually reaches the panel, not on what the clipping
+     * intended. */
+    uint32_t ax = vm->vx + x, ay = vm->vy + y;
+    if (ax < vm->vx || ay < vm->vy ||
+        ax + w > vm->vx + vm->vw || ay + h > vm->vy + vm->vh) {
+        g_vp_escapes++;
+        return;                         /* refuse it as well as count it */
+    }
+    g_vp_calls++;
+    if (ay + h > g_vp_max_y) {
+        g_vp_max_y = ay + h;
+    }
+
+    display_fill_rect(ax, ay, w, h, colour);
 }
 
 #define VM_STR_MAX 48

@@ -191,4 +191,11 @@ const char *vm_fault_name(int fault);
  * arena_contains() rather than assumed to agree with it. */
 int vm_in_bounds(const vm_t *vm, uint32_t off, uint32_t len);
 
+/* Viewport containment, as numbers rather than as something to look at.
+ * escapes must be 0 for any program, however hostile; max_y is the lowest row
+ * any application has actually painted and must never reach the panel bottom. */
+uint32_t vm_viewport_escapes(void);
+uint32_t vm_viewport_max_y(void);
+uint32_t vm_viewport_calls(void);
+
 #endif /* CYDOS_VM_H */
