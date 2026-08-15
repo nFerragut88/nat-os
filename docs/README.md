@@ -65,7 +65,7 @@ Reproducing a build: **005** alone is sufficient.
 | Roadmap M0–M5 | **Complete.** Six native tasks, three scheduling levels, a shell, and an application deliberately written to escape its arena that could not |
 | Locking | **Complete** — critical sections and a blocking mutex; heap and console both arbitrated, UM-CYDOS-014 |
 | Task blocking | **Live** — `TASK_BLOCKED` plus an idle task using `WAITI`, UM-CYDOS-014 §3 |
-| Display | **Working on hardware** — ILI9341, no framebuffer, 387 ms full-screen fill, UM-CYDOS-015 |
+| Display | **Working on hardware** — ILI9341, no framebuffer, 387 ms full-screen fill, colour order confirmed, UM-CYDOS-015 |
 | DRAM budget | **Measured** — 158,000 B allocatable today (167,680 before `TASK_MAX` rose to 8); a full framebuffer is unnecessary, UM-CYDOS-010 §7.2 |
 | Flash cache | **Enabled** — `.rodata` mapped from flash, UM-CYDOS-011 |
 | Version control | **Initialised 2026-08-14** |
