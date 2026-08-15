@@ -900,6 +900,9 @@ void kmain(void)
     display_init();
     uart_puts("init ok, bytes=");
     uart_put_dec(display_bytes_written());
+    uart_puts(" fullscreen=");
+    uart_put_dec(display_fill_cycles() / 80000u);
+    uart_puts(" ms");
     uart_puts("\n");
 
     m3_selftest();

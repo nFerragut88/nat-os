@@ -1,7 +1,7 @@
 # cyd-os — Engineering Documentation
 
 **Used Medias LLC — Embedded Systems Division**
-Document set: `UM-CYDOS-001` … `UM-CYDOS-014`
+Document set: `UM-CYDOS-001` … `UM-CYDOS-015`
 Project: cyd-os — a from-scratch operating system for the ESP32 "Cheap Yellow Display"
 Last revised: 2026-08-14
 
@@ -37,6 +37,7 @@ true" is the difference between a working boot and a silent reboot.
 | [UM-CYDOS-012](UM-CYDOS-012-m4-verification.md) | Milestone 4 Verification Report | Register-based bytecode VM, the ISA, the assembler, and containment of malformed programs |
 | [UM-CYDOS-013](UM-CYDOS-013-m5-verification.md) | Milestone 5 Verification Report | Application table and lifecycle, three-level scheduling, the shell, and the escape attempt |
 | [UM-CYDOS-014](UM-CYDOS-014-locking.md) | Locking Primitives | Critical sections vs blocking mutex, task blocking and idle, and a measured starvation defect |
+| [UM-CYDOS-015](UM-CYDOS-015-display.md) | Display Driver | ILI9341 over bit-banged SPI, span rendering with no framebuffer, and measured throughput |
 
 ## Reading order
 
@@ -64,7 +65,8 @@ Reproducing a build: **005** alone is sufficient.
 | Roadmap M0–M5 | **Complete.** Six native tasks, three scheduling levels, a shell, and an application deliberately written to escape its arena that could not |
 | Locking | **Complete** — critical sections and a blocking mutex; heap and console both arbitrated, UM-CYDOS-014 |
 | Task blocking | **Live** — `TASK_BLOCKED` plus an idle task using `WAITI`, UM-CYDOS-014 §3 |
-| DRAM budget | **Measured** — 167,680 B allocatable; a full framebuffer is unnecessary, UM-CYDOS-010 §7.2 |
+| Display | **Working on hardware** — ILI9341, no framebuffer, 387 ms full-screen fill, UM-CYDOS-015 |
+| DRAM budget | **Measured** — 158,000 B allocatable today (167,680 before `TASK_MAX` rose to 8); a full framebuffer is unnecessary, UM-CYDOS-010 §7.2 |
 | Flash cache | **Enabled** — `.rodata` mapped from flash, UM-CYDOS-011 |
 | Version control | **Initialised 2026-08-14** |
 | JTAG debug probe | Ordered, not in hand |
