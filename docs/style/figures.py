@@ -287,6 +287,190 @@ def layer_stack():
     return _wrap(580, y + 10, b)
 
 
+def read_shift():
+    """The one-bit read shift, drawn as bit cells against the sample points."""
+    b = _DEFS
+    want = 0x684016
+    got = 0x34200B
+    cw = 20.0
+    x0 = 96.0
+
+    def bits(v):
+        return [(v >> (23 - i)) & 1 for i in range(24)]
+
+    wb, gb = bits(want), bits(got)
+
+    b += (f'<text x="24" y="26" {_FONT} font-size="10" font-weight="600" '
+          f'fill="{INK}">MISO, RDID (0x9F), 24 bits, MSB first</text>')
+
+    rows = [
+        (48, "chip drives", wb, None),
+        (96, "we sampled", gb, 0),
+    ]
+    for y, label, vals, spurious in rows:
+        b += (f'<text x="24" y="{y + 18}" {_FONT} font-size="9.5" '
+              f'fill="{SOFT}">{label}</text>')
+        for i, v in enumerate(vals):
+            hot = spurious is not None and i == spurious
+            fill = OURS if hot else (PANEL if v == 0 else BORROWED)
+            b += (f'<rect x="{x0 + i * cw}" y="{y}" width="{cw}" height="26" '
+                  f'fill="{fill}" stroke="{ACCENT if hot else RULE}" '
+                  f'stroke-width="{1.6 if hot else 1}"/>')
+            b += (f'<text x="{x0 + i * cw + cw / 2}" y="{y + 18}" {_MONO} '
+                  f'font-size="10" fill="{ACCENT if hot else INK}" '
+                  f'text-anchor="middle">{v}</text>')
+        b += (f'<text x="{x0 + 24 * cw + 10}" y="{y + 18}" {_MONO} '
+              f'font-size="10" fill="{INK}">0x{want if spurious is None else got:06X}</text>')
+
+    # The alignment marker: bit i of the true value lands in cell i+1.
+    for i in (0, 8, 16, 23):
+        b += (f'<line x1="{x0 + i * cw + cw / 2}" y1="76" '
+              f'x2="{x0 + (i + 1) * cw + cw / 2}" y2="96" '
+              f'stroke="{ACCENT_LT}" stroke-width="1" stroke-dasharray="2 2"/>')
+
+    b += (f'<rect x="{x0}" y="96" width="{cw}" height="26" fill="none" '
+          f'stroke="{ACCENT}" stroke-width="1.6"/>')
+    b += (f'<text x="24" y="150" {_FONT} font-size="9" fill="{SOFT}">'
+          f'The first sample is taken before the chip has driven anything, so a '
+          f'zero enters at the top and every real bit</text>'
+          f'<text x="24" y="164" {_FONT} font-size="9" fill="{SOFT}">'
+          f'moves down one place. The last bit falls off the end. Received = true '
+          f'&#62;&#62; 1, exactly, on every read.</text>'
+          f'<text x="24" y="184" {_FONT} font-size="9" fill="{SOFT}">'
+          f'Cause: SPI1 was left at the bootloader&#8217;s cache-read divider. Any '
+          f'explicit divider samples correctly, at every edge setting.</text>')
+    return _wrap(600, 200, b)
+
+
+def flash_layout():
+    """Where the record sits, and why a wrong address here cannot brick a boot."""
+    b = _DEFS
+    x0, w0 = 30.0, 520.0
+    total = 4 * 1024 * 1024
+
+    segs = [
+        ("bootloader", 0x1000, 0x7000, BORROWED),
+        ("part. table", 0x8000, 0x8000, BORROWED),
+        ("kernel image", 0x10000, 0x1F0000, PANEL),
+        ("record", 0x200000, 0x1000, OURS),
+    ]
+    for label, off, size, fill in segs:
+        x = x0 + (off / total) * w0
+        w = max((size / total) * w0, 3.0)
+        b += (f'<rect x="{x}" y="34" width="{w}" height="34" rx="2" fill="{fill}" '
+              f'stroke="{ACCENT if fill == OURS else RULE}" '
+              f'stroke-width="{1.6 if fill == OURS else 1}"/>')
+
+    b += (f'<rect x="{x0}" y="34" width="{w0}" height="34" fill="none" '
+          f'stroke="{RULE}" stroke-width="1"/>')
+
+    labels = [
+        (0x1000, "bootloader", "0x1000"),
+        (0x10000, "kernel image", "0x10000"),
+        (0x200000, "record, 4 KB", "0x200000"),
+    ]
+    ty = 92
+    for off, label, addr in labels:
+        x = x0 + (off / total) * w0
+        b += (f'<line x1="{x}" y1="68" x2="{x}" y2="{ty - 10}" '
+              f'stroke="{FAINT}" stroke-width="1"/>')
+        b += (f'<text x="{x}" y="{ty + 2}" {_FONT} font-size="9.5" '
+              f'fill="{INK}" text-anchor="middle">{label}</text>')
+        b += (f'<text x="{x}" y="{ty + 15}" {_MONO} font-size="8.5" '
+              f'fill="{SOFT}" text-anchor="middle">{addr}</text>')
+        ty += 34
+
+    b += (f'<text x="24" y="18" {_FONT} font-size="10" font-weight="600" '
+          f'fill="{INK}">4 MB flash</text>')
+    b += (f'<text x="24" y="198" {_FONT} font-size="9" fill="{SOFT}">'
+          f'The record sits 2 MB in, past everything the boot depends on. Erase '
+          f'and write refuse any address below it, so a</text>'
+          f'<text x="24" y="212" {_FONT} font-size="9" fill="{SOFT}">'
+          f'wrong address inside the driver costs the record and nothing else &#8212; '
+          f'every failure stays recoverable over serial.</text>')
+    return _wrap(600, 224, b)
+
+
+def failure_modes():
+    """Three ways the kernel can stop, and what each one should do about it."""
+    b = _DEFS
+    rows = [
+        ("hang", "kernel stops making progress",
+         "watchdog resets", "recover", "unexplained — nothing to read"),
+        ("fault", "illegal instruction, bad pointer",
+         "panic, halt, disarm wdt", "preserve", "explained — the report IS the value"),
+        ("guard", "stack wrote past its base",
+         "panic, halt, name the task", "preserve", "explained, and bounded at the switch"),
+    ]
+    y = 34
+    b += (f'<text x="24" y="20" {_FONT} font-size="10" font-weight="600" '
+          f'fill="{INK}">trigger</text>'
+          f'<text x="104" y="20" {_FONT} font-size="10" font-weight="600" '
+          f'fill="{INK}">condition</text>'
+          f'<text x="286" y="20" {_FONT} font-size="10" font-weight="600" '
+          f'fill="{INK}">response</text>'
+          f'<text x="446" y="20" {_FONT} font-size="10" font-weight="600" '
+          f'fill="{INK}">goal</text>')
+    for cmd, cond, resp, goal, why in rows:
+        keep = goal == "preserve"
+        b += _box(24, y, 68, 26, OURS, ACCENT, cmd, mono=True)
+        b += (f'<text x="104" y="{y + 17}" {_FONT} font-size="9.5" '
+              f'fill="{SOFT}">{cond}</text>')
+        b += (f'<text x="286" y="{y + 17}" {_FONT} font-size="9.5" '
+              f'fill="{INK}">{resp}</text>')
+        b += _box(446, y, 74, 26, PANEL if keep else BORROWED,
+                  ACCENT if keep else RULE, goal)
+        b += (f'<text x="104" y="{y + 31}" {_FONT} font-size="8.5" '
+              f'fill="{FAINT}">{why}</text>')
+        y += 50
+    b += (f'<text x="24" y="{y + 6}" {_FONT} font-size="9" fill="{SOFT}">'
+          f'The distinction is whether the kernel can say WHY it stopped. It can '
+          f'not explain a hang, so recovery is the only</text>'
+          f'<text x="24" y="{y + 20}" {_FONT} font-size="9" fill="{SOFT}">'
+          f'useful response. It can explain the other two, and resetting would '
+          f'destroy the explanation — which it did, until measured.</text>')
+    return _wrap(600, y + 34, b)
+
+
+def stack_margins():
+    """Measured headroom per task. Previously three of eight, and unquantified."""
+    b = _DEFS
+    tasks = [
+        ("report", 1844), ("worker-a", 1796), ("worker-b", 1796),
+        ("vm-host", 1732), ("app-host", 1604), ("shell", 1828),
+        ("display", 1668), ("touch", 1716),
+    ]
+    total = 2048.0
+    x0, w0 = 108.0, 380.0
+    y = 30
+    b += (f'<text x="24" y="20" {_FONT} font-size="10" font-weight="600" '
+          f'fill="{INK}">task</text>'
+          f'<text x="{x0}" y="20" {_FONT} font-size="10" font-weight="600" '
+          f'fill="{INK}">used / 2048 B stack</text>')
+    tightest = min(t[1] for t in tasks)
+    for name, free in tasks:
+        used = total - free
+        uw = (used / total) * w0
+        hot = free == tightest
+        b += (f'<text x="24" y="{y + 13}" {_MONO} font-size="9.5" '
+              f'fill="{ACCENT if hot else INK}">{name}</text>')
+        b += (f'<rect x="{x0}" y="{y}" width="{w0}" height="17" rx="2" '
+              f'fill="{PANEL}" stroke="{RULE}" stroke-width="1"/>')
+        b += (f'<rect x="{x0}" y="{y}" width="{uw}" height="17" rx="2" '
+              f'fill="{OURS}" stroke="{ACCENT}" stroke-width="1"/>')
+        b += (f'<text x="{x0 + w0 + 10}" y="{y + 13}" {_MONO} font-size="9" '
+              f'fill="{ACCENT if hot else SOFT}">{int(used)} B'
+              f'{"   &#8592; tightest" if hot else ""}</text>')
+        y += 24
+    b += (f'<text x="24" y="{y + 16}" {_FONT} font-size="9" fill="{SOFT}">'
+          f'Every task keeps at least 78% of its stack. The worst is app-host, '
+          f'not display — which is where the deepest</text>'
+          f'<text x="24" y="{y + 30}" {_FONT} font-size="9" fill="{SOFT}">'
+          f'call chain was assumed to be. Before this, headroom was never '
+          f'measured and five of the eight guards were never checked.</text>')
+    return _wrap(600, y + 44, b)
+
+
 FIGURES = {
     "boot_chain": (boot_chain, "The four boot stages. Only L2 upward is project code; "
                                "the interface to L1 is the image header alone."),
@@ -305,6 +489,20 @@ FIGURES = {
     "dram_budget": (dram_budget, "Measured DRAM split after M3. A full 16-bit framebuffer "
                                  "would take 92% of the heap, which is the constraint M5 "
                                  "has to design around."),
+    "read_shift": (read_shift, "The flash read defect. A sample taken one clock early "
+                               "inserts a leading zero, so every byte arrives as the true "
+                               "value shifted right once — consistently enough to look "
+                               "like a framing error rather than a timing one."),
+    "flash_layout": (flash_layout, "The record's position in flash. Nothing the boot "
+                                   "depends on lies above it, which is what keeps a "
+                                   "driver defect recoverable."),
+    "failure_modes": (failure_modes, "How the kernel stops, by whether it can explain "
+                                     "itself. Recovery and evidence are in direct "
+                                     "conflict, and the watchdog silently won until "
+                                     "the conflict was measured."),
+    "stack_margins": (stack_margins, "Measured stack use across all eight tasks. The "
+                                     "tightest is not the one that was assumed, which "
+                                     "is the argument for measuring all of them."),
 }
 
 

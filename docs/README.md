@@ -1,9 +1,9 @@
 # cyd-os — Engineering Documentation
 
 **Used Medias LLC — Embedded Systems Division**
-Document set: `UM-CYDOS-001` … `UM-CYDOS-017`
+Document set: `UM-CYDOS-001` … `UM-CYDOS-019`
 Project: cyd-os — a from-scratch operating system for the ESP32 "Cheap Yellow Display"
-Last revised: 2026-08-14
+Last revised: 2026-08-15
 
 ---
 
@@ -40,6 +40,8 @@ true" is the difference between a working boot and a silent reboot.
 | [UM-CYDOS-015](UM-CYDOS-015-display.md) | Display Driver | ILI9341, span rendering with no framebuffer, and the path from bit-banged SPI to SPI2 with DMA |
 | [UM-CYDOS-016](UM-CYDOS-016-display-syscalls.md) | Display Syscalls, and a Total System Freeze | Per-application viewports, pointer discipline, measured containment, and a yield that stopped the clock |
 | [UM-CYDOS-017](UM-CYDOS-017-touch.md) | Touchscreen, and a Verification Method That Failed Three Times | XPT2046 over PENIRQ, the GPIO two-bank bug, calibration by controlled input, a capture that erased its own evidence, and input confinement |
+| [UM-CYDOS-018](UM-CYDOS-018-persistence.md) | Persistence, and a Read Defect That Looked Like the Wrong Thing | SPI flash driver, a checksummed record that survives a power cycle, the inherited clock divider that shifted every read by a bit, and two hypotheses tested against stale firmware |
+| [UM-CYDOS-019](UM-CYDOS-019-failure-handling.md) | Failure Handling, and Three Mechanisms That Had Never Fired | Stack guards enforced in the scheduler, the watchdog erasing its own panic reports, measured stack margins, and a UART receive path one byte behind |
 
 ## Reading order
 
@@ -77,6 +79,9 @@ Reproducing a build: **005** alone is sufficient.
 | Application bitmaps | **Live** — `SYS BLIT`, arena-bounded source and viewport-clipped destination, UM-CYDOS-012 §10 |
 | DRAM budget | **Measured** — 158,000 B allocatable today (167,680 before `TASK_MAX` rose to 8); a full framebuffer is unnecessary, UM-CYDOS-010 §7.2 |
 | Flash cache | **Enabled** — `.rodata` mapped from flash, UM-CYDOS-011 |
+| Persistence | **Live** — checksummed record in a flash sector at 2 MB; boot counter and a cumulative frame count survived 16 resets, UM-CYDOS-018 §6 |
+| Failure handling | **Enforced** — guards checked on every switch across all eight tasks; `hang`/`fault`/`smash` each trigger their path on demand, UM-CYDOS-019 §5 |
+| Stack margins | **Measured** — worst task uses 444 B of 2,048; minimum margin 78%, UM-CYDOS-019 §3.1 |
 | Version control | **Initialised 2026-08-14** |
 | JTAG debug probe | Ordered, not in hand |
 | Bootloader IRAM overlap | **Closed** — investigated and disproved, UM-CYDOS-004 §5 |
@@ -108,3 +113,24 @@ Reproducing a build: **005** alone is sufficient.
 > Two conclusions were published and later retracted as a result. Latch the
 > quantity so timing cannot lie about it, then feed the system a controlled
 > input rather than interpreting an uncontrolled one. UM-CYDOS-017 §6.
+
+> **Standing rule for debugging — a negative result is only informative if the
+> experiment demonstrably ran.** Two flash hypotheses were recorded as tested
+> against a board that had never been reflashed: `build.ps1` builds, but
+> `build.ps1 -Flash` is what flashes, and the invocation used named a script that
+> does not exist. Every hypothesis returned bit-identical output, which was read
+> as "none of these are the cause" when it meant "no experiment has run yet".
+> The signature to watch for is **a run of results that do not vary when the
+> input does** — suspect the harness before the theory, and verify the change
+> reached the target rather than inferring it from the absence of an error.
+> UM-CYDOS-018 §5.
+
+> **Standing rule for verification — a startup artefact is not evidence the
+> thing it introduces works.** The shell was signed off because its banner
+> printed; the banner proves a task was created and the TRANSMIT path works, and
+> says nothing about receive. The receive path was one byte behind for the
+> shell's entire existence, so pressing Enter did nothing until the next
+> keystroke — and every automated test drove it with CR **and** LF, the one
+> input shape that hides it. Stack guards and the panic handler went unexercised
+> for the same reason: each was confirmed to EXIST rather than observed to WORK.
+> Trigger the mechanism on purpose, or treat it as untested. UM-CYDOS-019 §4.1.
