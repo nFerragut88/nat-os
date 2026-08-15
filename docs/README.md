@@ -1,7 +1,7 @@
 # cyd-os — Engineering Documentation
 
 **Used Medias LLC — Embedded Systems Division**
-Document set: `UM-CYDOS-001` … `UM-CYDOS-016`
+Document set: `UM-CYDOS-001` … `UM-CYDOS-017`
 Project: cyd-os — a from-scratch operating system for the ESP32 "Cheap Yellow Display"
 Last revised: 2026-08-14
 
@@ -39,6 +39,7 @@ true" is the difference between a working boot and a silent reboot.
 | [UM-CYDOS-014](UM-CYDOS-014-locking.md) | Locking Primitives | Critical sections vs blocking mutex, task blocking and idle, and a measured starvation defect |
 | [UM-CYDOS-015](UM-CYDOS-015-display.md) | Display Driver | ILI9341 over bit-banged SPI, span rendering with no framebuffer, and measured throughput |
 | [UM-CYDOS-016](UM-CYDOS-016-display-syscalls.md) | Display Syscalls, and a Total System Freeze | Per-application viewports, pointer discipline, measured containment, and a yield that stopped the clock |
+| [UM-CYDOS-017](UM-CYDOS-017-touch.md) | Touchscreen, and a Verification Method That Failed Three Times | XPT2046 over PENIRQ, the GPIO two-bank bug, calibration by controlled input, and a capture that erased its own evidence |
 
 ## Reading order
 
@@ -68,6 +69,7 @@ Reproducing a build: **005** alone is sufficient.
 | Task blocking | **Live** — `TASK_BLOCKED` plus an idle task using `WAITI`, UM-CYDOS-014 §3 |
 | Display | **Working on hardware** — ILI9341, no framebuffer, 387 ms full-screen fill, colour order confirmed, UM-CYDOS-015 |
 | Application graphics | **Live** — `FILL`/`TEXT`/`DIMS` confined to per-application viewports; 0 escapes across 136 audited fills, UM-CYDOS-016 §5 |
+| Touch | **Working on hardware** — XPT2046 via PENIRQ, both axes calibrated by measurement, UM-CYDOS-017 |
 | DRAM budget | **Measured** — 158,000 B allocatable today (167,680 before `TASK_MAX` rose to 8); a full framebuffer is unnecessary, UM-CYDOS-010 §7.2 |
 | Flash cache | **Enabled** — `.rodata` mapped from flash, UM-CYDOS-011 |
 | Version control | **Initialised 2026-08-14** |
@@ -92,3 +94,12 @@ Reproducing a build: **005** alone is sufficient.
 > the whole kernel froze — the tick is what drives every context switch. Any
 > routine adjusting a scheduler deadline must only ever move it **earlier**.
 > UM-CYDOS-016 §3.
+
+> **Standing rule for verification — when an instrument reports its own reading
+> invalid, that outranks every value printed beside it.** Three times across two
+> sessions a frozen marker, a sample counter stuck at an identical value, and a
+> boot banner in a serial capture each said "this measurement is not what you
+> think", and the plausible-looking numbers next to them were believed anyway.
+> Two conclusions were published and later retracted as a result. Latch the
+> quantity so timing cannot lie about it, then feed the system a controlled
+> input rather than interpreting an uncontrolled one. UM-CYDOS-017 §6.
