@@ -72,6 +72,17 @@ int  desktop_active(void);
 /* Counters, for the reporter — a launcher that never sees a tap and a touch
  * path that never delivers one look identical on the glass. */
 uint32_t desktop_taps(void);
+
+/* First and last sample of the most recent press, and the cell each landed in.
+ * Present to distinguish "the touch layer is wrong" from "we sampled at the
+ * wrong moment", which are indistinguishable from the chair. */
+uint32_t desktop_first_x(void);
+uint32_t desktop_first_y(void);
+int      desktop_first_cell(void);
+uint32_t desktop_last_x(void);
+uint32_t desktop_last_y(void);
+int      desktop_last_cell(void);
+int      desktop_sel(void);
 uint32_t desktop_opens(void);
 
 #endif /* CYDOS_DESKTOP_H */

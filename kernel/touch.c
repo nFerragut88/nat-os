@@ -32,13 +32,46 @@
 #define CMD_Z2  (0xC0u | PD_ON)
 #define CMD_IDLE 0x90u              /* PD=00: power down, PENIRQ back on */
 
-/* Vendor calibration for this board. Kept as the extremes of the usable ADC
- * range rather than as a scale factor, so the mapping stays readable and a
- * re-calibration is two numbers per axis. */
-#define CAL_X_MIN  185u
-#define CAL_X_MAX  3700u
-#define CAL_Y_MIN  280u
-#define CAL_Y_MAX  3850u
+/* Calibration, measured on this board by tapping the four corners.
+ *
+ *      corner          raw_x   raw_y
+ *      top-left         3360     416
+ *      top-right         591     376
+ *      bottom-left      3258    3518
+ *      bottom-right      376    3462
+ *
+ * ---- the X axis runs backwards --------------------------------------------
+ *
+ * raw_x DECREASES as the finger moves right. Left reads ~3300, right reads
+ * ~480. The mapping did not account for that, so the top-left corner reported
+ * x=216 of 240 — the far right — and every touch landed on the wrong side of
+ * the screen. TOUCH_X_INVERTED below is the whole fix.
+ *
+ * ---- why the original calibration passed ----------------------------------
+ *
+ * This axis has been backwards since the touch driver was written, and the
+ * calibration pass in UM-CYDOS-017 §7 did not catch it, because that pass
+ * derived these limits from the OBSERVED EXTREMES of a drag across the panel.
+ *
+ * Extremes are invariant under inversion. Dragging left-to-right and
+ * right-to-left produce the same min and max, so a range-based calibration
+ * fits an inverted axis exactly as well as a correct one. It measures the
+ * SPAN and says nothing about the SIGN.
+ *
+ * Nothing downstream noticed for the same reason the defect survived: the
+ * application strips are full width, so horizontal position never mattered,
+ * and the raycaster's left/right steering was simply reversed — which reads as
+ * a control preference, not a fault. The launcher is the first consumer that
+ * depends on WHERE across the screen a finger is, and it failed immediately.
+ *
+ * The corner values above are what a calibration must record: four labelled
+ * points, not two unlabelled extremes. */
+#define CAL_X_MIN  380u         /* right edge — the LOW end of raw_x */
+#define CAL_X_MAX  3380u        /* left edge                         */
+#define CAL_Y_MIN  380u         /* top                               */
+#define CAL_Y_MAX  3520u        /* bottom                            */
+
+#define TOUCH_X_INVERTED 1
 
 #define Z_THRESHOLD 300u
 
@@ -147,6 +180,18 @@ void touch_init(void)
  * portrait display must transpose a landscape-calibrated panel. One drag
  * settled it; the reasoning had been wrong and no amount of staring at the
  * trail would have said which of swap-or-flip was at fault. */
+static touch_log_t g_log[TOUCH_LOG_MAX];
+static uint32_t    g_log_count;
+static int         g_was_down;
+
+uint32_t touch_log_count(void) { return g_log_count; }
+void     touch_log_clear(void) { g_log_count = 0; g_was_down = 0; }
+
+const touch_log_t *touch_log_entry(uint32_t i)
+{
+    return (i < g_log_count) ? &g_log[i] : 0;
+}
+
 static uint32_t map_axis(uint32_t raw, uint32_t lo, uint32_t hi, uint32_t span)
 {
     if (raw <= lo) {
@@ -243,8 +288,26 @@ int touch_read(touch_state_t *out)
         if (ry > g_ry_max) { g_ry_max = ry; }
 
         out->x = map_axis(rx, CAL_X_MIN, CAL_X_MAX, DISP_W);
+#if TOUCH_X_INVERTED
+        out->x = (DISP_W - 1u) - out->x;
+#endif
         out->y = map_axis(ry, CAL_Y_MIN, CAL_Y_MAX, DISP_H);
+
+        /* Record the FIRST sample of each press. A held finger yields hundreds
+         * of samples and only the moment of contact is a known screen
+         * position; recording every sample would fill the log with the drift
+         * of a finger settling. */
+        if (!g_was_down && g_log_count < TOUCH_LOG_MAX) {
+            touch_log_t *e = &g_log[g_log_count++];
+            e->raw_x = rx;
+            e->raw_y = ry;
+            e->x     = out->x;
+            e->y     = out->y;
+            e->z     = out->z;
+        }
+        g_was_down = 1;
     } else {
+        g_was_down = 0;
         out->x = 0;
         out->y = 0;
     }

@@ -328,7 +328,21 @@ static void task_report(void)
         uart_put_dec(raycast_columns());
         uart_puts("  | blits=");
         uart_put_dec(vm_blits());
-        uart_puts("  | desk act/tap/open=");
+        /* Compact: the first/last cell pair is what distinguishes a bad touch
+         * reading from sampling at the wrong moment, and it costs two numbers
+         * to keep that question answerable without another build. */
+        uart_puts("  | desk sel=");
+        uart_put_dec((unsigned int)desktop_sel());
+        uart_puts(" cell f/l=");
+        /* -1 means "no press recorded yet". Printed as a dash rather than cast
+         * to unsigned, where it reads as 4294967295 and looks like corruption. */
+        if (desktop_first_cell() < 0) { uart_putc('-'); }
+        else { uart_put_dec((unsigned int)desktop_first_cell()); }
+        uart_putc('/');
+        if (desktop_last_cell() < 0) { uart_putc('-'); }
+        else { uart_put_dec((unsigned int)desktop_last_cell()); }
+
+        uart_puts("  act/tap/open=");
         uart_put_dec((unsigned int)desktop_active());
         uart_putc('/');
         uart_put_dec(desktop_taps());
@@ -1166,6 +1180,21 @@ static void task_touch(void)
         /* Routed on every sample, pressed or not: a double-tap is two
          * press-RELEASE pairs, so the launcher needs to see the releases. */
         desktop_touch(t.x, t.y, down);
+
+        /* Latch the raw and mapped values on EVERY press, whoever consumes it.
+         *
+         * These were moved inside the raycaster's branch when the desktop was
+         * wired in, which meant that with the launcher active — the normal
+         * state — the reporter showed last=0,0 forever. Diagnosing a touch
+         * problem with the touch telemetry switched off is not a position to
+         * be in twice. */
+        if (down) {
+            g_last_rawx = t.raw_x;
+            g_last_rawy = t.raw_y;
+            g_last_x    = t.x;
+            g_last_y    = t.y;
+            g_last_z    = t.z;
+        }
 
         if (down && !desktop_active()) {
             /* Steer only from touches in the view itself, so the application

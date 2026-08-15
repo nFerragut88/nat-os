@@ -75,4 +75,24 @@ uint32_t touch_ry_first(void);
 uint32_t touch_samples(void);
 uint32_t touch_events(void);
 
+/* ---- press log ----------------------------------------------------------
+ *
+ * The last few presses, kept in memory rather than printed.
+ *
+ * Printing them was the obvious thing and it was wrong: the lines appear while
+ * the user's finger is on the glass, which is exactly when nobody is running a
+ * capture. A value that has already scrolled past is not a measurement. Held
+ * here, it can be read whenever somebody asks. */
+#define TOUCH_LOG_MAX 8u
+
+typedef struct {
+    uint32_t raw_x, raw_y;
+    uint32_t x, y;
+    uint32_t z;
+} touch_log_t;
+
+uint32_t           touch_log_count(void);
+const touch_log_t *touch_log_entry(uint32_t i);
+void               touch_log_clear(void);
+
 #endif /* CYDOS_TOUCH_H */

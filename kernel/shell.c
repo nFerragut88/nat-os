@@ -13,6 +13,7 @@
 #include "timer.h"
 #include "task.h"
 #include "sd.h"
+#include "touch.h"
 #include "uart.h"
 #include "vm.h"
 
@@ -248,6 +249,37 @@ static void execute(char *line)
             uart_put_dec(task_stack_headroom(id) * 4u);
             uart_puts("\n");
         }
+    }
+    else if (str_eq(line, "taps")) {
+        /* Dumps the press log. Exists because the same data printed live is
+         * unreadable: it appears while a finger is on the glass, which is
+         * precisely when nobody has a capture attached. */
+        uint32_t n = touch_log_count();
+        if (n == 0u) {
+            uart_puts("   no presses recorded (tap the screen, then run 'taps')\n");
+        } else {
+            uart_puts("   #   raw_x  raw_y    x    y    z\n");
+            for (uint32_t i = 0; i < n; i++) {
+                const touch_log_t *e = touch_log_entry(i);
+                uart_puts("   ");
+                uart_put_dec(i + 1u);
+                uart_puts("   ");
+                uart_put_dec(e->raw_x);
+                uart_puts("   ");
+                uart_put_dec(e->raw_y);
+                uart_puts("   ");
+                uart_put_dec(e->x);
+                uart_puts("   ");
+                uart_put_dec(e->y);
+                uart_puts("   ");
+                uart_put_dec(e->z);
+                uart_puts("\n");
+            }
+        }
+    }
+    else if (str_eq(line, "tapsclear")) {
+        touch_log_clear();
+        uart_puts("   press log cleared\n");
     }
     else if (str_eq(line, "sd")) {
         int rc = sd_init();

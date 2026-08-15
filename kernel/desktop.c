@@ -13,8 +13,25 @@
  * something unreadable. */
 #define COLS 3u
 #define ROWS 3u
+
+/* The bottom of the region is a status strip, not grid.
+ *
+ * It used to be neither: the launch message was drawn at DESK_H-10, which is
+ * inside the bottom-left cell's label. So "started" appeared over pong's name
+ * and stayed there permanently, and the obvious reading — that pong was what
+ * had been selected — was wrong but entirely reasonable. Text that overlaps a
+ * control is not a cosmetic problem; it makes the interface lie about its own
+ * state. */
+#define STATUS_H 14u
+#define GRID_H  (DESK_H - STATUS_H)
+
 #define CELL_W (DISP_W / COLS)          /* 80 */
-#define CELL_H (DESK_H / ROWS)          /* 56 */
+#define CELL_H (GRID_H / ROWS)          /* 51 */
+
+/* How long a launch message stays up. It expires rather than persisting,
+ * because a status line that never clears stops describing the present and
+ * becomes decoration. */
+#define MSG_TICKS 200u                  /* ~2 s */
 
 #define ICON_W 44u
 #define ICON_H 26u
@@ -54,10 +71,22 @@ static int      g_last_tap_sel = -1;
 
 static uint32_t g_taps, g_opens;
 
+/* Diagnostics for the selection itself.
+ *
+ * A tap that selects the wrong icon has two candidate causes that look
+ * identical from the chair: the touch layer reporting the wrong place, or this
+ * file sampling the right place at the wrong moment. Recording the FIRST and
+ * LAST sample of each press separates them — if they disagree, the fault is
+ * when we look, not where the finger was. */
+static uint32_t g_first_x, g_first_y; static int g_first_cell = -1;
+static uint32_t g_last_x,  g_last_y;  static int g_last_cell  = -1;
+static uint32_t g_samples;
+
 /* Set when a launch happens, so the next frame can say what it did. Kept as an
  * index rather than a pointer so nothing here outlives the table. */
 static int      g_msg_sel = -1;
 static int      g_msg_ok;
+static uint32_t g_msg_tick;
 
 int      desktop_active(void) { return g_active; }
 uint32_t desktop_taps(void)   { return g_taps; }
@@ -77,7 +106,7 @@ static uint32_t cell_y(int i) { return ((uint32_t)i / COLS) * CELL_H; }
  * application strips below cannot select anything up here. */
 static int cell_at(uint32_t x, uint32_t y)
 {
-    if (y >= DESK_H || x >= DISP_W) {
+    if (y >= GRID_H || x >= DISP_W) {
         return -1;
     }
     uint32_t c = x / CELL_W;
@@ -98,7 +127,7 @@ static void draw_cursor(uint32_t x, uint32_t y)
         if (x + w > DISP_W) {
             w = DISP_W - x;
         }
-        if (y + i >= DESK_H) {
+        if (y + i >= GRID_H) {
             break;
         }
         /* Black underlay one pixel wider gives the arrow an outline, so it stays
@@ -149,7 +178,18 @@ static void draw_icon(int i)
 
 void desktop_frame(void)
 {
-    if (!g_active || !g_dirty) {
+    if (!g_active) {
+        return;
+    }
+
+    /* Expire the launch message. Checked before the dirty gate, because
+     * expiry is itself a reason to repaint. */
+    if (g_msg_sel >= 0 && (timer_ticks() - g_msg_tick) > MSG_TICKS) {
+        g_msg_sel = -1;
+        g_dirty   = 1;
+    }
+
+    if (!g_dirty) {
         return;                 /* an idle launcher costs no SPI at all */
     }
     g_dirty = 0;
@@ -161,10 +201,15 @@ void desktop_frame(void)
         draw_icon(i);
     }
 
+    /* Status strip, below the grid and never over it. Named rather than bare:
+     * "started" alone cannot say WHICH program started, which is the only
+     * question the message exists to answer. */
     if (g_msg_sel >= 0) {
-        display_text(4, DESK_H - 10u,
-                     g_msg_ok ? "started" : "no free slot",
+        display_fill_rect(0, GRID_H, DISP_W, STATUS_H, COLOR_BLACK);
+        display_text(3, GRID_H + 3u, g_msg_ok ? "started" : "no slot:",
                      g_msg_ok ? COLOR_GREEN : COLOR_RED, COLOR_BLACK, 1u);
+        display_text(54, GRID_H + 3u, ICONS[g_msg_sel].label,
+                     COLOR_WHITE, COLOR_BLACK, 1u);
     }
 
     draw_cursor(g_cx, g_cy);
@@ -176,13 +221,15 @@ static void open_selected(void)
 {
     const desk_icon_t *ic = &ICONS[g_sel];
     g_opens++;
-    g_msg_sel = g_sel;
+    g_msg_sel  = g_sel;
+    g_msg_tick = timer_ticks();
 
     if (ic->action == DESK_ACTION_3D) {
         /* Hand the region over. The raycaster repaints every frame, so nothing
          * needs erasing first. */
-        g_active = 0;
-        g_msg_ok = 1;
+        g_active  = 0;
+        g_msg_ok  = 1;
+        g_msg_sel = -1;         /* nothing to report over a view we just left */
         return;
     }
 
@@ -207,21 +254,44 @@ void desktop_touch(uint32_t x, uint32_t y, int down)
     }
 
     if (down) {
+        /* The selection is latched from the FIRST sample of a press and never
+         * moved again until the finger lifts.
+         *
+         * It used to follow every sample, which made a drag move the cursor —
+         * pleasant in principle, and wrong in practice. A resistive panel's
+         * worst readings come at contact and release, and the last sample
+         * before release is precisely the one that decided the selection.
+         * Measured: a tap on the top-right icon reported cell 2 on its first
+         * sample and cell 3 on its last, so the correct target was read,
+         * recorded, and then thrown away microseconds later.
+         *
+         * The first sample is the one taken while the finger is where the user
+         * put it deliberately. Everything after it describes a finger being
+         * lifted, which is not an instruction. */
         if (!g_was_down) {
             g_press_tick = now;
+
+            int first = cell_at(x, y);
+            if (first >= 0) {
+                g_cx  = (x < DISP_W - 8u) ? x : DISP_W - 8u;
+                g_cy  = (y < GRID_H - 8u) ? y : GRID_H - 8u;
+                g_sel = first;
+                g_dirty = 1;
+            }
         }
         g_was_down = 1;
 
-        /* Track the cursor while the finger is down, so a drag moves it. */
+        /* Every later sample is recorded but acts on nothing. Kept because the
+         * first/last pair is what diagnosed this: identical values mean a
+         * steady press, and a divergence means the panel is smearing on
+         * release. Deleting the instrument once it has found its bug is how
+         * the bug comes back unnoticed. */
         int c = cell_at(x, y);
-        if (c >= 0) {
-            g_cx = (x < DISP_W - 8u) ? x : DISP_W - 8u;
-            g_cy = (y < DESK_H - 8u) ? y : DESK_H - 8u;
-            if (c != g_sel) {
-                g_sel = c;
-            }
-            g_dirty = 1;
+        if (g_samples == 0u) {
+            g_first_x = x; g_first_y = y; g_first_cell = c;
         }
+        g_last_x = x; g_last_y = y; g_last_cell = c;
+        g_samples++;
         return;
     }
 
@@ -230,6 +300,9 @@ void desktop_touch(uint32_t x, uint32_t y, int down)
         return;
     }
     g_was_down = 0;
+    uint32_t samples = g_samples;
+    g_samples = 0;
+    (void)samples;
 
     if ((now - g_press_tick) < TAP_MIN_TICKS) {
         return;                 /* contact chatter, not a press */
@@ -247,3 +320,11 @@ void desktop_touch(uint32_t x, uint32_t y, int down)
     g_last_tap_sel  = g_sel;
     g_last_tap_tick = now;
 }
+
+uint32_t desktop_first_x(void)  { return g_first_x; }
+uint32_t desktop_first_y(void)  { return g_first_y; }
+int      desktop_first_cell(void) { return g_first_cell; }
+uint32_t desktop_last_x(void)   { return g_last_x; }
+uint32_t desktop_last_y(void)   { return g_last_y; }
+int      desktop_last_cell(void)  { return g_last_cell; }
+int      desktop_sel(void)      { return g_sel; }
