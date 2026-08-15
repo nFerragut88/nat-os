@@ -289,6 +289,18 @@ static void task_report(void)
         uart_put_dec(touch_min_z2());
         uart_puts(" zmax=");
         uart_put_dec(touch_max_z());
+        uart_puts(" rx=");
+        uart_put_dec(touch_rx_min());
+        uart_putc('-');
+        uart_put_dec(touch_rx_max());
+        uart_puts(" ry=");
+        uart_put_dec(touch_ry_min());
+        uart_putc('-');
+        uart_put_dec(touch_ry_max());
+        uart_puts(" first=");
+        uart_put_dec(touch_rx_first());
+        uart_putc(',');
+        uart_put_dec(touch_ry_first());
         uart_puts(" last=");
         uart_put_dec(g_last_rawx);
         uart_putc(',');

@@ -57,6 +57,22 @@ static uint32_t g_max_z1;
 static uint32_t g_min_z2 = 0xFFFFFFFFu;
 static uint32_t g_max_z;
 
+/* Span of each raw axis while touched. A single drag along one screen axis
+ * makes the mapping self-evident: whichever raw channel sweeps a wide range is
+ * the one that tracks that screen axis, and the direction of travel falls out
+ * of which end it started from. Guessing at swaps and flips costs a flash cycle
+ * per guess; one controlled drag answers both at once. */
+static uint32_t g_rx_min = 0xFFFFFFFFu, g_rx_max;
+static uint32_t g_ry_min = 0xFFFFFFFFu, g_ry_max;
+static uint32_t g_rx_first, g_ry_first, g_first_set;
+
+uint32_t touch_rx_min(void)  { return g_rx_min; }
+uint32_t touch_rx_max(void)  { return g_rx_max; }
+uint32_t touch_ry_min(void)  { return g_ry_min; }
+uint32_t touch_ry_max(void)  { return g_ry_max; }
+uint32_t touch_rx_first(void){ return g_rx_first; }
+uint32_t touch_ry_first(void){ return g_ry_first; }
+
 uint32_t touch_max_z1(void) { return g_max_z1; }
 uint32_t touch_min_z2(void) { return g_min_z2; }
 uint32_t touch_max_z(void)  { return g_max_z; }
@@ -113,11 +129,17 @@ void touch_init(void)
     gpio_clear(PIN_CLK);        /* mode 0 idles low */
 }
 
-/* Maps a raw reading onto the panel, clamping rather than wrapping. The axes
- * are swapped: the controller's X runs along the panel's long edge, because the
- * touch layer is oriented to the glass and the display is driven in portrait.
- * Reading raw values before trusting the mapping is what showed which way round
- * they went. */
+/* Maps a raw reading onto the panel, clamping rather than wrapping.
+ *
+ * MEASURED, not assumed. A single left-to-right drag swept raw X across
+ * 486-3536 while raw Y moved only 2499-2862 — so raw X tracks the screen's
+ * horizontal axis, and the drag ending at rx=3527 against a maximum of 3536
+ * shows it increases left to right, needing no flip.
+ *
+ * This code originally had them the other way round on the reasoning that a
+ * portrait display must transpose a landscape-calibrated panel. One drag
+ * settled it; the reasoning had been wrong and no amount of staring at the
+ * trail would have said which of swap-or-flip was at fault. */
 static uint32_t map_axis(uint32_t raw, uint32_t lo, uint32_t hi, uint32_t span)
 {
     if (raw <= lo) {
@@ -202,8 +224,19 @@ int touch_read(touch_state_t *out)
 
     if (out->down) {
         g_events++;
-        out->x = map_axis(ry, CAL_Y_MIN, CAL_Y_MAX, DISP_W);
-        out->y = map_axis(rx, CAL_X_MIN, CAL_X_MAX, DISP_H);
+
+        if (!g_first_set) {
+            g_first_set = 1u;
+            g_rx_first = rx;
+            g_ry_first = ry;
+        }
+        if (rx < g_rx_min) { g_rx_min = rx; }
+        if (rx > g_rx_max) { g_rx_max = rx; }
+        if (ry < g_ry_min) { g_ry_min = ry; }
+        if (ry > g_ry_max) { g_ry_max = ry; }
+
+        out->x = map_axis(rx, CAL_X_MIN, CAL_X_MAX, DISP_W);
+        out->y = map_axis(ry, CAL_Y_MIN, CAL_Y_MAX, DISP_H);
     } else {
         out->x = 0;
         out->y = 0;

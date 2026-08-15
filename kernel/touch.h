@@ -61,6 +61,14 @@ uint32_t touch_max_z(void);
 /* Samples in which PENIRQ was asserted. */
 uint32_t touch_irq_lows(void);
 
+/* Raw-axis spans while touched, and the first point of the first touch. */
+uint32_t touch_rx_min(void);
+uint32_t touch_rx_max(void);
+uint32_t touch_ry_min(void);
+uint32_t touch_ry_max(void);
+uint32_t touch_rx_first(void);
+uint32_t touch_ry_first(void);
+
 uint32_t touch_samples(void);
 uint32_t touch_events(void);
 
