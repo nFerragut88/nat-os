@@ -1,7 +1,7 @@
 # UM-CYDOS-017 — Touchscreen, and a Verification Method That Failed Three Times
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.1 · 2026-08-15 · Status: **Complete, verified on hardware** — §8 added, applications now read the pointer
+Revision 1.2 · 2026-08-15 · Status: **Complete, verified on hardware** — §4.1 and §7.1–7.3 added after the launcher exposed an inverted axis
 
 ---
 
@@ -22,6 +22,14 @@ conclusions recorded as fact on the strength of it.
 This is the third time in two sessions that an instrument reported its own
 reading invalid and the number beside it was believed anyway. §6 treats that as
 the finding.
+
+Revision 1.2 records what a real consumer found. The horizontal axis had been
+**inverted since the driver was written**, and the calibration in §7 not only
+missed it but concluded the opposite — because it inferred direction from the
+last sample of a drag, which is the one sample guaranteed to be invalid. The
+same sample class was also feeding position readings to every consumer, fixed in
+§4.1 by gating on pressure. Neither was found by inspection; both were found by
+building something that depended on horizontal position for the first time.
 
 ## 2. Hardware
 
@@ -101,6 +109,40 @@ Pressure is still recorded despite no longer being the detector. A channel that
 never moves is itself evidence, and hiding it would only make the next person
 repeat the measurement.
 
+### 4.1 PENIRQ answers a different question than it was asked
+
+*Added in revision 1.2, after the launcher.*
+
+The reasoning above is sound and the conclusion was still wrong, which is an
+uncomfortable combination worth stating precisely.
+
+PENIRQ reports whether a finger is **there**. It says nothing about whether the
+position sample taken alongside it is **valid**. Those are different questions,
+and this section answered the second by measuring the first.
+
+The pin asserts on approach and stays asserted through release. During both, the
+panel is not resistively bridged, so the position channels float and read their
+ADC rail. Measured on the launcher, within a single tap:
+
+```
+z=7     raw_x=4095   ->  x=0     approach, input floating
+z=2025  raw_x=1280   ->  x=167   the actual finger
+z=20    raw_x=4095   ->  x=0     release
+```
+
+A factor of a hundred separates the populations, and `Z_THRESHOLD` — 300, defined
+in `touch.c` and unused since it was written — sits cleanly between them.
+
+The consequence is specific and was invisible for as long as nothing depended on
+horizontal position: **4095 is near the top of the range, so a rail reading maps
+to one edge of the screen.** Every spurious sample votes for the same place. In
+the launcher that place was the leftmost column, and it looked exactly like a
+broken axis rather than a valid-sample problem.
+
+`out->down` is now `pen && (z > Z_THRESHOLD)`. PENIRQ still gates it, because a
+pressure reading taken while nothing is near is its own kind of noise; pressure
+now gates it too, because presence is not validity.
+
 ## 5. The capture was destroying its own data
 
 ### 5.1 Symptom
@@ -142,6 +184,24 @@ normal, because a booting kernel prints a full banner and then healthy report
 lines. Values looked plausible, because they were real readings — of the wrong
 interval. Only the sample counter carried the contradiction, and it was printed
 in the same line as the values that were being trusted.
+
+### 5.5 It happened again, with new tools
+
+*Added in revision 1.2.*
+
+Investigating the inverted axis needed a way to read board state while a finger
+was on the glass. Two scripts were written for it, both described as "no reset",
+and **both reset the board** — on Windows the serial driver asserts DTR on
+`open()`, and DTR drives EN.
+
+So the same failure this section documents was reproduced, by someone who had
+just read this section, in tools written specifically to avoid it. Two rounds of
+four-corner taps were destroyed between being recorded and being read.
+
+The fix is the one already written here: set `dtr` and `rts` **before** `open()`.
+What is new is the verification — uptime is now sampled twice across a
+connection and confirmed to increase, rather than the absence of a reset being
+assumed. Knowing the failure mode was not enough; a check was needed.
 
 ## 6. The finding
 
@@ -188,6 +248,67 @@ a flip.
 The original code had the axes transposed, on the reasoning that a portrait
 display must swap a landscape-calibrated panel. **That reasoning was wrong**, and
 no amount of looking at the screen would have said so.
+
+### 7.1 The direction test was decided by its worst sample
+
+*Added in revision 1.2. The conclusion above about direction is **wrong**, and
+the method that produced it is why.*
+
+Raw X does not increase left to right. It decreases. Measured by tapping four
+labelled corners:
+
+| corner | `raw_x` | `raw_y` |
+|---|---|---|
+| top-left | **3360** | 416 |
+| top-right | **591** | 376 |
+| bottom-left | 3258 | **3518** |
+| bottom-right | 376 | **3462** |
+
+Left reads ~3300, right reads ~480. The axis assignment in the table above is
+correct — `raw_x` really is horizontal — but its **sign** is backwards, and has
+been since the driver was written.
+
+The span measurement was never the problem. The direction inference was:
+
+> *"the horizontal drag ended at `rx=3527` against a maximum of 3536, so raw X
+> increases left to right"*
+
+That reads the **last sample of a drag**, which is the release sample — and
+§4.1 establishes that release samples read the ADC rail. A rail reading is 4095,
+near the top of any range, so a drag that ends anywhere at all "ends near its
+maximum", and **every axis appears to increase.** The test could only ever
+return one answer.
+
+The same corrupted sample later decided the launcher's icon selection, three
+months apart, in a different file. One defect, two symptoms.
+
+### 7.2 Endpoints are not the instrument; labelled points are
+
+A drag produces a cloud of samples whose first and last are the two least
+trustworthy, because both sit at a contact transition. Inferring direction from
+precisely those two is the method's flaw, not a slip in applying it.
+
+Four **labelled** taps have no such moment. Each is a known screen position
+paired with a raw reading, and the direction of every axis falls out of
+comparing labels rather than trusting an endpoint. It also yields the range and
+the sign from one measurement instead of two.
+
+The corner table above is now recorded in `touch.c` as the calibration itself,
+rather than the two derived limits it produces. A future re-calibration can
+check the derivation instead of repeating the guess.
+
+### 7.3 Why nothing noticed for three months
+
+A backwards horizontal axis had no consumer:
+
+- the application strips are full width, so horizontal position never mattered
+- the raycaster steers from the left and right thirds of the view, so a reversed
+  axis makes it turn the other way — which reads as a control preference
+- §8's containment tests check that a touch is confined to the right viewport,
+  which is a question about `y`
+
+The launcher is the first thing in this project that asks **where across the
+screen** a finger is. It failed on the first tap.
 
 ## 8. Input reaches applications
 
@@ -284,6 +405,14 @@ its own viewport — which is the entire point of the syscall.
 | Touches delivered to an application | 81 |
 | Touches withheld as out-of-viewport | 109,211 |
 | Confinement failures | 0 |
+| `raw_x` at the left edge | ~3300 |
+| `raw_x` at the right edge | ~480 |
+| Direction of `raw_x` | **decreases** left → right |
+| Rail samples per tap, before the pressure gate | ~2 of 3 |
+| Pressure, real contact vs approach/release | ~2000 vs ~10 |
+| `Z_THRESHOLD` | 300 — defined at the start, first used in revision 1.2 |
+| Months the X axis was inverted | ~3 |
+| Tools written to avoid §5's failure that reproduced it | 2 of 2 |
 
 ## 10. What this does not establish
 
@@ -306,6 +435,19 @@ its own viewport — which is the entire point of the syscall.
   records what was underneath. Fixing that needs either a panel read-back this
   hardware does not reliably support, or damage tracking the display layer does
   not have.
+
+- **The calibration is four points, not a fit.** Two corners per axis give a
+  linear map. Resistive panels are not perfectly linear, and nothing here
+  measures the error in the middle of the screen.
+- **`Z_THRESHOLD` is a single number chosen from one measurement.** 300 sits
+  between populations that were ~10 and ~2000 on this panel, on this day, with
+  this finger. A lighter touch has not been tested, and a threshold that rejects
+  a real press is worse than one that admits a bad sample.
+- **No filtering beyond the gate.** Samples that pass the pressure test are used
+  as they arrive. There is no median-of-N or hysteresis, so a valid-pressure
+  outlier still lands wherever it says.
+- **Nothing re-checks the axis at runtime.** A different panel, or the same one
+  bonded the other way, would need this rediscovered by hand.
 
 ## 11. References
 

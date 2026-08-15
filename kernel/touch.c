@@ -50,13 +50,20 @@
  * ---- why the original calibration passed ----------------------------------
  *
  * This axis has been backwards since the touch driver was written, and the
- * calibration pass in UM-CYDOS-017 §7 did not catch it, because that pass
- * derived these limits from the OBSERVED EXTREMES of a drag across the panel.
+ * calibration in UM-CYDOS-017 §7 did not catch it — but NOT because it ignored
+ * direction. It tested direction explicitly, and concluded the opposite:
  *
- * Extremes are invariant under inversion. Dragging left-to-right and
- * right-to-left produce the same min and max, so a range-based calibration
- * fits an inverted axis exactly as well as a correct one. It measures the
- * SPAN and says nothing about the SIGN.
+ *     "the horizontal drag ended at rx=3527 against a maximum of 3536,
+ *      so raw X increases left to right"
+ *
+ * The flaw is which sample it trusted. Direction was inferred from where a drag
+ * ENDED, and the last sample of a drag is the release sample — taken as the
+ * finger lifts, when PENIRQ still reads pressed and the ADC reads its rail.
+ * A rail reading is 4095, near the top of the range, so a drag ending anywhere
+ * at all "ends near the maximum" and every axis appears to increase.
+ *
+ * The same corrupted sample later broke the launcher's selection. One defect,
+ * two symptoms, three months apart.
  *
  * Nothing downstream noticed for the same reason the defect survived: the
  * application strips are full width, so horizontal position never mattered,
@@ -272,7 +279,32 @@ int touch_read(touch_state_t *out)
      *
      * Pressure is still recorded, because a value that never moves is itself
      * evidence and hiding it would only make the next person repeat this. */
-    out->down  = pen;
+    /* PENIRQ says a finger is NEAR; pressure says it has actually landed.
+     *
+     * Both are now required, and the reason is not that PENIRQ was wrong.
+     *
+     * UM-CYDOS-017 §4 chose PENIRQ over pressure with pressure working fine —
+     * it measured a peak of 2065 against a threshold of 300 — on the grounds
+     * that PENIRQ is a direct electrical signal needing no ADC, no threshold
+     * and no calibration. That reasoning is still correct for the question it
+     * answered.
+     *
+     * It answered the wrong question. PENIRQ reports whether a finger is
+     * THERE; it says nothing about whether the position sample taken alongside
+     * it is VALID. The pin asserts on approach and stays asserted through
+     * release, and during both the panel is not resistively bridged, so the
+     * position channels read their rail. Measured on the launcher, one tap:
+     *
+     *     z=7     raw_x=4095   -> x=0     approach, input floating
+     *     z=2025  raw_x=1280   -> x=167   the actual finger
+     *     z=20    raw_x=4095   -> x=0     release
+     *
+     * The rail maps to x=0, so every spurious sample votes for the leftmost
+     * column — which is exactly what the launcher did once the axis inversion
+     * stopped masking it. Two populations separated by a factor of a hundred,
+     * and a threshold that has been sitting unused in this file the whole
+     * time. */
+    out->down  = pen && (z > Z_THRESHOLD);
 
     if (out->down) {
         g_events++;

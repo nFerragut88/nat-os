@@ -39,7 +39,7 @@ true" is the difference between a working boot and a silent reboot.
 | [UM-CYDOS-014](UM-CYDOS-014-locking.md) | Locking Primitives | Critical sections vs blocking mutex, task blocking and idle, and a measured starvation defect |
 | [UM-CYDOS-015](UM-CYDOS-015-display.md) | Display Driver | ILI9341, span rendering with no framebuffer, and the path from bit-banged SPI to SPI2 with DMA |
 | [UM-CYDOS-016](UM-CYDOS-016-display-syscalls.md) | Display Syscalls, and a Total System Freeze | Per-application viewports, pointer discipline, measured containment, and a yield that stopped the clock |
-| [UM-CYDOS-017](UM-CYDOS-017-touch.md) | Touchscreen, and a Verification Method That Failed Three Times | XPT2046 over PENIRQ, the GPIO two-bank bug, calibration by controlled input, a capture that erased its own evidence, and input confinement |
+| [UM-CYDOS-017](UM-CYDOS-017-touch.md) | Touchscreen, and a Verification Method That Failed Three Times | XPT2046 over PENIRQ, the GPIO two-bank bug, calibration by controlled input, a capture that erased its own evidence, input confinement, and an axis that was inverted for three months because the direction test read its own worst sample |
 | [UM-CYDOS-018](UM-CYDOS-018-persistence.md) | Persistence, and a Read Defect That Looked Like the Wrong Thing | SPI flash driver, a checksummed record that survives a power cycle, the inherited clock divider that shifted every read by a bit, and two hypotheses tested against stale firmware |
 | [UM-CYDOS-019](UM-CYDOS-019-failure-handling.md) | Failure Handling, and Three Mechanisms That Had Never Fired | Stack guards enforced in the scheduler, the watchdog erasing its own panic reports, measured stack margins, a UART receive path one byte behind, and a fault reported to flash and to the panel |
 
@@ -73,7 +73,7 @@ Reproducing a build: **005** alone is sufficient.
 | 3D renderer | **Running** — grid raycaster, no framebuffer (measured not to help), UM-CYDOS-015 §5.7 |
 | Display | **Working on hardware** — ILI9341, no framebuffer, **43 ms** full-screen fill via SPI2 + DMA, UM-CYDOS-015 §5.5 |
 | Application graphics | **Live** — `FILL`/`TEXT`/`DIMS` confined to per-application viewports; 0 escapes across 136 audited fills, UM-CYDOS-016 §5 |
-| Touch | **Working on hardware** — XPT2046 via PENIRQ, both axes calibrated by measurement, UM-CYDOS-017 |
+| Touch | **Working on hardware** — XPT2046 gated on PENIRQ **and** pressure; X axis was inverted for three months and is now calibrated from four labelled corners, UM-CYDOS-017 §4.1, §7.1 |
 | Application input | **Live** — `SYS TOUCH` confined to the asking application's viewport; 81 delivered, 109,211 withheld, 0 confinement failures, UM-CYDOS-017 §8 |
 | Application messaging | **Live** — copied through a kernel mailbox, never shared memory; 278 sent / 277 delivered / 0 bad buffers, UM-CYDOS-013 §8 |
 | Application bitmaps | **Live** — `SYS BLIT`, arena-bounded source and viewport-clipped destination, UM-CYDOS-012 §10 |
@@ -135,3 +135,13 @@ Reproducing a build: **005** alone is sufficient.
 > input shape that hides it. Stack guards and the panic handler went unexercised
 > for the same reason: each was confirmed to EXIST rather than observed to WORK.
 > Trigger the mechanism on purpose, or treat it as untested. UM-CYDOS-019 §4.1.
+
+> **Standing rule for calibration — never infer direction from the endpoint of a
+> gesture.** The first and last samples of a drag are its two least trustworthy,
+> because both sit at a contact transition where the panel is not bridged and the
+> ADC reads its rail. A rail reading is near the top of the range, so a drag
+> ending anywhere "ends near its maximum" and EVERY axis appears to increase —
+> the test can only return one answer. The touch X axis was backwards for three
+> months behind exactly that. Calibrate from labelled points, each a known
+> position paired with a reading, and let direction fall out of comparing labels.
+> UM-CYDOS-017 §7.1.
