@@ -881,6 +881,88 @@ static void m6_critical_test(void)
 }
 
 
+
+/* ---- animated spectrum strip -------------------------------------------
+ *
+ * Cycles the bottom band between the eight discrete primaries and a scrolling
+ * hue sweep, crossfading between them.
+ *
+ * The bars started as a diagnostic and keep that job: distinct colours prove
+ * the pixel format is right, and their ORDER is what confirms red and blue are
+ * not transposed (UM-CYDOS-015 §6). At full blend the bars are still there
+ * underneath — the crossfade passes through them once per cycle, so the check
+ * remains available to anyone watching rather than being traded away for the
+ * effect.
+ *
+ * One row is composed and then blitted 32 times with a source stride of ZERO,
+ * so every row reads the same 480 bytes. That costs 15,360 bytes over SPI — about
+ * 4 ms at the DMA rate — instead of composing 7,680 pixels individually.
+ */
+#define SPEC_H     32u
+#define SPEC_Y     (DISP_H - SPEC_H)
+#define SPEC_STEPS 64u                  /* frames per half-cycle */
+
+static uint16_t g_spec_row[DISP_W];
+
+/* Hue sweep with saturation and value pinned at maximum. Integer only: six
+ * linear segments around the colour wheel, which is what a floating-point
+ * HSV conversion reduces to at full saturation anyway. */
+static uint16_t spectrum_hue(uint32_t h)
+{
+    h %= 192u;
+    uint32_t seg = h / 32u;
+    uint32_t f   = (h % 32u) * 8u;      /* 0..248 */
+    uint32_t r, g, b;
+
+    switch (seg) {
+    case 0:  r = 255;     g = f;       b = 0;       break;
+    case 1:  r = 255 - f; g = 255;     b = 0;       break;
+    case 2:  r = 0;       g = 255;     b = f;       break;
+    case 3:  r = 0;       g = 255 - f; b = 255;     break;
+    case 4:  r = f;       g = 0;       b = 255;     break;
+    default: r = 255;     g = 0;       b = 255 - f; break;
+    }
+    return RGB(r, g, b);
+}
+
+/* Crossfade in RGB565's own channel widths — 5, 6, 5 bits. Unpacking to 8-bit
+ * per channel and back would round twice and band visibly on a gradient. */
+static uint16_t spectrum_mix(uint16_t a, uint16_t b, uint32_t t)
+{
+    uint32_t ar = (a >> 11) & 0x1Fu, ag = (a >> 5) & 0x3Fu, ab = a & 0x1Fu;
+    uint32_t br = (b >> 11) & 0x1Fu, bg = (b >> 5) & 0x3Fu, bb = b & 0x1Fu;
+    uint32_t u  = 16u - t;
+
+    return (uint16_t)((((ar * u + br * t) / 16u) << 11) |
+                      (((ag * u + bg * t) / 16u) <<  5) |
+                       ((ab * u + bb * t) / 16u));
+}
+
+static void spectrum_draw(uint32_t frame)
+{
+    static const uint16_t bars[8] = {
+        COLOR_RED, COLOR_GREEN, COLOR_BLUE,  COLOR_YELLOW,
+        COLOR_CYAN, COLOR_MAGENTA, COLOR_WHITE, COLOR_GREY
+    };
+
+    /* Triangle wave: 0 -> 16 -> 0, so the band returns to plain bars once per
+     * cycle rather than settling on the gradient. */
+    uint32_t pos = frame % (SPEC_STEPS * 2u);
+    uint32_t t   = (pos < SPEC_STEPS) ? pos : (SPEC_STEPS * 2u - pos);
+    t = (t * 16u) / SPEC_STEPS;
+
+    uint32_t phase = frame * 3u;        /* the sweep scrolls independently */
+
+    for (uint32_t x = 0; x < DISP_W; x++) {
+        uint16_t bar  = bars[(x * 8u) / DISP_W];
+        uint16_t grad = spectrum_hue(phase + (x * 192u) / DISP_W);
+        g_spec_row[x] = spectrum_mix(bar, grad, t);
+    }
+
+    /* Stride 0: every row of the blit reads the same composed row. */
+    display_blit(0, SPEC_Y, DISP_W, SPEC_H, g_spec_row, 0);
+}
+
 /* ---- status display -----------------------------------------------------
  * Draws what the kernel knows about itself onto the panel. Everything is drawn
  * through a 480-byte span buffer; there is no framebuffer anywhere in the
@@ -928,14 +1010,24 @@ static void task_display(void)
     /* A strip of the panel's colour primaries. If these are wrong, the pixel
      * format or the byte order is wrong, and that is worth seeing immediately
      * rather than inferring from a garbled photograph later. */
-    const uint16_t bars[] = { COLOR_RED, COLOR_GREEN, COLOR_BLUE, COLOR_YELLOW,
-                              COLOR_CYAN, COLOR_MAGENTA, COLOR_WHITE, COLOR_GREY };
-    for (uint32_t i = 0; i < 8; i++) {
-        display_fill_rect(i * 30u, DISP_H - 32u, 30u, 32u, bars[i]);
-    }
+    /* The strip is drawn every frame by spectrum_draw() now, so nothing is
+     * painted here. */
 
     uint32_t frame = 0;
     for (;;) {
+        spectrum_draw(frame);
+
+        /* The numbers change far more slowly than the strip and cost more to
+         * draw, so they are refreshed every eighth frame. */
+        if ((frame % 8u) != 0u) {
+            frame++;
+            uint32_t soon = timer_ticks() + 3u;
+            while (timer_ticks() < soon) {
+                task_yield();
+            }
+            continue;
+        }
+
         draw_num(90,  40, timer_ticks(),        COLOR_WHITE);
         draw_num(90,  56, (uint32_t)7,          COLOR_WHITE);
         draw_num(90,  72, (uint32_t)app_live_count(), COLOR_WHITE);
@@ -949,7 +1041,7 @@ static void task_display(void)
         display_fill_rect(((frame + 11u) % 12u) * 20u, 150u, 20u, 6u, COLOR_BLACK);
         frame++;
 
-        uint32_t until = timer_ticks() + 25u;
+        uint32_t until = timer_ticks() + 3u;
         while (timer_ticks() < until) {
             task_yield();
         }
