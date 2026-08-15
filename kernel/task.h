@@ -58,11 +58,31 @@ typedef enum {
     TASK_UNUSED = 0,
     TASK_READY,
     TASK_BLOCKED,       /* waiting on something; the scheduler will not pick it */
+    TASK_SLEEPING,      /* waiting for a tick deadline                          */
 } task_state_t;
+
+/* ---- priorities --------------------------------------------------------
+ *
+ * Strictly ordered: the highest-priority runnable task always runs, and equal
+ * priorities round-robin among themselves.
+ *
+ * Strict ordering is only safe because tasks SLEEP. A high-priority task that
+ * spins instead of sleeping starves everything beneath it completely — this
+ * kernel's previous `while (...) task_yield();` idiom would do exactly that.
+ * task_sleep() is therefore not a convenience here; it is what makes priorities
+ * usable at all.
+ */
+#define TASK_PRIO_LOW    0
+#define TASK_PRIO_NORMAL 1
+#define TASK_PRIO_HIGH   2
+#define TASK_PRIO_LEVELS 3
 
 typedef struct {
     uint32_t      sp;                  /* saved stack pointer when not running */
     task_state_t  state;
+    uint8_t       prio;                /* effective, possibly boosted          */
+    uint8_t       base_prio;           /* as created                           */
+    uint32_t      wake_tick;           /* deadline while TASK_SLEEPING         */
     uint32_t      switches;            /* times this task has been resumed */
     const char   *name;
     uint32_t     *stack_base;          /* for guard checking; NULL for boot task */
@@ -113,5 +133,17 @@ int  task_state_of(int id);
  * runnable, rather than taking an equal share of the round robin. Without one,
  * a system where every task blocks has nothing to run. */
 void task_set_idle(int id);
+
+/* Priority, and the boost used for inheritance. task_boost() only ever raises;
+ * task_unboost() returns to the priority the task was created with. */
+void task_set_priority(int id, int prio);
+int  task_priority(int id);
+void task_boost(int id, int prio);
+void task_unboost(int id);
+
+/* Blocks the caller until `ticks` scheduler ticks have elapsed. Unlike a yield
+ * loop this leaves the task unrunnable in the meantime, so lower-priority work
+ * actually gets the CPU. */
+void task_sleep(uint32_t ticks);
 
 #endif /* CYDOS_TASK_H */

@@ -178,6 +178,18 @@ static void worker(volatile uint32_t *count, volatile uint32_t *bad,
             (*bumps)++;
         }
 
+        /* Yield the CPU periodically rather than spinning flat out.
+         *
+         * These tasks exist to prove the context switch preserves registers
+         * across arbitrary suspension, and that claim needs them to run
+         * CONTINUOUSLY, not CONSTANTLY. Spinning at full rate cost the renderer
+         * more than half its frame rate and bought no extra evidence; sleeping
+         * briefly every few thousand iterations still exercises thousands of
+         * preemptions per second. */
+        if ((n % 2048u) == 0u) {
+            task_sleep(1u);
+        }
+
         if (magic != seed || alt != ~seed) {
             (*bad)++;
             magic = seed;       /* repair, so one fault is not counted forever */
@@ -1042,10 +1054,7 @@ static void task_display(void)
 
         frame++;
 
-        uint32_t until = timer_ticks() + 8u;
-        while (timer_ticks() < until) {
-            task_yield();
-        }
+        task_sleep(8u);
     }
 }
 
@@ -1149,10 +1158,7 @@ static void task_touch(void)
 
         /* Polled at roughly 30 Hz. Fast enough to track a finger, slow enough
          * that the panel is not being clocked continuously for nothing. */
-        uint32_t until = timer_ticks() + 1u;
-        while (timer_ticks() < until) {
-            task_yield();
-        }
+        task_sleep(1u);
     }
 }
 
@@ -1274,6 +1280,31 @@ void kmain(void)
     id_touch  = task_create("touch", task_touch);
     id_idle   = task_create("idle", task_idle);
     task_set_idle(id_idle);
+
+    /* Priorities. The renderer is the only HIGH task: it wakes, draws a frame,
+     * and sleeps, so it takes what it needs and then stands aside. Strict
+     * priority is only safe because of that sleep — a HIGH task that spun would
+     * starve every level beneath it outright.
+     *
+     * Nothing sits at LOW. Strict priority starves it absolutely: the workers
+     * were put there first and did exactly zero iterations, because the NORMAL
+     * band never empties — the application host never sleeps. That killed the
+     * M2 register-integrity evidence, since corrupt=0 means nothing when no
+     * work is being done.
+     *
+     * The renderer's speedup came from being HIGH, not from anything being LOW,
+     * so everything else shares NORMAL. LOW remains defined and usable, but any
+     * task placed there must be genuinely discardable — there is no aging or
+     * anti-starvation, and a LOW task will simply never run while any NORMAL
+     * task is runnable. */
+    task_set_priority(id_disp,   TASK_PRIO_HIGH);
+    task_set_priority(id_touch,  TASK_PRIO_NORMAL);
+    task_set_priority(id_shell,  TASK_PRIO_NORMAL);
+    task_set_priority(id_apps,   TASK_PRIO_NORMAL);
+    task_set_priority(id_report, TASK_PRIO_NORMAL);
+    task_set_priority(id_a,      TASK_PRIO_NORMAL);
+    task_set_priority(id_b,      TASK_PRIO_NORMAL);
+    task_set_priority(id_vm,     TASK_PRIO_NORMAL);
     uart_puts("  tasks        : report=");
     uart_put_dec((unsigned int)id_report);
     uart_puts(" a=");

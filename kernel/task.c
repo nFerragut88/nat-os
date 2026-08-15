@@ -15,6 +15,7 @@
 #include "task.h"
 #include "timer.h"
 #include "uart.h"
+#include "critical.h"
 #include "xtensa.h"
 
 /* Written into the lowest stack word; if it changes, the task overflowed. */
@@ -46,6 +47,19 @@ static int g_current = -1;
 /* -1 until a task registers as idle. Kept out of the round robin and used only
  * when nothing else can run. */
 static int g_idle_id = -1;
+
+/* Wakes any sleeping task whose deadline has passed. Called from the scheduler,
+ * which runs every tick, so a sleep resolves to one tick. */
+static void wake_sleepers(void)
+{
+    uint32_t now = timer_ticks();
+    for (int i = 0; i < TASK_MAX; i++) {
+        if (g_tasks[i].state == TASK_SLEEPING &&
+            (int32_t)(now - g_tasks[i].wake_tick) >= 0) {
+            g_tasks[i].state = TASK_READY;
+        }
+    }
+}
 
 int task_create(const char *name, task_entry_fn entry)
 {
@@ -80,6 +94,9 @@ int task_create(const char *name, task_entry_fn entry)
 
         g_tasks[id].sp         = (uint32_t)frame;
         g_tasks[id].state      = TASK_READY;
+        g_tasks[id].prio       = TASK_PRIO_NORMAL;
+        g_tasks[id].base_prio  = TASK_PRIO_NORMAL;
+        g_tasks[id].wake_tick  = 0;
         g_tasks[id].switches   = 0;
         g_tasks[id].name       = name;
         g_tasks[id].stack_base = stack;
@@ -209,7 +226,16 @@ uint32_t task_schedule(uint32_t current_sp)
      * The idle task is skipped here and used only as a fallback below. Leaving
      * it in the rotation would hand it an equal share of the CPU, which is a
      * seventh of the machine spent deliberately doing nothing. */
+    wake_sleepers();
+
+    /* Highest priority wins; equal priorities round-robin.
+     *
+     * Scanning from the task after the current one and taking a candidate only
+     * on STRICTLY greater priority gives both at once: among equals the first
+     * one met wins, and because the scan starts past the current task, that is
+     * a different task each time. */
     int next = -1;
+    int best = -1;
     /* Plain counted loop. GCC is free to emit a zero-overhead LOOP here, and
      * does; that is correct now that _handler_level3 clears PS.EXCM before
      * calling C. This loop previously needed a `volatile` counter to force
@@ -230,9 +256,10 @@ uint32_t task_schedule(uint32_t current_sp)
             uart_puts(g_tasks[candidate].state == TASK_READY ? " MATCH" : " skip");
         }
 #endif
-        if (g_tasks[candidate].state == TASK_READY) {
+        if (g_tasks[candidate].state == TASK_READY &&
+            (int)g_tasks[candidate].prio > best) {
+            best = (int)g_tasks[candidate].prio;
             next = candidate;
-            break;
         }
     }
     /* Nothing else runnable — fall back to idle. Resuming the interrupted task
@@ -335,6 +362,48 @@ void task_unblock(int id)
     if (id >= 0 && id < TASK_MAX && g_tasks[id].state == TASK_BLOCKED) {
         g_tasks[id].state = TASK_READY;
     }
+}
+
+void task_set_priority(int id, int prio)
+{
+    if (id < 0 || id >= TASK_MAX) {
+        return;
+    }
+    if (prio < 0) { prio = 0; }
+    if (prio >= TASK_PRIO_LEVELS) { prio = TASK_PRIO_LEVELS - 1; }
+    g_tasks[id].base_prio = (uint8_t)prio;
+    g_tasks[id].prio      = (uint8_t)prio;
+}
+
+int task_priority(int id)
+{
+    return (id >= 0 && id < TASK_MAX) ? (int)g_tasks[id].prio : -1;
+}
+
+void task_boost(int id, int prio)
+{
+    if (id >= 0 && id < TASK_MAX && prio > (int)g_tasks[id].prio) {
+        g_tasks[id].prio = (uint8_t)prio;
+    }
+}
+
+void task_unboost(int id)
+{
+    if (id >= 0 && id < TASK_MAX) {
+        g_tasks[id].prio = g_tasks[id].base_prio;
+    }
+}
+
+void task_sleep(uint32_t ticks)
+{
+    if (g_current < 0) {
+        return;                     /* no context to sleep */
+    }
+    uint32_t crit = crit_enter();
+    g_tasks[g_current].wake_tick = timer_ticks() + ticks;
+    g_tasks[g_current].state     = TASK_SLEEPING;
+    crit_exit(crit);
+    task_yield();
 }
 
 void task_yield(void)
