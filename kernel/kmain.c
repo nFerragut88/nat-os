@@ -20,6 +20,7 @@
 #include "console.h"
 #include "ipc.h"
 #include "display.h"
+#include "raycast.h"
 #include "touch.h"
 #include "critical.h"
 #include "mutex.h"
@@ -282,6 +283,16 @@ static void task_report(void)
         uart_put_dec(ipc_refused());
         uart_puts(" badbuf=");
         uart_put_dec(vm_ipc_bad_buffer());
+        uart_puts("  | ray us m/c/b=");
+        uart_put_dec(raycast_us_march());
+        uart_putc('/');
+        uart_put_dec(raycast_us_compose());
+        uart_putc('/');
+        uart_put_dec(raycast_us_blit());
+        uart_puts(" f/c=");
+        uart_put_dec(raycast_frames());
+        uart_putc('/');
+        uart_put_dec(raycast_columns());
         uart_puts("  | blits=");
         uart_put_dec(vm_blits());
         uart_puts("  | touch g/w=");
@@ -938,7 +949,7 @@ static uint16_t spectrum_mix(uint16_t a, uint16_t b, uint32_t t)
                        ((ab * u + bb * t) / 16u));
 }
 
-static void spectrum_draw(uint32_t frame)
+static void spectrum_region(uint32_t y, uint32_t h, uint32_t frame, uint32_t skew)
 {
     static const uint16_t bars[8] = {
         COLOR_RED, COLOR_GREEN, COLOR_BLUE,  COLOR_YELLOW,
@@ -951,7 +962,9 @@ static void spectrum_draw(uint32_t frame)
     uint32_t t   = (pos < SPEC_STEPS) ? pos : (SPEC_STEPS * 2u - pos);
     t = (t * 16u) / SPEC_STEPS;
 
-    uint32_t phase = frame * 3u;        /* the sweep scrolls independently */
+    /* `skew` offsets the hue per band, so the backdrop reads as one continuous
+     * sweep running down the panel rather than several bands in lockstep. */
+    uint32_t phase = frame * 3u + skew;
 
     for (uint32_t x = 0; x < DISP_W; x++) {
         uint16_t bar  = bars[(x * 8u) / DISP_W];
@@ -960,7 +973,18 @@ static void spectrum_draw(uint32_t frame)
     }
 
     /* Stride 0: every row of the blit reads the same composed row. */
-    display_blit(0, SPEC_Y, DISP_W, SPEC_H, g_spec_row, 0);
+    display_blit(0, y, DISP_W, h, g_spec_row, 0);
+}
+
+/* The whole backdrop: header, the status area behind the labels, and the strip
+ * along the bottom. The application viewports at 168..280 are deliberately
+ * skipped — those pixels belong to the applications, and the kernel painting
+ * over them is the ownership mistake removed in UM-CYDOS-017 §8.4. */
+static void spectrum_backdrop(uint32_t frame)
+{
+    spectrum_region(0u,      22u,     frame, 0u);
+    spectrum_region(22u,     146u,    frame, 48u);
+    spectrum_region(SPEC_Y,  SPEC_H,  frame, 96u);
 }
 
 /* ---- status display -----------------------------------------------------
@@ -997,15 +1021,8 @@ static void draw_num(uint32_t x, uint32_t y, uint32_t v, uint16_t fg)
 
 static void task_display(void)
 {
-    display_fill_rect(0, 0, DISP_W, 22, COLOR_BLUE);
-    display_text(6, 7, "cyd-os", COLOR_WHITE, COLOR_BLUE, 2);
-
-    display_text(6,  40, "ticks",  COLOR_GREY, COLOR_BLACK, 1);
-    display_text(6,  56, "tasks",  COLOR_GREY, COLOR_BLACK, 1);
-    display_text(6,  72, "apps",   COLOR_GREY, COLOR_BLACK, 1);
-    display_text(6,  88, "heap",   COLOR_GREY, COLOR_BLACK, 1);
-    display_text(6, 104, "bytecode", COLOR_GREY, COLOR_BLACK, 1);
-    display_text(6, 120, "locks",  COLOR_GREY, COLOR_BLACK, 1);
+    /* Nothing static any more: the backdrop is repainted every frame and
+     * everything else is drawn over it. */
 
     /* A strip of the panel's colour primaries. If these are wrong, the pixel
      * format or the byte order is wrong, and that is worth seeing immediately
@@ -1015,33 +1032,15 @@ static void task_display(void)
 
     uint32_t frame = 0;
     for (;;) {
-        spectrum_draw(frame);
+        /* The dungeon view owns the top 168 rows. The status text that used to
+         * live here is gone from the panel — it is all still on the UART, and a
+         * first-person view with numbers pasted over it reads as neither. */
+        raycast_frame();
+        spectrum_region(SPEC_Y, SPEC_H, frame, 96u);
 
-        /* The numbers change far more slowly than the strip and cost more to
-         * draw, so they are refreshed every eighth frame. */
-        if ((frame % 8u) != 0u) {
-            frame++;
-            uint32_t soon = timer_ticks() + 3u;
-            while (timer_ticks() < soon) {
-                task_yield();
-            }
-            continue;
-        }
-
-        draw_num(90,  40, timer_ticks(),        COLOR_WHITE);
-        draw_num(90,  56, (uint32_t)7,          COLOR_WHITE);
-        draw_num(90,  72, (uint32_t)app_live_count(), COLOR_WHITE);
-        draw_num(90,  88, heap_free_bytes(),    COLOR_WHITE);
-        draw_num(90, 104, g_vm.executed,        COLOR_GREEN);
-        draw_num(90, 120, g_shared_lock.acquisitions, COLOR_CYAN);
-
-        /* A marker that moves every frame, so a frozen display is obvious even
-         * when every number happens to look plausible. */
-        display_fill_rect((frame % 12u) * 20u, 150u, 20u, 6u, COLOR_YELLOW);
-        display_fill_rect(((frame + 11u) % 12u) * 20u, 150u, 20u, 6u, COLOR_BLACK);
         frame++;
 
-        uint32_t until = timer_ticks() + 3u;
+        uint32_t until = timer_ticks() + 8u;
         while (timer_ticks() < until) {
             task_yield();
         }
@@ -1087,6 +1086,16 @@ static void task_touch(void)
         }
 
         if (down) {
+            /* Steer only from touches in the view itself, so the application
+             * strips below keep their own input. */
+            if (t.y < RAY_VIEW_H) {
+                if (t.x < RAY_VIEW_W / 3u) {
+                    raycast_turn(-2);
+                } else if (t.x > (RAY_VIEW_W * 2u) / 3u) {
+                    raycast_turn(2);
+                }
+            }
+
             g_last_rawx = t.raw_x;
             g_last_rawy = t.raw_y;
             g_last_x    = t.x;
@@ -1190,6 +1199,8 @@ void kmain(void)
     mutex_init(&g_shared_lock);
 
     touch_init();
+
+    raycast_init();
 
     uart_puts("  display      : ");
     display_init();

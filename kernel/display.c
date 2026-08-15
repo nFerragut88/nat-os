@@ -427,6 +427,9 @@ int display_init(void)
     return 0;
 }
 
+void display_lock(void)   { mutex_lock(&g_lock); }
+void display_unlock(void) { mutex_unlock(&g_lock); }
+
 void display_backlight(int on)
 {
     if (on) {
@@ -468,11 +471,31 @@ void display_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h,
 
     mutex_lock(&g_lock);
     set_window(x, y, x + w - 1u, y + h - 1u);
-    for (uint32_t row = 0; row < h; row++) {
-        /* push_pixels byte-swaps into the transmit buffer, so the source is
-         * never modified and need not be aligned to anything but a pixel. */
-        push_pixels(src + (uint32_t)row * src_stride, w);
+
+    if (src_stride == w) {
+        /* Contiguous source: the whole rectangle is one linear stream, because
+         * the panel walks the window itself. Sent in buffer-sized chunks rather
+         * than row by row.
+         *
+         * This matters most where it looks least likely to. A 1-pixel-wide
+         * column has 168 rows of one pixel each, so the row-by-row path issues
+         * 168 two-byte transfers and a raycaster column costs ~170 ms. The same
+         * data as one stream is a single transfer. */
+        uint32_t total = w * h;
+        while (total) {
+            uint32_t chunk = (total > LINE_MAX) ? LINE_MAX : total;
+            push_pixels(src, chunk);
+            src   += chunk;
+            total -= chunk;
+        }
+    } else {
+        for (uint32_t row = 0; row < h; row++) {
+            /* push_pixels byte-swaps into the transmit buffer, so the source is
+             * never modified and need not be aligned to anything but a pixel. */
+            push_pixels(src + (uint32_t)row * src_stride, w);
+        }
     }
+
     push_end();
     mutex_unlock(&g_lock);
 }

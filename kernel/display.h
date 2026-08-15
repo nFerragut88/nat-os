@@ -54,6 +54,16 @@ int  display_init(void);
 
 void display_backlight(int on);
 
+/* Hold the draw lock across a batch of primitives.
+ *
+ * Every drawing call already locks, and the mutex is recursive, so this is only
+ * about FREQUENCY. A caller issuing hundreds of small primitives pays a full
+ * scheduling round-trip per contended acquisition — a raycaster taking the lock
+ * once per column spent 25 seconds per frame on 37 ms of work. Holding it for
+ * the batch turns that into one acquisition. UM-CYDOS-014 §5.2. */
+void display_lock(void);
+void display_unlock(void);
+
 /* Fills the whole panel. */
 void display_clear(uint16_t colour);
 
