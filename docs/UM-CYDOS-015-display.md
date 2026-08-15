@@ -1,7 +1,7 @@
 # UM-CYDOS-015 — Display Driver
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.0 · 2026-08-14 · Status: **Complete, verified on hardware**
+Revision 1.1 · 2026-08-15 · Status: **Complete, verified on hardware** — §5 added, driver moved to the SPI2 peripheral
 
 ---
 
@@ -17,6 +17,11 @@ argument implemented: every pixel is rendered through a **480-byte** span buffer
 
 Confirmed on the physical panel: header bar, live numeric fields, an advancing
 marker, and a strip of colour primaries.
+
+**§5 (revision 1.1)** replaces the bit-banged transport with the SPI2
+peripheral, taking a full-screen fill from 387 ms to 78 ms. The staging that §3
+argues for is what made that change safe to attempt, and §5.3 records why the
+speedup is 5× rather than the 12× this report originally predicted.
 
 ## 2. Pin map
 
@@ -98,7 +103,71 @@ use of UM-CYDOS-014's primitive outside its own self-test. Recursive matters
 here: `display_clear()` draws through `display_fill_rect()`, so a non-recursive
 lock would deadlock on the first clear.
 
-## 5. Verification
+## 5. Hardware SPI2
+
+Added in revision 1.1.
+
+### 5.1 The deferral was the point
+
+§3 argues for bit-banging first because a wrong DPORT clock bit or a wrong IOMUX
+selection produces a black screen — the same symptom as a wrong pin, a bad init
+sequence, or an unseated flex. Bringing up four uncertain subsystems together
+and bisecting them from one bit of output is how M2 consumed nine build cycles.
+
+That argument is what made this change cheap when it came. Panel, pins, command
+sequence and colour order were already known good, so the only thing under test
+was the transport. A black screen could mean exactly one thing.
+
+### 5.2 What it took
+
+The CYD's display pins are the ESP32's **native HSPI pads**, so IOMUX routes
+SCLK and MOSI straight to the peripheral — no GPIO matrix, and none of the
+40 MHz ceiling the matrix imposes.
+
+CS and DC stay ordinary GPIOs. The driver holds CS asserted across a window
+command *and* its entire pixel stream (§4), which is not a shape the
+peripheral's CS automation expresses.
+
+Two details worth keeping:
+
+- **The DPORT write is read-modify-write, never a plain store.** Bit 1 of the
+  same register clocks the flash controller this kernel executes from.
+- **Both configuration registers are read back.** `clk=0x00001001` confirms the
+  `sysclk/2` divisor took; `dport` bit 6 confirms the peripheral clock gate
+  stuck. A register that silently fails to take is the difference between a fast
+  display and a black one, and this report's whole staging argument is about not
+  having to guess which.
+
+The bit-banged path is retained behind `DISPLAY_USE_SPI2 0`, and both backends
+now route through a single `spi_tx()` entry point so a switch cannot leave a
+stray direct-transport call behind.
+
+### 5.3 Measured, and why the estimate was wrong
+
+```
+387 ms  ->  78 ms      full-screen fill
+```
+
+**5×, against the ~12× this report predicted in revision 1.0.**
+
+At 40 MHz the theoretical floor for 153,600 bytes is about 31 ms, so roughly
+2.5× of what remains is per-transaction overhead. The FIFO holds 64 bytes, so a
+480-byte span costs eight transactions — sixteen register writes, a start and a
+poll each — and a full screen is **2,560 of them**.
+
+The original estimate treated the clock rate as the only variable. It is the
+transaction count that dominates, and that is precisely what DMA exists to
+remove. The gap between the estimate and the measurement is more useful than
+either number alone, which is why both are recorded.
+
+### 5.4 Clock choice
+
+`sysclk/2` is deliberate and conservative. 80 MHz is one register bit away
+(`SPI_CLK_EQU_SYSCLK`), but the practical limit here is the flex cable and the
+board layout rather than the controller, so raising it is a change to make
+against a measurement rather than on spec-sheet optimism.
+
+## 6. Verification
 
 Visual confirmation on the panel: the status screen renders, values update, and
 the colour strip shows distinct primaries.
@@ -132,7 +201,7 @@ check before anything was known to be visible.
 **Regression.** Eight native tasks now scheduling. M3, M4, M5 and locking
 self-tests all still passing.
 
-## 6. Metrics
+## 7. Metrics
 
 | Quantity | Value |
 |---|---|
@@ -140,17 +209,23 @@ self-tests all still passing.
 | Framebuffer | none |
 | Span buffer | 480 B |
 | Font | 475 B, in flash |
-| Full-screen fill | 387 ms (measured) |
-| Effective SPI clock | ~3.2 MHz |
+| Full-screen fill | **78 ms** via SPI2 (387 ms bit-banged) |
+| SPI clock | 40 MHz (`sysclk/2`); ~3.2 MHz bit-banged |
+| Transactions per full screen | 2,560 (64-byte FIFO) |
+| Theoretical floor at 40 MHz | ~31 ms |
 | Bytes for init + clear | 153,634 |
 | Native tasks | 8 |
 | Image size | 18,896 B |
 
-## 7. What this does not establish
+## 8. What this does not establish
 
-- **No hardware SPI.** The 12× speedup from SPI2 at 40 MHz is unclaimed and
-  unattempted. §3 explains why it was not attempted *first*; nothing prevents it
-  now that the panel, pins and command sequence are known good.
+- **No DMA.** 2,560 CPU-driven transactions per full screen account for most
+  of the remaining time (§5.3). DMA would remove them and is the next real
+  speedup available.
+- **No 80 MHz.** One register bit, but unmeasured against this board's flex and
+  layout (§5.4).
+- **No read phase.** The driver is write-only; `MISO` is wired but unused, so
+  the panel is never interrogated.
 - **No touch.** The CYD's XPT2046 is on separate pins and entirely untouched.
 - **No orientation control.** MADCTL is fixed at `0x48`. Rotation is not
   implemented.
@@ -165,7 +240,7 @@ self-tests all still passing.
 - **No gamma correction.** The gamma tables (`0xE0`/`0xE1`) are left at panel
   defaults, so colours are correct in channel but not calibrated in response.
 
-## 8. References
+## 9. References
 
 - UM-CYDOS-010 §7.2 — why no framebuffer, and the 153,600 B it would have cost
 - UM-CYDOS-011 — flash-mapped `.rodata`, which the font depends on
