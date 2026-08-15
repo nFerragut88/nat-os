@@ -57,6 +57,7 @@ Reproducing a build: **005** alone is sufficient.
 | Milestone 3 — heap and arena model | **Complete, verified on hardware** — all three exit criteria |
 | Milestone 4 — bytecode interpreter | **Complete, verified on hardware** — program runs, six fault classes contained |
 | Isolation | **Live** — every VM memory access bounds-checked, UM-CYDOS-012 §6.2 |
+| Full stack | **Running** — bytecode hosted in a preemptible native task, 3.3M instructions across 450 preemptions with zero accounting drift, UM-CYDOS-012 §6.6 |
 | DRAM budget | **Measured** — 167,680 B allocatable; a full framebuffer is unnecessary, UM-CYDOS-010 §7.2 |
 | Flash cache | **Enabled** — `.rodata` mapped from flash, UM-CYDOS-011 |
 | Version control | **Initialised 2026-08-14** |

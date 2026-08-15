@@ -18,6 +18,7 @@
 #include "heap.h"
 #include "vm.h"
 #include "generated/demo.h"
+#include "generated/spin.h"
 #include "uart.h"
 #include "timer.h"
 #include "task.h"
@@ -31,7 +32,60 @@ extern char _vecbase;
 static volatile uint32_t work_a_count, work_a_bad;
 static volatile uint32_t work_b_count, work_b_bad;
 
-static int id_report, id_a, id_b;
+static int id_report, id_a, id_b, id_vm;
+
+/* ---- the VM hosted as a native task ------------------------------------
+ *
+ * Two independent preemption mechanisms stack here, and the point of this task
+ * is that they compose:
+ *
+ *   - The timer interrupt suspends this task wherever it happens to be, which
+ *     is usually somewhere inside the interpreter's own C code. The bytecode
+ *     program cannot observe that; it is the M2 context switch doing its job.
+ *
+ *   - vm_run() returns after its instruction quantum, at a bytecode
+ *     instruction boundary, so this task regains control on a schedule of its
+ *     own regardless of what the program does — including never terminating.
+ *
+ * The arena is created in kmain BEFORE the scheduler starts, not here. The heap
+ * has no locking (UM-CYDOS-010 §8) and allocating from task context would be
+ * the first thing to break that. */
+#define VM_TASK_QUANTUM 2000u
+
+static vm_t     g_vm;
+static int      g_vm_arena = -1;
+static uint32_t g_vm_base;
+static uint32_t g_vm_result;    /* last run outcome, for the reporter */
+
+static void task_vm(void)
+{
+    uart_puts("  [task 3 entered] hosting bytecode\n");
+
+    for (;;) {
+        g_vm_result = (uint32_t)vm_run(&g_vm, VM_TASK_QUANTUM);
+
+        /* A program that halts or faults must not spin the task at full tilt
+         * forever. Nothing yet loads a replacement, so it simply stops asking
+         * for cycles it cannot use. */
+        if (g_vm_result != (uint32_t)VM_RUN_QUANTUM) {
+            for (;;) {
+                task_yield();
+            }
+        }
+    }
+}
+
+/* The counter the bytecode publishes into its arena. Reading it from kernel
+ * code is not a special capability — an arena is ordinary DRAM, and the
+ * asymmetry is deliberate: the kernel can see into an arena, a program cannot
+ * see out of one. */
+static uint32_t vm_counter(void)
+{
+    if (g_vm_arena < 0) {
+        return 0;
+    }
+    return *(volatile uint32_t *)(g_vm_base + VM_SPIN_AT_COUNTER);
+}
 
 /* Keeps several values live across the whole loop, so the compiler parks them
  * in callee-saved registers and spills the rest to this task's stack — exactly
@@ -115,6 +169,17 @@ static void task_report(void)
 
         uart_puts("  corrupt=");
         uart_put_dec(work_a_bad + work_b_bad);
+
+        /* Bytecode progress, alongside the native figures on the same line so
+         * the two can be seen advancing together rather than in turn. */
+        uart_puts("  | vm sw=");
+        uart_put_dec(task_switch_count(id_vm));
+        uart_puts(" insns=");
+        uart_put_dec(g_vm.executed);
+        uart_puts(" counter=");
+        uart_put_dec(vm_counter());
+        uart_puts(" fault=");
+        uart_puts(vm_fault_name(vm_fault(&g_vm)));
         uart_puts("\n");
     }
 }
@@ -459,15 +524,36 @@ void kmain(void)
     m3_selftest();
     m4_selftest();
 
+    /* The VM's arena is created here, on the boot path, because the heap has no
+     * locking and this is the last moment at which exactly one context exists
+     * (UM-CYDOS-010 §8). The task only ever runs an already-initialised VM. */
+    g_vm_arena = arena_create(1024);
+    if (g_vm_arena >= 0 && arena_bounds(g_vm_arena, &g_vm_base, 0) == 0) {
+        load_program(g_vm_arena, vm_spin, VM_SPIN_LEN);
+        if (vm_init(&g_vm, g_vm_arena) != 0) {
+            g_vm_arena = -1;
+        }
+    }
+    uart_puts("  vm arena     : id=");
+    uart_put_dec((unsigned int)g_vm_arena);
+    uart_puts(" base=");
+    uart_put_hex(g_vm_base);
+    uart_puts(" program=");
+    uart_put_dec(VM_SPIN_LEN);
+    uart_puts(" B\n");
+
     id_report = task_create("report", task_report);
     id_a      = task_create("worker-a", task_a);
     id_b      = task_create("worker-b", task_b);
+    id_vm     = task_create("vm-host", task_vm);
     uart_puts("  tasks        : report=");
     uart_put_dec((unsigned int)id_report);
     uart_puts(" a=");
     uart_put_dec((unsigned int)id_a);
     uart_puts(" b=");
     uart_put_dec((unsigned int)id_b);
+    uart_puts(" vm=");
+    uart_put_dec((unsigned int)id_vm);
     uart_puts("\n");
 
     uart_puts("  tick every   : ");

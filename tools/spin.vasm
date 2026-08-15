@@ -1,0 +1,23 @@
+; cyd-os — a long-running program, for hosting inside a native task.
+;
+; Increments a counter held in its own arena, forever. Every iteration performs
+; a bounds-checked store, so the isolation path is on the hot loop rather than
+; exercised once at startup.
+;
+; It never terminates. That is the point: the kernel reads the counter out of
+; the arena to show bytecode making progress while native tasks run alongside,
+; and the program is stopped by being descheduled rather than by finishing.
+
+start:
+        ldi     r1, @counter        ; byte offset of the counter within the arena
+        ldi     r2, 0               ; iteration count, held in a register
+        ldi     r9, 1
+
+loop:
+        add     r2, r2, r9
+        stw     r2, r1, 0           ; publish it where the kernel can read it
+        jmp     loop
+
+        .align  4
+counter:
+        .word   0
