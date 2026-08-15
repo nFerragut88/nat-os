@@ -19,6 +19,20 @@ MEMORY
 
   /* Internal SRAM2 — data RAM, below the ROM's reserved region. */
   dram (rw)  : ORIGIN = 0x3FFB0000, LENGTH = 0x2C200   /* ~176 KB */
+
+  /* Flash mapped read-only through the data cache.
+   *
+   * Nothing is copied here: the 2nd-stage bootloader recognises load addresses
+   * in 0x3F400000–0x3F800000 as flash-mapped and programs the flash MMU to
+   * point at the image data in place, then enables the cache before jumping to
+   * the entry point. Reads then go through the cache transparently.
+   *
+   * The 0x20 offset is not arbitrary. The MMU maps in 64 KB pages, and the
+   * mapped page begins at the start of the image — which is occupied by the
+   * 24-byte image header plus an 8-byte segment header. Starting the region
+   * 32 bytes in makes the virtual address agree with the flash offset, which is
+   * the congruence esptool and the bootloader both assume. */
+  drom (r)   : ORIGIN = 0x3F400020, LENGTH = 0x400000 - 0x20
 }
 
 ENTRY(_start)
@@ -68,11 +82,24 @@ SECTIONS
     . = ALIGN(4);
   } > iram
 
-  .rodata : ALIGN(4)
+  /* Read-only data now lives in flash rather than DRAM.
+   *
+   * It sat in DRAM because IRAM cannot serve the unaligned byte reads that
+   * string handling performs. Flash mapped through the data cache has no such
+   * restriction, so the constraint that forced the original placement does not
+   * apply here (UM-CYDOS-010 §7.3).
+   *
+   * Literal pools are deliberately NOT moved. `-mtext-section-literals` keeps
+   * them beside the code in IRAM because `l32r` addresses backwards within
+   * 256 KB of the PC; a literal in flash would be out of range and the link
+   * would fail — or worse, not fail. */
+  .flash.rodata : ALIGN(16)
   {
+    _rodata_start = .;
     *(.rodata .rodata.*)
     . = ALIGN(4);
-  } > dram
+    _rodata_end = .;
+  } > drom
 
   .data : ALIGN(4)
   {

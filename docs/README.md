@@ -1,7 +1,7 @@
 # cyd-os — Engineering Documentation
 
 **Used Medias LLC — Embedded Systems Division**
-Document set: `UM-CYDOS-001` … `UM-CYDOS-010`
+Document set: `UM-CYDOS-001` … `UM-CYDOS-011`
 Project: cyd-os — a from-scratch operating system for the ESP32 "Cheap Yellow Display"
 Last revised: 2026-08-14
 
@@ -33,6 +33,7 @@ true" is the difference between a working boot and a silent reboot.
 | [UM-CYDOS-008](UM-CYDOS-008-m1-verification.md) | Milestone 1 Verification Report | Vectors, timer source and level choice, interrupt entry/exit, measured results |
 | [UM-CYDOS-009](UM-CYDOS-009-m2-verification.md) | Milestone 2 Verification Report | Task model, context frame, scheduler, the zero-overhead `LOOP` defect, watchdog correction |
 | [UM-CYDOS-010](UM-CYDOS-010-m3-verification.md) | Milestone 3 Verification Report | Heap allocator, arena model and bounds checking, and the measured DRAM budget |
+| [UM-CYDOS-011](UM-CYDOS-011-flash-cache.md) | Flash Cache and Read-Only Data Placement | Mapping `.rodata` into flash, the 0x20 page congruence, and the cache-off hazard |
 
 ## Reading order
 
@@ -53,7 +54,8 @@ Reproducing a build: **005** alone is sufficient.
 | Milestone 1 — timer interrupt, tick counter | **Complete, verified on hardware** |
 | Milestone 2 — native task switching | **Complete, verified on hardware** — 3,400+ switches, zero corruption |
 | Milestone 3 — heap and arena model | **Complete, verified on hardware** — all three exit criteria |
-| DRAM budget | **Measured** — 166,432 B allocatable; a full framebuffer would take 92% of it, UM-CYDOS-010 §7 |
+| DRAM budget | **Measured** — 167,680 B allocatable; a full framebuffer is unnecessary, UM-CYDOS-010 §7.2 |
+| Flash cache | **Enabled** — `.rodata` mapped from flash, UM-CYDOS-011 |
 | Version control | **Initialised 2026-08-14** |
 | JTAG debug probe | Ordered, not in hand |
 | Bootloader IRAM overlap | **Closed** — investigated and disproved, UM-CYDOS-004 §5 |

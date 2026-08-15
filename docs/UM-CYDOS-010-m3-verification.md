@@ -267,6 +267,11 @@ enabling the flash cache — the work deferred in UM-CYDOS-004 §3 — and is
 therefore a prerequisite worth scheduling before the asset-heavy milestones
 rather than during them.
 
+> **DONE — see UM-CYDOS-011.** The `.rodata` row of this table is now fact
+> rather than proposal: it is mapped from flash, and the heap figure quoted
+> throughout this report has risen from 166,432 B to **167,680 B** as a result.
+> The other two rows remain proposals, but the mechanism they depend on exists.
+
 Budget context: 4 MB of flash against a 6,720 B kernel image. Availability is
 not the constraint; cache configuration is.
 
