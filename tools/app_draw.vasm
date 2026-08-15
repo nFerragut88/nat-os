@@ -1,0 +1,49 @@
+; Application DRAW — a well-behaved graphical program.
+;
+; Moves a block across its own viewport, erasing the previous position rather
+; than clearing the whole strip: one 20x18 fill costs ~2 ms over bit-banged SPI,
+; a full-strip clear costs ~30 ms, and a syscall that slow would dominate the
+; application's whole time slice.
+;
+; Every coordinate here is viewport-relative. The program has no way to learn
+; where on the panel its viewport sits, and no way to name a pixel outside it.
+
+start:
+        ldi     r6, 0               ; current x
+        ldi     r11, 0              ; previous x
+        ldi     r7, 8               ; step
+        ldi     r8, 200             ; wrap point
+
+        ldi     r0, @name
+        ldi     r1, 206
+        ldi     r2, 9
+        ldi     r3, 0xFFFF          ; white
+        ldi     r4, 0x0000          ; on black
+        ldi     r5, 1
+        sys     text
+
+loop:
+        mov     r0, r11             ; erase where the block was
+        ldi     r1, 4
+        ldi     r2, 20
+        ldi     r3, 18
+        ldi     r4, 0x0000
+        sys     fill
+
+        mov     r0, r6              ; draw where it is now
+        ldi     r1, 4
+        ldi     r2, 20
+        ldi     r3, 18
+        ldi     r4, 0x07E0          ; green
+        sys     fill
+
+        mov     r11, r6
+        add     r6, r6, r7
+        sltu    r9, r6, r8
+        brnz    r9, loop
+        ldi     r6, 0
+        jmp     loop
+
+        .align  4
+name:
+        .string "draw"

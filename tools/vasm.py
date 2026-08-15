@@ -60,7 +60,14 @@ OPS = {
     "sys":  (0x50, "sys"),
 }
 
-SYSCALLS = {"exit": 0, "putc": 1, "puts": 2, "putd": 3, "ticks": 4}
+# Must stay in step with the VM_SYS_* enum in kernel/vm.h. A name missing here
+# is caught at assembly time ("cannot parse value"), which is the right place —
+# the alternative is a numeric syscall that assembles cleanly and faults on the
+# device with VM_FAULT_SYSCALL.
+SYSCALLS = {
+    "exit": 0, "putc": 1, "puts": 2, "putd": 3, "ticks": 4,
+    "fill": 5, "text": 6, "dims": 7,
+}
 
 ESCAPES = {"n": 10, "r": 13, "t": 9, "0": 0, "\\": 92, '"': 34, "'": 39}
 

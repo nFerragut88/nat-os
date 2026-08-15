@@ -305,3 +305,4 @@ void display_text(uint32_t x, uint32_t y, const char *s, uint16_t fg, uint16_t b
 
 uint32_t display_bytes_written(void) { return g_bytes; }
 uint32_t display_fill_cycles(void)   { return g_last_fill_cycles; }
+int      display_owner(void)         { return mutex_owner(&g_lock); }

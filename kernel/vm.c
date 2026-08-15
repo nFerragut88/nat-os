@@ -10,6 +10,7 @@
 
 #include "vm.h"
 #include "arena.h"
+#include "display.h"
 #include "timer.h"
 #include "uart.h"
 
@@ -56,7 +57,23 @@ int vm_init(vm_t *vm, int arena_id)
     vm->fault_detail = 0;
     vm->executed = 0;
     vm->exit_status = 0;
+    vm->yield_now = 0;
+
+    /* Whole panel by default. Correct for a VM the kernel hosts itself;
+     * app.c narrows it before an application ever runs. */
+    vm->vx = 0;
+    vm->vy = 0;
+    vm->vw = DISP_W;
+    vm->vh = DISP_H;
     return 0;
+}
+
+void vm_set_viewport(vm_t *vm, uint32_t x, uint32_t y, uint32_t w, uint32_t h)
+{
+    vm->vx = x;
+    vm->vy = y;
+    vm->vw = w;
+    vm->vh = h;
 }
 
 int vm_fault(const vm_t *vm) { return vm->fault; }
@@ -132,6 +149,88 @@ static int store_u8(vm_t *vm, uint32_t off, uint32_t v)
     return 1;
 }
 
+/* ---- display -------------------------------------------------------------
+ *
+ * Clipping happens HERE, not in the display driver. The driver clips to the
+ * panel, which is the wrong boundary: an application must be confined to its
+ * viewport, and a program allowed to paint the whole screen could erase every
+ * other application's output and the kernel's status area with it.
+ *
+ * Arithmetic is in the offset domain for the same reason arena_contains() is
+ * (UM-CYDOS-010 §5.2). Coordinates arrive as uint32_t, so a program passing a
+ * "negative" value hands over something near 0xFFFFFFFF; comparing it against
+ * the viewport width rejects it, whereas computing x + w first would wrap and
+ * admit it.
+ */
+static void vp_fill(vm_t *vm, uint32_t x, uint32_t y, uint32_t w, uint32_t h,
+                    uint16_t colour)
+{
+    if (x >= vm->vw || y >= vm->vh) {
+        return;                         /* origin outside — nothing to draw */
+    }
+    if (w > vm->vw - x) { w = vm->vw - x; }
+    if (h > vm->vh - y) { h = vm->vh - y; }
+    if (w == 0u || h == 0u) {
+        return;
+    }
+    display_fill_rect(vm->vx + x, vm->vy + y, w, h, colour);
+}
+
+#define VM_STR_MAX 48
+
+/* Copies a NUL-terminated string out of the arena into kernel memory, one
+ * bounds-checked byte at a time. The copy is not paranoia: display_text() takes
+ * a kernel pointer, and handing it an arena address would let a program's own
+ * writes change the string mid-render. A string that runs to the end of the
+ * arena without a terminator faults rather than reading past it. */
+static int copy_string(vm_t *vm, uint32_t off, char *dst, uint32_t max)
+{
+    for (uint32_t n = 0; n < max - 1u; n++) {
+        int ok = 0;
+        uint32_t ch = load_u8(vm, off + n, &ok);
+        if (!ok) {
+            return 0;                   /* load_u8 recorded the fault */
+        }
+        dst[n] = (char)ch;
+        if (ch == 0u) {
+            return 1;
+        }
+    }
+    dst[max - 1u] = 0;
+    return 1;                           /* truncated, not a fault */
+}
+
+static void vp_text(vm_t *vm, uint32_t x, uint32_t y, const char *s,
+                    uint16_t fg, uint16_t bg, uint32_t scale)
+{
+    if (scale == 0u || scale > 4u) {
+        scale = 1u;
+    }
+    if (x >= vm->vw || y >= vm->vh) {
+        return;
+    }
+    /* Reject rather than clip vertically: half a line of text is worse than
+     * none, and the glyph renderer has no partial-row mode. */
+    if (8u * scale > vm->vh - y) {
+        return;
+    }
+
+    /* Truncate to what fits horizontally, so a long string cannot run out of
+     * the viewport and across a neighbour's. */
+    char buf[VM_STR_MAX];
+    uint32_t room = (vm->vw - x) / (6u * scale);
+    uint32_t i = 0;
+    while (s[i] && i < room && i < VM_STR_MAX - 1u) {
+        buf[i] = s[i];
+        i++;
+    }
+    buf[i] = 0;
+    if (i == 0u) {
+        return;
+    }
+    display_text(vm->vx + x, vm->vy + y, buf, fg, bg, scale);
+}
+
 /* ---- syscalls ----------------------------------------------------------- */
 
 /* Returns 0 to keep running, 1 to stop (exit or fault). */
@@ -173,6 +272,30 @@ static int do_syscall(vm_t *vm, uint32_t num)
 
     case VM_SYS_TICKS:
         vm->reg[0] = timer_ticks();
+        return 0;
+
+    case VM_SYS_FILL:
+        vp_fill(vm, vm->reg[0], vm->reg[1], vm->reg[2], vm->reg[3],
+                (uint16_t)vm->reg[4]);
+        vm->yield_now = 1;              /* milliseconds, not instructions */
+        return 0;
+
+    case VM_SYS_TEXT: {
+        char buf[VM_STR_MAX];
+        if (!copy_string(vm, vm->reg[0], buf, sizeof buf)) {
+            return 1;                   /* bounds fault already recorded */
+        }
+        vp_text(vm, vm->reg[1], vm->reg[2], buf,
+                (uint16_t)vm->reg[3], (uint16_t)vm->reg[4], vm->reg[5]);
+        vm->yield_now = 1;
+        return 0;
+    }
+
+    case VM_SYS_DIMS:
+        /* Size only. A program is told how much canvas it has, never where on
+         * the panel it sits — position is not its business and knowing it would
+         * only tempt a producer into absolute coordinates. */
+        vm->reg[0] = (vm->vw << 16) | (vm->vh & 0xFFFFu);
         return 0;
 
     default:
@@ -314,6 +437,17 @@ int vm_run(vm_t *vm, uint32_t quantum)
             if (do_syscall(vm, imm)) {
                 vm->executed++;
                 return vm->fault == VM_FAULT_NONE ? VM_RUN_HALTED : VM_RUN_FAULTED;
+            }
+            /* An expensive syscall ends the slice regardless of how much of the
+             * instruction budget is left, so wall-clock time per vm_run() stays
+             * bounded by roughly one display operation instead of by the
+             * quantum. Without this the host task disappears for minutes and
+             * every other application starves. */
+            if (vm->yield_now) {
+                vm->yield_now = 0;
+                vm->pc = next;
+                vm->executed++;
+                return VM_RUN_QUANTUM;
             }
             break;
 
