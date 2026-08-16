@@ -548,6 +548,16 @@ static void execute(char *line)
                       : "no new movement; the MAC is readable but may be idle\n");
         }
     }
+    else if (str_eq(line, "macirq")) {
+        wifimac_irq_enable();
+        uart_puts("   wifi mac source 0 -> cpu line 27, handler installed\n   fires=");
+        uart_put_dec(wifimac_irq_fires());
+        uart_puts("  last status=");
+        uart_put_hex(wifimac_irq_status());
+        uart_puts("\n   line disabled mask=");
+        uart_put_hex(intr_disabled_mask());
+        uart_puts("\n   zero fires is expected until receive exists\n");
+    }
     else if (str_eq(line, "maclive")) {
         uint32_t addrs[16], khz[16];
         uint32_t n = wifimac_movers(addrs, khz, 16u);

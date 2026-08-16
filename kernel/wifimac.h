@@ -48,4 +48,10 @@ static inline uint32_t wifimac_tsf(void)
  * no drifting or noisy register can produce by accident. */
 uint32_t wifimac_tsf_check(uint32_t ms, uint32_t *cycles);
 
+/* Routes the MAC's interrupt onto a CPU line and counts what arrives. Safe to
+ * call before receive exists: an idle MAC simply never raises anything. */
+void     wifimac_irq_enable(void);
+uint32_t wifimac_irq_fires(void);
+uint32_t wifimac_irq_status(void);
+
 #endif /* NATOS_WIFIMAC_H */

@@ -34,9 +34,19 @@
  * a wrong index silently programs a different peripheral's routing. */
 #define INTR_SRC_GPIO_PRO   22u
 
+/* The WiFi MAC is source 0 -- the first entry in the silicon's table, which is
+ * why its map register is the first one. Verified only by that structural fact
+ * so far; nothing has been observed to arrive on it yet. */
+#define INTR_SRC_WIFI_MAC    0u
+
 /* CPU interrupt lines this kernel uses. Both are level 3. */
 #define INTR_LINE_TIMER1    15u     /* internal CCOMPARE1; not from the matrix */
 #define INTR_LINE_GPIO      23u
+
+/* Line 27 is level 3 and level-triggered, which is what a peripheral that
+ * holds its interrupt asserted needs. Lines 22 and 29 are also level 3 but are
+ * edge and software respectively. */
+#define INTR_LINE_WIFI_MAC  27u
 
 typedef void (*intr_handler_fn)(void);
 

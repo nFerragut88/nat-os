@@ -32,6 +32,7 @@
 #include "phyinit.h"
 #include "xtensa.h"
 #include "task.h"
+#include "intr.h"
 
 /* Clock gating for the MAC, which is separate from the WiFi/BT common clock
  * phyinit already ungated (0x3C9).
@@ -223,4 +224,46 @@ uint32_t wifimac_tsf_check(uint32_t ms, uint32_t *cycles)
         *cycles = c1 - c0;
     }
     return t1 - t0;
+}
+
+/* ---- interrupt ----------------------------------------------------------
+ *
+ * Routing only. Nothing has been observed to arrive here yet, and it will not
+ * until receive is enabled -- an idle MAC has nothing to report. The value of
+ * doing it now is that the path is in place and COUNTED, so when RX is turned
+ * on the question "did the hardware raise anything" has an answer rather than
+ * needing new code written under a fault.
+ *
+ * The clear is the part to be wary of. Line 27 is level-triggered, so a handler
+ * that returns without clearing the source at the peripheral re-enters
+ * immediately and forever -- a hang with no output. Writing the status back to
+ * a presumed clear register is the conventional shape, but 0x3ff73c4c is a
+ * reverse-engineered address and this code cannot prove it does anything.
+ *
+ * What makes that acceptable is that intr_dispatch() already defends against
+ * exactly this: a line that keeps re-asserting gets shut off and recorded in
+ * intr_disabled_mask(). So the failure mode is a disabled interrupt and a
+ * counter to read, not a dead board. That defence was written for a different
+ * peripheral and is being relied on here deliberately.
+ */
+#define WIFI_DMA_INT_STATUS  0x3FF73C48u
+#define WIFI_DMA_INT_CLR     0x3FF73C4Cu
+
+static volatile uint32_t g_irq_fires;
+static volatile uint32_t g_irq_last_status;
+
+uint32_t wifimac_irq_fires(void)  { return g_irq_fires; }
+uint32_t wifimac_irq_status(void) { return g_irq_last_status; }
+
+static void wifimac_isr(void)
+{
+    uint32_t status = *(volatile uint32_t *)WIFI_DMA_INT_STATUS;
+    g_irq_last_status = status;
+    *(volatile uint32_t *)WIFI_DMA_INT_CLR = status;
+    g_irq_fires++;
+}
+
+void wifimac_irq_enable(void)
+{
+    intr_route(INTR_SRC_WIFI_MAC, INTR_LINE_WIFI_MAC, wifimac_isr);
 }
