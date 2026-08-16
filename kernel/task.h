@@ -117,6 +117,10 @@ typedef struct {
     uint8_t       prio;                /* effective, possibly boosted          */
     uint8_t       base_prio;           /* as created                           */
     uint32_t      wake_tick;           /* deadline while TASK_SLEEPING         */
+    /* Set by task_wake(), cleared by task_sleep(). Distinguishes "an interrupt
+     * cut this sleep short" from "the deadline has not arrived yet", which
+     * task_sleep must tell apart to re-arm without defeating touch_irq_wait. */
+    volatile uint8_t woken;
     uint32_t      switches;            /* times this task has been resumed */
     uint32_t      waiting;             /* ticks READY but not selected      */
     const char   *name;

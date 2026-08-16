@@ -74,23 +74,49 @@ That is not a failure — `init_mac()` is a clearing operation and at cold boot
 there is nothing to clear — but it means this register write is **currently
 unverified**. It will matter once the blob has set those bits.
 
-## Unrelated bug found on the way
+## Unrelated bug found on the way — now fixed
 
-`task_sleep()` does not sleep when called from shell-task context:
+`task_sleep()` was returning without sleeping. Found because the first TSF
+check used it and reported ~1 us for a requested 500 ms, with the CPU cycle
+counter and the MAC's TSF independently agreeing.
 
-```
-task_sleep(50 ticks) took 0 ms; expected ~500
-```
+TWO causes, and the first diagnosis in this file was wrong about the second:
 
-Found because the first TSF check used it and reported ~1 us for a requested
-500 ms — with the CPU cycle counter and the MAC's TSF independently agreeing,
-so it is not a measurement artefact.
+**1. `timer_ticks()` counted ISR entries, not time.** `task_yield()` ends a
+slice by pulling CCOMPARE1 to `ccount + 64`, so `timer_isr` ran on every yield
+as well as every deadline — and `g_ticks++` sat at the bottom of it
+unconditionally. Measured at **217 ticks per real second** where 100 is
+correct, and far higher when a task sat in an idle-yield loop. Every deadline
+expressed in ticks came due early, in proportion to how much yielding the
+system happened to be doing. Fixed by advancing the clock only when the
+deadline has actually passed: **217 -> 105**.
 
-Not diagnosed. `wake_sleepers()` and the ageing loop both look correct and both
-skip non-READY tasks. The suspicion is `task_yield()`, which pulls the
-comparator deadline forward and so advances `timer_ticks()` per yield rather
-than per 10 ms — making a deadline expressed in ticks arrive early for a task
-in a tight yield loop, which `task_shell` is. **Unverified.**
+**2. `task_yield()` arms a switch; it does not perform one.** It writes the
+comparator and returns, so the caller keeps running for ~60 cycles into what it
+believes is a sleep. `task_sleep(50)` — half a second — returned to its caller
+in **107 cycles**, the cost of the function body and nothing else. The sleep
+did happen; it started after the caller had already read the clock. Fixed by
+re-arming until the deadline genuinely arrives, with a `woken` flag so
+`task_wake()` can still cut a sleep short — `touch_irq_wait()` depends on that
+and a naive loop would have turned every early wake into a full-length one.
 
-`wifimac_tsf_check()` busy-waits instead, so this file's measurements do not
-depend on the broken path.
+Verified: `task_sleep(50)` now takes 639 ms / 64 ticks, and 64 ticks x 10 ms =
+640 ms — the tick count and the wall clock agree, which they did not before.
+The overshoot past 50 is scheduling latency for a NORMAL-priority task waiting
+behind the HIGH-priority display task, which is correct behaviour for a sleep.
+
+### It made the 3D view 44% faster
+
+| | before | after |
+|---|---|---|
+| ticks per real second | 217 | 105 |
+| raycaster blit | 55.85 ms | **31.4 ms** |
+
+Every spurious tick cost a full context save, a scheduler run and a restore.
+Removing them was pure gain — the timing fix was expected to risk the frame
+rate and improved it instead.
+
+The uncomfortable part is the same one `timer.c` already noted about an earlier
+bug in this function: **nothing showed a symptom.** Sleeps ran short, timeouts
+ran loose, and every frame-rate figure this project has recorded was taken
+against a clock that ran fast by a load-dependent factor.

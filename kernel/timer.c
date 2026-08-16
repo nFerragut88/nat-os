@@ -29,6 +29,36 @@ static uint32_t g_next;                  /* CCOUNT value of the next tick */
 void timer_isr(void)
 {
     uint32_t now = xt_ccount();
+
+    /* Not every entry here is a tick.
+     *
+     * task_yield() ends a slice by pulling CCOMPARE1 back to ccount+64, so this
+     * handler runs on every yield as well as on every real deadline. Counting
+     * entries therefore counts yields, and g_ticks++ used to sit at the bottom
+     * of this function unconditionally.
+     *
+     * That made timer_ticks() a measure of scheduling activity rather than of
+     * time, and every deadline expressed in ticks came due early in proportion
+     * to how much yielding the system happened to be doing. Measured at 217
+     * ticks per real second with the shell busy-waiting; far higher when a task
+     * sits in an idle-yield loop, which is where task_sleep(50) was observed
+     * returning in under a millisecond.
+     *
+     * The consequences were quiet and everywhere: sleeps ran short, timeouts
+     * ran loose, and any measurement taken against this clock was wrong by a
+     * factor that varied with load. The 3D view's own frame timing was among
+     * them.
+     *
+     * So: advance the clock only when the deadline has actually passed. An
+     * early entry falls through to the re-arm below, which restores CCOMPARE1
+     * to the real deadline the yield displaced -- the yield still got its
+     * context switch, because _handler_level3 calls the scheduler regardless of
+     * what this function decides. */
+    if ((int32_t)(now - g_next) < 0) {
+        xt_set_ccompare1(g_next);
+        return;
+    }
+
     g_last_delta = now - (g_next - g_interval);
 
     g_next += g_interval;
@@ -39,12 +69,17 @@ void timer_isr(void)
      * done in the handler. */
     /* The deadline must end up within one interval of now, in BOTH directions.
      *
-     * Too late was the only case this handled, and it is the obvious one. Too
-     * EARLY is the one that actually bit: task_yield() ends a slice by pulling
-     * CCOMPARE1 back to ccount+64 without telling this file, so g_next still
-     * holds the original deadline. The handler then fires 64 cycles later and
-     * adds a WHOLE interval to a deadline that was already a whole interval
-     * away — and every yield pushes the tick further into the future.
+     * Too late is the obvious case and the only one still reachable here: the
+     * early-return above now catches every entry that arrives before the
+     * deadline, so a yield can no longer reach this code at all. The too-EARLY
+     * arm is kept because it costs nothing and this is the second bug in this
+     * function to come from an assumption about who calls it.
+     *
+     * The history is worth keeping. task_yield() pulls CCOMPARE1 back to
+     * ccount+64 without telling this file, so g_next still held the original
+     * deadline; the handler then fired 64 cycles later and added a WHOLE
+     * interval to a deadline that was already a whole interval away — every
+     * yield pushing the tick further into the future.
      *
      * Measured after the display task's sleep was shortened, which multiplied
      * the yield rate: CCOMPARE1 ended up 14,630,119 cycles — 18 tick periods,

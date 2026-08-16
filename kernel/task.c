@@ -139,6 +139,7 @@ int task_create(const char *name, task_entry_fn entry)
         g_tasks[id].prio       = TASK_PRIO_NORMAL;
         g_tasks[id].base_prio  = TASK_PRIO_NORMAL;
         g_tasks[id].wake_tick  = 0;
+        g_tasks[id].woken      = 0;
         g_tasks[id].switches   = 0;
         g_tasks[id].waiting    = 0;
         g_tasks[id].name       = name;
@@ -571,6 +572,12 @@ void task_wake(int id)
     if (g_tasks[id].state == TASK_BLOCKED ||
         g_tasks[id].state == TASK_SLEEPING) {
         g_tasks[id].state = TASK_READY;
+        /* Records that this was a DELIBERATE release, not a deadline expiring.
+         * task_sleep re-arms until its deadline arrives, so without this it
+         * would sleep the caller again and the early wake would be lost. Set
+         * only here; wake_sleepers() leaves it alone, which is what makes the
+         * two cases distinguishable. */
+        g_tasks[id].woken = 1;
     }
 }
 
@@ -609,11 +616,51 @@ void task_sleep(uint32_t ticks)
     if (g_current < 0) {
         return;                     /* no context to sleep */
     }
+
+    /* Loops, because task_yield() does not switch — it ARMS a switch.
+     *
+     * It writes CCOMPARE1 to ccount + 64 and returns; the context change
+     * happens when that comparator fires, roughly sixty cycles later. So the
+     * caller keeps running past this function for a short window, and whatever
+     * it does in that window happens DURING what it believes is a sleep.
+     *
+     * Measured directly: task_sleep(50) — half a second — returned to its
+     * caller in 107 cycles, which is the cost of the function body and nothing
+     * else. The sleep did happen; it just started after the caller had already
+     * read the clock and concluded no time had passed. Two separate
+     * measurements this session were wrong because of it, including the first
+     * TSF check, which is what exposed it.
+     *
+     * Re-arming until the deadline genuinely arrives closes that window and
+     * costs one extra pass in the normal case.
+     *
+     * The `woken` flag is what keeps this from breaking touch_irq_wait. That
+     * caller wants a sleep an interrupt can cut short, so "the deadline has not
+     * arrived" must not be confused with "task_wake released me deliberately" —
+     * without the flag, this loop would put the task straight back to sleep and
+     * turn every early wake into a full-length one. */
+    uint32_t deadline = timer_ticks() + ticks;
+
     uint32_t crit = crit_enter();
-    g_tasks[g_current].wake_tick = timer_ticks() + ticks;
-    g_tasks[g_current].state     = TASK_SLEEPING;
+    g_tasks[g_current].woken = 0;
     crit_exit(crit);
-    task_yield();
+
+    for (;;) {
+        crit = crit_enter();
+        if (g_tasks[g_current].woken) {
+            g_tasks[g_current].woken = 0;
+            crit_exit(crit);
+            return;                 /* released early, on purpose */
+        }
+        if ((int32_t)(timer_ticks() - deadline) >= 0) {
+            crit_exit(crit);
+            return;                 /* the time really has passed */
+        }
+        g_tasks[g_current].wake_tick = deadline;
+        g_tasks[g_current].state     = TASK_SLEEPING;
+        crit_exit(crit);
+        task_yield();
+    }
 }
 
 void task_yield(void)

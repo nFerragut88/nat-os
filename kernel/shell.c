@@ -536,16 +536,42 @@ static void execute(char *line)
             uart_puts("\n");
         }
     }
+    else if (str_eq(line, "tickrate")) {
+        /* How many ticks pass per real second.
+         *
+         * Should be 100 at a 10 ms tick. Anything higher means timer_ticks()
+         * is counting something other than time -- which is the whole reason
+         * task_sleep was returning early. Busy-waits on CCOUNT rather than
+         * sleeping, for the obvious reason. */
+        uint32_t t0 = timer_ticks();
+        uint32_t c0 = xt_ccount();
+        while ((xt_ccount() - c0) < 80000000u) {
+            /* one second at ~80 MHz */
+        }
+        uart_puts("   ticks in one real second: ");
+        uart_put_dec(timer_ticks() - t0);
+        uart_puts("   (10 ms tick -> expect 100)\n");
+    }
     else if (str_eq(line, "sleeptest")) {
         /* Does task_sleep actually sleep? Found while bringing up the MAC:
          * a 500 ms sleep returned in about a microsecond, and two independent
          * clocks agreed on that, so it is not a measurement artefact. */
+        uint32_t t0 = timer_ticks();
         uint32_t c0 = xt_ccount();
         task_sleep(50u);                        /* 50 ticks = 500 ms */
-        uint32_t ms = (xt_ccount() - c0) / 80000u;
-        uart_puts("   task_sleep(50 ticks) took ");
-        uart_put_dec(ms);
-        uart_puts(" ms; expected ~500\n");
+        uint32_t cyc = xt_ccount() - c0;
+        uint32_t t1 = timer_ticks();
+        uart_puts("   task_sleep(50) -> ");
+        uart_put_dec(cyc / 80000u);
+        uart_puts(" ms, ");
+        uart_put_dec(t1 - t0);
+        uart_puts(" ticks (expected ~500 ms / 50 ticks)\n   raw cycles=");
+        uart_put_dec(cyc);
+        uart_puts("  ticks ");
+        uart_put_dec(t0);
+        uart_puts(" -> ");
+        uart_put_dec(t1);
+        uart_puts("\n");
     }
     else if (str_eq(line, "mactsf")) {
         /* Two independent clocks over half a second. The MAC's counter has no
