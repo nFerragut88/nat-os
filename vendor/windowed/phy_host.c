@@ -16,18 +16,37 @@
 #include <stddef.h>
 #include <stdarg.h>
 
+/* NESTING-SAFE, and it has to be.
+ *
+ * The first version kept a single saved PS. register_chipv7_phy() nests these,
+ * so the inner enter overwrote the outer's saved value and the final exit
+ * restored the MASKED level instead of the original. Interrupts stayed off, the
+ * tick stopped, no task switched, and the hang detector reset the board exactly
+ * 3000 ms later -- rst:0x7 TG0WDT_SYS_RESET.
+ *
+ * The PHY returned 0 through all of that. The bring-up had SUCCEEDED; the
+ * reset came from this shim afterwards, which is a good illustration of how far
+ * a wrong answer can travel when the thing it breaks is somewhere else.
+ *
+ * Only the outermost pair touches PS. Inner pairs raise the level again, which
+ * is already raised, and change nothing. */
 static uint32_t g_crit_saved;
+static int      g_crit_depth;
 
 void phy_enter_critical(void)
 {
     uint32_t ps;
     __asm__ volatile ("rsil %0, 3" : "=a"(ps));
-    g_crit_saved = ps;
+    if (g_crit_depth++ == 0) {
+        g_crit_saved = ps;
+    }
 }
 
 void phy_exit_critical(void)
 {
-    __asm__ volatile ("wsr.ps %0; rsync" :: "a"(g_crit_saved));
+    if (g_crit_depth > 0 && --g_crit_depth == 0) {
+        __asm__ volatile ("wsr.ps %0; rsync" :: "a"(g_crit_saved));
+    }
 }
 
 /* Single core, so the dual-core DPORT read hazard does not apply. */

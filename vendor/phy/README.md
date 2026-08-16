@@ -132,6 +132,48 @@ libphy, both weak. All 683 other symbols stay in nat-os's own regions.
 Relocation is not displacement: `memcpy` moving from `4008a5e8` to `4008aa34`
 is code shifting, and fine. `memcpy` becoming `4000c0bc` is the bug.
 
+## The radio initialises
+
+```
+> phyinit
+   ungating the radio clock, calling register_chipv7_phy...
+   returned 0
+> phyinit
+   already initialised this boot; a second call faults
+```
+
+`register_chipv7_phy(init_data, cal_data, PHY_RF_CAL_FULL)` returns **0**. The
+PHY is up: clock ungated, Espressif's default 128-byte init table accepted, full
+RF calibration run.
+
+Three things it needed beyond the linking work:
+
+- **The WiFi/BT common clock ungated** in `DPORT_WIFI_CLK_EN_REG` (`0x3C9`).
+  Without it the PHY's registers are dead — the same "peripheral configured
+  perfectly and switched off" shape as UM-NATOS-027 §3.3, now its fourth
+  appearance in this project.
+- **128 bytes of init data**, Espressif's default table. The header lists 107
+  values; the remaining 21 are the zeros C fills in.
+- **`PHY_RF_CAL_FULL`**, not PARTIAL or NONE — those expect calibration data
+  from a previous run, and there has never been one.
+
+### Two failures, both in the shims, neither in the blob
+
+**The board reset 3000 ms after the first successful call.** `phy_enter_critical`
+kept a *single* saved PS, and the PHY nests those: the inner enter overwrote the
+outer's saved value, the final exit restored the masked level, the tick stopped,
+no task switched, and the hang detector fired. `rst:0x7 TG0WDT_SYS_RESET` — our
+own watchdog, working. The call had already returned 0. Now depth-counted.
+
+**A second call faults** with `exccause 29` (StoreProhibited) inside the blob.
+The PHY holds state across the call; handing it a fresh calibration buffer while
+it believes it is initialised is not supported. ESP-IDF calls it exactly once,
+and `phyinit_run()` now refuses the second.
+
+Both are worth recording for the same reason: **the blob was right and the
+environment around it was wrong**, and in the first case the symptom appeared
+three seconds after the thing that caused it had already succeeded.
+
 ## What this does NOT establish
 
 Linking is not running, and the gap is the whole remaining risk:

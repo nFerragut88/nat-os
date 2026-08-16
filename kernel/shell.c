@@ -23,6 +23,7 @@
 #include "uart.h"
 #include "vm.h"
 #include "window.h"
+#include "phyinit.h"
 
 #define LINE_MAX 64
 
@@ -445,6 +446,27 @@ static void execute(char *line)
         uart_puts("   libphy says: ");
         uart_puts(phy_host_log_buf);
         uart_puts("\n");
+    }
+    else if (str_eq(line, "phyinit")) {
+        /* The first thing in this project that touches the radio.
+         *
+         * Printed BEFORE the call as well as after, deliberately: if the board
+         * hangs or resets inside register_chipv7_phy, the difference between
+         * "never started" and "started and did not return" is the only clue
+         * that would survive a reset. It is how the watchdog reset on the
+         * first attempt was traced to the critical-section shim rather than to
+         * the PHY -- the call had already returned 0. */
+        if (phyinit_attempted()) {
+            uart_puts("   already initialised this boot; a second call faults\n");
+        } else {
+            uart_puts("   ungating the radio clock, calling register_chipv7_phy...\n");
+            int r = phyinit_run();
+            uart_puts("   returned ");
+            uart_put_dec((unsigned int)r);
+            uart_puts("\n   phy log: ");
+            uart_puts(phy_host_log_buf);
+            uart_puts("\n");
+        }
     }
     else if (str_eq(line, "3d")) {
         int on = !str_eq(arg, "off");
