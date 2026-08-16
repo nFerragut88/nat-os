@@ -62,6 +62,8 @@ uint32_t raycast_us_compose(void);
 uint32_t raycast_us_blit(void);
 
 uint32_t raycast_frames(void);
+uint32_t raycast_cam_x(void);
+uint32_t raycast_cam_y(void);
 uint32_t raycast_columns(void);
 
 #endif /* NATOS_RAYCAST_H */

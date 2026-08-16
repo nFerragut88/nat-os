@@ -345,6 +345,11 @@ static void task_report(void)
         uart_put_dec(raycast_frames());
         uart_putc('/');
         uart_put_dec(raycast_columns());
+        uart_puts("  | cam=");
+        uart_put_dec(raycast_cam_x());
+        uart_putc(',');
+        uart_put_dec(raycast_cam_y());
+
         uart_puts("  | blits=");
         uart_put_dec(vm_blits());
         /* Compact: the first/last cell pair is what distinguishes a bad touch

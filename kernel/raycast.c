@@ -50,13 +50,55 @@ static uint32_t g_frames, g_columns;
 static uint32_t g_us_march, g_us_compose, g_us_blit;
 static uint32_t g_last_move_tick;
 
+/* ---- walk and steer ------------------------------------------------------
+ *
+ * MOVE_SHIFT  distance per tick, as a shift of the unit direction vector.
+ *             6 is 1/64 of a cell per tick, so about 1.5 cells a second once
+ *             MOVE_CATCHUP_MAX stopped throwing most of the ticks away.
+ * LOOK_SHIFT  how far ahead a wall triggers a turn. 0 is a FULL cell — half a
+ *             cell was not enough warning at this speed, which is what "runs
+ *             into walls before turning" meant the second time.
+ * STOP_SHIFT  how far ahead a wall stops the walk. 3 is an eighth of a cell,
+ *             so the camera keeps advancing through a turn and only halts when
+ *             it is genuinely about to embed.
+ * TURN_UNITS  angle per tick while a turn is wanted, out of 256 for a full
+ *             circle. 1 is 1.4 degrees — a sweep, where the 3 it replaced was
+ *             a 4.2-degree jerk applied only on contact. */
+#define MOVE_SHIFT  6
+#define LOOK_SHIFT  0
+#define STOP_SHIFT  3
+#define TURN_UNITS  1
+
+/* Ticks of movement a single frame may apply.
+ *
+ * This was 4, and it was the reason the camera crawled AND turned late. At
+ * 9 fps about eleven ticks pass between frames, so the clamp discarded two
+ * thirds of both the walking and the turning, every frame — a stall guard that
+ * fired constantly during normal running.
+ *
+ * 20 is 200 ms, longer than any gap between frames the renderer produces, so it
+ * now only bites on a genuine stall. The guard is still needed: without it, a
+ * pause of a second would apply a second of movement in one step and walk
+ * straight through a wall, because the collision probe only checks the
+ * destination of each step and not the path to it. */
+#define MOVE_CATCHUP_MAX 20u
+
+
+
+
 /* Two pixels per row, so one composed buffer covers a 2-pixel-wide column.
  *
  * The data volume is identical either way — the panel receives the same 80,640
  * bytes. What halves is the number of address-window setups, and those measured
  * at ~450 us each against only ~94 us of pixel data per column. The overhead was
  * five times the payload. */
-#define RAY_COLW  2u
+/* One ray per screen column.
+ *
+ * Was 2, which halved the cast cost at the price of halving horizontal detail.
+ * That trade made sense when the renderer's cost was unknown; measurement says
+ * it is not: marching is 0.2 ms of a 50 ms frame and the blit is 41.9 ms, so
+ * the frame is bus-bound and casting twice as many rays is close to free. */
+#define RAY_COLW  1u
 #define RAY_COLS  (RAY_VIEW_W / RAY_COLW)
 
 static uint16_t g_col[RAY_VIEW_H * RAY_COLW];
@@ -75,6 +117,83 @@ static int wall_at(int32_t fx, int32_t fy)
         return 1;                       /* outside the map counts as solid */
     }
     return MAP[cy][cx];
+}
+
+/* ---- navigation ----------------------------------------------------------
+ *
+ * Heading is chosen once per CELL, then held while the camera walks to the next
+ * one. Steering is smooth: the angle turns toward the chosen heading a little
+ * each tick, so the corner is rounded rather than snapped.
+ *
+ * The previous version steered reactively — probe ahead, turn while blocked —
+ * and it could not traverse a maze. With corridors one cell wide, a probe
+ * looking a full cell ahead is blocked almost all the time, so the camera
+ * turned continuously and never committed to a direction. It covered four
+ * distinct cells in twenty seconds and paced between them.
+ *
+ * Deciding per cell instead of per tick is the difference between a camera that
+ * reacts to walls and one that follows corridors. The rule is left-first, which
+ * is wall-following: with a consistent hand a connected maze gets walked
+ * instead of paced.
+ *
+ * Headings are indices, not angles: 0 = +x, 1 = +y, 2 = -x, 3 = -y, matching
+ * fcos/fsin at multiples of 64. */
+static uint32_t g_heading;              /* 0..3 */
+static uint32_t g_target_angle;         /* g_heading * 64 */
+static int32_t  g_decided_x = -1, g_decided_y = -1;
+
+static const int8_t HEAD_DX[4] = { 1, 0, -1, 0 };
+static const int8_t HEAD_DY[4] = { 0, 1, 0, -1 };
+
+static int cell_open(int32_t cx, int32_t cy, uint32_t h)
+{
+    int32_t nx = cx + HEAD_DX[h & 3u];
+    int32_t ny = cy + HEAD_DY[h & 3u];
+    if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) {
+        return 0;
+    }
+    return !MAP[ny][nx];
+}
+
+static void navigate_step(void)
+{
+    int32_t cx = g_px >> FP;
+    int32_t cy = g_py >> FP;
+
+    /* One decision per cell entered. Without this the heading would be
+     * re-chosen every tick and the camera would dither on the boundary. */
+    if (cx != g_decided_x || cy != g_decided_y) {
+        g_decided_x = cx;
+        g_decided_y = cy;
+
+        /* Left, straight, right, back — the first that is open wins. */
+        static const int8_t ORDER[4] = { 3, 0, 1, 2 };   /* -1, 0, +1, +2 */
+        for (uint32_t i = 0; i < 4u; i++) {
+            uint32_t h = (g_heading + (uint32_t)ORDER[i]) & 3u;
+            if (cell_open(cx, cy, h)) {
+                g_heading = h;
+                break;
+            }
+        }
+        g_target_angle = g_heading * 64u;
+    }
+
+    /* Turn toward the chosen heading, shortest way round, a little per tick. */
+    uint32_t diff = (g_target_angle - g_angle) & (SIN_N - 1u);
+    if (diff != 0u) {
+        raycast_turn(diff < (SIN_N / 2u) ? TURN_UNITS : -TURN_UNITS);
+    }
+
+    /* Walk. The stop probe stays as a backstop: navigation should never aim at
+     * a wall, and if it ever does this is what keeps the camera out of it. */
+    int32_t dx = fcos(g_angle);
+    int32_t dy = fsin(g_angle);
+    int32_t nx = g_px + (dx >> MOVE_SHIFT);
+    int32_t ny = g_py + (dy >> MOVE_SHIFT);
+    if (!wall_at(nx + (dx >> STOP_SHIFT), ny + (dy >> STOP_SHIFT))) {
+        g_px = nx;
+        g_py = ny;
+    }
 }
 
 void raycast_init(void)
@@ -249,14 +368,20 @@ void raycast_frame(void)
                 uint32_t s = 20u + (uint32_t)(below * 50) / (span > 0 ? span : 1);
                 px = RGB(s, s / 2u, s / 3u);
             }
+            /* Written RAY_COLW times rather than twice: the column width is a
+             * constant that has now changed once, and code that hardcodes it
+             * is code that silently writes into the neighbouring column when it
+             * changes again. */
             if (g_fb) {
                 /* Row-major, so the finished view is one contiguous stream. */
                 uint16_t *row = g_fb + (uint32_t)y * RAY_VIEW_W + x;
-                row[0] = px;
-                row[1] = px;
+                for (uint32_t k = 0; k < RAY_COLW; k++) {
+                    row[k] = px;
+                }
             } else {
-                g_col[y * RAY_COLW]      = px;
-                g_col[y * RAY_COLW + 1u] = px;
+                for (uint32_t k = 0; k < RAY_COLW; k++) {
+                    g_col[y * RAY_COLW + k] = px;
+                }
             }
         }
 
@@ -302,27 +427,18 @@ void raycast_frame(void)
      * buried itself in a wall, and every column rendered as one flat colour —
      * measured as cam=6,1 hit0=0, a centre-column hit distance of zero cells.
      *
-     * The shift reproduces the speed the frame-based version had when it was
-     * liked, rather than being picked afresh: (dir >> 4) per frame at ~3 fps is
-     * about dir/5 per second, and dir >> 9 per tick at 100 ticks/s is the same.
-     * Changing a rate's units is an opportunity to change its value by
-     * accident, and the first attempt did exactly that by a factor of eight. */
+     * Speed and steering are four constants, all per tick — see their
+     * definitions above. Keeping them per tick is what stops a faster renderer
+     * becoming a faster camera, which it did once already. */
     uint32_t now = timer_ticks();
     uint32_t elapsed = now - g_last_move_tick;
-    if (elapsed > 4u) {
-        elapsed = 4u;               /* a stall must not teleport the camera */
+    if (elapsed > MOVE_CATCHUP_MAX) {
+        elapsed = MOVE_CATCHUP_MAX;
     }
     g_last_move_tick = now;
 
     for (uint32_t step = 0; step < elapsed; step++) {
-        int32_t nx = g_px + (dirX >> 9);
-        int32_t ny = g_py + (dirY >> 9);
-        if (wall_at(nx + (dirX >> 2), ny + (dirY >> 2))) {
-            raycast_turn(3);
-            break;
-        }
-        g_px = nx;
-        g_py = ny;
+        navigate_step();
     }
 
     g_us_march   = t_march   / 80u;     /* 80 MHz -> microseconds */
@@ -330,6 +446,12 @@ void raycast_frame(void)
     g_us_blit    = t_blit    / 80u;
     g_frames++;
 }
+
+/* Camera cell, for the reporter. A view that looks wrong has two very
+ * different causes — nothing drawn, or a correct view from inside a wall — and
+ * only the camera position tells them apart. */
+uint32_t raycast_cam_x(void) { return (uint32_t)(g_px >> FP); }
+uint32_t raycast_cam_y(void) { return (uint32_t)(g_py >> FP); }
 
 uint32_t raycast_frames(void)  { return g_frames; }
 uint32_t raycast_columns(void) { return g_columns; }
