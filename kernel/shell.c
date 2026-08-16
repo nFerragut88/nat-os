@@ -16,6 +16,7 @@
 #include "touch.h"
 #include "calib.h"
 #include "intr.h"
+#include "adc.h"
 #include "desktop.h"
 #include "uart.h"
 #include "vm.h"
@@ -98,6 +99,7 @@ static void cmd_help(void)
               "    cal           calibrate the touch panel\n"
               "    calshow       last calibration result and readings\n"
               "    intr          interrupt matrix counters\n"
+              "    adc           read every ADC1 channel\n"
               "    help          this\n");
 }
 
@@ -177,6 +179,50 @@ static void cmd_run(const char *name)
     uart_puts("   no such program (try 'progs')\n");
 }
 
+/* Reads every ADC1 channel, not just the interesting one.
+ *
+ * Four of these pads belong to the touch controller, so their values are this
+ * kernel's own wiring rather than the world — and that is exactly what makes
+ * them useful here. A converter that is not really converting returns the same
+ * number on every channel, and eight identical readings are obvious in a way
+ * that one plausible reading is not.
+ *
+ * It also tests a claim about the board rather than trusting one: the LDR is
+ * SAID to be on GPIO34. Whichever channel moves when the room light changes is
+ * the one that actually is. */
+static void cmd_adc(void)
+{
+    static const uint32_t pad[8] = { 36, 37, 38, 39, 32, 33, 34, 35 };
+
+    uart_puts("   ch  gpio  value   note\n");
+    for (uint32_t ch = 0; ch < 8u; ch++) {
+        uint32_t v = adc1_read_avg(ch, 8u);
+
+        uart_puts("   ");
+        uart_put_dec(ch);
+        uart_puts("   ");
+        uart_put_dec(pad[ch]);
+        uart_puts("    ");
+        if (v == ADC_INVALID) {
+            uart_puts("----   no conversion\n");
+            continue;
+        }
+        uart_put_dec(v);
+        uart_puts("    ");
+        if (ch == 0u || ch == 3u) {
+            uart_puts("touch penirq/miso\n");
+        } else if (ch == 4u || ch == 5u) {
+            uart_puts("touch mosi/cs\n");
+        } else if (ch == ADC1_CH_LDR) {
+            uart_puts("<- LDR? cover it and re-run\n");
+        } else {
+            uart_puts("header\n");
+        }
+    }
+    adc_dump();
+    adc_dump_rtcio();
+}
+
 static void cmd_mem(void)
 {
     uart_puts("   heap free=");
@@ -210,6 +256,12 @@ static void execute(char *line)
     else if (str_eq(line, "ps"))    { cmd_ps(); }
     else if (str_eq(line, "progs")) { cmd_progs(); }
     else if (str_eq(line, "mem"))   { cmd_mem(); }
+    else if (str_eq(line, "adc"))   { cmd_adc(); }
+    else if (str_eq(line, "adcprobe")) { adc_probe_sensor_mux(); }
+    else if (str_eq(line, "adcconv")) { adc_probe_convert(); }
+    else if (str_eq(line, "adcdrive")) { adc_probe_driven(); }
+    else if (str_eq(line, "ldr")) { adc_watch(ADC1_CH_LDR, 120u); }
+    else if (str_eq(line, "ldrscan")) { adc_watch_all(40u); }
     else if (str_eq(line, "hang")) {
         /* Deliberately wedge the system to prove the hang detector works.
          *

@@ -30,6 +30,7 @@
 #include "calib.h"
 #include "touch.h"
 #include "intr.h"
+#include "adc.h"
 #include "critical.h"
 #include "mutex.h"
 #include "shell.h"
@@ -1464,7 +1465,8 @@ void kmain(void)
     mutex_init(&g_shared_lock);
 
     touch_init();
-    touch_irq_init();       /* PENIRQ -> matrix -> CPU line 23; see intr.h */
+    touch_irq_init();
+    adc_init();       /* PENIRQ -> matrix -> CPU line 23; see intr.h */
 
     raycast_init();
     desktop_init();
