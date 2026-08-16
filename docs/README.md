@@ -79,7 +79,7 @@ Reproducing a build: **005** alone is sufficient.
 | Locking | **Complete** — critical sections and a blocking mutex; heap and console both arbitrated, UM-NATOS-014 |
 | Task blocking | **Live** — `TASK_BLOCKED`, `TASK_SLEEPING` and an idle task using `WAITI`, UM-NATOS-009 §11 |
 | Scheduling | **Priorities with ageing** — three levels plus ageing credit, so a ready task reaches the front within ~600 ms whatever sits above it; `task_sleep()` and priority inheritance, UM-NATOS-009 §11.4 |
-| 3D renderer | **Running** — grid raycaster, no framebuffer (measured not to help), UM-NATOS-015 §5.7 |
+| 3D renderer | **Running** — grid raycaster, one ray per column, face shading, framebuffer on (§5.7's contrary measurement was taken through a stalling clock and lock contention), UM-NATOS-015 §5.8 |
 | Display | **Working on hardware** — ILI9341, no framebuffer, **43 ms** full-screen fill via SPI2 + DMA, UM-NATOS-015 §5.5 |
 | Application graphics | **Live** — `FILL`/`TEXT`/`DIMS` confined to per-application viewports; 0 escapes across 136 audited fills, UM-NATOS-016 §5 |
 | Touch | **Working on hardware** — XPT2046 gated on PENIRQ **and** pressure; X axis was inverted for three months and is now calibrated from four labelled corners, UM-NATOS-017 §4.1, §7.1 |

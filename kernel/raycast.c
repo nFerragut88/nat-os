@@ -310,6 +310,7 @@ void raycast_frame(void)
         int32_t  fx = g_px, fy = g_py;
         int      hit = 0, steps = 0;
         int32_t  hx = 0, hy = 0;
+        int      face_x = 0;    /* crossed a vertical boundary (an E/W face) */
 
         t0 = xt_ccount();
         while (steps < MAX_STEPS) {
@@ -320,6 +321,16 @@ void raycast_frame(void)
                 hit = 1;
                 hx = fx >> FP;
                 hy = fy >> FP;
+
+                /* Which face was crossed, recovered by comparing the cell one
+                 * step back. A DDA would know this for free; a fixed-step march
+                 * does not, and one subtraction is cheaper than changing the
+                 * marcher.
+                 *
+                 * If both coordinates changed cell in the same step the choice
+                 * is arbitrary and X wins. At 1/8 of a cell per step that is a
+                 * corner hit, where either answer is defensible. */
+                face_x = (((fx - sx) >> FP) != hx);
                 break;
             }
         }
@@ -350,6 +361,21 @@ void raycast_frame(void)
 
         /* Hue from the cell, so each wall block is its own colour and the room
          * reads as a rainbow rather than one tinted box. */
+        /* Darken one family of faces.
+         *
+         * Every face was equally bright, so two walls meeting at a corner
+         * differed only by their cell hue and the corner read as a colour
+         * change rather than as geometry. Shading by orientation is what makes
+         * a box look like a box: the eye takes consistent light direction as
+         * depth, and it costs one multiply per column.
+         *
+         * 5/8 rather than something subtler because this panel is 16-bit and
+         * dim differences band badly; the floor of 40 in the distance falloff
+         * above stops far walls going black. */
+        if (!face_x) {
+            shade = (shade * 5u) / 8u;
+        }
+
         uint16_t wall = hue_shaded((uint32_t)(hx * 23 + hy * 41), shade);
 
         t0 = xt_ccount();

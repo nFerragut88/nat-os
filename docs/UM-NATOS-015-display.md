@@ -1,7 +1,7 @@
 # UM-NATOS-015 — Display Driver
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.3 · 2026-08-15 · Status: **Complete, verified on hardware** — §5.6–5.7 added, a renderer exposed two defects and disproved a framebuffer
+Revision 1.4 · 2026-08-15 · Status: **Complete, verified on hardware** — §5.8 added; the framebuffer claim in §5.7 is overturned
 
 ---
 
@@ -253,6 +253,88 @@ decides everything else.
 Keeping the switch means the claim can be rechecked whenever the display path
 changes underneath it, rather than being inherited as folklore.
 
+> **Superseded — see §5.8.** The switch was rechecked and the conclusion did not
+> survive. Both figures above were taken on a clock that intermittently stalled
+> (UM-NATOS-008 §8) and under draw-lock contention that dominated the frame
+> (UM-NATOS-014 §10). With both fixed the framebuffer is worth having and is
+> now the default. The paragraph above is left standing because the *method* —
+> keep the switch, recheck the claim — is what produced the correction.
+
+### 5.8 The renderer since, and a claim that did not survive
+
+*Added in revision 1.4.*
+
+#### The framebuffer pays after all
+
+§5.7 measured no difference between the framebuffer and per-column blitting, and
+defaulted it off. Both measurements were taken through two faults discovered
+later:
+
+- `xt_ccount()` deltas measured wall clock, and the tick those frames were
+  counted against **stalled for up to 183 ms at a time** (UM-NATOS-008 §8)
+- the draw lock was contended hard enough that the renderer spent most of every
+  frame blocked rather than drawing (UM-NATOS-014 §10)
+
+With both fixed, one window per frame beats 240, and the framebuffer is on by
+default. §5.7's *conclusion* was wrong; its *method* was right, and is why the
+error was findable — a switch that can be flipped is a claim that can be
+rechecked.
+
+#### Where the frame goes now
+
+```
+march      2.6 ms      one ray per screen column
+compose   13.9 ms      240 x 168 pixels into DRAM
+blit      41.9 ms      one 80,640-byte window
+                       ~9.1 fps
+```
+
+**The frame is bus-bound**: 72% of it is pushing pixels down SPI at 40 MHz,
+which UM-NATOS-018 §4 established is this board's ceiling — 80 MHz works
+electrically and puts visible noise on the glass. So detail is cheap here and
+pixels are expensive, and that shapes what is worth adding.
+
+#### One ray per column
+
+`RAY_COLW` 2 → 1, doubling horizontal detail. The estimate for this was wrong by
+a factor of forty — predicted 0.2 ms, cost about 9 ms — for two reasons worth
+recording:
+
+- the 0.2 ms march figure was sampled with the camera **against a wall**, where
+  rays terminate immediately. A cost measured at the cheapest moment is not a
+  cost.
+- compose doubled although the pixel count did not: the per-row loop now runs
+  once per column, 240 × 168 iterations instead of 120 × 168 writing two pixels
+  each. Same pixels, twice the loop.
+
+#### Face shading
+
+Every wall face was equally bright, so two walls meeting at a corner differed
+only by cell hue and the corner read as a colour change rather than as geometry.
+Faces crossed through a vertical boundary now render at full brightness and the
+others at 5/8.
+
+The marcher is fixed-step rather than DDA, so it does not know which face it
+crossed. It is recovered by comparing the cell one step back — one subtraction,
+cheaper than replacing the marcher. When both coordinates change cell in the
+same step the hit is a corner, either answer is defensible, and X wins
+arbitrarily.
+
+Cost: one comparison per hit and one multiply per column, unmeasurable against a
+41.9 ms blit.
+
+#### Navigation belongs to the camera, not the driver
+
+The camera's wander was rewritten from reactive probing to a heading chosen once
+per cell, because no amount of probe tuning could traverse a maze — in corridors
+one cell wide a look-ahead probe is blocked almost always, so the camera turned
+continuously and never committed to a direction. Distinct cells visited in 20 s
+went from 4, pacing in one pocket, to 12 across the map.
+
+That is recorded here for want of a better home. It is not a display-driver
+property, and if the renderer grows much further it wants its own report rather
+than a subsection of the driver's.
+
 ## 6. Verification
 
 Visual confirmation on the panel: the status screen renders, values update, and
@@ -302,6 +384,11 @@ self-tests all still passing.
 | Bytes for init + clear | 153,634 |
 | Native tasks | 8 |
 | Image size | 18,896 B |
+| Rays per frame | 240, one per column |
+| Frame cost, march / compose / blit | 2.6 / 13.9 / 41.9 ms |
+| Share of frame spent on the bus | 72% |
+| Framebuffer | on by default — §5.7's conclusion overturned in §5.8 |
+| SPI clock ceiling on this board | 40 MHz (80 MHz is electrically fine and visibly noisy) |
 
 ## 8. What this does not establish
 
@@ -326,6 +413,16 @@ self-tests all still passing.
   discipline as everything else in UM-NATOS-012 §3.
 - **No gamma correction.** The gamma tables (`0xE0`/`0xE1`) are left at panel
   defaults, so colours are correct in channel but not calibrated in response.
+
+- **Face shading is by orientation only.** There is no light source and no
+  falloff across a face; two walls of the same orientation are equally bright
+  regardless of where they are. It is a depth cue, not lighting.
+- **The corner case in face recovery is arbitrary.** When a march step crosses
+  both boundaries at once, X is chosen because something must be. Nothing
+  measures how often that happens or whether it is visible.
+- **Nothing measures whether the icons or the shading are legible.** Both were
+  judged by one person on one panel, which is the same standard the report set
+  criticises elsewhere.
 
 ## 9. References
 
