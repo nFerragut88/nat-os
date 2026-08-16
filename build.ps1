@@ -106,13 +106,40 @@ Write-Host "== linking ==" -ForegroundColor Cyan
 $elf = Join-Path $build "natos.elf"
 # Quote every -Wl,... argument: PowerShell otherwise reads the comma as an
 # array separator and the parser dies before gcc is ever invoked.
+# Espressif's radio blob and the ROM symbol tables it resolves against.
+#
+# Linked normally, NOT --whole-archive: the linker pulls in only the objects
+# actually referenced, so a build that calls one small function costs a few KB
+# rather than libphy's full 56 KB. vendor/phy/README.md has the measurement.
+#
+# The ROM scripts are pure address assignments -- memcpy, sprintf, soft-float
+# helpers and hundreds of others already burned into the chip. libgcc supplies
+# __divsf3, the one helper the ROM lacks.
+$sdk = "$env:USERPROFILE\.platformio\packages\framework-arduinoespressif32\tools\sdk\esp32"
+$phylibs = @()
+if ($false) {   # DISABLED: see below
+    # The newlib ROM scripts assign memcpy/sprintf as STRONG symbols, which
+    # silently redirected the kernel's own call0 memcpy to a WINDOWED ROM
+    # function. Boot panicked with IllegalInstruction at 0x4000c336.
+
+    $phylibs = @(
+        "$sdk\ld\libphy.a",
+        "-T", "$sdk\ld\esp32.rom.ld",
+        "-T", "$sdk\ld\esp32.rom.libgcc.ld",
+        "-T", "$sdk\ld\esp32.rom.newlib-funcs.ld",
+        "-T", "$sdk\ld\esp32.rom.newlib-nano.ld",
+        "-lgcc"
+    )
+    Write-Host "  linking libphy.a + ROM symbol tables" -ForegroundColor DarkGray
+}
+
 $ldflags = @(
     "-mabi=call0", "-nostdlib", "-nostartfiles",
     "-Wl,--gc-sections",
     "-Wl,-Map,$build\natos.map",
     "-T", "$root\kernel\linker.ld"
 )
-& $gcc @ldflags -o $elf @objs
+& $gcc @ldflags -o $elf @objs @phylibs
 if ($LASTEXITCODE -ne 0) { throw "link failed" }
 
 & $size $elf

@@ -11,7 +11,7 @@ archive*, which the linker resolves internally. The true external surface is:
 
 **16 symbols.** Of those, 10 are already in the chip's ROM at fixed addresses
 (`memcpy`, `sprintf`, `ets_delay_us`, `phy_get_romfuncs`, and the soft-float
-helpers), leaving **6 to write** — all of them small, and all in `phy_host.c`:
+helpers), leaving **6 to write** — all of them small, and all in `../windowed/phy_host.c`:
 
 | symbol | implementation |
 |---|---|
@@ -46,6 +46,48 @@ xtensa-esp32-elf-gcc -nostdlib -nostartfiles \
 IRAM is 128 KB. nat-os is 57.5 KB of text, libphy is 55.8 KB — **110 KB, about
 15 KB spare.** Tight, and real. Much of libphy need not live in IRAM anyway.
 
+## The first attempt to link it into the kernel FAILED
+
+Recorded because the failure mode is not obvious and will be met again.
+
+Adding `libphy.a` plus the ROM linker scripts to nat-os's own link produced a
+kernel that **panicked during boot**: `IllegalInstruction` at `0x4000c336`, a
+ROM address, inside `msg_load`.
+
+The cause is in the scripts, not the blob. `esp32.rom.newlib-*.ld` and
+`esp32.rom.libgcc.ld` define symbols by **direct assignment**, not `PROVIDE`:
+
+```
+memcpy = 0x4000c0bc;      /* strong — overrides any definition */
+PROVIDE ( ets_delay_us = 0x40008534 );   /* weak — defers to ours */
+```
+
+`esp32.rom.libgcc.ld` says so in its own header, and the reason is deliberate:
+Espressif wants the ROM versions to beat `libgcc.a`. The consequence here is
+that **every `memcpy` in the kernel was redirected to the ROM's**, including
+compiler-generated struct copies — and the ROM's `memcpy` is **windowed ABI**,
+called from call0 code. It faulted on the first use.
+
+This is the ABI problem arriving from an unexpected direction. The work so far
+was about calling *into* windowed code deliberately; this was a linker script
+quietly *replacing the kernel's own functions* with windowed ones.
+
+### What the fix looks like
+
+The two ABIs cannot share one symbol name. `libphy.a` needs a windowed
+`memcpy`; nat-os needs a call0 one. The standard remedy is to rename the blob's
+references so they stop colliding:
+
+```
+objcopy --redefine-sym memcpy=phy_memcpy         --redefine-sym sprintf=phy_sprintf  libphy.a libphy_natos.a
+```
+
+then supply windowed `phy_memcpy` / `phy_sprintf` alongside the other shims, and
+link **only** `esp32.rom.ld` — whose entries are all `PROVIDE` and therefore
+cannot displace anything nat-os defines.
+
+Not attempted yet. The kernel was restored to its working state first.
+
 ## What this does NOT establish
 
 Linking is not running, and the gap is the whole remaining risk:
@@ -67,3 +109,14 @@ The question was whether a vendor blob would demand a whole operating system
 underneath it — heap, FreeRTOS, NVS, the IDF's logging and locking. The answer
 is six functions and a symbol table. That moves WiFi from "blocked on an
 unknown" to "blocked on known work".
+
+## Where the shims live
+
+`../windowed/phy_host.c`, not here. They are compiled `-mabi=windowed` because
+the blob **calls** them: a windowed caller issues `CALL8`, and a call0 callee
+neither executes `ENTRY` nor returns with `RETW`, so the window would rotate
+forward and never come back. The ABI has to match on both sides of every edge,
+in both directions.
+
+That is also why `phy_printf` writes to a buffer instead of calling
+`uart_puts()` — that call would be exactly the broken edge described above.
