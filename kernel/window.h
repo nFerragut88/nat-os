@@ -25,4 +25,14 @@ uint32_t win_call_probe(uint32_t depth);
  * kernel can call vendor-ABI code, not just hand-written windowed assembly. */
 uint32_t win_call_vendor(uint32_t depth, uint32_t seed);
 
+/* Calls a three-argument WINDOWED function at an arbitrary address.
+ *
+ * Espressif's ROM holds hundreds of routines at fixed addresses, all windowed,
+ * needing no linking and no environment. This makes every one of them callable.
+ * crc32_le lives at 0x4005CFEC and is a pure function, which is why it is the
+ * first vendor code this kernel runs. */
+uint32_t rom_call3(uint32_t fn, uint32_t a, uint32_t b, uint32_t c);
+
+#define ESP_ROM_CRC32_LE  0x4005CFECu
+
 #endif /* NATOS_WINDOW_H */

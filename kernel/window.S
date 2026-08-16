@@ -236,3 +236,41 @@ win_call_vendor:
     addi    a1, a1, 32
     ret
     .size win_call_vendor, . - win_call_vendor
+
+/* Generic call0 -> windowed bridge for a three-argument function at a runtime
+ * address.
+ *
+ * This is the one that matters. Espressif's ROM holds hundreds of routines at
+ * fixed addresses, all windowed ABI, and every one of them becomes reachable
+ * through this: no linking, no relocation, no environment — just an address.
+ * The same shape works for a function inside a linked blob.
+ *
+ * CALLX8 takes its target from a register that must survive the window
+ * rotation, so it is read from a2, which is in the half that does not rotate.
+ * Arguments move to a10..a12 and the result returns in a10.
+ *
+ *   uint32_t rom_call3(uint32_t fn, uint32_t a, uint32_t b, uint32_t c);
+ */
+    .align 4
+    .global rom_call3
+    .type rom_call3, @function
+rom_call3:
+    addi    a1, a1, -32
+    s32i    a0,  a1, 0
+    s32i    a12, a1, 4              /* callee-saved under call0; CALL8 eats them */
+    s32i    a13, a1, 8
+    s32i    a14, a1, 12
+    s32i    a15, a1, 16
+    mov     a10, a3
+    mov     a11, a4
+    mov     a12, a5
+    callx8  a2
+    mov     a2,  a10
+    l32i    a0,  a1, 0
+    l32i    a12, a1, 4
+    l32i    a13, a1, 8
+    l32i    a14, a1, 12
+    l32i    a15, a1, 16
+    addi    a1, a1, 32
+    ret
+    .size rom_call3, . - rom_call3

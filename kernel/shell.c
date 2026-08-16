@@ -411,6 +411,23 @@ static void execute(char *line)
         uart_put_dec(got);
         uart_puts("\n");
     }
+    else if (str_eq(line, "romcall")) {
+        /* The first Espressif code this kernel has ever executed.
+         *
+         * crc32_le lives in the chip ROM at a fixed address, is windowed ABI,
+         * and is a pure function -- no heap, no clocks, no calibration data,
+         * none of the environment a real blob wants. It is therefore the
+         * smallest possible test of "can vendor code run here", and its answer
+         * is checkable against a CRC computed on the host: garbage from a
+         * broken call does not accidentally equal a CRC32. */
+        static const char msg[] = "123456789";
+        uint32_t r = rom_call3(ESP_ROM_CRC32_LE, 0u, (uint32_t)msg, 9u);
+        uart_puts("   crc32_le(0,");
+        uart_puts(msg);
+        uart_puts(",9) = ");
+        uart_put_hex(r);
+        uart_puts("\n");
+    }
     else if (str_eq(line, "3d")) {
         int on = !str_eq(arg, "off");
         desktop_set_active(!on);
