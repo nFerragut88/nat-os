@@ -120,3 +120,92 @@ The uncomfortable part is the same one `timer.c` already noted about an earlier
 bug in this function: **nothing showed a symptom.** Sleeps ran short, timeouts
 ran loose, and every frame-rate figure this project has recorded was taken
 against a clock that ran fast by a load-dependent factor.
+
+---
+
+# Receive: built, armed, not yet receiving
+
+## Now built from open-mac's actual source
+
+Earlier steps used addresses recalled rather than read. The register set has now
+been checked against esp32-open-mac directly, and the recalled ones were right:
+`WIFI_DMA_INT_STATUS` 0x3ff73c48, `WIFI_DMA_INT_CLR` 0x3ff73c4c, `MAC_CTRL_REG`
+0x3ff73cb8, and the interrupt handler shape (read status, return if zero, write
+it back to clear) is identical.
+
+What could NOT be recalled, and is now taken verbatim, is the descriptor:
+
+```c
+typedef struct __attribute__((packed)) dma_list_item {
+	uint16_t size : 12;
+	uint16_t length : 12;
+	uint8_t  _unknown : 6;
+	uint8_t  has_data : 1;
+	uint8_t  owner : 1;
+	void    *packet;
+	struct dma_list_item *next;
+} dma_list_item;
+```
+
+A bitfield order guessed wrong here would hand the DMA engine a length where it
+expects a flag and corrupt memory silently — the one class of error this kernel
+has no defence against. It was worth fetching rather than reconstructing.
+
+Four buffers of 1600 bytes, against open-mac's ten: 6.4 KB rather than 16 KB, on
+a board with no PSRAM and about 21 KB of heap. Fewer buffers drops frames under
+burst load; it does not stop reception.
+
+## What the hardware confirmed
+
+- `macrx` returns 0 — `update_rx_chain()` set bit 0 of 0x3ff73084 and the
+  hardware **cleared it**, which is an acknowledgement, not a readback.
+- `WIFI_NEXT_RX_DSCR` reads back 0x3ffd7028 — one of our own descriptors. The
+  DMA engine ingested the base pointer and walked into the chain.
+
+That is as far as it goes. Zero interrupts, zero filled descriptors.
+
+## Where it stops: chip_v7_set_chan_nomac
+
+Nothing had tuned the radio, so nothing could arrive. open-mac's sequence is
+
+```c
+deinit_mac(); chip_v7_set_chan_nomac(ch, 0);
+disable_wifi_agc(); init_mac(); enable_wifi_agc();
+```
+
+`chip_v7_set_chan_nomac` panics: **exccause 29, StoreProhibited**, inside
+`ram_chip_i2c_readReg`.
+
+The faulting instruction is not the RF access. Disassembled, it is a `call8` —
+so what failed is the WINDOW OVERFLOW SPILL the call triggered, writing register
+state to a stack with no room left. That reframes it from an RF problem into a
+stack problem.
+
+nat-os gives every task 2 KB. That is generous for the call0 kernel and far too
+little for windowed blob code, where every nested `call8` can spill four
+registers. ESP-IDF gives its WiFi tasks 4 KB and up.
+
+**Attempted fix:** `phy_stack_call()` in window.S, which switches to a private
+6 KB stack for the duration of a PHY call — the same trick `_panic_stack`
+already uses, and it means only tasks that enter the blob pay for it.
+
+**Result: the fault moved forward but did not go away.** 0x40094efe ->
+0x40094f2e, past the first `call8` and onto a later one. So depth was part of it
+and is not the whole story.
+
+## Next lead
+
+The remaining fault is at a `call8` whose argument register is loaded with
+0x3ff4e0c4 — a peripheral address, not one of ours. Worth checking before
+anything else:
+
+1. Whether 6 KB is simply still not enough (raise it and see if the fault walks
+   further again — if it does, it is purely depth).
+2. Whether `phy_enter_critical`/`phy_exit_critical` in vendor/windowed/phy_host.c
+   behave correctly when re-entered from this path. They are depth-counted, but
+   that counting was verified for phy_init, not for a retune.
+3. Whether the PHY needs state that `register_chipv7_phy` alone does not set —
+   ESP-IDF's `esp_phy_enable()` does more than call it.
+
+Nothing on the normal boot path is affected: `chan` is opt-in, and phyinit,
+macinit, macirq, macrx and the 3D view all work.

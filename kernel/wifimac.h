@@ -54,4 +54,19 @@ void     wifimac_irq_enable(void);
 uint32_t wifimac_irq_fires(void);
 uint32_t wifimac_irq_status(void);
 
+/* Builds the receive descriptor chain and arms the receiver in promiscuous
+ * mode. Returns 0, or negative if macinit has not run (-1), it is already
+ * armed (-2), DRAM ran out (-3), or the hardware never acknowledged the chain
+ * (-4). */
+int      wifimac_rx_start(void);
+
+uint32_t wifimac_rx_filled(void);
+uint32_t wifimac_rx_next_dscr(void);
+int      wifimac_rx_peek(uint32_t *len, uint8_t *out, uint32_t max);
+
+/* Tunes the radio, using open-mac's exact deinit/retune/AGC sequence. Returns
+ * 0, -1 if macinit has not run, -2 if the channel is outside 1..13. */
+int      wifimac_set_channel(uint32_t ch);
+uint32_t wifimac_channel(void);
+
 #endif /* NATOS_WIFIMAC_H */

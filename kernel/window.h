@@ -51,4 +51,10 @@ uint32_t w2c_call3(uint32_t fn, uint32_t a, uint32_t b, uint32_t c);
 extern char     phy_host_log_buf[];
 extern uint32_t phy_host_log_len;
 
+/* Calls a WINDOWED function on a private 6 KB stack. The PHY nests far deeper
+ * than a 2 KB nat-os task stack allows, and the overflow shows up as a
+ * StoreProhibited inside the window spill rather than as anything resembling a
+ * stack problem. See the note in window.S. */
+uint32_t phy_stack_call(uint32_t fn, uint32_t a, uint32_t b);
+
 #endif /* NATOS_WINDOW_H */

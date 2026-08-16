@@ -371,3 +371,62 @@ win_call_bridge:                    /* call0 -> windowed -> call0, round trip */
     addi    a1, a1, 32
     ret
     .size win_call_bridge, . - win_call_bridge
+
+/* ---- calling the PHY on a stack big enough for it ----------------------
+ *
+ * chip_v7_set_chan_nomac faulted with StoreProhibited at a `call8` deep inside
+ * ram_chip_i2c_readReg. The store that failed was not the RF access -- it was
+ * the WINDOW OVERFLOW spill that the call8 triggered, writing register state to
+ * a stack that had no room left.
+ *
+ * nat-os gives every task 2 KB (TASK_STACK_WORDS). That is generous for call0
+ * kernel code, which this kernel is, and far too little for windowed blob code:
+ * each nested call8 can spill four registers, and the PHY nests deeply. ESP-IDF
+ * gives its WiFi tasks 4 KB and more. Raising every task to match would cost
+ * 24 KB of DRAM on a board with about 21 KB of heap left.
+ *
+ * So the PHY gets its own stack for the duration of the call, and only the
+ * tasks that actually enter the blob pay for it. The panic handler already does
+ * exactly this with _panic_stack, for the same reason: the stack you are on may
+ * be the thing that is wrong.
+ *
+ *   uint32_t phy_stack_call(uint32_t fn, uint32_t a, uint32_t b);
+ *
+ * Saves the caller's stack pointer INTO the new stack rather than a register,
+ * because call8 destroys a12..a15 and there is nowhere else that survives.
+ */
+    .section .text, "ax"
+    .align 4
+    .global phy_stack_call
+    .type phy_stack_call, @function
+phy_stack_call:
+    movi    a8, _phy_stack_top
+    addi    a8, a8, -32
+    s32i    a1,  a8, 0              /* the stack we came from */
+    s32i    a0,  a8, 4
+    s32i    a12, a8, 8              /* callee-saved under call0; call8 eats them */
+    s32i    a13, a8, 12
+    s32i    a14, a8, 16
+    s32i    a15, a8, 20
+    mov     a1,  a8                 /* switch */
+
+    mov     a10, a3
+    mov     a11, a4
+    mov     a12, a5
+    callx8  a2
+    mov     a2,  a10
+
+    l32i    a0,  a1, 4
+    l32i    a12, a1, 8
+    l32i    a13, a1, 12
+    l32i    a14, a1, 16
+    l32i    a15, a1, 20
+    l32i    a1,  a1, 0              /* switch back, last */
+    ret
+    .size phy_stack_call, . - phy_stack_call
+
+    .section .bss
+    .align 16
+_phy_stack:
+    .space 6144
+_phy_stack_top:

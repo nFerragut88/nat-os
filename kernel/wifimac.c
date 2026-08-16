@@ -33,6 +33,9 @@
 #include "xtensa.h"
 #include "task.h"
 #include "intr.h"
+#include "heap.h"
+#include "uart.h"
+#include "window.h"
 
 /* Clock gating for the MAC, which is separate from the WiFi/BT common clock
  * phyinit already ungated (0x3C9).
@@ -60,6 +63,7 @@
 static uint32_t g_snap[SCAN_WORDS];
 
 static int      g_attempted;
+static uint32_t g_channel;
 static uint32_t g_before, g_after;
 
 int      wifimac_attempted(void)   { return g_attempted; }
@@ -267,3 +271,223 @@ void wifimac_irq_enable(void)
 {
     intr_route(INTR_SRC_WIFI_MAC, INTR_LINE_WIFI_MAC, wifimac_isr);
 }
+
+/* ---- receive chain ------------------------------------------------------
+ *
+ * Now built from esp32-open-mac's actual source rather than from recollection.
+ * The descriptor layout below is theirs verbatim, because a bitfield order
+ * guessed wrong would hand the DMA engine a length where it expects a flag and
+ * corrupt memory silently -- the one class of error this kernel has no defence
+ * against.
+ *
+ * Ten buffers of 1600 bytes is what open-mac uses. This uses four: 6.4 KB
+ * against 16 KB, on a board with no PSRAM and a display that already owns a
+ * framebuffer. Fewer buffers means frames are dropped under burst load, not
+ * that reception fails -- an acceptable trade here, and stated so it is not
+ * mistaken for a faithful port.
+ */
+#define RX_BUFFERS      4u
+#define RX_BUFFER_BYTES 1600u
+
+#define WIFI_MAC_BITMASK_084            0x3FF73084u
+#define WIFI_BASE_RX_DSCR               0x3FF73088u
+#define WIFI_NEXT_RX_DSCR               0x3FF7308Cu
+#define WIFI_LAST_RX_DSCR               0x3FF73090u
+#define WIFI_MAC_ADDR_ACK_ENABLE_SLOT_0 0x3FF73064u
+#define WIFI_BSSID_FILTER_ADDR_SLOT_0   0x3FF73000u
+
+typedef struct dma_list_item {
+    uint16_t size     : 12;
+    uint16_t length   : 12;
+    uint8_t  _unknown : 6;
+    uint8_t  has_data : 1;
+    uint8_t  owner    : 1;
+    void    *packet;
+    struct dma_list_item *next;
+} __attribute__((packed)) dma_list_item;
+
+static dma_list_item *g_rx_chain;
+static int            g_rx_ready;
+
+/* Commits the chain to the hardware.
+ *
+ * open-mac sets bit 0 and spins until the hardware clears it. The spin is
+ * bounded here: an unbounded wait on an undocumented acknowledge bit is a hang
+ * with no output if the bit never clears, and this kernel has already spent a
+ * session on one of those. */
+static int update_rx_chain(void)
+{
+    volatile uint32_t *reg = (volatile uint32_t *)WIFI_MAC_BITMASK_084;
+    *reg |= 0x1u;
+    for (uint32_t spins = 0; spins < 1000000u; spins++) {
+        if (!(*reg & 0x1u)) {
+            return 0;
+        }
+    }
+    return -1;                          /* never acknowledged */
+}
+
+/* Promiscuous: accept everything. The address and BSSID filters are turned OFF
+ * rather than programmed with this board's MAC, because the first thing worth
+ * proving is that ANY frame arrives. Filtering to our own address first would
+ * make "nothing received" ambiguous between a broken receiver and a correct
+ * one with nothing addressed to it. */
+static void disable_filters(void)
+{
+    for (uint32_t slot = 0; slot < 2u; slot++) {
+        volatile uint32_t *ack =
+            (volatile uint32_t *)(WIFI_MAC_ADDR_ACK_ENABLE_SLOT_0 + 8u * slot);
+        *ack &= ~0x10000u;
+        volatile uint32_t *bssid =
+            (volatile uint32_t *)(WIFI_BSSID_FILTER_ADDR_SLOT_0 + 8u * slot);
+        *bssid &= ~0x10000u;
+        /* open-mac's set_some_kind_of_rx_policy(slot, false). Its purpose is
+         * not documented there either -- the name is theirs. Cleared because
+         * that is what their working receive path does. */
+        volatile uint32_t *policy =
+            (volatile uint32_t *)(0x3FF730D8u + 4u * slot);
+        *policy &= ~0x110u;
+    }
+}
+
+int wifimac_rx_start(void)
+{
+    if (!g_attempted) {
+        return -1;                      /* macinit has not run */
+    }
+    if (g_rx_ready) {
+        return -2;
+    }
+
+    dma_list_item *prev = 0;
+    for (uint32_t i = 0; i < RX_BUFFERS; i++) {
+        dma_list_item *item = heap_alloc(sizeof(dma_list_item));
+        uint8_t *buf = heap_alloc(RX_BUFFER_BYTES);
+        if (!item || !buf) {
+            return -3;                  /* out of DRAM; nothing armed */
+        }
+        item->has_data = 0;
+        item->owner    = 1;             /* hardware owns it */
+        item->size     = RX_BUFFER_BYTES;
+        item->length   = RX_BUFFER_BYTES;
+        item->packet   = buf;
+        item->next     = prev;
+        prev = item;
+    }
+    g_rx_chain = prev;
+
+    *(volatile uint32_t *)WIFI_BASE_RX_DSCR = (uint32_t)prev;
+    disable_filters();
+
+    if (update_rx_chain() != 0) {
+        return -4;
+    }
+    g_rx_ready = 1;
+    return 0;
+}
+
+/* How many descriptors the hardware has filled. Read from the descriptors
+ * themselves rather than from a driver counter, so it reports what the DMA
+ * engine actually did and not what this code believes it asked for. */
+uint32_t wifimac_rx_filled(void)
+{
+    uint32_t n = 0;
+    for (dma_list_item *it = g_rx_chain; it; it = it->next) {
+        if (it->has_data) {
+            n++;
+        }
+    }
+    return n;
+}
+
+uint32_t wifimac_rx_next_dscr(void)
+{
+    return *(volatile uint32_t *)WIFI_NEXT_RX_DSCR;
+}
+
+/* First filled descriptor's length and a few bytes of its payload, so a
+ * received frame can be recognised as 802.11 rather than merely counted. */
+int wifimac_rx_peek(uint32_t *len, uint8_t *out, uint32_t max)
+{
+    for (dma_list_item *it = g_rx_chain; it; it = it->next) {
+        if (it->has_data) {
+            uint32_t n = it->length;
+            *len = n;
+            if (n > max) {
+                n = max;
+            }
+            const uint8_t *p = (const uint8_t *)it->packet;
+            for (uint32_t i = 0; i < n; i++) {
+                out[i] = p[i];
+            }
+            return (int)n;
+        }
+    }
+    return -1;
+}
+
+/* ---- channel ------------------------------------------------------------
+ *
+ * Arming the receiver was not enough: the chain was accepted, the DMA engine
+ * took the base pointer, and nothing ever arrived. Nothing had tuned the radio.
+ *
+ * open-mac's sequence, and the ORDER is theirs, not a rearrangement:
+ *
+ *     deinit_mac(); chip_v7_set_chan_nomac(ch, 0);
+ *     disable_wifi_agc(); init_mac(); enable_wifi_agc();
+ *
+ * The MAC is taken down around the retune and the AGC is bracketed across the
+ * MAC coming back up. Reordering those would be guessing at a sequence that
+ * exists because someone watched the hardware misbehave without it.
+ *
+ * The three PHY calls are WINDOWED -- they come out of libphy, which this
+ * project cannot rebuild -- so each goes through rom_call3(). Calling one
+ * directly from call0 is the IllegalInstruction this project has already met.
+ */
+static void deinit_mac(void)
+{
+    volatile uint32_t *ctrl = (volatile uint32_t *)WIFIMAC_CTRL_REG;
+    *ctrl |= 0x17FFu;
+    for (uint32_t spins = 0; spins < 1000000u; spins++) {
+        if (!(*ctrl & 0x2000u)) {
+            return;
+        }
+    }
+    /* Bounded, like update_rx_chain: an unbounded wait on an undocumented
+     * status bit is a silent hang, and the caller can still proceed. */
+}
+
+int wifimac_set_channel(uint32_t ch)
+{
+    extern int chip_v7_set_chan_nomac(int, int);
+    extern int disable_wifi_agc(void);
+    extern int enable_wifi_agc(void);
+
+    if (!g_attempted) {
+        return -1;                      /* macinit has not run */
+    }
+    if (ch < 1u || ch > 13u) {
+        return -2;
+    }
+
+    /* Announced step by step. The first attempt panicked with StoreProhibited
+     * inside ram_chip_i2c_readReg -- the PHY's analog RF register access -- and
+     * with all three calls in a row there was no way to tell which one had
+     * reached it. A panic prints nothing about where it came from; these do. */
+    uart_puts("   deinit_mac...");
+    deinit_mac();
+    uart_puts(" ok\n   set_chan_nomac...");
+    phy_stack_call((uint32_t)&chip_v7_set_chan_nomac, ch, 0u);
+    uart_puts(" ok\n   disable_agc...");
+    phy_stack_call((uint32_t)&disable_wifi_agc, 0u, 0u);
+    uart_puts(" ok\n   init_mac...");
+    *(volatile uint32_t *)WIFIMAC_CTRL_REG &= MAC_INIT_MASK;
+    uart_puts(" ok\n   enable_agc...");
+    phy_stack_call((uint32_t)&enable_wifi_agc, 0u, 0u);
+    uart_puts(" ok\n");
+
+    g_channel = ch;
+    return 0;
+}
+
+uint32_t wifimac_channel(void) { return g_channel; }

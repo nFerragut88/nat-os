@@ -548,6 +548,56 @@ static void execute(char *line)
                       : "no new movement; the MAC is readable but may be idle\n");
         }
     }
+    else if (str_eq(line, "chan")) {
+        int ch = parse_int(arg);
+        if (ch < 1) {
+            uart_puts("   usage: chan <1..13>\n");
+        } else {
+            int r = wifimac_set_channel((uint32_t)ch);
+            uart_puts(r == 0 ? "   tuned to channel " : "   refused, code ");
+            uart_put_dec(r == 0 ? (unsigned)ch : (unsigned)(-r));
+            uart_puts("\n");
+        }
+    }
+    else if (str_eq(line, "macrx")) {
+        int r = wifimac_rx_start();
+        if (r == -1)      { uart_puts("   run macinit first\n"); }
+        else if (r == -2) { uart_puts("   already armed\n"); }
+        else if (r == -3) { uart_puts("   out of DRAM for rx buffers\n"); }
+        else if (r == -4) { uart_puts("   hardware never acknowledged the chain\n"); }
+        else              { uart_puts("   receiver armed, promiscuous\n"); }
+    }
+    else if (str_eq(line, "macstat")) {
+        uart_puts("   irq fires=");
+        uart_put_dec(wifimac_irq_fires());
+        uart_puts("  last status=");
+        uart_put_hex(wifimac_irq_status());
+        uart_puts("\n   descriptors filled=");
+        uart_put_dec(wifimac_rx_filled());
+        uart_puts("  next dscr=");
+        uart_put_hex(wifimac_rx_next_dscr());
+        uart_puts("\n");
+        uint32_t len = 0;
+        uint8_t  buf[24];
+        int n = wifimac_rx_peek(&len, buf, sizeof buf);
+        if (n < 0) {
+            uart_puts("   no frame captured yet\n");
+        } else {
+            uart_puts("   first frame len=");
+            uart_put_dec(len);
+            uart_puts("  bytes:");
+            static const char hex[] = "0123456789abcdef";
+            for (int i = 0; i < n; i++) {
+                char b[4];
+                b[0] = ' ';
+                b[1] = hex[(buf[i] >> 4) & 0xF];
+                b[2] = hex[buf[i] & 0xF];
+                b[3] = 0;
+                uart_puts(b);
+            }
+            uart_puts("\n");
+        }
+    }
     else if (str_eq(line, "macirq")) {
         wifimac_irq_enable();
         uart_puts("   wifi mac source 0 -> cpu line 27, handler installed\n   fires=");
