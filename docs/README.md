@@ -201,3 +201,11 @@ Reproducing a build: **005** alone is sufficient.
 > app works, the fault is untouched, and every future element finer than 80 px
 > will meet it again. Record which one you did, at the place a reader would
 > otherwise assume the generous version. UM-NATOS-022 §3.3.
+
+> **Standing rule for reverts — reverting two changes together destroys the
+> information about which one mattered.** A relayout and a camera fix were
+> reverted in one commit; the screen looked right afterwards, which appeared to
+> convict the layout. Re-applying the geometry alone, later, showed it was
+> innocent — the camera had broken concurrently and "blank screen" was a correct
+> rendering of the inside of a wall. If a revert must bundle, the bundle is a
+> hypothesis to test later, not a conclusion. UM-NATOS-021 §6.7.

@@ -1,7 +1,7 @@
 # UM-NATOS-021 — The Launcher, and Four Defects It Found by Existing
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.2 · 2026-08-15 · Status: **Complete, verified on hardware** — §6.5 added, chrome that cannot flicker; §6.6 a fix whose scope was wrong
+Revision 1.3 · 2026-08-15 · Status: **Complete, verified on hardware** — §6.6 corrected: the cause WAS found, and it was not the layout
 
 ---
 
@@ -274,26 +274,90 @@ therefore the application strips, and therefore the colour strip, and the
 launcher grid was resized to use the space freed by removing things that had
 been on screen at boot. Four files of constants moved together.
 
-The result was a screen that looked wrong, and **the cause was never found**.
-Every measurement said the renderer was correct: the wall band landed at the
-right rows, the composed framebuffer held a dark ceiling, an orange wall and a
-dark floor at the expected offsets, `display_blit` was verified including its
-contiguous fast path, and eleven self-tests passed throughout. Three rounds of
-instrumenting the raycaster produced three rounds of evidence that the raycaster
-was fine.
+The result was a screen that looked wrong, and it was reverted to the last
+confirmed-good state without the cause being understood. Every measurement said
+the renderer was correct: the wall band landed at the right rows, the composed
+framebuffer held a dark ceiling, an orange wall and a dark floor at the expected
+offsets, `display_blit` was verified including its contiguous fast path, and
+eleven self-tests passed throughout. Three rounds of instrumenting the raycaster
+produced three rounds of evidence that the raycaster was fine.
 
-It was reverted to the last confirmed-good state. The fix in §6.5 does the same
-job by writing 324 pixels into a buffer that was about to be sent anyway.
+The fix in §6.5 does the same job by writing 324 pixels into a buffer that was
+about to be sent anyway, and that comparison still stands:
 
-The lesson is not about compositing:
-
-> A correct diagnosis does not license a fix of arbitrary scope. The first
-> attempt and the second share a diagnosis and differ by a factor of twenty in
-> what they touch — and the larger one broke something that was never
-> explained, in a subsystem it had no business affecting.
+> A correct diagnosis does not license a fix of arbitrary scope. The two
+> attempts share a diagnosis and differ by a factor of twenty in what they
+> touch.
 
 The compile-time assertions added afterwards (§8) are the mechanical part of
 that lesson: the layout is agreed across four files and nothing enforced it.
+
+### 6.7 The cause, found later — and it was not the layout
+
+*Revision 1.3. §6.6 said the cause was never found. It has been, and the
+conclusion a reader would have drawn from §6.6 was wrong.*
+
+The geometry change was applied **on its own** to current code — nothing else
+those commits touched — and the 3D view rendered correctly: the framebuffer
+allocated, frames climbed, the camera crossed the map. **Geometry alone breaks
+nothing.**
+
+What broke was the camera. The relayout raised the frame rate, movement was
+per-frame at the time (UM-NATOS-015 §5.8), and the camera outran its turn probe
+and buried itself in a wall. "Blank screen" and "a bunch of vertical lines" are
+precisely what a wall at zero distance looks like: full-height columns of flat
+colour.
+
+Which is why every instrument insisted the renderer was fine. **It was fine.** It
+was correctly drawing the inside of a wall. A taller region made the symptom
+worse rather than better, because wall height scales with `RAY_VIEW_H` — so the
+layout looked more guilty the more of it there was.
+
+#### The actual lesson
+
+The revert bundled the layout change **and** the camera fix into one commit. The
+screen looked right afterwards, which appeared to convict the layout, and the
+information needed to acquit it had been destroyed by the same action that
+produced the evidence.
+
+> Reverting two changes together destroys the information about which one
+> mattered. If a revert must bundle, the bundle is a hypothesis to test later,
+> not a conclusion — and it should be recorded as one.
+
+§6.6 recorded it as a conclusion. This section is the correction.
+
+#### What is structurally true
+
+The screen budget is real and was the other half of the difficulty. Before this
+change it was **312 of 320 rows allocated with 8 spare**, and the four claims on
+it live in four files:
+
+| rows | claimed by | file |
+|---|---|---|
+| launcher and full-region views | `DESK_H`, `RAY_VIEW_H` | `desktop.h`, `raycast.h` |
+| application strips | `APP_VIEW_Y0/PITCH/H` | `app.h` |
+| colour strip | `SPEC_Y/SPEC_H` | `kmain.c` |
+
+Growing one forces a cascade through the others with no single owner to check
+it. That is why the assertions in §8 exist, and they are what let the experiment
+build safely instead of silently overlapping.
+
+#### The layout that resulted
+
+```
+launcher / views    0..223     was 0..167
+application strips  224..287   was 168..279 — now 14 rows each
+colour strip        288..319   unchanged
+
+launcher cells      80 x 70    was 80 x 51
+icon glyphs         32 x 32    was 24 x 24
+notes text area     10 lines   was about 4
+3D view             224 rows   was 168
+```
+
+The cost is the application strips losing more than half their height. `ping`
+and `pong` draw nothing, so it costs nothing today; a program that draws will
+notice.
 
 ## 7. Verification
 
@@ -317,7 +381,9 @@ strip reports which. Confirmed on hardware by the user.
 | Double-tap window | 60 ticks (~600 ms) |
 | Minimum press | 2 ticks, rejects contact chatter |
 | SPI cost when idle | 0 bytes |
-| Icon glyphs | 8 × 8, drawn at 3× |
+| Grid | 3 × 3, cells 80 × 70 |
+| Icon glyphs | 8 × 8, drawn at 4× |
+| Screen rows allocated, before / after | 312 of 320 / 320 of 320 |
 | Layout assertions | 6, spanning four files |
 | Overlay cost per frame | 324 pixels into a buffer already being sent |
 | Reverted attempt | ~200 lines, four files, cause never found |
@@ -328,6 +394,12 @@ strip reports which. Confirmed on hardware by the user.
 
 ## 9. What this does not establish
 
+- **The screen is now fully allocated.** Every row is claimed; there is no
+  spare. The next feature wanting rows must take them from something named in
+  §6.7, and the assertions will refuse a build that overlaps rather than letting
+  it render wrongly.
+- **Application strips are 14 rows.** No program currently draws into one, so
+  nothing has tested whether that is enough to be useful.
 - **No focus, no windows, no z-order.** §2. Applications occupy fixed strips and
   cannot be brought forward.
 - **No way to stop a program from the launcher.** `kill` exists only in the
