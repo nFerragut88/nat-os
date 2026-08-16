@@ -10,9 +10,16 @@
  * register the handler touches must therefore be saved by the handler.
  *
  * Because the kernel is built -mabi=call0 there are no register windows, so the
- * window overflow/underflow vectors are never taken. They are left as traps
- * rather than omitted: if one is somehow reached it means an ABI assumption has
- * broken, and stopping loudly beats executing whatever bytes follow.
+ * window overflow/underflow vectors are never taken by ITS OWN code.
+ *
+ * They were described here as "left as traps", which was the intent and not
+ * what the linker script did: nothing was placed before _vecbase + 0x1C0, so
+ * slots 0x000..0x180 were zero-filled and a window exception would have
+ * executed zeros. PS.WOE is set by the ROM, so the mechanism was armed with
+ * nothing behind it.
+ *
+ * They are now real handlers — see kernel/window.S — which is what lets
+ * WINDOWED code run here at all.
  */
 
 /* Slot offsets are imposed by the linker script, not by this file — see the

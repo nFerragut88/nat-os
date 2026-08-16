@@ -22,6 +22,7 @@
 #include "desktop.h"
 #include "uart.h"
 #include "vm.h"
+#include "window.h"
 
 #define LINE_MAX 64
 
@@ -386,6 +387,18 @@ static void execute(char *line)
             uart_put_dec(task_stack_headroom(id) * 4u);
             uart_puts("\n");
         }
+    }
+    else if (str_eq(line, "wintest")) {
+        int d = parse_int(arg);
+        if (d < 0) { d = 20; }
+        uart_puts("   calling a WINDOWED function, depth ");
+        uart_put_dec((unsigned int)d);
+        uart_puts("\n");
+        uint32_t got = win_call_probe((uint32_t)d);
+        uart_puts("   returned ");
+        uart_put_dec(got);
+        uart_puts(got == (uint32_t)d ? "  CORRECT" : "  WRONG");
+        uart_puts("\n");
     }
     else if (str_eq(line, "3d")) {
         int on = !str_eq(arg, "off");

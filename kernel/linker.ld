@@ -58,6 +58,29 @@ SECTIONS
   {
     _vecbase = .;
 
+    /* Register-window vectors, 0x000..0x180.
+     *
+     * These were previously left EMPTY — the section jumped straight to 0x1C0,
+     * so a window exception executed zero-filled space. Nothing in this kernel
+     * takes them (it is -mabi=call0 throughout), but PS.WOE is set by the ROM,
+     * so the mechanism was armed with no handlers behind it.
+     *
+     * Filling them is what makes windowed-ABI code callable at all — see
+     * kernel/window.S. Purely additive: code that never raises a window
+     * exception cannot observe the difference. */
+    . = _vecbase + 0x000;
+    KEEP(*(.vectors.window.of4))
+    . = _vecbase + 0x040;
+    KEEP(*(.vectors.window.uf4))
+    . = _vecbase + 0x080;
+    KEEP(*(.vectors.window.of8))
+    . = _vecbase + 0x0C0;
+    KEEP(*(.vectors.window.uf8))
+    . = _vecbase + 0x100;
+    KEEP(*(.vectors.window.of12))
+    . = _vecbase + 0x140;
+    KEEP(*(.vectors.window.uf12))
+
     . = _vecbase + 0x1C0;
     KEEP(*(.vectors.level3))
 
