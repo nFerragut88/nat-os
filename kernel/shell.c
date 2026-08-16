@@ -18,6 +18,7 @@
 #include "intr.h"
 #include "adc.h"
 #include "i2c.h"
+#include "audio.h"
 #include "desktop.h"
 #include "uart.h"
 #include "vm.h"
@@ -103,6 +104,8 @@ static void cmd_help(void)
               "    adc           read every ADC1 channel\n"
               "    ldrscan       watch all ADC channels for movement\n"
               "    i2c           check the bus and scan it\n"
+              "    tone <hz>     sound a tone on DAC2; 'tone 0' stops it\n"
+              "    beep          a short 1 kHz beep\n"
               "    3d [off]      3D view or launcher\n"
               "    taps          dump the touch press log\n"
               "    tapsclear     empty it\n"
@@ -306,6 +309,21 @@ static void execute(char *line)
     else if (str_eq(line, "ldr")) { adc_watch(ADC1_CH_LDR, 120u); }
     else if (str_eq(line, "ldrscan")) { adc_watch_all(40u); }
     else if (str_eq(line, "i2c")) { i2c_selftest(); i2c_scan(); }
+    else if (str_eq(line, "tone")) {
+        int hz = parse_int(arg);
+        if (hz < 0) {
+            uart_puts("   tone <hz>, or 'tone 0' to stop\n");
+        } else {
+            audio_tone((uint32_t)hz);
+            uart_puts(hz ? "   sounding\n" : "   off\n");
+        }
+    }
+    else if (str_eq(line, "findspk")) { audio_find_speaker(); }
+    else if (str_eq(line, "spktest")) { audio_probe_square(); }
+    else if (str_eq(line, "beep")) {
+        audio_beep(1000u, 20u);
+        uart_puts("   beep\n");
+    }
     else if (str_eq(line, "hang")) {
         /* Deliberately wedge the system to prove the hang detector works.
          *

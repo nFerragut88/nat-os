@@ -27,6 +27,7 @@
 #include "desktop.h"
 #include "notes.h"
 #include "term.h"
+#include "audio.h"
 #include "messages.h"
 #include "calib.h"
 #include "touch.h"
@@ -1168,6 +1169,8 @@ static void task_display(void)
         /* One owner at a time. The launcher repaints only when something
          * changed, so an idle desktop pushes no pixels at all; the raycaster
          * repaints unconditionally because every frame differs. */
+        audio_service();    /* ends any beep whose deadline passed */
+
         if (desktop_active()) {
             desktop_frame();
         } else if (desktop_notes()) {
@@ -1473,7 +1476,8 @@ void kmain(void)
     touch_init();
     touch_irq_init();   /* PENIRQ -> matrix -> CPU line 23; see intr.h */
     adc_init();         /* SAR ADC1; the light sensor is channel 6           */
-    i2c_init();         /* bit-banged, SDA gpio22 / SCL gpio27               */
+    i2c_init();
+    audio_init();       /* DAC2 on gpio26; tones only, see audio.h */         /* bit-banged, SDA gpio22 / SCL gpio27               */
 
     raycast_init();
     desktop_init();

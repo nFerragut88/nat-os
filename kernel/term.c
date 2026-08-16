@@ -87,10 +87,24 @@ static uint32_t g_inlen;
 
 /* The output pane is a ring of fixed-width lines rather than a byte stream.
  * A stream would need re-wrapping on every draw, and the wrap is already
- * decided at capture time by where the newlines fall. */
-static char     g_out[TERM_ROWS][TERM_COLS + 1u];
-static uint32_t g_row;          /* line being written */
+ * decided at capture time by where the newlines fall.
+ *
+ * The ring holds far more than the pane shows. Nine visible lines was the
+ * original size and it was the wrong size for the two commands most worth
+ * running: `help` produces about thirty lines and `adc` about fifteen, so the
+ * pane showed the end of a list whose beginning was the part being asked for.
+ *
+ * 48 lines is a little over three screens of `help` and costs under 2 KB of
+ * .bss. The bound is deliberate rather than generous — this is a fixed
+ * allocation in a kernel with no paging, so scrollback that grew with output
+ * would be an unbounded allocation driven by whatever the user typed. */
+#define HIST_ROWS  48u
+
+static char     g_out[HIST_ROWS][TERM_COLS + 1u];
+static uint32_t g_row;          /* write cursor within the ring */
 static uint32_t g_col;
+static uint32_t g_filled = 1u;  /* lines ever written, capped at HIST_ROWS */
+static uint32_t g_scroll;       /* lines scrolled back from the newest */
 
 static uint32_t g_commands;
 static int      g_kb_drawn;
@@ -102,11 +116,21 @@ uint32_t term_commands(void) { return g_commands; }
 
 static void out_newline(void)
 {
-    g_row = (g_row + 1u) % TERM_ROWS;
+    g_row = (g_row + 1u) % HIST_ROWS;
     g_col = 0;
     for (uint32_t i = 0; i <= TERM_COLS; i++) {
         g_out[g_row][i] = 0;
     }
+    if (g_filled < HIST_ROWS) {
+        g_filled++;
+    }
+}
+
+/* Lines that could be scrolled back through: everything held, less a screenful
+ * already visible. */
+static uint32_t max_scroll(void)
+{
+    return (g_filled > TERM_ROWS) ? g_filled - TERM_ROWS : 0u;
 }
 
 /* Installed as the UART tee for exactly the duration of one command.
@@ -197,17 +221,53 @@ static void draw_keyboard(void)
     }
 }
 
-/* Draws the ring oldest-first, so the newest line sits at the bottom where a
- * terminal puts it. */
+/* Draws a window into the ring, newest line at the bottom where a terminal puts
+ * it, offset back by g_scroll.
+ *
+ * Addressing is by distance BACK from the write cursor rather than forward from
+ * an origin. The ring has no origin once it has wrapped, and counting forward
+ * from one means recomputing where it moved to on every draw; counting back
+ * from the cursor is the same arithmetic whether the ring has wrapped or not. */
 static void draw_output(void)
 {
+    if (g_scroll > max_scroll()) {
+        g_scroll = max_scroll();        /* history shrank under a held scroll */
+    }
+
     display_fill_rect(0, OUT_Y, DISP_W, OUT_H, TRM_BG);
+
     for (uint32_t i = 0; i < TERM_ROWS; i++) {
-        uint32_t src = (g_row + 1u + i) % TERM_ROWS;
+        uint32_t back = (TERM_ROWS - 1u - i) + g_scroll;
+        if (back >= g_filled) {
+            continue;                   /* before anything was written */
+        }
+        uint32_t src = (g_row + HIST_ROWS - back) % HIST_ROWS;
         if (g_out[src][0]) {
             display_text(2, OUT_Y + i * LINE_H, g_out[src], TRM_FG, TRM_BG, 1u);
         }
     }
+
+    /* Scrollbar, drawn only when there is something to scroll.
+     *
+     * It is the affordance as well as the indicator: nothing else on screen
+     * says the pane can be scrolled, and a gesture with no visible cue is a
+     * feature only its author knows about. */
+    uint32_t span = max_scroll();
+    if (span == 0u) {
+        return;
+    }
+
+    uint32_t track_h = OUT_H;
+    uint32_t thumb_h = (TERM_ROWS * track_h) / g_filled;
+    if (thumb_h < 6u) {
+        thumb_h = 6u;
+    }
+    /* g_scroll counts BACK from the newest, so the thumb runs bottom-to-top. */
+    uint32_t travel = track_h - thumb_h;
+    uint32_t thumb_y = OUT_Y + travel - (g_scroll * travel) / span;
+
+    display_fill_rect(DISP_W - 3u, OUT_Y, 2u, track_h, TRM_KEY);
+    display_fill_rect(DISP_W - 3u, thumb_y, 2u, thumb_h, TRM_FG);
 }
 
 static void draw_input(void)
@@ -236,6 +296,16 @@ static void submit(void)
     if (g_inlen == 0u) {
         return;
     }
+
+    /* Snap to the newest before running.
+     *
+     * Done here rather than in out_newline() so that scrolling stays put while
+     * reading — output only ever arrives because a command was submitted, and
+     * a pane that jumped while being read would be worse than one that did not
+     * follow. It also keeps the ring indices stable for the whole of a draw:
+     * scrolled-back positions shift as lines are overwritten, and this makes
+     * that unobservable. */
+    g_scroll = 0;
 
     out_puts("> ");
     out_puts(g_input);
@@ -297,6 +367,26 @@ void term_touch(uint32_t x, uint32_t y, int down)
         return;                 /* one press, one action (UM-NATOS-021 §4.2) */
     }
     g_was_down = 1;
+
+    /* The output pane scrolls: upper half back, lower half forward.
+     *
+     * Half a screen per tap rather than a line. Every tap here costs a press on
+     * a panel this slow, and nine taps to move one screen is not a control, it
+     * is a chore. Half-screens also keep two lines of overlap, so the reader
+     * does not have to remember what the last line was. */
+    if (y >= OUT_Y && y < INPUT_Y) {
+        uint32_t step = TERM_ROWS / 2u;
+        if (y < OUT_Y + OUT_H / 2u) {
+            g_scroll += step;                       /* older */
+            if (g_scroll > max_scroll()) {
+                g_scroll = max_scroll();
+            }
+        } else {
+            g_scroll = (g_scroll > step) ? g_scroll - step : 0u;
+        }
+        g_out_dirty = 1;
+        return;
+    }
 
     if (y < KB_Y || y >= DESK_H || x >= DISP_W) {
         return;                 /* header close is handled before this is called */
