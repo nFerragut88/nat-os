@@ -24,6 +24,10 @@
 #include "vm.h"
 #include "window.h"
 #include "phyinit.h"
+#include "wifi_osi_impl.h"
+
+uint32_t osi_add_probe(uint32_t a, uint32_t b);
+uint32_t osi_add_probe(uint32_t a, uint32_t b) { return a + b; }
 
 #define LINE_MAX 64
 
@@ -467,6 +471,37 @@ static void execute(char *line)
             uart_puts(phy_host_log_buf);
             uart_puts("\n");
         }
+    }
+    else if (str_eq(line, "ositest")) {
+        /* Drives the OSI vtable exactly as libpp will. osi_selftest is
+         * WINDOWED, so it is entered through rom_call3 -- calling it directly
+         * from here would be the IllegalInstruction this project has already
+         * met once. Each body it reaches then crosses BACK to call0 via
+         * w2c_callN, so a pass exercises both directions per call. */
+        extern uint32_t osi_selftest(void);
+        uint32_t got = rom_call3((uint32_t)&osi_selftest, 0, 0, 0);
+        uart_puts("   osi vtable checks = ");
+        uart_put_hex(got);
+        uart_puts(got == 0x3Fu ? "  ALL PASS\n" : "  INCOMPLETE (want 0x3F)\n");
+        uart_puts("   pools: sem ");
+        uart_put_dec(osi_impl_sems_used());
+        uart_puts("  queue ");
+        uart_put_dec(osi_impl_queues_used());
+        uart_puts("  timer ");
+        uart_put_dec(osi_impl_timers_used());
+        uart_puts("\n   timer service task id ");
+        uart_put_dec((unsigned int)osi_impl_service_start());
+        uart_puts("\n");
+    }
+    else if (str_eq(line, "bridgetest")) {
+        /* Proves windowed code can call BACK into this call0 kernel.
+         * osi_add lives here, in call0; the loop calling it is windowed. */
+        extern uint32_t osi_add_probe(uint32_t a, uint32_t b);
+        uint32_t got = win_call_bridge((uint32_t)&osi_add_probe, 10u);
+        uart_puts("   sum 0..9 across the ABI boundary = ");
+        uart_put_dec(got);
+        uart_puts(got == 45u ? "  CORRECT" : "  WRONG");
+        uart_puts("\n");
     }
     else if (str_eq(line, "3d")) {
         int on = !str_eq(arg, "off");

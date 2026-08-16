@@ -274,3 +274,100 @@ rom_call3:
     addi    a1, a1, 32
     ret
     .size rom_call3, . - rom_call3
+
+/* ---- windowed -> call0 -------------------------------------------------
+ *
+ * The other direction, and the one the OSI table needs.
+ *
+ * libpp calls the OSI entries, so those are windowed. Their bodies want the
+ * kernel's heap, mutexes and scheduler, which are call0. A windowed function
+ * cannot simply CALL8 a call0 one: the window rotates forward, the callee uses
+ * the rotated registers as its own, and its RET does not rotate back. That is
+ * the fault that put IllegalInstruction at 0x4008a810 the first time.
+ *
+ * These bridges do it properly. ENTRY establishes a windowed frame, the call0
+ * callee is invoked with CALLX0 under its own convention, and RETW unwinds the
+ * window. a0 must be saved by hand: after ENTRY it holds the return address
+ * RETW needs, and CALLX0 overwrites it.
+ *
+ * Arguments arrive in a2.. as usual for a windowed callee (the caller's a10..),
+ * and a2 is both the call0 first argument and the return register, which is why
+ * the shuffles below are as short as they are.
+ */
+    .section .text, "ax"
+    .align 4
+    .global w2c_call0f
+    .type w2c_call0f, @function
+w2c_call0f:                         /* uint32_t w2c_call0f(fn) */
+    entry   a1, 32
+    s32i    a0, a1, 0
+    mov     a8, a2
+    callx0  a8
+    l32i    a0, a1, 0
+    retw
+    .size w2c_call0f, . - w2c_call0f
+
+    .align 4
+    .global w2c_call1
+    .type w2c_call1, @function
+w2c_call1:                          /* uint32_t w2c_call1(fn, a) */
+    entry   a1, 32
+    s32i    a0, a1, 0
+    mov     a8, a2
+    mov     a2, a3
+    callx0  a8
+    l32i    a0, a1, 0
+    retw
+    .size w2c_call1, . - w2c_call1
+
+    .align 4
+    .global w2c_call2
+    .type w2c_call2, @function
+w2c_call2:                          /* uint32_t w2c_call2(fn, a, b) */
+    entry   a1, 32
+    s32i    a0, a1, 0
+    mov     a8, a2
+    mov     a2, a3
+    mov     a3, a4
+    callx0  a8
+    l32i    a0, a1, 0
+    retw
+    .size w2c_call2, . - w2c_call2
+
+    .align 4
+    .global w2c_call3
+    .type w2c_call3, @function
+w2c_call3:                          /* uint32_t w2c_call3(fn, a, b, c) */
+    entry   a1, 32
+    s32i    a0, a1, 0
+    mov     a8, a2
+    mov     a2, a3
+    mov     a3, a4
+    mov     a4, a5
+    callx0  a8
+    l32i    a0, a1, 0
+    retw
+    .size w2c_call3, . - w2c_call3
+
+    .align 4
+    .global win_call_bridge
+    .type win_call_bridge, @function
+win_call_bridge:                    /* call0 -> windowed -> call0, round trip */
+    addi    a1, a1, -32
+    s32i    a0,  a1, 0
+    s32i    a12, a1, 4
+    s32i    a13, a1, 8
+    s32i    a14, a1, 12
+    s32i    a15, a1, 16
+    mov     a10, a2
+    mov     a11, a3
+    call8   vendor_bridge_probe
+    mov     a2, a10
+    l32i    a0,  a1, 0
+    l32i    a12, a1, 4
+    l32i    a13, a1, 8
+    l32i    a14, a1, 12
+    l32i    a15, a1, 16
+    addi    a1, a1, 32
+    ret
+    .size win_call_bridge, . - win_call_bridge

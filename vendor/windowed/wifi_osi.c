@@ -37,6 +37,58 @@
 #define ESP_WIFI_OS_ADAPTER_VERSION  0x00000008
 #define ESP_WIFI_OS_ADAPTER_MAGIC    0xDEADBEAF
 
+
+/* ---- forwarding into the call0 kernel -----------------------------------
+ *
+ * These bodies do no work. Every one hands off through w2c_callN() in
+ * window.S, which establishes a windowed frame, invokes the call0 target under
+ * its own convention, and unwinds. The implementations live in
+ * kernel/wifi_osi_impl.c where the heap, scheduler and tick are reachable.
+ *
+ * Taking the ADDRESS of a call0 function from windowed code is safe -- it is
+ * just a symbol. CALLING it directly would not be, and is the fault this
+ * project has now met from both directions.
+ */
+extern uint32_t w2c_call0f(uint32_t fn);
+extern uint32_t w2c_call1(uint32_t fn, uint32_t a);
+extern uint32_t w2c_call2(uint32_t fn, uint32_t a, uint32_t b);
+extern uint32_t w2c_call3(uint32_t fn, uint32_t a, uint32_t b, uint32_t c);
+
+extern void osi_impl_sem_create(void);      /* addresses only; see above */
+extern void osi_impl_sem_delete(void);
+extern void osi_impl_sem_take(void);
+extern void osi_impl_sem_give(void);
+extern void osi_impl_queue_create(void);
+extern void osi_impl_queue_delete(void);
+extern void osi_impl_queue_send(void);
+extern void osi_impl_queue_recv(void);
+extern void osi_impl_queue_waiting(void);
+extern void osi_impl_evt_create(void);
+extern void osi_impl_evt_delete(void);
+extern void osi_impl_evt_set(void);
+extern void osi_impl_evt_clear(void);
+extern void osi_impl_evt_wait(void);
+extern void osi_impl_timer_alloc(void);
+extern void osi_impl_timer_setfn(void);
+extern void osi_impl_timer_arm(void);
+extern void osi_impl_timer_arm_us(void);
+extern void osi_impl_timer_disarm(void);
+extern void osi_impl_timer_done(void);
+extern void osi_impl_malloc(void);
+extern void osi_impl_free(void);
+extern void osi_impl_calloc(void);
+extern void osi_impl_free_heap(void);
+extern void osi_impl_random(void);
+extern void osi_impl_ms_to_tick(void);
+extern void osi_impl_delay(void);
+extern void osi_impl_current_task(void);
+extern void osi_impl_time_us_lo(void);
+
+#define FWD0(f)          w2c_call0f((uint32_t)&f)
+#define FWD1(f,a)        w2c_call1((uint32_t)&f,(uint32_t)(a))
+#define FWD2(f,a,b)      w2c_call2((uint32_t)&f,(uint32_t)(a),(uint32_t)(b))
+#define FWD3(f,a,b,c)    w2c_call3((uint32_t)&f,(uint32_t)(a),(uint32_t)(b),(uint32_t)(c))
+
 typedef struct {
     int32_t _version;
     bool (*_env_is_chip)(void);
@@ -235,28 +287,22 @@ static void osi_task_yield_from_isr(void)
 
 static void * osi_semphr_create(uint32_t max, uint32_t init)
 {
-    (void)max;
-    (void)init;
-    return 0;
+    return (void *)FWD2(osi_impl_sem_create, max, init);
 }
 
 static void osi_semphr_delete(void *semphr)
 {
-    (void)semphr;
-    /* stub */
+    FWD1(osi_impl_sem_delete, semphr);
 }
 
 static int32_t osi_semphr_take(void *semphr, uint32_t block_time_tick)
 {
-    (void)semphr;
-    (void)block_time_tick;
-    return 0;
+    return (int32_t)FWD2(osi_impl_sem_take, semphr, block_time_tick);
 }
 
 static int32_t osi_semphr_give(void *semphr)
 {
-    (void)semphr;
-    return 0;
+    return (int32_t)FWD1(osi_impl_sem_give, semphr);
 }
 
 static void * osi_wifi_thread_semphr_get(void)
@@ -266,51 +312,42 @@ static void * osi_wifi_thread_semphr_get(void)
 
 static void * osi_mutex_create(void)
 {
-    return 0;
+    return (void *)FWD2(osi_impl_sem_create, 1u, 1u);
 }
 
 static void * osi_recursive_mutex_create(void)
 {
-    return 0;
+    return (void *)FWD2(osi_impl_sem_create, 1u, 1u);
 }
 
 static void osi_mutex_delete(void *mutex)
 {
-    (void)mutex;
-    /* stub */
+    FWD1(osi_impl_sem_delete, mutex);
 }
 
 static int32_t osi_mutex_lock(void *mutex)
 {
-    (void)mutex;
-    return 0;
+    return (int32_t)FWD2(osi_impl_sem_take, mutex, 0xFFFFFFFFu);
 }
 
 static int32_t osi_mutex_unlock(void *mutex)
 {
-    (void)mutex;
-    return 0;
+    return (int32_t)FWD1(osi_impl_sem_give, mutex);
 }
 
 static void * osi_queue_create(uint32_t queue_len, uint32_t item_size)
 {
-    (void)queue_len;
-    (void)item_size;
-    return 0;
+    return (void *)FWD2(osi_impl_queue_create, queue_len, item_size);
 }
 
 static void osi_queue_delete(void *queue)
 {
-    (void)queue;
-    /* stub */
+    FWD1(osi_impl_queue_delete, queue);
 }
 
 static int32_t osi_queue_send(void *queue, void *item, uint32_t block_time_tick)
 {
-    (void)queue;
-    (void)item;
-    (void)block_time_tick;
-    return 0;
+    return (int32_t)FWD3(osi_impl_queue_send, queue, item, block_time_tick);
 }
 
 static int32_t osi_queue_send_from_isr(void *queue, void *item, void *hptw)
@@ -323,10 +360,7 @@ static int32_t osi_queue_send_from_isr(void *queue, void *item, void *hptw)
 
 static int32_t osi_queue_send_to_back(void *queue, void *item, uint32_t block_time_tick)
 {
-    (void)queue;
-    (void)item;
-    (void)block_time_tick;
-    return 0;
+    return (int32_t)FWD3(osi_impl_queue_send, queue, item, block_time_tick);
 }
 
 static int32_t osi_queue_send_to_front(void *queue, void *item, uint32_t block_time_tick)
@@ -339,41 +373,32 @@ static int32_t osi_queue_send_to_front(void *queue, void *item, uint32_t block_t
 
 static int32_t osi_queue_recv(void *queue, void *item, uint32_t block_time_tick)
 {
-    (void)queue;
-    (void)item;
-    (void)block_time_tick;
-    return 0;
+    return (int32_t)FWD3(osi_impl_queue_recv, queue, item, block_time_tick);
 }
 
 static uint32_t osi_queue_msg_waiting(void *queue)
 {
-    (void)queue;
-    return 0;
+    return FWD1(osi_impl_queue_waiting, queue);
 }
 
 static void * osi_event_group_create(void)
 {
-    return 0;
+    return (void *)FWD0(osi_impl_evt_create);
 }
 
 static void osi_event_group_delete(void *event)
 {
-    (void)event;
-    /* stub */
+    FWD1(osi_impl_evt_delete, event);
 }
 
 static uint32_t osi_event_group_set_bits(void *event, uint32_t bits)
 {
-    (void)event;
-    (void)bits;
-    return 0;
+    return FWD2(osi_impl_evt_set, event, bits);
 }
 
 static uint32_t osi_event_group_clear_bits(void *event, uint32_t bits)
 {
-    (void)event;
-    (void)bits;
-    return 0;
+    return FWD2(osi_impl_evt_clear, event, bits);
 }
 
 static uint32_t osi_event_group_wait_bits(void *event, uint32_t bits_to_wait_for, int clear_on_exit, int wait_for_all_bits, uint32_t block_time_tick)
@@ -417,19 +442,17 @@ static void osi_task_delete(void *task_handle)
 
 static void osi_task_delay(uint32_t tick)
 {
-    (void)tick;
-    /* stub */
+    FWD1(osi_impl_delay, tick);
 }
 
 static int32_t osi_task_ms_to_tick(uint32_t ms)
 {
-    (void)ms;
-    return 0;
+    return (int32_t)FWD1(osi_impl_ms_to_tick, ms);
 }
 
 static void * osi_task_get_current_task(void)
 {
-    return 0;
+    return (void *)FWD0(osi_impl_current_task);
 }
 
 static int32_t osi_task_get_max_priority(void)
@@ -439,14 +462,12 @@ static int32_t osi_task_get_max_priority(void)
 
 static void * osi_malloc(unsigned int size)
 {
-    (void)size;
-    return 0;
+    return (void *)FWD1(osi_impl_malloc, size);
 }
 
 static void osi_free(void *p)
 {
-    (void)p;
-    /* stub */
+    FWD1(osi_impl_free, p);
 }
 
 static int32_t osi_event_post(const char* event_base, int32_t event_id, void* event_data, size_t event_data_size, uint32_t ticks_to_wait)
@@ -461,12 +482,12 @@ static int32_t osi_event_post(const char* event_base, int32_t event_id, void* ev
 
 static uint32_t osi_get_free_heap_size(void)
 {
-    return 0;
+    return FWD0(osi_impl_free_heap);
 }
 
 static uint32_t osi_rand(void)
 {
-    return 0;
+    return FWD0(osi_impl_random);
 }
 
 static void osi_dport_access_stall_other_cpu_start_wrap(void)
@@ -524,38 +545,27 @@ static int osi_read_mac(uint8_t* mac, uint32_t type)
 
 static void osi_timer_arm(void *timer, uint32_t tmout, bool repeat)
 {
-    (void)timer;
-    (void)tmout;
-    (void)repeat;
-    /* stub */
+    FWD3(osi_impl_timer_arm, timer, tmout, repeat);
 }
 
 static void osi_timer_disarm(void *timer)
 {
-    (void)timer;
-    /* stub */
+    FWD1(osi_impl_timer_disarm, timer);
 }
 
 static void osi_timer_done(void *ptimer)
 {
-    (void)ptimer;
-    /* stub */
+    FWD1(osi_impl_timer_done, ptimer);
 }
 
 static void osi_timer_setfn(void *ptimer, void *pfunction, void *parg)
 {
-    (void)ptimer;
-    (void)pfunction;
-    (void)parg;
-    /* stub */
+    FWD3(osi_impl_timer_setfn, ptimer, pfunction, parg);
 }
 
 static void osi_timer_arm_us(void *ptimer, uint32_t us, bool repeat)
 {
-    (void)ptimer;
-    (void)us;
-    (void)repeat;
-    /* stub */
+    FWD3(osi_impl_timer_arm_us, ptimer, us, repeat);
 }
 
 static void osi_wifi_reset_mac(void)
@@ -585,7 +595,7 @@ static void osi_wifi_rtc_disable_iso(void)
 
 static int64_t osi_esp_timer_get_time(void)
 {
-    return 0;
+    return (int64_t)FWD0(osi_impl_time_us_lo);
 }
 
 static int osi_nvs_set_i8(uint32_t handle, const char* key, int8_t value)
@@ -696,7 +706,7 @@ static int osi_get_time(void *t)
 
 static unsigned long osi_random(void)
 {
-    return 0;
+    return FWD0(osi_impl_random);
 }
 
 static uint32_t osi_slowclk_cal_get(void)
@@ -726,8 +736,7 @@ static uint32_t osi_log_timestamp(void)
 
 static void * osi_malloc_internal(size_t size)
 {
-    (void)size;
-    return 0;
+    return (void *)FWD1(osi_impl_malloc, size);
 }
 
 static void * osi_realloc_internal(void *ptr, size_t size)
@@ -739,21 +748,17 @@ static void * osi_realloc_internal(void *ptr, size_t size)
 
 static void * osi_calloc_internal(size_t n, size_t size)
 {
-    (void)n;
-    (void)size;
-    return 0;
+    return (void *)FWD2(osi_impl_calloc, n, size);
 }
 
 static void * osi_zalloc_internal(size_t size)
 {
-    (void)size;
-    return 0;
+    return (void *)FWD2(osi_impl_calloc, 1u, size);
 }
 
 static void * osi_wifi_malloc(size_t size)
 {
-    (void)size;
-    return 0;
+    return (void *)FWD1(osi_impl_malloc, size);
 }
 
 static void * osi_wifi_realloc(void *ptr, size_t size)
@@ -765,15 +770,12 @@ static void * osi_wifi_realloc(void *ptr, size_t size)
 
 static void * osi_wifi_calloc(size_t n, size_t size)
 {
-    (void)n;
-    (void)size;
-    return 0;
+    return (void *)FWD2(osi_impl_calloc, n, size);
 }
 
 static void * osi_wifi_zalloc(size_t size)
 {
-    (void)size;
-    return 0;
+    return (void *)FWD2(osi_impl_calloc, 1u, size);
 }
 
 static void * osi_wifi_create_queue(int queue_len, int item_size)
@@ -1026,3 +1028,62 @@ wifi_osi_funcs_t g_wifi_osi_funcs = {
 };
 
 wifi_osi_funcs_t *g_osi_funcs_p = &g_wifi_osi_funcs;
+
+/* ---- self-test ----------------------------------------------------------
+ *
+ * WINDOWED, and reached from the call0 shell through rom_call3(). It has to
+ * live on this side: it exercises the vtable the way libpp will, by calling
+ * through the function pointers rather than the static functions, so the whole
+ * path -- pointer, windowed prologue, w2c bridge, call0 body, unwind -- is
+ * what gets tested. A call0 test could only reach the implementations, which
+ * is the half that was never in doubt.
+ *
+ * Returns a bitmask of PASSED checks so a partial result is still readable;
+ * 0x3F is everything.
+ */
+uint32_t osi_selftest(void)
+{
+    const wifi_osi_funcs_t *f = g_osi_funcs_p;
+    uint32_t pass = 0;
+
+    void *m = f->_malloc(64);
+    if (m) { pass |= 0x01; f->_free(m); }
+
+    void *s = f->_semphr_create(1, 0);
+    if (s) {
+        /* give then take must succeed immediately; take on an empty count with
+         * a zero timeout must fail. A semaphore that always succeeds would
+         * satisfy the first check alone. */
+        if (f->_semphr_give(s) && f->_semphr_take(s, 0) && !f->_semphr_take(s, 0)) {
+            pass |= 0x02;
+        }
+        f->_semphr_delete(s);
+    }
+
+    void *q = f->_queue_create(4, 4);
+    if (q) {
+        uint32_t in = 0xA5A51234u, out = 0;
+        if (f->_queue_send(q, &in, 0) && f->_queue_msg_waiting(q) == 1 &&
+            f->_queue_recv(q, &out, 0) && out == in) {
+            pass |= 0x04;
+        }
+        f->_queue_delete(q);
+    }
+
+    void *e = f->_event_group_create();
+    if (e) {
+        if (f->_event_group_set_bits(e, 0x0Fu) == 0x0Fu &&
+            f->_event_group_clear_bits(e, 0x0Au) == 0x05u) {
+            pass |= 0x08;
+        }
+        f->_event_group_delete(e);
+    }
+
+    if (f->_get_free_heap_size() > 1024u) { pass |= 0x10; }
+
+    /* Two draws differing proves the generator advances rather than returning
+     * a constant, which a stub would also do. */
+    if (f->_random() != f->_random()) { pass |= 0x20; }
+
+    return pass;
+}

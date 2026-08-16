@@ -33,11 +33,21 @@ uint32_t win_call_vendor(uint32_t depth, uint32_t seed);
  * first vendor code this kernel runs. */
 uint32_t rom_call3(uint32_t fn, uint32_t a, uint32_t b, uint32_t c);
 
+/* Calls a windowed function that calls BACK into call0 code on every
+ * iteration -- proof the reverse bridge round-trips. */
+uint32_t win_call_bridge(uint32_t fn_add, uint32_t depth);
+
 #define ESP_ROM_CRC32_LE  0x4005CFECu
 
 /* Output captured from libphy.a's own printf. The blob is windowed and cannot
  * call back into this call0 kernel, so its shim buffers instead — a data
  * pointer crosses the ABI boundary safely where a call would not. */
+/* Windowed -> call0 bridges, for the OSI table's bodies. See window.S. */
+uint32_t w2c_call0f(uint32_t fn);
+uint32_t w2c_call1(uint32_t fn, uint32_t a);
+uint32_t w2c_call2(uint32_t fn, uint32_t a, uint32_t b);
+uint32_t w2c_call3(uint32_t fn, uint32_t a, uint32_t b, uint32_t c);
+
 extern char     phy_host_log_buf[];
 extern uint32_t phy_host_log_len;
 

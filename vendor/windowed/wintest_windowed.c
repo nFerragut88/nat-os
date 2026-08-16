@@ -41,3 +41,23 @@ unsigned int vendor_probe(unsigned int depth, unsigned int seed)
     }
     return sum;
 }
+
+/* ---- windowed -> call0, proved -----------------------------------------
+ *
+ * The OSI table's bodies are windowed and need the call0 kernel underneath
+ * them. This exercises that direction the same way vendor_probe exercises the
+ * other: it recurses, so window overflow is unavoidable, and it crosses the ABI
+ * boundary on every level. The return value is a checksum, so a bridge that
+ * corrupts a register produces a wrong number rather than merely surviving.
+ */
+extern unsigned int w2c_call2(unsigned int fn, unsigned int a, unsigned int b);
+
+unsigned int vendor_bridge_probe(unsigned int fn_add, unsigned int depth)
+{
+    unsigned int acc = 0;
+    for (unsigned int i = 0; i < depth; i++) {
+        /* Each iteration leaves windowed code, runs a call0 function, returns. */
+        acc = w2c_call2(fn_add, acc, i);
+    }
+    return acc;
+}
