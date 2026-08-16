@@ -588,6 +588,26 @@ static void execute(char *line)
         wifimac_beacon_stop();
         uart_puts("   stopped\n");
     }
+    else if (str_eq(line, "txpwr")) {
+        /* One step per invocation, so the probe test after each says which
+         * step mattered. "txpwr" alone just reports. */
+        if (str_eq(arg, "init")) {
+            uart_puts("   tx_pwctrl_init -> ");
+            uart_put_dec((unsigned)wifimac_txpwr_init());
+        } else if (str_eq(arg, "cal")) {
+            uart_puts("   tx_pwctrl_cal -> ");
+            uart_put_dec((unsigned)wifimac_txpwr_cal());
+        } else if (*arg) {
+            int v = parse_int(arg);
+            uart_puts("   phy_set_most_tpw -> ");
+            uart_put_dec((unsigned)wifimac_txpwr_set((uint32_t)v));
+        } else {
+            uart_puts("   usage: txpwr init | cal | <quarter-dBm, e.g. 78>");
+        }
+        uart_puts("\n   most_tpw now = ");
+        uart_put_hex(wifimac_txpwr_get());
+        uart_puts("\n");
+    }
     else if (str_eq(line, "probe")) {
         /* Ten, spaced by the caller re-running this: APs answer probe requests
          * but not reliably on the first try, and a single unanswered one would

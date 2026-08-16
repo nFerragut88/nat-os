@@ -1032,3 +1032,76 @@ int wifimac_probe_request(void)
 
     return wifimac_tx(f, n, 0u);                    /* 1 Mbps */
 }
+
+/* ---- transmit power ----------------------------------------------------
+ *
+ * The MAC completes every frame and no access point answers a probe request,
+ * so the transmitter is enabled with nothing behind it. register_chipv7_phy
+ * calibrates the radio; ESP-IDF's esp_phy_enable() does more than that, and
+ * the extra is where power control gets armed.
+ *
+ * Every function reached here is ALREADY in the image -- confirmed with nm
+ * before writing the call. That matters more than it sounds: referencing
+ * ram_tx_pwctrl_bg_init, which was NOT linked, pulled fresh objects out of
+ * libphy.a and broke PHY calibration entirely. Calling something already
+ * present cannot change which objects link, so the worst case here is that
+ * nothing improves.
+ *
+ * Exposed as separate steps rather than one sequence because which of them
+ * matters is unknown, and a single combined call would not say which one did
+ * anything.
+ */
+/* Measured result: NONE of these changed anything.
+ *
+ * most_tpw already reads 0x28 -- 40 quarter-dBm, 10 dBm -- straight out of
+ * register_chipv7_phy, so the transmitter was never running at zero power and
+ * this was never the explanation. phy_set_most_tpw(78) returned success and
+ * left the value at 0x28, so it does not take either.
+ *
+ * A negative result worth keeping: it rules out the most plausible cause and
+ * points at the real one, which is that the MAC's transmit machinery was never
+ * initialised at all. See vendor/phy/MAC-STATE.md.
+ */
+int wifimac_txpwr_init(void)
+{
+    extern int tx_pwctrl_init(void);
+    if (!g_attempted) {
+        return -1;
+    }
+    phy_stack_call((uint32_t)&tx_pwctrl_init, 0u, 0u);
+    return 0;
+}
+
+/* FAULTS. LoadProhibited at 0x40095613, inside tx_pwctrl_cal itself.
+ *
+ * Kept rather than deleted, because the fault is the finding: this routine
+ * expects calibration state that register_chipv7_phy alone does not leave
+ * behind, which is the same story the whole transmit path tells. Do not call
+ * it without reading the note at the bottom of vendor/phy/MAC-STATE.md. */
+int wifimac_txpwr_cal(void)
+{
+    extern int tx_pwctrl_cal(void);
+    if (!g_attempted) {
+        return -1;
+    }
+    phy_stack_call((uint32_t)&tx_pwctrl_cal, 0u, 0u);
+    return 0;
+}
+
+/* tpw is Espressif's "target power word", quarter-dBm. 78 is 19.5 dBm, near
+ * the part's maximum. */
+int wifimac_txpwr_set(uint32_t tpw)
+{
+    extern int phy_set_most_tpw(int);
+    if (!g_attempted) {
+        return -1;
+    }
+    phy_stack_call((uint32_t)&phy_set_most_tpw, tpw, 0u);
+    return 0;
+}
+
+uint32_t wifimac_txpwr_get(void)
+{
+    extern int phy_get_most_tpw(void);
+    return phy_stack_call((uint32_t)&phy_get_most_tpw, 0u, 0u);
+}

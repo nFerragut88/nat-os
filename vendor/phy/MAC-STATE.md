@@ -377,3 +377,80 @@ retransmission and drops it, which would look exactly like transmit not working.
 
 Beacons rather than arbitrary frames because a completion bit proves the MAC
 accepted the frame, and only a second radio proves it reached the air.
+
+
+---
+
+# Transmit power was not the problem
+
+Measured rather than assumed, and the measurement killed the theory:
+
+```
+most_tpw now = 0x00000028
+```
+
+0x28 is 40 quarter-dBm -- **10 dBm**, straight out of `register_chipv7_phy`.
+The transmitter was never running at zero power. `phy_set_most_tpw(78)` returns
+success and leaves the value at 0x28, so it does not take either.
+`tx_pwctrl_init()` changed nothing. `tx_pwctrl_cal()` **faults**, LoadProhibited
+inside itself, which is its own clue: it expects calibration state that
+`register_chipv7_phy` alone does not leave behind.
+
+Probe requests after each step: still zero answers.
+
+Every symbol called was confirmed present in the image with `nm` FIRST. That was
+learned the hard way -- referencing `ram_tx_pwctrl_bg_init`, which was not
+linked, pulled fresh objects out of libphy.a and broke PHY calibration outright.
+
+# What is actually missing
+
+open-mac's `hwinit()` is not one call, it is a chain, and almost none of it has
+been run here:
+
+```
+adc2_wifi_acquire()
+wifi_hw_start_openmac(0)
+    esp_wifi_power_domain_on()
+    wifi_module_enable()                  <- proprietary
+    esp_phy_enable_openmac()
+        esp_phy_common_clock_enable()
+        esp_phy_load_cal_and_init()       <- the ONLY part nat-os does
+        coex_bt_high_prio()
+    periph_module_reset(0x19)
+    ic_mac_init_openmac()                 <- proprietary
+    hal_init()                            <- proprietary
+    ic_enable_rx()                        <- proprietary
+_do_wifi_start_openmac(0)
+    wifi_station_start_openmac()
+    hal_mac_tsf_reset(0)                  <- proprietary
+```
+
+nat-os does `register_chipv7_phy` (inside `esp_phy_load_cal_and_init`), ungates
+the clocks by hand, and writes `MAC_CTRL_REG`. It has never run `ic_mac_init`,
+`hal_init`, `ic_enable_rx` or `hal_mac_tsf_reset`.
+
+Receive works anyway because the RX path is little more than a descriptor chain
+and a DMA engine. Transmit needs the MAC's transmit machinery -- queues, access
+categories, the RF switch timing -- and that is what those calls set up.
+
+All of them exist in `vendor/phy/libpp_natos.a`:
+
+```
+ic_mac_init  ic_enable_rx  hal_init  hal_mac_tsf_reset  lmacInit  lmacInitAc  pp_post
+```
+
+**None is currently linked**, because nothing references libpp at all — only
+libphy is on the link line today.
+
+## Why this is a real step and not a quick fix
+
+1. **The link is fragile.** Referencing one unlinked libphy symbol already broke
+   PHY calibration. Pulling in libpp means pulling in the OSI table's real
+   consumers, and the 116-entry table is currently a set of bodies that has
+   never been exercised by the code it was written for.
+2. **IRAM.** The earlier measurement stands: libpp + libphy whole-archive is
+   121,601 bytes against a 131,072-byte IRAM with the kernel already using
+   57,464. A real link pulls less than whole-archive, but this is the budget
+   problem the project has been deferring, and transmit is what triggers it.
+3. **It is the payoff.** The OSI table, the window handlers and the mixed-ABI
+   bridges were all built for exactly this moment. Nothing else needs them.

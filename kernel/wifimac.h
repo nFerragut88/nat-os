@@ -118,6 +118,15 @@ uint32_t wifimac_rx_to_us_subtype(void);
  * nothing while silence after this is informative. */
 int      wifimac_probe_request(void);
 
+/* Transmit power. Each is a separate step because which one matters is
+ * unknown, and a combined call would not say which did anything. Every symbol
+ * reached is already linked -- see the note in wifimac.c about what happened
+ * when an unlinked one was referenced. */
+int      wifimac_txpwr_init(void);
+int      wifimac_txpwr_cal(void);
+int      wifimac_txpwr_set(uint32_t tpw);
+uint32_t wifimac_txpwr_get(void);
+
 uint32_t wifimac_tx_sent(void);
 uint32_t wifimac_tx_done(void);
 
