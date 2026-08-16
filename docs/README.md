@@ -53,6 +53,8 @@ true" is the difference between a working boot and a silent reboot.
 | [UM-NATOS-021](UM-NATOS-021-launcher.md) | The Launcher, and Four Defects It Found by Existing | Icon grid and hybrid cursor, launch by name, status text that lied about state, selection read at the worst moment, the missing idle task, a close button an application cannot reach, and a correct diagnosis fixed at twenty times the necessary scope |
 | [UM-NATOS-022](UM-NATOS-022-notes.md) | The Note Pad, and a Workaround Wearing a Costume | Multi-tap keypad, messages saved to flash and read back after a power cycle, and a keypad whose key size was a touch calibration fault in disguise, plus what that fault actually was |
 | [UM-NATOS-023](UM-NATOS-023-interrupts.md) | The Interrupt Matrix, and Four Ways to Deliver an Edge to Nobody | The first peripheral interrupt this kernel routes: sources vs lines, a shared vector that could only have been right by accident, a PRO CPU enable bit that had to be measured, and four failures in which an edge was delivered perfectly to something that could not act on it |
+| [UM-NATOS-024](UM-NATOS-024-adc.md) | The ADC, and a Wrong Bit in a Right Register | SAR ADC1, the board's light sensor confirmed rather than assumed, and a one-bit error invisible to every read-back because it sat inside a twelve-bit field |
+| [UM-NATOS-025](UM-NATOS-025-i2c.md) | I2C, and Why a Preempted Master Is Legal | Bit-banged two-wire master on the last two free pins, clock stretching as the reason preemption is safe, and a self-test for the failure where a missing pull-up makes every address answer |
 
 ## Reading order
 
@@ -86,6 +88,8 @@ Reproducing a build: **005** alone is sufficient.
 | Application graphics | **Live** — `FILL`/`TEXT`/`DIMS` confined to per-application viewports; 0 escapes across 136 audited fills, UM-NATOS-016 §5 |
 | Touch | **Working on hardware** — XPT2046 gated on PENIRQ **and** pressure; X axis was inverted for three months; calibrated on-device from four inset targets and persisted across reset, UM-NATOS-017 §4.1, §7.4 |
 | Interrupts | **Matrix verified, no consumer** — peripheral interrupts routable for the first time; PENIRQ proven by injection but never observed to fire from a finger, so touch stays polled, UM-NATOS-023 §6, §7 |
+| ADC | **Working on hardware** — SAR ADC1, 8 channels; the light sensor on GPIO34 moved 265 counts against a 47-count control group, UM-NATOS-024 §6 |
+| I2C | **Bus verified, nothing attached** — bit-banged on GPIO22/27; both lines drive and release correctly, no byte has yet been transferred, UM-NATOS-025 §7, §8 |
 | Application input | **Live** — `SYS TOUCH` confined to the asking application's viewport; 81 delivered, 109,211 withheld, 0 confinement failures, UM-NATOS-017 §8 |
 | Application messaging | **Live** — copied through a kernel mailbox, never shared memory; 278 sent / 277 delivered / 0 bad buffers, UM-NATOS-013 §8 |
 | Application bitmaps | **Live** — `SYS BLIT`, arena-bounded source and viewport-clipped destination, UM-NATOS-012 §10 |

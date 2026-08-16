@@ -17,6 +17,7 @@
 #include "calib.h"
 #include "intr.h"
 #include "adc.h"
+#include "i2c.h"
 #include "desktop.h"
 #include "uart.h"
 #include "vm.h"
@@ -100,6 +101,8 @@ static void cmd_help(void)
               "    calshow       last calibration result and readings\n"
               "    intr          interrupt matrix counters\n"
               "    adc           read every ADC1 channel\n"
+              "    ldrscan       watch all ADC channels for movement\n"
+              "    i2c           check the bus and scan it\n"
               "    help          this\n");
 }
 
@@ -262,6 +265,7 @@ static void execute(char *line)
     else if (str_eq(line, "adcdrive")) { adc_probe_driven(); }
     else if (str_eq(line, "ldr")) { adc_watch(ADC1_CH_LDR, 120u); }
     else if (str_eq(line, "ldrscan")) { adc_watch_all(40u); }
+    else if (str_eq(line, "i2c")) { i2c_selftest(); i2c_scan(); }
     else if (str_eq(line, "hang")) {
         /* Deliberately wedge the system to prove the hang detector works.
          *

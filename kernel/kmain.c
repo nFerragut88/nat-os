@@ -31,6 +31,7 @@
 #include "touch.h"
 #include "intr.h"
 #include "adc.h"
+#include "i2c.h"
 #include "critical.h"
 #include "mutex.h"
 #include "shell.h"
@@ -1465,8 +1466,9 @@ void kmain(void)
     mutex_init(&g_shared_lock);
 
     touch_init();
-    touch_irq_init();
-    adc_init();       /* PENIRQ -> matrix -> CPU line 23; see intr.h */
+    touch_irq_init();   /* PENIRQ -> matrix -> CPU line 23; see intr.h */
+    adc_init();         /* SAR ADC1; the light sensor is channel 6           */
+    i2c_init();         /* bit-banged, SDA gpio22 / SCL gpio27               */
 
     raycast_init();
     desktop_init();
