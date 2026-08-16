@@ -34,6 +34,10 @@ typedef struct {
     uint32_t fault_epc;     /* faulting instruction, 0 when not applicable */
     uint32_t fault_boot;    /* which boot it happened on */
 
+    /* Touch calibration, so a calibration survives a reboot. Zero means never
+     * calibrated, and the driver's compiled-in defaults stand. */
+    uint32_t cal_x_min, cal_x_max, cal_y_min, cal_y_max;
+
     uint32_t checksum;
 } store_t;
 
@@ -51,6 +55,11 @@ uint32_t store_fault_kind(void);
 uint32_t store_fault_detail(void);
 uint32_t store_fault_epc(void);
 uint32_t store_fault_boot(void);
+
+/* Non-zero if the record carries a calibration. */
+int  store_has_calibration(void);
+void store_get_calibration(uint32_t *xmin, uint32_t *xmax,
+                           uint32_t *ymin, uint32_t *ymax);
 
 /* Reads and validates the record. Returns 0 if a valid one was found; on
  * failure the record is reset to defaults so a first run and a corrupt sector

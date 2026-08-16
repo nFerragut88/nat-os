@@ -22,7 +22,7 @@
 #include <stdint.h>
 
 #define RAY_VIEW_W 240u
-#define RAY_VIEW_H 168u
+#define RAY_VIEW_H 224u
 
 void raycast_init(void);
 

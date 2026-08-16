@@ -4,7 +4,7 @@
 #include "flash.h"
 
 #define STORE_MAGIC   0x59444F53u      /* "SODY" little-endian */
-#define STORE_VERSION 2u   /* 2 adds the fault fields */
+#define STORE_VERSION 3u   /* 3 adds the touch calibration */
 
 static store_t g_rec;
 static int     g_valid;
@@ -17,6 +17,7 @@ static uint32_t checksum(const store_t *r)
 {
     return r->magic + r->version + r->boots + r->frames +
            r->fault_kind + r->fault_detail + r->fault_epc + r->fault_boot +
+           r->cal_x_min + r->cal_x_max + r->cal_y_min + r->cal_y_max +
            0x9E3779B9u;
 }
 
@@ -48,6 +49,8 @@ defaults:
     g_rec.fault_detail = 0;
     g_rec.fault_epc    = 0;
     g_rec.fault_boot   = 0;
+    g_rec.cal_x_min = g_rec.cal_x_max = 0;
+    g_rec.cal_y_min = g_rec.cal_y_max = 0;
     return -1;
 }
 
@@ -71,6 +74,29 @@ uint32_t store_fault_kind(void)   { return g_rec.fault_kind; }
 uint32_t store_fault_detail(void) { return g_rec.fault_detail; }
 uint32_t store_fault_epc(void)    { return g_rec.fault_epc; }
 uint32_t store_fault_boot(void)   { return g_rec.fault_boot; }
+
+int store_has_calibration(void) { return g_rec.cal_x_max > g_rec.cal_x_min; }
+
+void store_get_calibration(uint32_t *xmin, uint32_t *xmax,
+                           uint32_t *ymin, uint32_t *ymax)
+{
+    *xmin = g_rec.cal_x_min;
+    *xmax = g_rec.cal_x_max;
+    *ymin = g_rec.cal_y_min;
+    *ymax = g_rec.cal_y_max;
+}
+
+/* Declared in calib.h. Writing the record here keeps every write to it in one
+ * file, which is what makes "the record is only changed in store.c" a property
+ * rather than a habit. */
+void calib_persist(uint32_t xmin, uint32_t xmax, uint32_t ymin, uint32_t ymax)
+{
+    g_rec.cal_x_min = xmin;
+    g_rec.cal_x_max = xmax;
+    g_rec.cal_y_min = ymin;
+    g_rec.cal_y_max = ymax;
+    (void)store_save();
+}
 
 /* Runs inside a panic, so it assumes as little as possible about the state of
  * the system. It does not read the existing record first: g_rec already holds

@@ -39,7 +39,7 @@
 
 /* The launcher owns the same region the 3D view does. Only one of them draws at
  * a time — see desktop_active(). */
-#define DESK_H  168u
+#define DESK_H  224u
 
 /* A launchable entry. `prog` is looked up in the shell's program table by name,
  * so the desktop holds no image pointers of its own and cannot fall out of step
