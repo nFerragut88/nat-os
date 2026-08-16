@@ -134,6 +134,9 @@ uint32_t display_dport_reg(void);
 
 /* DMA transfers completed, and transfers abandoned on timeout. A non-zero
  * timeout count means DMA disabled itself and the FIFO path took over. */
+/* One full-screen fill, timed at runtime. See display.c. */
+uint32_t display_fill_bench(void);
+
 uint32_t display_dma_transfers(void);
 uint32_t display_dma_timeouts(void);
 

@@ -150,7 +150,9 @@ typedef struct {
     uint32_t next;
 } dma_desc_t;
 
-static dma_desc_t g_desc __attribute__((aligned(4)));
+static dma_desc_t g_desc  __attribute__((aligned(4)));
+static dma_desc_t g_desc2 __attribute__((aligned(4)));   /* the pipeline's other half */
+static int        g_dma_busy;   /* a transfer is in flight */
 
 /* Set once by display_init(), so a panic before the panel exists draws nothing
  * rather than writing to an unconfigured controller. */
@@ -184,37 +186,66 @@ static void spi2_dma_init(void)
 /* Returns 1 if the transfer completed, 0 if it timed out. A timeout disables
  * DMA permanently rather than retrying: a DMA engine that missed one completion
  * has no reason to be trusted with the next, and the FIFO path still works. */
-static int spi2_dma_tx(const uint8_t *data, uint32_t n)
+/* Starting and waiting are separate so a caller can do useful work in between.
+ *
+ * The blocking spi2_dma_tx() below is these two back to back, which is what
+ * every caller wanted until the raycaster's full-screen blit made the gap worth
+ * filling: 224 transfers per frame, each with the CPU idle for the whole of it.
+ *
+ * The descriptor is a parameter rather than a global because a pipelined caller
+ * has one transfer in flight while it prepares the next, and the engine is
+ * still reading the first descriptor at that moment. One descriptor would be
+ * rewritten underneath a live transfer. */
+static void spi2_dma_start(dma_desc_t *d, const uint8_t *data, uint32_t n)
 {
     GPIO_REG(SPI2_DMA_INT_CLR) = 0xFFFFFFFFu;
 
-    g_desc.flags = (n & 0xFFFu)              /* size   */
-                 | ((n & 0xFFFu) << 12)      /* length */
-                 | (1u << 30)                /* eof    */
-                 | (1u << 31);               /* owned by the DMA engine */
-    g_desc.buf   = (uint32_t)data;
-    g_desc.next  = 0;
+    d->flags = (n & 0xFFFu)              /* size   */
+             | ((n & 0xFFFu) << 12)      /* length */
+             | (1u << 30)                /* eof    */
+             | (1u << 31);               /* owned by the DMA engine */
+    d->buf   = (uint32_t)data;
+    d->next  = 0;
 
-    GPIO_REG(SPI2_DMA_OUT_LINK) = ((uint32_t)&g_desc & 0xFFFFFu) | DMA_OUTLINK_START;
+    GPIO_REG(SPI2_DMA_OUT_LINK) = ((uint32_t)d & 0xFFFFFu) | DMA_OUTLINK_START;
 
     GPIO_REG(SPI2_MOSI_DLEN) = n * 8u - 1u;
     GPIO_REG(SPI2_CMD)       = SPI_USR_BIT;
 
-    /* Bounded wait. 2,000,000 cycles is ~25 ms at 80 MHz, far beyond the ~100 us
-     * a 480-byte transfer needs, and short enough that a stuck engine costs one
-     * frame rather than the system. */
+    g_dma_busy = 1;
+    g_bytes   += n;
+}
+
+/* Returns 0 if the engine stalled, having disabled DMA for the rest of the run.
+ *
+ * Bounded wait. 2,000,000 cycles is ~25 ms at 80 MHz, far beyond the ~100 us a
+ * 480-byte transfer needs, and short enough that a stuck engine costs one frame
+ * rather than the system. */
+static int spi2_dma_wait(void)
+{
+    if (!g_dma_busy) {
+        return 1;
+    }
+
     uint32_t start = xt_ccount();
     while (GPIO_REG(SPI2_CMD) & SPI_USR_BIT) {
         if ((xt_ccount() - start) > 2000000u) {
             g_dma_timeouts++;
-            g_dma_ok = 0;
+            g_dma_ok    = 0;
+            g_dma_busy  = 0;
             return 0;
         }
     }
 
+    g_dma_busy = 0;
     g_dma_transfers++;
-    g_bytes += n;
     return 1;
+}
+
+static int spi2_dma_tx(const uint8_t *data, uint32_t n)
+{
+    spi2_dma_start(&g_desc, data, n);
+    return spi2_dma_wait();
 }
 
 uint32_t display_dma_transfers(void) { return g_dma_transfers; }
@@ -382,14 +413,90 @@ static void set_window(uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1)
  * of how it sits in memory. Sent as one transfer: with a hardware FIFO the
  * per-call overhead dominates if this is done a byte at a time. */
 static uint8_t g_txbuf[LINE_MAX * 2u];
+static uint8_t g_txbuf2[LINE_MAX * 2u];     /* filled while g_txbuf is in flight */
+
+/* The panel wants big-endian; the framebuffer is little-endian. This is the
+ * conversion that used to sit between every transfer and the next, with the bus
+ * idle throughout. */
+static void swap_into(uint8_t *dst, const uint16_t *px, uint32_t n)
+{
+    for (uint32_t i = 0; i < n; i++) {
+        dst[i * 2u]      = (uint8_t)(px[i] >> 8);
+        dst[i * 2u + 1u] = (uint8_t)px[i];
+    }
+}
 
 static void push_pixels(const uint16_t *px, uint32_t n)
 {
-    for (uint32_t i = 0; i < n; i++) {
-        g_txbuf[i * 2u]      = (uint8_t)(px[i] >> 8);
-        g_txbuf[i * 2u + 1u] = (uint8_t)px[i];
-    }
+    swap_into(g_txbuf, px, n);
     spi_tx(g_txbuf, n * 2u);
+}
+
+/* Sends a contiguous run of pixels with the conversion overlapped against the
+ * transfer.
+ *
+ * The serial version alternated: convert a span with the bus idle, transfer it
+ * with the CPU idle, repeat. Two resources, each roughly half idle, for 224
+ * spans a frame. Here span N+1 is converted into the other buffer while span N
+ * is still going out, so the conversion disappears behind the transfer and the
+ * bus stops waiting for it.
+ *
+ * Falls back to the blocking path if DMA is unavailable or stalls mid-run —
+ * a degraded frame rate is a better outcome than a torn frame or a hang. *
+ * MEASURED GAIN: inconclusive. The raycaster's blit went 55.9 ms to 55.5 ms,
+ * which is inside the noise. The conversion this hides is only about 4 ms of
+ * that total, and the figure it is measured against turns out to be wall-clock
+ * across preemptions rather than transfer time — see display_fill_bench().
+ * Kept because it is correct and costs one 480-byte buffer, not because it was
+ * shown to be faster. */
+static void push_pixels_stream(const uint16_t *px, uint32_t total)
+{
+    if (!g_dma_ok || g_panic_mode || total <= LINE_MAX) {
+        while (total) {
+            uint32_t chunk = (total > LINE_MAX) ? LINE_MAX : total;
+            push_pixels(px, chunk);
+            px    += chunk;
+            total -= chunk;
+        }
+        return;
+    }
+
+    uint8_t     *buf[2]  = { g_txbuf, g_txbuf2 };
+    dma_desc_t  *desc[2] = { &g_desc, &g_desc2 };
+    int cur = 0;
+
+    uint32_t chunk = (total > LINE_MAX) ? LINE_MAX : total;
+    swap_into(buf[cur], px, chunk);
+    spi2_dma_start(desc[cur], buf[cur], chunk * 2u);
+    px    += chunk;
+    total -= chunk;
+
+    while (total) {
+        int nxt = 1 - cur;
+        uint32_t next_chunk = (total > LINE_MAX) ? LINE_MAX : total;
+
+        /* The whole point: this runs while the previous span is on the wire. */
+        swap_into(buf[nxt], px, next_chunk);
+
+        if (!spi2_dma_wait()) {
+            /* The engine stalled and DMA is now off for the run. Finish what is
+             * left the slow way rather than leaving the window half written. */
+            while (total) {
+                uint32_t c = (total > LINE_MAX) ? LINE_MAX : total;
+                push_pixels(px, c);
+                px    += c;
+                total -= c;
+            }
+            return;
+        }
+
+        spi2_dma_start(desc[nxt], buf[nxt], next_chunk * 2u);
+        px    += next_chunk;
+        total -= next_chunk;
+        cur    = nxt;
+    }
+
+    (void)spi2_dma_wait();
 }
 
 static void push_end(void)
@@ -633,13 +740,7 @@ void display_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h,
          * column has 168 rows of one pixel each, so the row-by-row path issues
          * 168 two-byte transfers and a raycaster column costs ~170 ms. The same
          * data as one stream is a single transfer. */
-        uint32_t total = w * h;
-        while (total) {
-            uint32_t chunk = (total > LINE_MAX) ? LINE_MAX : total;
-            push_pixels(src, chunk);
-            src   += chunk;
-            total -= chunk;
-        }
+        push_pixels_stream(src, w * h);
     } else {
         for (uint32_t row = 0; row < h; row++) {
             /* push_pixels byte-swaps into the transmit buffer, so the source is
@@ -746,3 +847,19 @@ void display_text(uint32_t x, uint32_t y, const char *s, uint16_t fg, uint16_t b
 uint32_t display_bytes_written(void) { return g_bytes; }
 uint32_t display_fill_cycles(void)   { return g_last_fill_cycles; }
 int      display_owner(void)         { return mutex_owner(&g_lock); }
+
+/* Times a full-screen fill at runtime and returns the cost in microseconds.
+ *
+ * The same work display_init() measures at 43 ms, but run from a task with the
+ * scheduler live. init's figure is single-threaded — nothing else exists yet —
+ * so the difference between the two is time the display task spent descheduled
+ * rather than time the panel spent receiving.
+ *
+ * That distinction decides what the raycaster's 55 ms blit means: whether the
+ * bus is slow, or the measurement is wall-clock across preemptions. */
+uint32_t display_fill_bench(void)
+{
+    uint32_t t0 = xt_ccount();
+    display_fill_rect(0, 0, DISP_W, DISP_H, 0x0000u);
+    return (xt_ccount() - t0) / 80u;
+}

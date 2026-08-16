@@ -323,6 +323,13 @@ static void execute(char *line)
     else if (str_eq(line, "findspk")) { audio_find_speaker(); }
     else if (str_eq(line, "spktest")) { audio_probe_square(); }
     else if (str_eq(line, "audio")) { audio_dump(); }
+    else if (str_eq(line, "fillbench")) {
+        uint32_t us = display_fill_bench();
+        uart_puts("   full-screen fill: ");
+        uart_put_dec(us / 1000u);
+        uart_puts(" ms   (init measured 43 ms single-threaded)\n");
+        desktop_invalidate();
+    }
     else if (str_eq(line, "spkhold")) {
         int pin = parse_int(arg);
         uint32_t mux = 0x3FF49028u;             /* gpio26 */
