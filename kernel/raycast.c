@@ -1,6 +1,7 @@
 /* nat-os — grid raycaster. See raycast.h for the camera-plane argument. */
 
 #include "raycast.h"
+#include "timer.h"
 #include "display.h"
 #include "heap.h"
 #include "xtensa.h"
@@ -46,6 +47,7 @@ static uint32_t g_frames, g_columns;
  * SPI transfer. Guessing which dominates has been wrong often enough in this
  * project that it is cheaper to measure. */
 static uint32_t g_us_march, g_us_compose, g_us_blit;
+static uint32_t g_last_move_tick;
 
 /* Two pixels per row, so one composed buffer covers a 2-pixel-wide column.
  *
@@ -284,11 +286,33 @@ void raycast_frame(void)
     /* Walk forward; turn when something is close ahead. Probing half a cell in
      * front rather than at the feet stops the camera burying itself in a wall
      * before the turn takes effect. */
-    int32_t nx = g_px + (dirX >> 4);
-    int32_t ny = g_py + (dirY >> 4);
-    if (wall_at(nx + (dirX >> 2), ny + (dirY >> 2))) {
-        raycast_turn(3);
-    } else {
+    /* Movement is per TICK, not per frame.
+     *
+     * A fixed step every frame made the camera's speed a function of the
+     * renderer's throughput. Harmless at three frames a second; at sixteen the
+     * camera advanced five times faster than the turn-away probe could react,
+     * buried itself in a wall, and every column rendered as one flat colour —
+     * measured as cam=6,1 hit0=0, a centre-column hit distance of zero cells.
+     *
+     * The shift reproduces the speed the frame-based version had when it was
+     * liked, rather than being picked afresh: (dir >> 4) per frame at ~3 fps is
+     * about dir/5 per second, and dir >> 9 per tick at 100 ticks/s is the same.
+     * Changing a rate's units is an opportunity to change its value by
+     * accident, and the first attempt did exactly that by a factor of eight. */
+    uint32_t now = timer_ticks();
+    uint32_t elapsed = now - g_last_move_tick;
+    if (elapsed > 4u) {
+        elapsed = 4u;               /* a stall must not teleport the camera */
+    }
+    g_last_move_tick = now;
+
+    for (uint32_t step = 0; step < elapsed; step++) {
+        int32_t nx = g_px + (dirX >> 9);
+        int32_t ny = g_py + (dirY >> 9);
+        if (wall_at(nx + (dirX >> 2), ny + (dirY >> 2))) {
+            raycast_turn(3);
+            break;
+        }
         g_px = nx;
         g_py = ny;
     }

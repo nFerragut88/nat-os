@@ -22,14 +22,7 @@
 #include <stdint.h>
 
 #define RAY_VIEW_W 240u
-/* The 3D view fills the launcher region MINUS the chrome bar at its foot.
- *
- * It briefly filled the whole region, and the close button drawn on top of it
- * flickered badly: the raycaster repaints every pixel every frame, so the X was
- * visible only in the gap between one repaint and the next. Drawing chrome over
- * something that repaints continuously cannot be made to work by ordering the
- * draws — the view has to not own those rows. */
-#define RAY_VIEW_H 208u
+#define RAY_VIEW_H 168u
 
 void raycast_init(void);
 

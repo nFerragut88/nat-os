@@ -7,12 +7,29 @@
 #include "app.h"
 #include "timer.h"
 
+/* The screen layout is agreed across four files — desktop.h sizes the launcher
+ * region, raycast.h sizes the 3D view, app.h places the application strips, and
+ * kmain.c places the colour strip. Nothing enforced that agreement, and a
+ * session spent reshuffling it produced a screen that looked broken in ways no
+ * test could see: every self-test passed throughout.
+ *
+ * These do not check that the layout is GOOD. They check that its pieces do not
+ * overlap or fall off the panel, which is the part a compiler can know. */
+_Static_assert(RAY_VIEW_H <= DESK_H,
+               "the 3D view must fit inside the launcher region");
+_Static_assert(APP_VIEW_Y0 >= DESK_H,
+               "application strips must start at or below the launcher region");
+_Static_assert(APP_VIEW_Y0 + APP_MAX * APP_VIEW_PITCH <= DISP_H,
+               "application strips must fit on the panel");
+_Static_assert(APP_CHROME_W < DISP_W,
+               "the kernel column must leave an application something to draw in");
+
 /* 3 x 3 over a 240 x 168 region. The cell is what constrains the label length,
  * not the other way round: at 6 px per character a 78 px cell holds 13, so the
  * labels below are kept to that rather than being clipped at draw time into
  * something unreadable. */
 #define COLS 3u
-#define ROWS 4u
+#define ROWS 3u
 
 /* The bottom of the region is a status strip, not grid.
  *
@@ -22,7 +39,7 @@
  * had been selected — was wrong but entirely reasonable. Text that overlaps a
  * control is not a cosmetic problem; it makes the interface lie about its own
  * state. */
-#define STATUS_H 16u
+#define STATUS_H 14u
 #define GRID_H  (DESK_H - STATUS_H)
 
 #define CELL_W (DISP_W / COLS)          /* 80 */
@@ -61,13 +78,7 @@
  * there is nowhere else to put them yet. */
 #define GLYPH_PX 3u                     /* scale: 8x8 -> 24x24 */
 
-/* Twelve cells, ten of them used. The grid is sized by the screen rather than
- * by the current program list, so adding a program does not mean re-deciding
- * the layout. Empty cells draw nothing and cannot be selected. */
-#define CELLS (COLS * ROWS)
-#define ICON_COUNT 10
-
-static const uint8_t GLYPHS[CELLS][8] = {
+static const uint8_t GLYPHS[COLS * ROWS][8] = {
     /* counter — stacked bars, tallest last */
     { 0x00, 0x08, 0x18, 0x38, 0x78, 0xF8, 0xF8, 0x00 },
     /* squares — a grid */
@@ -86,9 +97,6 @@ static const uint8_t GLYPHS[CELLS][8] = {
     { 0xFF, 0x91, 0x91, 0xFF, 0x19, 0x19, 0xFF, 0x00 },
     /* 3D view — an isometric cube */
     { 0x18, 0x3C, 0x7E, 0xFF, 0xFF, 0x7E, 0x3C, 0x18 },
-    /* colours — stacked bands */
-    { 0x00, 0xFF, 0xFF, 0x00, 0xFF, 0xFF, 0x00, 0x00 },
-    { 0 }, { 0 },
 };
 
 /* One draw call per run of set pixels, not one per pixel. A row of eight
@@ -115,7 +123,7 @@ static void draw_glyph(const uint8_t *g, uint32_t x, uint32_t y, uint16_t fg)
     }
 }
 
-static const desk_icon_t ICONS[CELLS] = {
+static const desk_icon_t ICONS[COLS * ROWS] = {
     { "counter",  "counter",  COLOR_CYAN,    DESK_ACTION_NONE },
     { "squares",  "squares",  COLOR_GREEN,   DESK_ACTION_NONE },
     { "draw",     "draw",     COLOR_YELLOW,  DESK_ACTION_NONE },
@@ -125,19 +133,9 @@ static const desk_icon_t ICONS[CELLS] = {
     { "pong",     "pong",     COLOR_GREEN,   DESK_ACTION_NONE },
     { "rogue",    "gfxrogue", COLOR_YELLOW,  DESK_ACTION_NONE },
     { "3D view",  0,          COLOR_RED,     DESK_ACTION_3D   },
-    { "colours",  0,          COLOR_MAGENTA, DESK_ACTION_ART  },
-    { 0, 0, 0, DESK_ACTION_NONE },
-    { 0, 0, 0, DESK_ACTION_NONE },
 };
 
-/* 0 = launcher, otherwise the view that has taken the region. Kept as a mode
- * rather than a pile of booleans so "who owns the region" has exactly one
- * answer. */
-#define MODE_LAUNCHER 0
-#define MODE_3D       1
-#define MODE_ART      2
-static int      g_mode = MODE_LAUNCHER;
-#define g_active (g_mode == MODE_LAUNCHER)
+static int      g_active = 1;
 static int      g_sel = 0;              /* cell under the cursor */
 static uint32_t g_cx, g_cy;             /* cursor, in region coordinates */
 static int      g_dirty = 1;
@@ -168,12 +166,11 @@ static int      g_msg_sel = -1;
 static int      g_msg_ok;
 static uint32_t g_msg_tick;
 
-int      desktop_active(void) { return g_mode == MODE_LAUNCHER; }
-int      desktop_art(void)    { return g_mode == MODE_ART; }
+int      desktop_active(void) { return g_active; }
 
 void desktop_set_active(int on)
 {
-    g_mode  = on ? MODE_LAUNCHER : MODE_3D;
+    g_active = on ? 1 : 0;
     g_dirty  = 1;
 }
 uint32_t desktop_taps(void)   { return g_taps; }
@@ -221,8 +218,7 @@ static int cell_at(uint32_t x, uint32_t y)
     if (c >= COLS || r >= ROWS) {
         return -1;
     }
-    int cell = (int)(r * COLS + c);
-    return (cell < ICON_COUNT) ? cell : -1;   /* empty cells are not targets */
+    return (int)(r * COLS + c);
 }
 
 /* An arrow, drawn as a stack of horizontal runs. Deliberately not a bitmap:
@@ -334,23 +330,15 @@ void desktop_chrome(void)
     }
 
     if (!g_active) {
-        /* A bar the open view never draws into, so this is painted once per
-         * frame over pixels nobody else touched — no flicker, whatever the view
-         * above is doing. */
-        display_fill_rect(0, DESK_BAR_Y, DISP_W, DESK_BAR_H, COLOR_BLACK);
-        display_text(4, DESK_BAR_Y + 4u,
-                     desktop_art() ? "colours" : "3D view",
-                     COLOR_GREY, COLOR_BLACK, 1u);
-        draw_close(DISP_W - DESK_BAR_H, DESK_BAR_Y, DESK_BAR_H, DESK_BAR_H,
-                   COLOR_WHITE);
+        draw_close(DISP_W - 20u, 2u, 18u, 18u, COLOR_WHITE);
     }
 }
 
 /* Non-zero if the touch was consumed by a close button. */
 int desktop_chrome_touch(uint32_t x, uint32_t y)
 {
-    if (!g_active && x >= DISP_W - DESK_BAR_H - 6u && y >= DESK_BAR_Y) {
-        g_mode  = MODE_LAUNCHER;    /* leave whichever view is open */
+    if (!g_active && x >= DISP_W - 22u && y < 22u) {
+        g_active = 1;               /* leave the 3D view */
         g_dirty  = 1;
         return 1;
     }
@@ -391,7 +379,7 @@ void desktop_frame(void)
     display_lock();
 
     display_fill_rect(0, 0, DISP_W, DESK_H, COLOR_BLACK);
-    for (int i = 0; i < ICON_COUNT; i++) {
+    for (int i = 0; i < (int)(COLS * ROWS); i++) {
         draw_icon(i);
     }
 
@@ -418,10 +406,10 @@ static void open_selected(void)
     g_msg_sel  = g_sel;
     g_msg_tick = timer_ticks();
 
-    if (ic->action == DESK_ACTION_3D || ic->action == DESK_ACTION_ART) {
-        /* Hand the region over. Both views repaint every frame, so nothing
+    if (ic->action == DESK_ACTION_3D) {
+        /* Hand the region over. The raycaster repaints every frame, so nothing
          * needs erasing first. */
-        g_mode    = (ic->action == DESK_ACTION_3D) ? MODE_3D : MODE_ART;
+        g_active  = 0;
         g_msg_ok  = 1;
         g_msg_sel = -1;         /* nothing to report over a view we just left */
         return;
@@ -441,8 +429,8 @@ void desktop_touch(uint32_t x, uint32_t y, int down)
          * left and right thirds of the same region, and anything subtler would
          * be indistinguishable from turning. */
         if (down && x < 36u && y < 18u) {
-            g_mode  = MODE_LAUNCHER;
-            g_dirty = 1;
+            g_active = 1;
+            g_dirty  = 1;
         }
         return;
     }

@@ -39,20 +39,7 @@
 
 /* The launcher owns the same region the 3D view does. Only one of them draws at
  * a time — see desktop_active(). */
-/* The launcher owns everything above the application strips.
- *
- * It was 168, leaving a band of application strips and a colour strip visible
- * at boot whether or not anything was running — two rows of empty boxes and an
- * animation nobody asked for. Neither earns permanent screen space: the strips
- * appear when a program is running, and the colour artwork is now something you
- * open from the menu. */
-#define DESK_H  224u
-
-/* The foot of the region, owned by the kernel whichever view is open. It holds
- * the close button, and no view draws into it — which is what stops the button
- * flickering against a view that repaints every frame. */
-#define DESK_BAR_H  16u
-#define DESK_BAR_Y  (DESK_H - DESK_BAR_H)
+#define DESK_H  168u
 
 /* A launchable entry. `prog` is looked up in the shell's program table by name,
  * so the desktop holds no image pointers of its own and cannot fall out of step
@@ -67,7 +54,6 @@ typedef struct {
 
 #define DESK_ACTION_NONE   0
 #define DESK_ACTION_3D     1    /* hand the region to the raycaster */
-#define DESK_ACTION_ART    2    /* hand the region to the colour artwork */
 
 void desktop_init(void);
 
@@ -83,11 +69,6 @@ void desktop_touch(uint32_t x, uint32_t y, int down);
 /* Non-zero while the launcher owns the region. Cleared by opening the 3D view
  * and set again by a touch in the top-left corner, which is the way back. */
 int  desktop_active(void);
-
-/* Non-zero when the colour artwork owns the region. The artwork used to be
- * drawn permanently along the bottom of the screen; it is now something you
- * open, which is the only reason it needs to be asked about. */
-int  desktop_art(void);
 
 /* Force the launcher on or off without touching the glass. Exists so the
  * renderer can be measured from the console: with the launcher active the
