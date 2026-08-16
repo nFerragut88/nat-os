@@ -12,13 +12,18 @@
 param(
     [switch]$Flash,
     [switch]$Monitor,
-    [string]$Port = "COM5"
+    [string]$Port = "COM5",
+    [string]$Vendor            # bootloader/partition source; defaults to vendor/
 )
 
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
 $build = Join-Path $root "build"
-$borrowed = "C:\Users\nobod\Projects\CYD28_BaseProject\.pio\build\esp32devCYD_STOCK"
+# The second-stage bootloader and partition table. Both live in vendor/ so a
+# fresh clone builds with nothing else installed; see vendor/README.md for what
+# they are and how to rebuild them yourself. Override with -Vendor <path> to use
+# artefacts from your own PlatformIO build instead.
+$borrowed = if ($Vendor) { $Vendor } else { Join-Path $root "vendor" }
 
 function Find-Tool($pattern) {
     $hit = Get-ChildItem "$env:USERPROFILE\.platformio\packages\$pattern" -ErrorAction SilentlyContinue |
@@ -99,7 +104,7 @@ Write-Host ("  image: {0:N0} bytes" -f (Get-Item $bin).Length)
 
 if ($Flash) {
     foreach ($f in @("bootloader.bin", "partitions.bin")) {
-        if (-not (Test-Path (Join-Path $borrowed $f))) { throw "missing borrowed $f" }
+        if (-not (Test-Path (Join-Path $borrowed $f))) { throw "missing $f in $borrowed - see vendor/README.md" }
     }
     Write-Host "== flashing $Port ==" -ForegroundColor Cyan
     & $python $esptool --chip esp32 --port $Port --baud 460800 write_flash -z `

@@ -116,7 +116,7 @@ breaks this one's flash step.
 ## 7. Reproduction
 
 ```powershell
-cd C:\Users\nobod\Projects\nat-os
+cd C:\src\nat-os
 .\build.ps1                                  # build only
 .\build.ps1 -Flash -Port COM5                # build and flash
 .\build.ps1 -Flash -Monitor -Port COM5       # build, flash, attach monitor

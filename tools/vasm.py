@@ -29,6 +29,7 @@ label's byte offset (useful for string arguments to SYS PUTS).
 
 import argparse
 import re
+import os
 import sys
 
 INSN_BYTES = 4
@@ -359,7 +360,12 @@ def main():
         return 1
 
     if args.output.endswith(".h"):
-        payload = emit_header(data, args.name, asm.labels, args.source)
+        # Repo-relative, never absolute. An absolute path bakes the author's
+        # home directory into a generated header that is then committed, which
+        # is noise in a diff and a small privacy leak in a public repository.
+        src_rel = os.path.relpath(os.path.abspath(args.source),
+                                  os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        payload = emit_header(data, args.name, asm.labels, src_rel.replace(os.sep, "/"))
         with open(args.output, "w", encoding="utf-8") as fh:
             fh.write(payload)
     else:

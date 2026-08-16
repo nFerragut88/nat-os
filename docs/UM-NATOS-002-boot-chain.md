@@ -183,7 +183,7 @@ rather than attaching to an already-running system.
 ## 8. Reproduction
 
 ```powershell
-cd C:\Users\nobod\Projects\nat-os
+cd C:\src\nat-os
 .\build.ps1 -Flash -Port COM5
 # then capture with the port opened before reset
 ```
