@@ -350,6 +350,87 @@ That is recorded here for want of a better home. It is not a display-driver
 property, and if the renderer grows much further it wants its own report rather
 than a subsection of the driver's.
 
+## 5.9 The DMA stall, and three failed fixes
+
+**Status: unresolved and deliberately left alone.** The driver ships with the
+behaviour described in §5 and the 3D view works. This section is the evidence,
+so the next attempt starts from it rather than from a fresh guess.
+
+### 5.9.1 What is happening
+
+DMA disables itself within about eight seconds of the raycaster starting. After
+that every transfer takes the 64-byte FIFO path — 2,400 transactions per full
+screen instead of 320 — and the blit costs 55.9 ms instead of a possible ~22 ms.
+**The 3D view has run this way for its entire existence.** Nothing reported it;
+the fallback is silent by design.
+
+### 5.9.2 The stall is spurious
+
+Captured at the moment the guard fires, with the guard left intact:
+
+```
+stall after 63910 good transfers, asking 480 B
+cmd        = 0x00000000        <- USR bit already CLEAR
+dma_status = 0x00000000
+after that : FINISHED late after 0 us
+waited     = 30332 us
+```
+
+**The transfer had completed.** `cmd` reads zero, and the follow-up poll found
+it done in 0 µs.
+
+The mechanism is a race between two adjacent lines:
+
+```c
+while (GPIO_REG(SPI2_CMD) & SPI_USR_BIT) {      /* A: still running? */
+    if ((xt_ccount() - start) > 2000000u) {     /* B: too long?      */
+```
+
+A preemption landing between A and B times out a transfer that has already
+finished. `xt_ccount()` is wall-clock, so descheduled time counts against the
+bound. Rare per transfer — 63,910 succeeded first — and certain over the
+~2,900 waits a second the raycaster issues.
+
+### 5.9.3 The corruption is the recovery, not the timeout
+
+`spi2_dma_tx()` returns 0 on timeout, and `spi_tx()` then falls through to
+`spi2_tx()` — **re-sending bytes the DMA has already sent.** The panel takes the
+span twice, its window advances one span too far, and every row after it shifts.
+
+This is a latent bug in the shipped driver, not something introduced by the
+attempts below. It fires once per boot and is invisible, because the same
+timeout that causes it also disables DMA so it cannot happen again.
+
+### 5.9.4 What was tried, and what it cost
+
+| attempt | result |
+|---|---|
+| Overlap conversion with DMA (two buffers) | no measured gain; broke the view once DMA actually ran |
+| Bound by CPU time, reset and retry instead of disabling | blit 21.9 ms — and the view rendered wrong |
+| Bound by CPU time, re-read USR, never re-send | view still wrong |
+
+Three attempts, three breakages. Each had a plausible mechanism and a good
+number **before anyone looked at the screen**, which is the whole lesson: this
+driver's only correctness instrument is a person looking at the panel, exactly
+as §5.3 already says about the SPI clock ceiling.
+
+The pipelined path deserves its own note. It measured as noise (55.9 → 55.5 ms)
+and was kept anyway as "correct and free". It had also **never actually run** —
+DMA disabled itself before it mattered — so it sat in the tree for a day looking
+like tested code. An optimisation with no measured gain has no claim on the
+tree, and code that only executes when another bug is absent has been tested by
+nothing.
+
+### 5.9.5 If this is picked up again
+
+- The 55.9 ms blit is correct. It is slow, and it works. That trade has already
+  been made three times in the other direction and lost every time.
+- Fix the duplicate re-send first (§5.3.3). It is a real defect, it is
+  independent of the timing question, and it makes any later timeout change
+  safe rather than destructive.
+- Do not remove the guard to study the failure. That was the first mistake.
+- Verify on the glass before reporting a number.
+
 ## 6. Verification
 
 Visual confirmation on the panel: the status screen renders, values update, and
