@@ -306,8 +306,25 @@ typedef struct dma_list_item {
     struct dma_list_item *next;
 } __attribute__((packed)) dma_list_item;
 
-static dma_list_item *g_rx_chain;
+static void wifi_rx_task(void);
+
+static dma_list_item *g_rx_chain;       /* head: oldest descriptor awaiting data */
+static dma_list_item *g_rx_last;        /* tail: where recycled items are appended */
 static int            g_rx_ready;
+
+/* Totals and the most recent decode. Kept here rather than walking the chain on
+ * demand: once recycling works a descriptor is only briefly filled, so anything
+ * that reads the chain later would usually find it empty and report nothing
+ * received -- exactly backwards. */
+static uint32_t          g_rx_frames;
+static uint32_t          g_rx_recycled;
+static wifi_frame_info_t g_rx_latest;
+
+/* Distinct networks seen, which is the readable proof that reception is
+ * CONTINUING rather than having captured a handful of frames once. */
+#define NET_MAX 8
+static struct { uint8_t bssid[6]; char ssid[33]; uint32_t seen; } g_nets[NET_MAX];
+static uint32_t g_net_count;
 
 /* Commits the chain to the hardware.
  *
@@ -372,6 +389,9 @@ int wifimac_rx_start(void)
         item->length   = RX_BUFFER_BYTES;
         item->packet   = buf;
         item->next     = prev;
+        if (!prev) {
+            g_rx_last = item;       /* first built is the tail: its next is NULL */
+        }
         prev = item;
     }
     g_rx_chain = prev;
@@ -383,6 +403,7 @@ int wifimac_rx_start(void)
         return -4;
     }
     g_rx_ready = 1;
+    task_create("wifirx", wifi_rx_task);
     return 0;
 }
 
@@ -507,42 +528,165 @@ uint32_t wifimac_channel(void) { return g_channel; }
  */
 #define RX_CTRL_BYTES 40u
 
-int wifimac_frame_info(wifi_frame_info_t *out)
+/* Decodes one descriptor's payload into out. Split from the old version, which
+ * walked the chain looking for a filled descriptor -- that worked only because
+ * nothing was ever recycled, so filled descriptors stayed filled forever. With
+ * recycling in place a descriptor is filled only briefly, and a chain walk run
+ * a moment later would find nothing and report that no frame had arrived. */
+static void decode_frame(const dma_list_item *it, wifi_frame_info_t *out)
 {
-    for (dma_list_item *it = g_rx_chain; it; it = it->next) {
-        if (!it->has_data || it->length <= RX_CTRL_BYTES + 24u) {
-            continue;
-        }
-        const uint8_t *p = (const uint8_t *)it->packet + RX_CTRL_BYTES;
+    const uint8_t *p = (const uint8_t *)it->packet + RX_CTRL_BYTES;
 
-        out->fc_type    = (uint8_t)((p[0] >> 2) & 0x3u);
-        out->fc_subtype = (uint8_t)((p[0] >> 4) & 0xFu);
-        out->length     = it->length;
-        for (int i = 0; i < 6; i++) {
-            out->addr1[i] = p[4 + i];
-            out->addr2[i] = p[10 + i];
-            out->addr3[i] = p[16 + i];
-        }
+    out->fc_type    = (uint8_t)((p[0] >> 2) & 0x3u);
+    out->fc_subtype = (uint8_t)((p[0] >> 4) & 0xFu);
+    out->length     = it->length;
+    for (int i = 0; i < 6; i++) {
+        out->addr1[i] = p[4 + i];
+        out->addr2[i] = p[10 + i];
+        out->addr3[i] = p[16 + i];
+    }
 
-        /* Beacon (type 0, subtype 8): a 24-byte header, then 12 fixed bytes
-         * (timestamp, interval, capability), then tagged parameters. Tag 0 is
-         * the SSID and is required to come first. */
-        out->ssid[0] = 0;
-        if (out->fc_type == 0u && out->fc_subtype == 8u) {
-            const uint8_t *tag = p + 24 + 12;
-            if (tag[0] == 0u) {
-                uint32_t n = tag[1];
-                if (n > sizeof(out->ssid) - 1u) {
-                    n = sizeof(out->ssid) - 1u;
-                }
-                for (uint32_t i = 0; i < n; i++) {
-                    uint8_t c = tag[2 + i];
-                    out->ssid[i] = (c >= 32u && c < 127u) ? (char)c : '?';
-                }
-                out->ssid[n] = 0;
+    /* Beacon: 24-byte header, 12 fixed bytes (timestamp, interval,
+     * capability), then tagged parameters. Tag 0 is the SSID and the standard
+     * requires it first. */
+    out->ssid[0] = 0;
+    if (out->fc_type == 0u && out->fc_subtype == 8u) {
+        const uint8_t *tag = p + 24 + 12;
+        if (tag[0] == 0u) {
+            uint32_t n = tag[1];
+            if (n > sizeof(out->ssid) - 1u) {
+                n = sizeof(out->ssid) - 1u;
+            }
+            for (uint32_t i = 0; i < n; i++) {
+                uint8_t c = tag[2 + i];
+                out->ssid[i] = (c >= 32u && c < 127u) ? (char)c : '?';
+            }
+            out->ssid[n] = 0;
+        }
+    }
+}
+
+static void note_network(const wifi_frame_info_t *fi)
+{
+    if (!fi->ssid[0]) {
+        return;                     /* only beacons name themselves */
+    }
+    for (uint32_t i = 0; i < g_net_count; i++) {
+        int same = 1;
+        for (int b = 0; b < 6; b++) {
+            if (g_nets[i].bssid[b] != fi->addr3[b]) {
+                same = 0;
+                break;
             }
         }
-        return 0;
+        if (same) {
+            g_nets[i].seen++;
+            return;
+        }
     }
-    return -1;
+    if (g_net_count < NET_MAX) {
+        uint32_t i = g_net_count++;
+        for (int b = 0; b < 6; b++) {
+            g_nets[i].bssid[b] = fi->addr3[b];
+        }
+        uint32_t j = 0;
+        for (; fi->ssid[j] && j < sizeof(g_nets[i].ssid) - 1u; j++) {
+            g_nets[i].ssid[j] = fi->ssid[j];
+        }
+        g_nets[i].ssid[j] = 0;
+        g_nets[i].seen = 1;
+    }
+}
+
+/* Hands a descriptor back to the hardware, per open-mac's rs_recycle_dma_item.
+ *
+ * length is restored to size and has_data cleared -- `owner` is deliberately
+ * NOT touched, because open-mac does not touch it either and this is not a
+ * place to improvise. The item goes on the TAIL, so buffers rotate rather than
+ * one being reused while the others sit idle. */
+static void recycle_item(dma_list_item *item)
+{
+    item->length   = item->size;
+    item->has_data = 0;
+    item->next     = 0;
+
+    if (g_rx_chain) {
+        g_rx_last->next = item;
+        g_rx_last = item;
+        update_rx_chain();
+    } else {
+        /* The chain drained completely: the hardware has no descriptor at all,
+         * so it needs a new base address rather than an appended link. */
+        g_rx_chain = item;
+        g_rx_last  = item;
+        *(volatile uint32_t *)WIFI_BASE_RX_DSCR = (uint32_t)item;
+        update_rx_chain();
+    }
+    g_rx_recycled++;
+}
+
+/* Drains filled descriptors and returns them to the hardware.
+ *
+ * Bounded per call, as open-mac bounds it: without a limit a busy channel can
+ * keep this loop fed indefinitely and starve everything else on a cooperative
+ * scheduler. */
+uint32_t wifimac_rx_service(void)
+{
+    uint32_t handled = 0;
+
+    while (g_rx_chain && g_rx_chain->has_data && handled < 10u) {
+        dma_list_item *item = g_rx_chain;
+        dma_list_item *next = item->next;
+
+        g_rx_chain = next;          /* detach before touching the payload */
+        item->next = 0;
+
+        if (item->length > RX_CTRL_BYTES + 24u) {
+            decode_frame(item, &g_rx_latest);
+            note_network(&g_rx_latest);
+            g_rx_frames++;
+        }
+
+        recycle_item(item);
+        handled++;
+    }
+    return handled;
+}
+
+int wifimac_frame_info(wifi_frame_info_t *out)
+{
+    if (!g_rx_frames) {
+        return -1;
+    }
+    *out = g_rx_latest;
+    return 0;
+}
+
+uint32_t wifimac_rx_frames(void)   { return g_rx_frames; }
+uint32_t wifimac_rx_recycled(void) { return g_rx_recycled; }
+uint32_t wifimac_net_count(void)   { return g_net_count; }
+
+int wifimac_net_info(uint32_t i, uint8_t bssid[6], const char **ssid,
+                     uint32_t *seen)
+{
+    if (i >= g_net_count) {
+        return -1;
+    }
+    for (int b = 0; b < 6; b++) {
+        bssid[b] = g_nets[i].bssid[b];
+    }
+    *ssid = g_nets[i].ssid;
+    *seen = g_nets[i].seen;
+    return 0;
+}
+
+/* Polls, because the MAC interrupt has never fired (see MAC-STATE.md). A task
+ * rather than a shell command: reception has to continue whether or not anyone
+ * is typing, and four descriptors fill in milliseconds on a busy channel. */
+static void wifi_rx_task(void)
+{
+    for (;;) {
+        wifimac_rx_service();
+        task_sleep(1u);
+    }
 }

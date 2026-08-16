@@ -276,11 +276,47 @@ Evidence the frames are genuine rather than uninitialised memory:
 - the 802.11 header decodes: type 0 subtype 8, broadcast address1, addr2 == addr3
 - the SSID tag parses to printable ASCII naming a real network
 
+## Continuous reception
+
+Descriptors are now recycled, per open-mac's `rs_recycle_dma_item`: `length` is
+restored to `size`, `has_data` cleared, and the item appended to the TAIL so
+buffers rotate instead of one being reused while the rest sit idle. `owner` is
+deliberately left alone -- open-mac does not touch it and this is not a place to
+improvise.
+
+A `wifirx` task polls and drains, bounded to ten frames per pass. Bounded
+because on a cooperative scheduler a busy channel can otherwise keep the loop
+fed indefinitely and starve everything else.
+
+Soak result:
+
+```
+frames=181  recycled=182  networks=2      ...then, minutes later...
+frames=372  recycled=374  networks=2
+   44:25:38:19:0d:1a  x199  "TC7NR"
+   38:88:71:2d:c1:cd   x53  "Verizon_S6QHX4"
+```
+
+With four buffers, 372 frames can only come from reuse. Reception also
+continued through a 3D rendering session, which is the interesting part: the
+radio and the display share nothing but the scheduler, and neither starved.
+
+`recycled` runs slightly ahead of `frames` because runt descriptors are handed
+back without being counted as frames. That is intended, and the gap is the
+count of them.
+
 ## Not done
 
-- **Interrupts never fire.** `irq fires=0` while DMA fills descriptors happily.
-  Routing installs and the line is not disabled, so either source 0 is not the
-  right index or the MAC's own interrupt mask has not been enabled.
-- **Descriptors are never recycled.** Four buffers fill and reception stops.
-  `has_data` must be cleared and ownership returned to the hardware.
+- **Interrupts never fire.** `irq fires=0` while DMA fills descriptors happily
+  -- which is why reception is polled. Routing installs and the line is not
+  disabled, so either source 0 is the wrong index or the MAC's own interrupt
+  mask has not been enabled. Polling works; an interrupt would be cheaper.
+- **Only the latest frame is decoded.** There is no queue: a frame arriving
+  before the previous one is read replaces it. Fine for a scanner, not for a
+  protocol.
+- **Shell stack is thin on the WiFi path.** 1856 B free at rest, 528 B while
+  the WiFi commands run. `execute()` is one long if/else chain so GCC sums every
+  branch's locals into one frame; the larger buffers are now static, which
+  recovered most of it. The guard is intact and `corrupt=0`, but this wants
+  splitting into functions before more commands are added.
 - **Transmit** is untouched.

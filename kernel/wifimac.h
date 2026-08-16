@@ -71,6 +71,20 @@ int wifimac_frame_info(wifi_frame_info_t *out);
 int      wifimac_rx_start(void);
 
 uint32_t wifimac_rx_filled(void);
+
+/* Drains filled descriptors and hands them back to the hardware. Called
+ * continuously by the 'wifirx' task that rx_start creates; exposed so the
+ * shell can force a pass. Returns how many were handled. */
+uint32_t wifimac_rx_service(void);
+
+uint32_t wifimac_rx_frames(void);
+uint32_t wifimac_rx_recycled(void);
+
+/* Distinct networks seen, which is what shows reception is CONTINUING rather
+ * than having captured a few frames once. */
+uint32_t wifimac_net_count(void);
+int      wifimac_net_info(uint32_t i, uint8_t bssid[6], const char **ssid,
+                          uint32_t *seen);
 uint32_t wifimac_rx_next_dscr(void);
 int      wifimac_rx_peek(uint32_t *len, uint8_t *out, uint32_t max);
 

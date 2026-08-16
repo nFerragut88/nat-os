@@ -567,6 +567,46 @@ static void execute(char *line)
         else if (r == -4) { uart_puts("   hardware never acknowledged the chain\n"); }
         else              { uart_puts("   receiver armed, promiscuous\n"); }
     }
+    else if (str_eq(line, "scan")) {
+        /* Every distinct beacon source seen since the receiver was armed.
+         * Several networks, each with a rising beacon count, is what proves
+         * descriptors are being recycled -- four buffers can hold four frames,
+         * so anything beyond that had to come from reuse. */
+        uint32_t n = wifimac_net_count();
+        uart_puts("   frames=");
+        uart_put_dec(wifimac_rx_frames());
+        uart_puts("  recycled=");
+        uart_put_dec(wifimac_rx_recycled());
+        uart_puts("  networks=");
+        uart_put_dec(n);
+        uart_puts("\n");
+        static const char hx[] = "0123456789abcdef";
+        for (uint32_t i = 0; i < n; i++) {
+            uint8_t bssid[6];
+            const char *ssid;
+            uint32_t seen;
+            if (wifimac_net_info(i, bssid, &ssid, &seen) != 0) {
+                continue;
+            }
+            uart_puts("   ");
+            for (int b = 0; b < 6; b++) {
+                char t[4];
+                t[0] = ':';
+                t[1] = hx[(bssid[b] >> 4) & 0xF];
+                t[2] = hx[bssid[b] & 0xF];
+                t[3] = 0;
+                uart_puts(t + (b ? 0 : 1));
+            }
+            uart_puts("  x");
+            uart_put_dec(seen);
+            uart_puts("  \"");
+            uart_puts(ssid);
+            uart_puts("\"\n");
+        }
+        if (!n) {
+            uart_puts("   nothing yet - run macrx then chan 1\n");
+        }
+    }
     else if (str_eq(line, "macstat")) {
         uart_puts("   irq fires=");
         uart_put_dec(wifimac_irq_fires());
@@ -577,7 +617,10 @@ static void execute(char *line)
         uart_puts("  next dscr=");
         uart_put_hex(wifimac_rx_next_dscr());
         uart_puts("\n");
-        wifi_frame_info_t fi;
+        /* static: wifi_frame_info_t is ~64 bytes and the shell task has a 2 KB
+         * stack that 'stacks' showed down to 380 B free with these on it. The
+         * shell is single-threaded, so this costs nothing but .bss. */
+        static wifi_frame_info_t fi;
         if (wifimac_frame_info(&fi) == 0) {
             static const char hx[] = "0123456789abcdef";
             static const char *sub[16] = {
@@ -606,7 +649,7 @@ static void execute(char *line)
             uart_puts("\n");
         }
         uint32_t len = 0;
-        uint8_t  buf[64];
+        static uint8_t buf[64];
         int n = wifimac_rx_peek(&len, buf, sizeof buf);
         if (n < 0) {
             uart_puts("   no frame captured yet\n");
@@ -637,7 +680,10 @@ static void execute(char *line)
         uart_puts("\n   zero fires is expected until receive exists\n");
     }
     else if (str_eq(line, "maclive")) {
-        uint32_t addrs[16], khz[16];
+        /* static, like the other buffers here: execute() is one long if/else
+         * chain, so GCC sums EVERY branch's locals into a single frame and the
+         * shell task's 2 KB was down to 380 B free. */
+        static uint32_t addrs[16], khz[16];
         uint32_t n = wifimac_movers(addrs, khz, 16u);
         uart_puts("   moving words=");
         uart_put_dec(n);
