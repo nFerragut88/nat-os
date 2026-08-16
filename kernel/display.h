@@ -122,6 +122,13 @@ void display_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h,
 /* Bytes pushed to the panel since init — the cheapest measure of whether the
  * driver is doing anything at all when nothing appears on screen. */
 uint32_t display_bytes_written(void);
+uint32_t display_spi_clock_live(void);   /* read NOW, not captured at init */
+int      display_dma_enabled(void);
+uint32_t display_took_dma(void);
+uint32_t display_took_fifo(void);
+uint32_t display_wait_us(void);
+uint32_t display_setup_us(void);
+void     display_reset_profile(void);
 
 /* CCOUNT cycles taken by the full-screen clear during init — the driver's
  * throughput, measured on the real panel rather than estimated. */
@@ -136,6 +143,7 @@ uint32_t display_dport_reg(void);
  * timeout count means DMA disabled itself and the FIFO path took over. */
 /* One full-screen fill, timed at runtime. See display.c. */
 uint32_t display_fill_bench(void);
+uint32_t display_fill_bench_masked(void);   /* same, interrupts off */
 
 uint32_t display_dma_transfers(void);
 uint32_t display_dma_timeouts(void);

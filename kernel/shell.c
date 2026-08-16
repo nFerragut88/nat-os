@@ -21,6 +21,7 @@
 #include "audio.h"
 #include "desktop.h"
 #include "uart.h"
+#include "xtensa.h"
 #include "vm.h"
 
 #define LINE_MAX 64
@@ -323,11 +324,49 @@ static void execute(char *line)
     else if (str_eq(line, "findspk")) { audio_find_speaker(); }
     else if (str_eq(line, "spktest")) { audio_probe_square(); }
     else if (str_eq(line, "audio")) { audio_dump(); }
+    else if (str_eq(line, "bytes")) {
+        /* Raw byte counter. Sampled twice from the host with a known wall-clock
+         * gap between, this gives true panel throughput without trusting any
+         * on-device clock -- which is the assumption currently under suspicion. */
+        uart_puts("   bytes=");
+        uart_put_dec(display_bytes_written());
+        uart_puts("  dma_on=");
+        uart_put_dec((unsigned int)display_dma_enabled());
+        uart_puts(" xfers=");
+        uart_put_dec(display_dma_transfers());
+        uart_puts(" timeouts=");
+        uart_put_dec(display_dma_timeouts());
+        uart_puts("\n   spi clk: init=");
+        uart_put_hex(display_spi_clock_reg());
+        uart_puts("  live=");
+        uart_put_hex(display_spi_clock_live());
+        uart_puts("\n   ccount=");
+        uart_put_dec(xt_ccount());
+        uart_puts("\n");
+    }
     else if (str_eq(line, "fillbench")) {
+        display_reset_profile();
+        uint32_t x0 = display_dma_transfers();
         uint32_t us = display_fill_bench();
+        uart_puts("   dma transfers this fill: ");
+        uart_put_dec(display_dma_transfers() - x0);
+        uart_puts("  (320 spans of 480 B expected)\n   spi_tx branches: dma=");
+        uart_put_dec(display_took_dma());
+        uart_puts(" fifo=");
+        uart_put_dec(display_took_fifo());
+        uart_puts("\n");
+        uart_puts("   of which: bus busy ");
+        uart_put_dec(display_wait_us() / 1000u);
+        uart_puts(" ms, dma setup ");
+        uart_put_dec(display_setup_us() / 1000u);
+        uart_puts(" ms\n");
         uart_puts("   full-screen fill: ");
         uart_put_dec(us / 1000u);
         uart_puts(" ms   (init measured 43 ms single-threaded)\n");
+        uint32_t m = display_fill_bench_masked();
+        uart_puts("   with interrupts masked: ");
+        uart_put_dec(m / 1000u);
+        uart_puts(" ms\n");
         desktop_invalidate();
     }
     else if (str_eq(line, "spkhold")) {

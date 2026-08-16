@@ -2,9 +2,11 @@
 
 #include "display.h"
 #include "gpio.h"
+#include "uart.h"
 #include "mutex.h"
 #include "task.h"
 #include "xtensa.h"
+#include "critical.h"
 
 #define PIN_MOSI 13u
 #define PIN_SCLK 14u
@@ -164,6 +166,10 @@ static volatile int g_panic_mode;
 static int      g_dma_ok;     /* 0 disables DMA for the rest of the run */
 static uint32_t g_dma_timeouts;
 static uint32_t g_dma_transfers;
+static uint32_t g_took_dma;     /* spi_tx chose the DMA branch */
+static uint32_t g_took_fifo;    /* spi_tx chose the FIFO branch */
+static uint32_t g_wait_cycles;    /* spent waiting for the engine */
+static uint32_t g_setup_cycles;   /* spent programming it */
 
 static void spi2_dma_init(void)
 {
@@ -198,6 +204,7 @@ static void spi2_dma_init(void)
  * rewritten underneath a live transfer. */
 static void spi2_dma_start(dma_desc_t *d, const uint8_t *data, uint32_t n)
 {
+    uint32_t t_enter = xt_ccount();
     GPIO_REG(SPI2_DMA_INT_CLR) = 0xFFFFFFFFu;
 
     d->flags = (n & 0xFFFu)              /* size   */
@@ -214,6 +221,7 @@ static void spi2_dma_start(dma_desc_t *d, const uint8_t *data, uint32_t n)
 
     g_dma_busy = 1;
     g_bytes   += n;
+    g_setup_cycles += xt_ccount() - t_enter;
 }
 
 /* Returns 0 if the engine stalled, having disabled DMA for the rest of the run.
@@ -228,17 +236,38 @@ static int spi2_dma_wait(void)
     }
 
     uint32_t start = xt_ccount();
+    uint32_t t_enter = start;
     while (GPIO_REG(SPI2_CMD) & SPI_USR_BIT) {
         if ((xt_ccount() - start) > 2000000u) {
             g_dma_timeouts++;
             g_dma_ok    = 0;
             g_dma_busy  = 0;
+
+            /* Say so, once and loudly.
+             *
+             * Falling back to the FIFO path is the right call — a stalled
+             * engine has not earned the next transfer. Doing it SILENTLY was
+             * not: every span becomes 64-byte transactions, a full screen goes
+             * from 320 transfers to 2,400, and the fill measured 43 ms at boot
+             * takes 79 ms forever after. Nothing surfaced that. It was found by
+             * chasing a 1.8x gap between init and runtime through preemption,
+             * interrupt masking, CPU clock, SPI divider and transaction size,
+             * all of which were innocent.
+             *
+             * A degradation nobody can see is indistinguishable from the
+             * hardware simply being slow, which is exactly the conclusion it
+             * led to. */
+            uart_puts("\n  !! display DMA timed out - FIFO path for the rest of"
+                      " this run\n"
+                      "     expect roughly half the throughput; 'bytes' shows"
+                      " dma_on=0\n");
             return 0;
         }
     }
 
     g_dma_busy = 0;
     g_dma_transfers++;
+    g_wait_cycles += xt_ccount() - t_enter;
     return 1;
 }
 
@@ -354,12 +383,14 @@ static void spi_tx(const uint8_t *data, uint32_t n)
      * descriptor setup costs more than it saves. Commands and their few
      * parameter bytes are all in that range. */
     if (g_dma_ok && !g_panic_mode && n > 64u) {
+        g_took_dma++;
         if (spi2_dma_tx(data, n)) {
             return;
         }
         /* Fell through: DMA timed out and is now disabled. The FIFO path
          * below still works, so the display degrades rather than stopping. */
     }
+    g_took_fifo++;
     spi2_tx(data, n);
 #else
     for (uint32_t i = 0; i < n; i++) {
@@ -845,6 +876,18 @@ void display_text(uint32_t x, uint32_t y, const char *s, uint16_t fg, uint16_t b
 }
 
 uint32_t display_bytes_written(void) { return g_bytes; }
+uint32_t display_spi_clock_live(void) { return GPIO_REG(SPI2_CLOCK); }
+
+/* Splits a transfer's cost into time the BUS was busy and time the CPU spent
+ * programming it. If the bus figure alone accounts for the wall-clock, the
+ * panel is the limit and no software change will help; if setup dominates, the
+ * transactions are too small and the fix is fewer, larger ones. */
+uint32_t display_took_dma(void)  { return g_took_dma; }
+uint32_t display_took_fifo(void) { return g_took_fifo; }
+uint32_t display_wait_us(void)  { return g_wait_cycles / 80u; }
+uint32_t display_setup_us(void) { return g_setup_cycles / 80u; }
+void     display_reset_profile(void) { g_wait_cycles = 0; g_setup_cycles = 0; }
+int      display_dma_enabled(void)    { return g_dma_ok; }
 uint32_t display_fill_cycles(void)   { return g_last_fill_cycles; }
 int      display_owner(void)         { return mutex_owner(&g_lock); }
 
@@ -862,4 +905,46 @@ uint32_t display_fill_bench(void)
     uint32_t t0 = task_cpu_cycles();
     display_fill_rect(0, 0, DISP_W, DISP_H, 0x0000u);
     return (task_cpu_cycles() - t0) / 80u;
+}
+
+/* The same fill with interrupts masked for its whole duration.
+ *
+ * display_fill_bench() removed preemption from the MEASUREMENT; this removes it
+ * from the RUN. The difference between the two is everything interrupts cost
+ * while a task is nominally running: the handler itself, the scheduler it
+ * calls, and — the reason this is worth knowing — whatever those do to the
+ * instruction cache this kernel executes from flash through.
+ *
+ * If the masked figure matches init's 43 ms, the whole gap is interrupt-borne
+ * and no amount of DMA tuning will touch it. If it does not, the cause is
+ * somewhere else entirely and the search moves.
+ *
+ * Masking for ~50 ms makes the tick late once. timer.c bounds its deadline in
+ * both directions and counts it, which is exactly the case that was built for. */
+uint32_t display_fill_bench_masked(void)
+{
+    /* The lock is taken BEFORE masking, and this is not a detail.
+     *
+     * The first version masked first and called display_fill_rect(), which
+     * takes the draw lock. If the display task held it, the shell blocked —
+     * and a blocked task with interrupts masked can never be switched back in.
+     * The board deadlocked and the hardware watchdog reset it: rst:0x7
+     * TG0WDT_SYS_RESET.
+     *
+     * The panic-mode note forty lines up says exactly this about exactly this
+     * lock. Reading it would have been cheaper than the reset.
+     *
+     * Acquiring first works because the lock is recursive: the acquisition
+     * inside display_fill_rect() is already owned by this task and cannot
+     * block. Nothing waits while interrupts are off. */
+    display_lock();
+
+    uint32_t crit = crit_enter();
+    uint32_t t0 = xt_ccount();
+    display_fill_rect(0, 0, DISP_W, DISP_H, 0x0000u);
+    uint32_t d = xt_ccount() - t0;
+    crit_exit(crit);
+
+    display_unlock();
+    return d / 80u;
 }
