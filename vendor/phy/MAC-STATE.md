@@ -319,4 +319,61 @@ count of them.
   branch's locals into one frame; the larger buffers are now static, which
   recovered most of it. The guard is intact and `corrupt=0`, but this wants
   splitting into functions before more commands are added.
-- **Transmit** is untouched.
+- **Only one TX slot** is used, of the several the hardware has.
+- **No association, no data frames.** Beacons only.
+
+
+---
+
+# It transmits
+
+```
+tx handed to hardware=178  completions reaped=178   forced=0
+```
+
+Registers and ordering from open-mac's `transmit_80211_frame`, unrearranged:
+`TX_CONFIG |= 0xa`, descriptor address into `PLCP0`, the PLCP/duration words,
+two more `TX_CONFIG` bits, and only at the very end the `0xc0000000` in `PLCP0`
+that actually puts the frame on the air.
+
+Note the base/offset pairs index BACKWARDS -- `MAC_TX_PLCP0_OS` is -2 on a
+`uint32_t` array, so slot n sits 8 bytes BELOW the base. Slot 0 is the base.
+
+The completion count is the point. A transmit call returning 0 proves only that
+some register stores did not fault, which is the weak evidence this project has
+been caught by three times. The hardware setting a completion bit is the MAC
+saying it put the frame out.
+
+## Two bugs found by watching the counters
+
+**Beacons paced against loop iterations, not the clock.** First version counted
+passes of the rx task and beaconed once every four seconds instead of ten times
+a second. The loop rate is not fixed. Repaced against `timer_ticks()`.
+
+**The rx task was starved.** Even repaced it managed 3 Hz, because `fair
+maxwait=36` -- a NORMAL-priority task can wait 36 ticks, 360 ms, behind the
+HIGH-priority renderer, so a 10 ms sleep became a third of a second. Raised to
+HIGH, matching the display: **9.4 Hz**, and the raycaster blit did not move
+(55.84 ms).
+
+The useful measurement was the one that ruled the obvious suspect OUT.
+`update_rx_chain()` spins on a hardware acknowledge and looked like the cost;
+instrumenting it showed a worst-case wait of **one** iteration. It was never the
+radio, it was the scheduler.
+
+**Reusing a descriptor still in flight.** Every frame shares one descriptor and
+one buffer, and the counters showed 421 sent against 273 reaped -- frames handed
+over while the previous was possibly still being read by DMA. Guarded with a
+pending flag that self-clears after 50 ms, so a completion that never arrives
+cannot stop transmission for good. Now 178/178 with zero forced clears.
+
+## What is beaconed
+
+A 51-byte beacon: broadcast address1, the factory MAC as address2 and BSSID,
+100 TU interval, ESS capability, SSID, basic rates 1 and 2 Mbps, and a DS
+parameter naming the tuned channel. Sequence control is filled in per frame --
+a receiver that sees a repeated sequence number treats the frame as a
+retransmission and drops it, which would look exactly like transmit not working.
+
+Beacons rather than arbitrary frames because a completion bit proves the MAC
+accepted the frame, and only a second radio proves it reached the air.

@@ -36,6 +36,8 @@
 #include "heap.h"
 #include "uart.h"
 #include "window.h"
+#include "efuse.h"
+#include "timer.h"
 
 /* Clock gating for the MAC, which is separate from the WiFi/BT common clock
  * phyinit already ungated (0x3C9).
@@ -316,6 +318,10 @@ static int            g_rx_ready;
  * demand: once recycling works a descriptor is only briefly filled, so anything
  * that reads the chain later would usually find it empty and report nothing
  * received -- exactly backwards. */
+static uint8_t  g_beacon_frame[128];
+static uint32_t g_beacon_len, g_beacon_due;
+static int      g_beacon_on;
+
 static uint32_t          g_rx_frames;
 static uint32_t          g_rx_recycled;
 static wifi_frame_info_t g_rx_latest;
@@ -332,15 +338,26 @@ static uint32_t g_net_count;
  * bounded here: an unbounded wait on an undocumented acknowledge bit is a hang
  * with no output if the bit never clears, and this kernel has already spent a
  * session on one of those. */
+static uint32_t g_chain_spins_max;      /* worst acknowledge wait seen */
+static uint32_t g_chain_calls;
+
+uint32_t wifimac_chain_spins(void) { return g_chain_spins_max; }
+uint32_t wifimac_chain_calls(void) { return g_chain_calls; }
+
 static int update_rx_chain(void)
 {
     volatile uint32_t *reg = (volatile uint32_t *)WIFI_MAC_BITMASK_084;
     *reg |= 0x1u;
+    g_chain_calls++;
     for (uint32_t spins = 0; spins < 1000000u; spins++) {
         if (!(*reg & 0x1u)) {
+            if (spins > g_chain_spins_max) {
+                g_chain_spins_max = spins;
+            }
             return 0;
         }
     }
+    g_chain_spins_max = 1000000u;
     return -1;                          /* never acknowledged */
 }
 
@@ -403,7 +420,26 @@ int wifimac_rx_start(void)
         return -4;
     }
     g_rx_ready = 1;
-    task_create("wifirx", wifi_rx_task);
+    /* HIGH, matching the display.
+     *
+     * At NORMAL this task ran about twice a second: 'fair maxwait=36' means a
+     * NORMAL task can wait 36 ticks -- 360 ms -- to be selected behind the
+     * HIGH-priority renderer, so a 10 ms sleep became a third of a second and
+     * beacons went out at 3 Hz instead of 10.
+     *
+     * The measurement that pointed here was the one that ruled the obvious
+     * suspect OUT: update_rx_chain() spins on a hardware acknowledge and looked
+     * like the cost, but its worst observed wait is ONE iteration. It was never
+     * the radio; it was the scheduler.
+     *
+     * Equal priority rather than higher, deliberately. This task does a few
+     * register accesses and a memcpy per pass, so sharing a round-robin with
+     * the renderer costs the display almost nothing, while putting it ABOVE
+     * would let a busy channel preempt every frame. */
+    int rxid = task_create("wifirx", wifi_rx_task);
+    if (rxid >= 0) {
+        task_set_priority(rxid, TASK_PRIO_HIGH);
+    }
     return 0;
 }
 
@@ -687,6 +723,235 @@ static void wifi_rx_task(void)
 {
     for (;;) {
         wifimac_rx_service();
+
+        /* Reaping lives here rather than in a task of its own: it is a couple
+         * of register accesses and there is no reason to spend a task slot or
+         * a 2 KB stack on it. */
+        wifimac_tx_reap();
+
+        /* Beacons, if enabled, paced against the CLOCK rather than against
+         * this loop's iteration count.
+         *
+         * Counting iterations was the first attempt and it beaconed roughly
+         * once every four seconds instead of ten times a second: the loop rate
+         * is not fixed, because draining a descriptor calls update_rx_chain()
+         * which spins on a hardware acknowledge, and the task competes with a
+         * HIGH-priority display. A beacon interval that drifts with load is
+         * not an interval.
+         *
+         * 100 ms is what the frame itself advertises (100 TU), so a client
+         * that gives up after missed beacons gets what it was promised. */
+        if (g_beacon_on) {
+            uint32_t now = timer_ticks();
+            if ((int32_t)(now - g_beacon_due) >= 0) {
+                g_beacon_due = now + 10u;               /* 10 ticks = 100 ms */
+                if (!wifimac_tx_busy()) {
+                    wifimac_tx(g_beacon_frame, g_beacon_len, 0u);   /* 1 Mbps */
+                }
+            }
+        }
+
         task_sleep(1u);
     }
+}
+
+int wifimac_beacon_start(const char *ssid)
+{
+    uint8_t mac[6];
+    if (!g_rx_ready) {
+        return -1;                  /* the rx task is what sends them */
+    }
+    if (!g_channel) {
+        return -2;                  /* a beacon must advertise a real channel */
+    }
+    efuse_factory_mac(mac);
+    g_beacon_len = wifimac_build_beacon(g_beacon_frame, mac, ssid, g_channel);
+    g_beacon_due = timer_ticks();
+    g_beacon_on = 1;
+    return 0;
+}
+
+void wifimac_beacon_stop(void) { g_beacon_on = 0; }
+uint32_t wifimac_beacon_len(void) { return g_beacon_len; }
+
+/* ---- transmit -----------------------------------------------------------
+ *
+ * Registers and ordering taken from esp32-open-mac's transmit_80211_frame.
+ * The ORDER is theirs and is not rearranged: TX_CONFIG |= 0xa first, then the
+ * descriptor address into PLCP0, then the PLCP/duration words, then two more
+ * TX_CONFIG bits, and only at the very end the 0xc0000000 in PLCP0 that
+ * actually starts the transmission. Sequences like this exist because someone
+ * watched the hardware misbehave without them.
+ *
+ * The base/offset pairs index BACKWARDS: MAC_TX_PLCP0_OS is -2 on a uint32_t
+ * array, so slot n sits 8 bytes BELOW the base. Slot 0 is the base itself,
+ * which is the only slot used here.
+ */
+#define MAC_TX_PLCP0_BASE    0x3FF73D20u     /* -8  per slot */
+#define WIFI_TX_CONFIG_BASE  0x3FF73D1Cu     /* -8  per slot */
+#define MAC_TX_PLCP1_BASE    0x3FF74258u     /* -60 per slot */
+#define MAC_TX_PLCP2_BASE    0x3FF7425Cu
+#define MAC_TX_DURATION_BASE 0x3FF74268u
+#define WIFI_TXQ_CLR_STATE_COMPLETE 0x3FF73CC4u
+#define WIFI_TXQ_GET_STATE_COMPLETE 0x3FF73CC8u
+
+#define TX_SLOT 0u
+
+/* Static, not heap: the descriptor address is handed to hardware masked to its
+ * low 20 bits, and it must be 4-byte aligned. A static in .bss satisfies both
+ * without depending on what the allocator happens to return. */
+static dma_list_item g_tx_item __attribute__((aligned(4)));
+static uint8_t       g_tx_buf[256] __attribute__((aligned(4)));
+static uint32_t      g_tx_seq;
+static uint32_t      g_tx_sent, g_tx_done;
+
+/* Every frame reuses one descriptor and one buffer, so a second must not be
+ * handed over while the first is still in flight -- that would rewrite a
+ * buffer the DMA engine is reading. Measured: with beacons at 10 Hz and no
+ * guard, 421 frames were sent against 273 completions reaped.
+ *
+ * The deadline is what keeps the guard from being worse than the problem. A
+ * completion that never arrives would otherwise stop transmission permanently,
+ * and this project has already shipped one wait that could hang forever. */
+static int      g_tx_pending;
+static uint32_t g_tx_started;
+static uint32_t g_tx_forced;
+
+#define TX_PENDING_MAX_TICKS 5u         /* 50 ms; airtime here is under 1 ms */
+
+int wifimac_tx_busy(void)
+{
+    if (!g_tx_pending) {
+        return 0;
+    }
+    if ((int32_t)(timer_ticks() - g_tx_started) >= (int32_t)TX_PENDING_MAX_TICKS) {
+        g_tx_pending = 0;               /* stale; let the caller proceed */
+        g_tx_forced++;
+        return 0;
+    }
+    return 1;
+}
+
+uint32_t wifimac_tx_forced(void) { return g_tx_forced; }
+
+
+static volatile uint32_t *tx_reg(uint32_t base, uint32_t stride_bytes)
+{
+    return (volatile uint32_t *)(base - stride_bytes * TX_SLOT);
+}
+
+int wifimac_tx(const uint8_t *payload, uint32_t len, uint32_t rate)
+{
+    if (!g_attempted || !g_channel) {
+        return -1;                  /* no MAC, or the radio was never tuned */
+    }
+    if (len < 24u || len > sizeof(g_tx_buf)) {
+        return -2;
+    }
+
+    for (uint32_t i = 0; i < len; i++) {
+        g_tx_buf[i] = payload[i];
+    }
+
+    /* Sequence control, bytes 22..23 of the 802.11 header. Every frame from a
+     * station carries an incrementing sequence number; a receiver that sees the
+     * same one twice treats the second as a retransmission and drops it, which
+     * would look exactly like transmit not working. */
+    g_tx_buf[22] = (uint8_t)((g_tx_seq & 0x0Fu) << 4);
+    g_tx_buf[23] = (uint8_t)((g_tx_seq & 0xFF0u) >> 4);
+    g_tx_seq = (g_tx_seq + 1u) & 0xFFFu;
+
+    g_tx_item.owner    = 1;
+    g_tx_item.has_data = 1;
+    g_tx_item.length   = len;
+    g_tx_item.size     = len + 32u;     /* open-mac's headroom, not padding */
+    g_tx_item.packet   = g_tx_buf;
+    g_tx_item.next     = 0;
+
+    uint32_t is_ht = (rate >= 0x10u);
+
+    *tx_reg(WIFI_TX_CONFIG_BASE, 8u) |= 0xAu;
+
+    *tx_reg(MAC_TX_PLCP0_BASE, 8u) =
+        (((uint32_t)&g_tx_item) & 0xFFFFFu) | 0x00600000u;
+
+    *tx_reg(MAC_TX_PLCP1_BASE, 60u) =
+        0x10000000u | (len & 0xFFFu) | ((rate & 0x1Fu) << 12) |
+        ((is_ht & 1u) << 25);           /* crypto key slot 0: nothing to OR in */
+    *tx_reg(MAC_TX_PLCP2_BASE, 60u)    = 0x00000020u;
+    *tx_reg(MAC_TX_DURATION_BASE, 60u) = 0;
+
+    *tx_reg(WIFI_TX_CONFIG_BASE, 8u) |= 0x02000000u;
+    *tx_reg(WIFI_TX_CONFIG_BASE, 8u) |= 0x00003000u;
+
+    /* Last, and only now: this bit is what puts it on the air. */
+    *tx_reg(MAC_TX_PLCP0_BASE, 8u) |= 0xC0000000u;
+
+    g_tx_sent++;
+    g_tx_pending = 1;
+    g_tx_started = timer_ticks();
+    return 0;
+}
+
+/* Reaps completed transmissions.
+ *
+ * This is the self-check that matters. A transmit call that returns 0 has only
+ * proved that some register stores did not fault -- the same weak evidence this
+ * project has been caught by three times. The hardware setting a completion bit
+ * is the MAC saying it actually put the frame out. */
+uint32_t wifimac_tx_reap(void)
+{
+    uint32_t st = *(volatile uint32_t *)WIFI_TXQ_GET_STATE_COMPLETE;
+    if (!st) {
+        return 0;
+    }
+    uint32_t slot = 31u - (uint32_t)__builtin_clz(st);
+    *(volatile uint32_t *)WIFI_TXQ_CLR_STATE_COMPLETE |= (1u << slot);
+    g_tx_pending = 0;
+    g_tx_done++;
+    return st;
+}
+
+uint32_t wifimac_tx_sent(void) { return g_tx_sent; }
+uint32_t wifimac_tx_done(void) { return g_tx_done; }
+
+/* ---- a beacon, so the result is visible from another device -------------
+ *
+ * Building a beacon rather than an arbitrary frame is deliberate: a completion
+ * bit proves the MAC accepted the frame, but only a second radio proves it
+ * reached the air. A beacon shows up in any phone's WiFi list by name, which is
+ * evidence this kernel cannot fake to itself.
+ */
+uint32_t wifimac_build_beacon(uint8_t *out, const uint8_t mac[6],
+                              const char *ssid, uint32_t channel)
+{
+    uint32_t n = 0;
+
+    out[n++] = 0x80; out[n++] = 0x00;               /* beacon, no flags */
+    out[n++] = 0x00; out[n++] = 0x00;               /* duration */
+    for (int i = 0; i < 6; i++) { out[n++] = 0xFF; }        /* addr1 broadcast */
+    for (int i = 0; i < 6; i++) { out[n++] = mac[i]; }      /* addr2 source */
+    for (int i = 0; i < 6; i++) { out[n++] = mac[i]; }      /* addr3 bssid */
+    out[n++] = 0x00; out[n++] = 0x00;               /* seq: wifimac_tx fills it */
+
+    for (int i = 0; i < 8; i++) { out[n++] = 0x00; }        /* timestamp */
+    out[n++] = 0x64; out[n++] = 0x00;               /* interval, 100 TU */
+    out[n++] = 0x01; out[n++] = 0x00;               /* capability: ESS */
+
+    out[n++] = 0x00;                                /* tag 0: SSID */
+    uint32_t len_at = n++;
+    uint32_t sl = 0;
+    while (ssid[sl] && sl < 32u) {
+        out[n++] = (uint8_t)ssid[sl++];
+    }
+    out[len_at] = (uint8_t)sl;
+
+    /* Supported rates. 1 and 2 Mbps, both flagged basic (bit 7). A beacon
+     * advertising no rates is malformed and some clients will not list it. */
+    out[n++] = 0x01; out[n++] = 0x02; out[n++] = 0x82; out[n++] = 0x84;
+
+    out[n++] = 0x03; out[n++] = 0x01;               /* tag 3: DS parameter */
+    out[n++] = (uint8_t)channel;
+
+    return n;
 }

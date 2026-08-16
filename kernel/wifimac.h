@@ -77,6 +77,8 @@ uint32_t wifimac_rx_filled(void);
  * shell can force a pass. Returns how many were handled. */
 uint32_t wifimac_rx_service(void);
 
+uint32_t wifimac_chain_spins(void);
+uint32_t wifimac_chain_calls(void);
 uint32_t wifimac_rx_frames(void);
 uint32_t wifimac_rx_recycled(void);
 
@@ -92,5 +94,31 @@ int      wifimac_rx_peek(uint32_t *len, uint8_t *out, uint32_t max);
  * 0, -1 if macinit has not run, -2 if the channel is outside 1..13. */
 int      wifimac_set_channel(uint32_t ch);
 uint32_t wifimac_channel(void);
+
+/* Transmits a raw 802.11 frame. rate is a wifi_phy_rate_t; 0 is 1 Mbps long
+ * preamble, the most robust. Returns 0, -1 if the radio is not tuned, -2 on a
+ * bad length. Sequence control is filled in for you. */
+int      wifimac_tx(const uint8_t *payload, uint32_t len, uint32_t rate);
+
+/* Reaps a completed transmission and returns the raw status word, or 0. The
+ * hardware setting this is the only real evidence a frame went out. */
+uint32_t wifimac_tx_reap(void);
+/* Non-zero while a frame is still in flight. The single TX descriptor and
+ * buffer must not be reused until then. Self-clears after 50 ms so a missing
+ * completion cannot stop transmission for good. */
+int      wifimac_tx_busy(void);
+uint32_t wifimac_tx_forced(void);
+uint32_t wifimac_tx_sent(void);
+uint32_t wifimac_tx_done(void);
+
+uint32_t wifimac_build_beacon(uint8_t *out, const uint8_t mac[6],
+                              const char *ssid, uint32_t channel);
+
+/* Beacons the given SSID every 100 ms from the rx task. Needs the receiver
+ * armed (-1) and the radio tuned (-2), because a beacon must name a real
+ * channel. */
+int      wifimac_beacon_start(const char *ssid);
+void     wifimac_beacon_stop(void);
+uint32_t wifimac_beacon_len(void);
 
 #endif /* NATOS_WIFIMAC_H */

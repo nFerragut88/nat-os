@@ -567,6 +567,39 @@ static void execute(char *line)
         else if (r == -4) { uart_puts("   hardware never acknowledged the chain\n"); }
         else              { uart_puts("   receiver armed, promiscuous\n"); }
     }
+    else if (str_eq(line, "beacon")) {
+        /* Default SSID is deliberately identifiable rather than generic: the
+         * whole point is that a phone can see it and nobody has to wonder
+         * whether they are looking at someone else's network. */
+        const char *ssid = *arg ? arg : "nat-os";
+        int r = wifimac_beacon_start(ssid);
+        if (r == -1)      { uart_puts("   run macrx first\n"); }
+        else if (r == -2) { uart_puts("   tune a channel first, e.g. 'chan 1'\n"); }
+        else {
+            uart_puts("   beaconing \"");
+            uart_puts(ssid);
+            uart_puts("\" every 100 ms, ");
+            uart_put_dec(wifimac_beacon_len());
+            uart_puts(" byte frame\n   look for it in a phone's wifi list; "
+                      "'txstat' for what the hardware says\n");
+        }
+    }
+    else if (str_eq(line, "beaconoff")) {
+        wifimac_beacon_stop();
+        uart_puts("   stopped\n");
+    }
+    else if (str_eq(line, "txstat")) {
+        uart_puts("   tx handed to hardware=");
+        uart_put_dec(wifimac_tx_sent());
+        uart_puts("  completions reaped=");
+        uart_put_dec(wifimac_tx_done());
+        uart_puts("\n   a rising completion count is the MAC saying the frame "
+                  "actually went out\n   chain acks=");
+        uart_put_dec(wifimac_chain_calls());
+        uart_puts("  forced=");
+        uart_put_dec(wifimac_tx_forced());
+        uart_puts("\n");
+    }
     else if (str_eq(line, "scan")) {
         /* Every distinct beacon source seen since the receiver was armed.
          * Several networks, each with a rising beacon count, is what proves
