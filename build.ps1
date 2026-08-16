@@ -81,6 +81,27 @@ foreach ($src in (Get-ChildItem "$root\kernel" -Include *.c,*.S -Recurse)) {
     $objs += $obj
 }
 
+# Objects built for the WINDOWED ABI, linked alongside the call0 kernel.
+#
+# Everything in kernel/ is -mabi=call0 and always will be. This directory holds
+# code that is not: the ABI every precompiled Espressif library uses. Mixing the
+# two in one image is a link-time question, not a compile-time one, and the
+# register-window handlers in kernel/window.S are what make the resulting calls
+# actually work at run time.
+$winsrc = Get-ChildItem "$root\vendor\windowed\*.c" -ErrorAction SilentlyContinue
+if ($winsrc) {
+    Write-Host "== compiling windowed ABI ==" -ForegroundColor Cyan
+    $wflags = @("-mabi=windowed", "-mlongcalls", "-ffreestanding", "-fno-builtin",
+                "-fno-stack-protector", "-Os", "-Wall", "-Wextra", "-std=c11")
+    foreach ($src in $winsrc) {
+        $obj = Join-Path $build ($src.BaseName + ".o")
+        Write-Host ("  {0}  [windowed]" -f $src.Name)
+        & $gcc @wflags -c $src.FullName -o $obj
+        if ($LASTEXITCODE -ne 0) { throw "compile failed: $($src.Name)" }
+        $objs += $obj
+    }
+}
+
 Write-Host "== linking ==" -ForegroundColor Cyan
 $elf = Join-Path $build "natos.elf"
 # Quote every -Wl,... argument: PowerShell otherwise reads the comma as an

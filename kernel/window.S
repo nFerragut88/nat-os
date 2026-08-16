@@ -163,23 +163,76 @@ win_probe:
 
 /* call0 -> windowed bridge.
  *
- * CALL8 rotates the window by 8, so this caller's a8..a15 become the callee's
- * a0..a7 and are clobbered; a0..a7 survive. A call0 function may therefore call
- * a windowed one directly, provided it treats the upper half as volatile and
- * passes its argument in a10.
+ * CALL8 rotates the window by 8, so this caller's a8..a15 physically BECOME the
+ * callee's a0..a7 and come back holding whatever the callee left in them.
+ * Arguments therefore move up by eight and the result returns in a10.
  *
- * a0 is saved by hand: CALL8 overwrites the callee's a0 with the return
- * address, and this function's own a0 lives in the half that does not rotate. */
+ * ---- and a12..a15 must be saved by hand ----------------------------------
+ *
+ * Under the call0 ABI a12..a15 are CALLEE-SAVED: a C caller is entitled to keep
+ * a live value in one across a call and find it intact afterwards. Under the
+ * windowed ABI that same register range is the outgoing-argument area and is
+ * volatile. A bridge between the two therefore has to honour the call0 contract
+ * itself, because neither compiler will.
+ *
+ * Found by evidence rather than inspection. The first version saved only a0,
+ * and the shell printed the depth argument as 1073433976 — the C caller had
+ * parked it in a callee-saved register that CALL8 then destroyed. The RESULT
+ * was correct, so a test checking only the return value would have passed and
+ * shipped a bridge that silently corrupts its caller.
+ *
+ * a0 is saved for a different reason: CALL8 writes the return address into the
+ * callee's a0, and this function's own a0 is in the half that does not rotate. */
     .align 4
     .global win_call_probe
     .type win_call_probe, @function
 win_call_probe:
-    addi    a1, a1, -16
-    s32i    a0, a1, 0
+    addi    a1, a1, -32
+    s32i    a0,  a1, 0
+    s32i    a12, a1, 4              /* see the note above: CALL8 eats these */
+    s32i    a13, a1, 8
+    s32i    a14, a1, 12
+    s32i    a15, a1, 16
     mov     a10, a2
     call8   win_probe
     mov     a2, a10
-    l32i    a0, a1, 0
-    addi    a1, a1, 16
+    l32i    a0,  a1, 0
+    l32i    a12, a1, 4
+    l32i    a13, a1, 8
+    l32i    a14, a1, 12
+    l32i    a15, a1, 16
+    addi    a1, a1, 32
     ret
     .size win_call_probe, . - win_call_probe
+
+/* Same bridge, for the two-argument windowed function in vendor/windowed/.
+ *
+ * That object is compiled -mabi=windowed by the same compiler that produces
+ * Espressif's libraries, so it stands in for a vendor blob: if this call works,
+ * the mechanism for calling theirs works.
+ *
+ * Under CALL8 the callee's a2..a7 are this caller's a10..a15, so arguments move
+ * up by eight and the result comes back in a10. Anything a call0 caller needs
+ * to keep must live in a0..a7, which do not rotate. */
+    .align 4
+    .global win_call_vendor
+    .type win_call_vendor, @function
+win_call_vendor:
+    addi    a1, a1, -32
+    s32i    a0,  a1, 0
+    s32i    a12, a1, 4              /* callee-saved under call0, volatile under */
+    s32i    a13, a1, 8              /* windowed — this bridge owes the caller   */
+    s32i    a14, a1, 12
+    s32i    a15, a1, 16
+    mov     a10, a2                 /* depth */
+    mov     a11, a3                 /* seed  */
+    call8   vendor_probe
+    mov     a2, a10
+    l32i    a0,  a1, 0
+    l32i    a12, a1, 4
+    l32i    a13, a1, 8
+    l32i    a14, a1, 12
+    l32i    a15, a1, 16
+    addi    a1, a1, 32
+    ret
+    .size win_call_vendor, . - win_call_vendor

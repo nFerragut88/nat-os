@@ -20,4 +20,9 @@
  * merely failing to crash. */
 uint32_t win_call_probe(uint32_t depth);
 
+/* Calls vendor_probe() in vendor/windowed/, which is compiled -mabi=windowed by
+ * the same compiler that builds Espressif's libraries. Standing proof that this
+ * kernel can call vendor-ABI code, not just hand-written windowed assembly. */
+uint32_t win_call_vendor(uint32_t depth, uint32_t seed);
+
 #endif /* NATOS_WINDOW_H */

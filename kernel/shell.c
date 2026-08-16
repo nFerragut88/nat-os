@@ -400,6 +400,17 @@ static void execute(char *line)
         uart_puts(got == (uint32_t)d ? "  CORRECT" : "  WRONG");
         uart_puts("\n");
     }
+    else if (str_eq(line, "vendorcall")) {
+        int d = parse_int(arg);
+        if (d < 0) { d = 20; }
+        uart_puts("   calling a -mabi=windowed object built by the vendor compiler\n");
+        uint32_t got = win_call_vendor((uint32_t)d, 1u);
+        uart_puts("   vendor_probe(");
+        uart_put_dec((unsigned int)d);
+        uart_puts(",1) = ");
+        uart_put_dec(got);
+        uart_puts("\n");
+    }
     else if (str_eq(line, "3d")) {
         int on = !str_eq(arg, "off");
         desktop_set_active(!on);
