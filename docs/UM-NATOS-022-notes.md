@@ -1,7 +1,7 @@
 # UM-NATOS-022 — The Note Pad, and a Workaround Wearing a Costume
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.0 · 2026-08-15 · Status: **Complete, verified on hardware**
+Revision 1.1 · 2026-08-15 · Status: **Complete, verified on hardware**
 
 ---
 
@@ -16,8 +16,14 @@ a power cycle. That last part is the whole claim, and it is verified in §6.
 
 The report's more useful half is about the keypad. It looks like a design
 choice — a phone keypad, on a device that resembles a phone — and it is not. It
-is a **workaround for an uncorrected touch calibration fault**, adopted because
-the obvious layout was unusable. The fault is still there. Large keys absorb it.
+is a **workaround for a touch calibration fault**, adopted because the obvious
+layout was unusable.
+
+> **Revision 1.1 — the fault has since been corrected.** UM-NATOS-017 §7.4
+> replaced the corner-derived constants with an on-device calibration, and §3.2
+> below is retained as written because *the diagnosis in it was wrong* and the
+> way it was wrong is the useful part. The keypad remains, now as a choice
+> rather than a necessity.
 
 ## 2. Why this is native code
 
@@ -64,6 +70,21 @@ Fixing it properly means calibrating from targets **in the middle of the
 screen**, where the error is measured rather than extrapolated from the one
 place a fingertip cannot go.
 
+> **What that paragraph got wrong.** The cause is right; the characterisation is
+> not. "Reads systematically about 24 px low on X" describes a constant offset,
+> and the fault was a **magnification** — the narrow range is a divisor, so the
+> error is proportional to distance from centre and changes sign across the
+> screen (−29 px at the left edge, +12 px at the right; UM-NATOS-017 §7.4).
+>
+> The number 24 was real. It was measured in one place, on keys near the middle,
+> and then written down as though it were a property of the panel rather than of
+> where it happened to be measured. A single sample of a position-dependent
+> quantity looks exactly like a constant.
+>
+> It also explains something this document treated as unremarkable: no adjustment
+> of the constants ever helped, because there is no offset that corrects a scale
+> error. That should have been the clue.
+
 ### 3.3 Why the keypad works anyway
 
 Twelve keys, 3 × 4, each **80 × 26** — a third of the panel wide. An 80 px key
@@ -76,9 +97,21 @@ this fault survived unnoticed until something needed fine positioning.
 > different, and calling the first one a fix is how a known fault becomes
 > folklore. Anything finer than 80 px will hit it again.
 
+That paragraph is the reason this section survived. Because the keypad was never
+called a fix, the fault stayed on the record as unresolved, and calibrating it
+properly stayed on the list instead of quietly becoming the way things are. A
+workaround that is honestly labelled is a debt; one that is called a solution is
+a defect with good manners.
+
+**Since correction**, 80 px keys are no longer load-bearing. They are kept
+because multi-tap is the point of this app, not because a smaller key cannot be
+hit — and that difference is now testable rather than assumed.
+
 The cost is real and worth stating: three taps for `c` against one tap on a key
-that cannot be hit. On a panel this imprecise, slow and correct beats fast and
-wrong — but that is a trade forced by a bug, not a feature.
+that cannot be hit. While the fault stood, slow and correct beat fast and wrong,
+and that trade was forced by a bug rather than chosen. It is now chosen — the
+same keypad, held for a different reason, which is worth writing down because a
+decision whose original justification has expired is one nobody re-examines.
 
 ### 3.4 Multi-tap details that matter in use
 
@@ -178,7 +211,8 @@ nothing *enforces* the agreement, it is merely adjacent.
 |---|---|
 | Keys | 12, 80 × 26 |
 | Key size that failed | 24 × 26 |
-| Touch X error absorbed | ~24 px |
+| Touch X error absorbed | ~24 px near centre, up to 29 px at an edge |
+| Calibration status | corrected, UM-NATOS-017 §7.4 |
 | Multi-tap commit timeout | 800 ms |
 | Messages stored | 8 × 160 characters |
 | Store size | ~1.4 KB in one 4 KB sector |
@@ -187,8 +221,10 @@ nothing *enforces* the agreement, it is merely adjacent.
 
 ## 9. What this does not establish
 
-- **The touch calibration is still wrong.** §3.2. Every UI element finer than
-  80 px will hit it. This app avoids the problem; it does not solve it.
+- **The touch calibration is corrected but still linear.** §3.2 and
+  UM-NATOS-017 §7.4. It has been run on one unit once, and nothing measures
+  panel non-linearity between the target positions, so a UI element much finer
+  than the keys has not been shown to work — only stopped being impossible.
 - **The full store has never been exercised.** Eight messages have not been
   saved, so the oldest-dropped path has never run outside reasoning.
 - **Corrupt-sector rejection is reasoned, not tested.** The checksum path has
@@ -204,7 +240,8 @@ nothing *enforces* the agreement, it is merely adjacent.
 
 ## 10. References
 
-- UM-NATOS-017 §7.1 — the corner calibration this inherits its error from
+- UM-NATOS-017 §7.1 — the corner calibration this inherits its error from,
+  and §7.4 — the on-device calibration that corrected it
 - UM-NATOS-018 — the flash record, and the sector this store sits beside
 - UM-NATOS-021 §4.2 — first-sample latching, and §6.5 — the flicker fix that
   caused §7

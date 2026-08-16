@@ -310,6 +310,73 @@ A backwards horizontal axis had no consumer:
 The launcher is the first thing in this project that asks **where across the
 screen** a finger is. It failed on the first tap.
 
+### 7.4 The corners were the wrong four points
+
+§7.2 is right that labelled points beat endpoints, and it still chose the four
+places on the panel where a labelled point is least trustworthy.
+
+**A finger cannot reach the extreme corner of a bezelled panel.** Every corner
+reading was therefore short of the true extreme, the derived range came out
+narrower than reality, and — because the range is the *divisor* — every raw step
+counted for too many pixels. The mapping magnified position about the centre of
+the screen.
+
+Measured against a proper fit, the corner constants were **23% over-sensitive on
+X and 11% on Y**:
+
+| | corner-derived span | measured span | error |
+|---|---|---|---|
+| X | 3000 | 3694 | 23% |
+| Y | 3140 | 3484 | 11% |
+
+The consequence is what made it hard to characterise. The error is proportional
+to distance from centre **and changes sign**:
+
+| true screen x | old mapping returned | error |
+|---|---|---|
+| 30 | ~1 | −29 px |
+| 120 | ~112 | −8 px |
+| 210 | ~222 | +12 px |
+
+UM-NATOS-022 §3.2 described this as "about 24 px low on X", which is a fair
+reading of one symptom at one place on the screen and is not what was wrong. No
+fixed offset could have corrected a magnification, which is why every attempt to
+nudge the constants moved the fault somewhere else rather than removing it.
+
+**The fix is `kernel/calib.c`: four targets inset 30 px from the edges**, tapped
+on the device. An inset target is somewhere a fingertip can actually go, so the
+reading is a real position rather than the closest approach to an unreachable
+one, and the mapping is interpolated outward to the edges instead of
+extrapolated inward from a guess.
+
+Two properties of the routine matter more than the arithmetic:
+
+- **The pairs are checked before anything is fitted.** Two targets share each
+  screen coordinate, so every reading has a partner it should nearly match
+  (tolerance 900 of a ~3000 span). The first run on hardware was refused by this
+  check — two targets had been tapped on the wrong cross, and 3453 and 353
+  average to 1903, an entirely ordinary-looking number that measures nothing.
+  Without the pair check the run failed its *later* sanity test and reported
+  "readings too close together", which was true of the averages and described
+  nothing that had happened.
+- **The outcome is held, not just printed.** The result line is emitted the
+  instant the fourth target is tapped, which is precisely when no capture is
+  attached. That is §5's failure in a new costume — the third time in this
+  project a measurement was written into a stream nobody was reading — so
+  `calshow` reports the four readings, the outcome, and the calibration in use,
+  and can be asked at any later time.
+
+The result is persisted in the boot record (UM-NATOS-018, record version 3) and
+restored at startup, verified across a hard reset:
+
+```
+touch cal    : restored x 141..3835 y 243..3727
+```
+
+`touch_set_calibration()` refuses a degenerate range, and the routine reports
+what was **read back** rather than what it computed, so a refusal cannot be
+mistaken for an install.
+
 ## 8. Input reaches applications
 
 Added in revision 1.1. `SYS TOUCH` (8) returns `r0 = touched, r1 = x, r2 = y`.
@@ -428,17 +495,23 @@ its own viewport — which is the entire point of the syscall.
 - **One pointer, shared.** All applications read the same snapshot. Two
   applications whose viewports overlapped would both see the same touch; nothing
   arbitrates focus, because nothing yet needs to.
-- **Calibration is the vendor's, not this board's.** The extremes were taken
-  from the vendor driver and the measured spans are consistent with them, but no
-  per-unit calibration pass has been run.
+- **The calibration is this board's, but only this board's.** §7.4's pass has
+  been run on one unit, with one finger, once. The vendor extremes remain the
+  compiled-in defaults for a panel that has never been calibrated, and they are
+  known to be wrong by 23% on X — a first boot is usable, not accurate.
 - **The cursor leaves a black square** where it has been, because nothing
   records what was underneath. Fixing that needs either a panel read-back this
   hardware does not reliably support, or damage tracking the display layer does
   not have.
 
-- **The calibration is four points, not a fit.** Two corners per axis give a
-  linear map. Resistive panels are not perfectly linear, and nothing here
-  measures the error in the middle of the screen.
+- **The calibration is still linear.** §7.4 fits four inset targets, averaging
+  two readings per axis, and the residuals were small (16 and 174 raw on X, 145
+  and 2 on Y). But a linear map cannot express panel non-linearity, and the two
+  targets on each axis sit at the same two positions — so nothing measures the
+  error *between* them. A bilinear or per-corner fit would; this does not.
+- **Nothing detects that a calibration has gone stale.** A restored calibration
+  is trusted indefinitely. If the panel ages, or a different unit boots this
+  flash image, the stored numbers are wrong and nothing says so.
 - **`Z_THRESHOLD` is a single number chosen from one measurement.** 300 sits
   between populations that were ~10 and ~2000 on this panel, on this day, with
   this finger. A lighter touch has not been tested, and a threshold that rejects

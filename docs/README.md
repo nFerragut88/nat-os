@@ -46,12 +46,12 @@ true" is the difference between a working boot and a silent reboot.
 | [UM-NATOS-014](UM-NATOS-014-locking.md) | Locking Primitives | Critical sections vs blocking mutex, task blocking and idle, a measured starvation defect, and why contention cost is the number of blocking events rather than the time held |
 | [UM-NATOS-015](UM-NATOS-015-display.md) | Display Driver | ILI9341, span rendering with no framebuffer, and the path from bit-banged SPI to SPI2 with DMA |
 | [UM-NATOS-016](UM-NATOS-016-display-syscalls.md) | Display Syscalls, and a Total System Freeze | Per-application viewports, pointer discipline, measured containment, and a yield that stopped the clock |
-| [UM-NATOS-017](UM-NATOS-017-touch.md) | Touchscreen, and a Verification Method That Failed Three Times | XPT2046 over PENIRQ, the GPIO two-bank bug, calibration by controlled input, a capture that erased its own evidence, input confinement, and an axis that was inverted for three months because the direction test read its own worst sample |
+| [UM-NATOS-017](UM-NATOS-017-touch.md) | Touchscreen, and a Verification Method That Failed Three Times | XPT2046 over PENIRQ, the GPIO two-bank bug, calibration by controlled input, why the four corners were the wrong four points, a capture that erased its own evidence, input confinement, and an axis that was inverted for three months because the direction test read its own worst sample |
 | [UM-NATOS-018](UM-NATOS-018-persistence.md) | Persistence, and a Read Defect That Looked Like the Wrong Thing | SPI flash driver, a checksummed record that survives a power cycle, the inherited clock divider that shifted every read by a bit, and two hypotheses tested against stale firmware |
 | [UM-NATOS-019](UM-NATOS-019-failure-handling.md) | Failure Handling, and Three Mechanisms That Had Never Fired | Stack guards enforced in the scheduler, the watchdog erasing its own panic reports, measured stack margins, a UART receive path one byte behind, and a fault reported to flash and to the panel |
 | [UM-NATOS-020](UM-NATOS-020-sdcard.md) | microSD over SPI, and a Pad Table That Is Not in Pin Order | SPI mode and why, per-stage error codes, the IO_MUX entry that is the UART's receive pad, and a cross-check whose samples could not have caught it |
 | [UM-NATOS-021](UM-NATOS-021-launcher.md) | The Launcher, and Four Defects It Found by Existing | Icon grid and hybrid cursor, launch by name, status text that lied about state, selection read at the worst moment, the missing idle task, a close button an application cannot reach, and a correct diagnosis fixed at twenty times the necessary scope |
-| [UM-NATOS-022](UM-NATOS-022-notes.md) | The Note Pad, and a Workaround Wearing a Costume | Multi-tap keypad, messages saved to flash and read back after a power cycle, and a keypad whose key size is a touch calibration fault in disguise |
+| [UM-NATOS-022](UM-NATOS-022-notes.md) | The Note Pad, and a Workaround Wearing a Costume | Multi-tap keypad, messages saved to flash and read back after a power cycle, and a keypad whose key size was a touch calibration fault in disguise, plus what that fault actually was |
 
 ## Reading order
 
@@ -83,7 +83,7 @@ Reproducing a build: **005** alone is sufficient.
 | 3D renderer | **Running** — grid raycaster, one ray per column, face shading, framebuffer on (§5.7's contrary measurement was taken through a stalling clock and lock contention), UM-NATOS-015 §5.8 |
 | Display | **Working on hardware** — ILI9341, no framebuffer, **43 ms** full-screen fill via SPI2 + DMA, UM-NATOS-015 §5.5 |
 | Application graphics | **Live** — `FILL`/`TEXT`/`DIMS` confined to per-application viewports; 0 escapes across 136 audited fills, UM-NATOS-016 §5 |
-| Touch | **Working on hardware** — XPT2046 gated on PENIRQ **and** pressure; X axis was inverted for three months and is now calibrated from four labelled corners, UM-NATOS-017 §4.1, §7.1 |
+| Touch | **Working on hardware** — XPT2046 gated on PENIRQ **and** pressure; X axis was inverted for three months; calibrated on-device from four inset targets and persisted across reset, UM-NATOS-017 §4.1, §7.4 |
 | Application input | **Live** — `SYS TOUCH` confined to the asking application's viewport; 81 delivered, 109,211 withheld, 0 confinement failures, UM-NATOS-017 §8 |
 | Application messaging | **Live** — copied through a kernel mailbox, never shared memory; 278 sent / 277 delivered / 0 bad buffers, UM-NATOS-013 §8 |
 | Application bitmaps | **Live** — `SYS BLIT`, arena-bounded source and viewport-clipped destination, UM-NATOS-012 §10 |
