@@ -26,6 +26,7 @@
 #include "phyinit.h"
 #include "wifi_osi_impl.h"
 #include "wifimac.h"
+#include "efuse.h"
 #include "xtensa.h"
 
 uint32_t osi_add_probe(uint32_t a, uint32_t b);
@@ -476,6 +477,39 @@ static void execute(char *line)
             uart_puts(phy_host_log_buf);
             uart_puts("\n");
         }
+    }
+    else if (str_eq(line, "efusedump")) {
+        /* Raw block 0. The decode below it was wrong on the first attempt and
+         * the OUI check caught it, so this prints the source bytes rather than
+         * inviting another guess at the byte order. */
+        for (uint32_t w = 0; w < 8; w++) {
+            uart_puts("   rdata");
+            uart_put_dec(w);
+            uart_puts(" = ");
+            uart_put_hex(*(volatile uint32_t *)(0x3FF5A000u + w * 4u));
+            uart_puts("\n");
+        }
+    }
+    else if (str_eq(line, "macaddr")) {
+        uint8_t mac[6];
+        efuse_factory_mac(mac);
+        uart_puts("   factory mac ");
+        for (int i = 0; i < 6; i++) {
+            if (i) {
+                uart_puts(":");
+            }
+            /* Two hex digits, zero-padded. uart_put_hex prints a full word
+             * with an 0x prefix, which is not a MAC address. */
+            static const char hex[] = "0123456789abcdef";
+            char b[3];
+            b[0] = hex[(mac[i] >> 4) & 0xF];
+            b[1] = hex[mac[i] & 0xF];
+            b[2] = 0;
+            uart_puts(b);
+        }
+        uart_puts(efuse_mac_valid(mac)
+                  ? "   crc matches - decode confirmed\n"
+                  : "   CRC MISMATCH - the byte order is wrong\n");
     }
     else if (str_eq(line, "macinit")) {
         /* Liveness is sampled BEFORE the write as well as after.
