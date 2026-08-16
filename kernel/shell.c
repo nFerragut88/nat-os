@@ -14,6 +14,7 @@
 #include "task.h"
 #include "sd.h"
 #include "touch.h"
+#include "calib.h"
 #include "desktop.h"
 #include "uart.h"
 #include "vm.h"
@@ -93,6 +94,7 @@ static void cmd_help(void)
               "    smash         break this task's stack guard (panics)\n"
               "    sd            probe the microSD card\n"
               "    sdread <lba>  read and dump one 512 B block\n"
+              "    cal           calibrate the touch panel\n"
               "    help          this\n");
 }
 
@@ -255,6 +257,10 @@ static void execute(char *line)
         int on = !str_eq(arg, "off");
         desktop_set_active(!on);
         uart_puts(on ? "   3D view\n" : "   launcher\n");
+    }
+    else if (str_eq(line, "cal")) {
+        uart_puts("   tap the centre of each cross; four of them\n");
+        calib_start();
     }
     else if (str_eq(line, "taps")) {
         /* Dumps the press log. Exists because the same data printed live is

@@ -73,10 +73,39 @@
  *
  * The corner values above are what a calibration must record: four labelled
  * points, not two unlabelled extremes. */
-#define CAL_X_MIN  380u         /* right edge — the LOW end of raw_x */
-#define CAL_X_MAX  3380u        /* left edge                         */
-#define CAL_Y_MIN  380u         /* top                               */
-#define CAL_Y_MAX  3520u        /* bottom                            */
+/* Runtime, not compile-time, so a calibration routine can replace them and a
+ * saved result can be restored at boot. The values below are the defaults from
+ * the corner measurement described above — usable, and wrong by about 24 px on
+ * X for the reason in the next paragraph. */
+static uint32_t g_cal_x_min = 380u;     /* right edge — the LOW end of raw_x */
+static uint32_t g_cal_x_max = 3380u;    /* left edge                         */
+static uint32_t g_cal_y_min = 380u;     /* top                               */
+static uint32_t g_cal_y_max = 3520u;    /* bottom                            */
+
+void touch_set_calibration(uint32_t xmin, uint32_t xmax,
+                           uint32_t ymin, uint32_t ymax)
+{
+    /* Refuse a degenerate or inverted range rather than installing it. A bad
+     * calibration makes the panel unusable, which also makes it impossible to
+     * run the calibration routine again — the failure would be
+     * self-perpetuating. */
+    if (xmax <= xmin + 100u || ymax <= ymin + 100u) {
+        return;
+    }
+    g_cal_x_min = xmin;
+    g_cal_x_max = xmax;
+    g_cal_y_min = ymin;
+    g_cal_y_max = ymax;
+}
+
+void touch_get_calibration(uint32_t *xmin, uint32_t *xmax,
+                           uint32_t *ymin, uint32_t *ymax)
+{
+    *xmin = g_cal_x_min;
+    *xmax = g_cal_x_max;
+    *ymin = g_cal_y_min;
+    *ymax = g_cal_y_max;
+}
 
 #define TOUCH_X_INVERTED 1
 
@@ -319,11 +348,11 @@ int touch_read(touch_state_t *out)
         if (ry < g_ry_min) { g_ry_min = ry; }
         if (ry > g_ry_max) { g_ry_max = ry; }
 
-        out->x = map_axis(rx, CAL_X_MIN, CAL_X_MAX, DISP_W);
+        out->x = map_axis(rx, g_cal_x_min, g_cal_x_max, DISP_W);
 #if TOUCH_X_INVERTED
         out->x = (DISP_W - 1u) - out->x;
 #endif
-        out->y = map_axis(ry, CAL_Y_MIN, CAL_Y_MAX, DISP_H);
+        out->y = map_axis(ry, g_cal_y_min, g_cal_y_max, DISP_H);
 
         /* Record the FIRST sample of each press. A held finger yields hundreds
          * of samples and only the moment of contact is a known screen

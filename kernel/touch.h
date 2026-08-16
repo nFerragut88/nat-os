@@ -83,6 +83,15 @@ uint32_t touch_events(void);
  * the user's finger is on the glass, which is exactly when nobody is running a
  * capture. A value that has already scrolled past is not a measurement. Held
  * here, it can be read whenever somebody asks. */
+/* Calibration, as runtime values. Set by the calibration routine and restored
+ * from the persistent record at boot. touch_set_calibration() refuses a
+ * degenerate range: a bad calibration makes the panel unusable, which would
+ * make it impossible to run the calibration again. */
+void touch_set_calibration(uint32_t xmin, uint32_t xmax,
+                           uint32_t ymin, uint32_t ymax);
+void touch_get_calibration(uint32_t *xmin, uint32_t *xmax,
+                           uint32_t *ymin, uint32_t *ymax);
+
 #define TOUCH_LOG_MAX 8u
 
 typedef struct {

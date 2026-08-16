@@ -77,7 +77,10 @@ _Static_assert(APP_CHROME_W < DISP_W,
  *
  * Still not an asset pipeline (UM-NATOS-011 §6). These are in the image because
  * there is nowhere else to put them yet. */
-#define GLYPH_PX 3u                     /* scale: 8x8 -> 24x24 */
+/* 4x, so an 8x8 glyph draws at 32x32. The cells are 80 x 70 now that the
+ * launcher owns the rows the application strips used to reserve, and a 24 px
+ * icon in a 70 px cell reads as a small mark in a large empty box. */
+#define GLYPH_PX 4u                     /* scale: 8x8 -> 32x32 */
 
 static const uint8_t GLYPHS[COLS * ROWS][8] = {
     /* counter — stacked bars, tallest last */
@@ -257,7 +260,7 @@ static void draw_icon(int i)
 
     uint32_t gw = 8u * GLYPH_PX;
     uint32_t ix = x + (CELL_W - gw) / 2u;
-    uint32_t iy = y + 5u;
+    uint32_t iy = y + 9u;
 
     /* Selected cell gets a filled backing rather than a border: a one-pixel
      * outline on this panel is legible only if you already know it is there. */
@@ -285,7 +288,7 @@ static void draw_icon(int i)
      * in the corner of the icon. The dot was four pixels and read as a
      * rendering artefact; a full-width rule under the name cannot. */
     uint32_t lx = x + 4u;
-    uint32_t ly = y + 5u + gw + 4u;
+    uint32_t ly = y + 9u + gw + 7u;
     display_text(lx, ly, ic->label, COLOR_WHITE, bg, 1u);
     if (running) {
         display_fill_rect(lx, ly + 9u, CELL_W - 8u, 1u, ic->colour);

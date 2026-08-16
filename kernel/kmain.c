@@ -27,6 +27,7 @@
 #include "desktop.h"
 #include "notes.h"
 #include "messages.h"
+#include "calib.h"
 #include "touch.h"
 #include "critical.h"
 #include "mutex.h"
@@ -1275,6 +1276,14 @@ static void task_touch(void)
 
         /* Routed on every sample, pressed or not: a double-tap is two
          * press-RELEASE pairs, so the launcher needs to see the releases. */
+        /* Calibration takes every touch while it runs, and takes the RAW
+         * channels: it is calibrating the mapping, so feeding it mapped
+         * coordinates would fit the result to its own error. */
+        if (calib_running()) {
+            calib_touch(t.raw_x, t.raw_y, down);
+            continue;
+        }
+
         /* Close buttons see the touch first. They occupy a column outside every
          * application viewport, so a press there is unambiguous — no consumer
          * below has a claim on those pixels. */
@@ -1485,6 +1494,24 @@ void kmain(void)
     uart_puts(", frames ");
     uart_put_dec(store_frames());
     uart_puts(saved ? ", saved\n" : ", SAVE FAILED\n");
+
+    /* Restore a saved touch calibration before anything can be touched. */
+    if (store_has_calibration()) {
+        uint32_t cxa, cxb, cya, cyb;
+        store_get_calibration(&cxa, &cxb, &cya, &cyb);
+        touch_set_calibration(cxa, cxb, cya, cyb);
+        uart_puts("  touch cal    : restored x ");
+        uart_put_dec(cxa);
+        uart_puts("..");
+        uart_put_dec(cxb);
+        uart_puts(" y ");
+        uart_put_dec(cya);
+        uart_puts("..");
+        uart_put_dec(cyb);
+        uart_puts("\n");
+    } else {
+        uart_puts("  touch cal    : defaults (run 'cal' to measure)\n");
+    }
 
     /* Report a fault recorded by a previous boot.
      *
