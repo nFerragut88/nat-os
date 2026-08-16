@@ -1,7 +1,7 @@
 # UM-NATOS-021 — The Launcher, and Four Defects It Found by Existing
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.0 · 2026-08-15 · Status: **Complete, verified on hardware**
+Revision 1.1 · 2026-08-15 · Status: **Complete, verified on hardware** — §6 added, icons and a close button outside the viewport
 
 ---
 
@@ -43,18 +43,26 @@ answers it.
 ### 2.1 Layout
 
 ```
-240 x 168 region, 3 x 3 grid over 154 rows, 14-row status strip
-
-  +----------+----------+----------+
-  | counter  | squares  | draw     |   cell 80 x 51
-  +----------+----------+----------+
-  | paint    | blit     | ping     |
-  +----------+----------+----------+
-  | pong     | rogue    | 3D view  |
-  +----------+----------+----------+
-  | started counter                |   status strip, expires after ~2 s
-  +--------------------------------+
+  0   +----------+----------+----------+
+      | counter  | squares  | draw     |   launcher: 3 x 3 grid
+      +----------+----------+----------+   cells 80 x 51
+      | paint    | blit     | ping     |
+      +----------+----------+----------+
+      | pong     | rogue    | 3D view  |
+      +----------+----------+----------+
+ 154  | started counter                |   status strip, expires ~2 s
+ 168  +-------------------+------+-----+
+      | application 0     | name |  X  |   four strips, pitch 28, height 26
+      +-------------------+------+-----+   the right 60 px are the KERNEL's
+      | application 1     | name |  X  |
+      ...
+ 288  +--------------------------------+
+      | colour strip                   |
+ 320  +--------------------------------+
 ```
+
+Everything left of the name belongs to the application. The name and the X do
+not — see §6.2.
 
 The 3D view is an icon rather than a permanent fixture: it becomes something you
 open, returning via the top-left corner.
@@ -149,7 +157,78 @@ about it.
 `TASK_MAX` is now 12 and `must_create()` panics rather than returning −1, so a
 full table cannot fail quietly again.
 
-## 6. Verification
+## 6. Icons, and a close button an application cannot reach
+
+*Added in revision 1.1.*
+
+### 6.1 Icons are a bitmap, not nine drawing routines
+
+8 × 8 monochrome glyphs, one byte per row, drawn at 3× into 24 × 24. Nine
+bespoke drawing functions would be more code than nine constants and would make
+every icon a place a bug can hide; a bitmap is also editable by anyone who can
+count to eight, which matters more than elegance for something whose only
+requirement is being recognisable at 24 pixels.
+
+Each row is drawn as one rectangle per **run** of set pixels rather than one per
+pixel. That is not micro-optimisation: every primitive takes the draw lock, and
+UM-NATOS-014 §10 established that the cost of that lock is the number of
+acquisitions rather than the time held.
+
+This is still not an asset pipeline (UM-NATOS-011 §6). The glyphs are in the
+image because there is nowhere else to put them yet.
+
+### 6.2 The close button is outside the viewport, and that is the point
+
+Every running program gets an X, and the 3D view gets one in place of the
+invisible top-left corner gesture it had.
+
+The X sits in a column the application's viewport **no longer covers**:
+`APP_VIEW_W` is `DISP_W` minus the chrome width, and the kernel owns those
+pixels.
+
+If the close button lived inside the viewport, a misbehaving program could paint
+over it, draw a decoy elsewhere, or simply fill its strip and hide the way out.
+Outside means **the one control a user needs in order to escape a program is the
+one control that program cannot touch.** That is the viewport argument of
+UM-NATOS-016 §2 applied to a pixel the *user* owns rather than one the
+application does.
+
+The touch path enforces the same boundary: close buttons see the press first,
+and a consumed press is not passed on, so closing a program cannot also select
+an icon underneath it.
+
+### 6.3 A button for something you cannot name
+
+The area below the launcher was reported as *"strange space … why is there two x
+boxes in there"*, and the answer was worse than the question implied.
+
+Those were `ping` and `pong`, which `kmain` starts at boot to keep the IPC
+counters live. They exchange **messages**, not pixels. So two programs were
+running correctly, producing no visible output, and the only evidence of their
+existence was two buttons whose function was to destroy them. Tapping one would
+have been a guess about what it deleted.
+
+Each running strip now carries its program's name beside its X.
+
+The cost is real and is not hidden: the kernel column grew from 16 px to 60 px,
+so applications lost about a fifth of their strip width to a label they can
+neither draw nor overwrite. If a program later needs the full width, this is the
+decision to revisit.
+
+### 6.4 The running marker, again
+
+The mark for "this program is running" was a four-pixel dot in the corner of the
+icon. It is now an underline beneath the icon's label.
+
+The dot had already failed once: it compared only the first character of the
+program name, so `paint`, `ping` and `pong` marked each other, and **nobody
+noticed by looking at the screen** — three wrong four-pixel dots read as a
+rendering artefact. It was found while writing §9 of this report.
+
+A mark too small to be read wrongly is also too small to be read at all. The
+underline spans the cell.
+
+## 7. Verification
 
 ```
 tap left icon   raw_x=3408 -> x=0,   cell 0
@@ -162,7 +241,7 @@ first and last sample of each press agree
 All three columns selectable, double-tap opens the named program, and the status
 strip reports which. Confirmed on hardware by the user.
 
-## 7. Metrics
+## 8. Metrics
 
 | Quantity | Value |
 |---|---|
@@ -171,29 +250,35 @@ strip reports which. Confirmed on hardware by the user.
 | Double-tap window | 60 ticks (~600 ms) |
 | Minimum press | 2 ticks, rejects contact chatter |
 | SPI cost when idle | 0 bytes |
+| Icon glyphs | 8 × 8, drawn at 3× |
+| Kernel-owned column | 60 px of 240 (name + close button) |
+| Application viewport width | 180 px, was 240 |
 | Defects exposed in other subsystems | 4 |
 | Defects of its own | 2 |
 
-## 8. What this does not establish
+## 9. What this does not establish
 
 - **No focus, no windows, no z-order.** §2. Applications occupy fixed strips and
   cannot be brought forward.
 - **No way to stop a program from the launcher.** `kill` exists only in the
   shell; the icon grid can start and cannot stop.
-- **The running-program marker is per-name, not per-instance.** It now compares
-  the whole name (it originally compared the first character, which marked
-  `paint`, `ping` and `pong` together — found while writing this section, not by
-  looking at the screen, because three wrong four-pixel dots read as a rendering
-  artefact). Two instances of the same program would still share one marker.
+- **The running marker is per-name, not per-instance.** Two instances of the
+  same program would share one underline. §6.4.
+- **Faulted programs cannot be dismissed.** A program that faults keeps its slot
+  and shows no X, because it is not running — it lingers until `kill` from the
+  shell. The new chrome makes that visible without addressing it.
+- **The chrome column is fixed width.** 60 px regardless of how long the name
+  is, and names are truncated to fit rather than scaled or scrolled.
 - **Double-tap timing is unmeasured.** 600 ms and the 2-tick minimum press were
   reasoned, not derived from anyone's actual tapping. The counters exist to
   settle them and nobody has.
-- **No icons.** Coloured rectangles with labels, because there is still no asset
-  pipeline (UM-NATOS-011 §6).
+- **The icons are guesses at 24 pixels.** 8 × 8 glyphs scaled 3×, drawn by
+  hand and judged by one person. `blit` and `rogue` are the two most likely to
+  read as noise. Nothing tests whether any of them is recognisable.
 - **One user.** Every judgement about whether the interaction feels right came
   from a single person on a single panel.
 
-## 9. References
+## 10. References
 
 - UM-NATOS-017 §4.1, §7.1 — the touch defects this exposed
 - UM-NATOS-014 §10 — the lock contention this exposed
