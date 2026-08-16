@@ -859,7 +859,7 @@ int      display_owner(void)         { return mutex_owner(&g_lock); }
  * bus is slow, or the measurement is wall-clock across preemptions. */
 uint32_t display_fill_bench(void)
 {
-    uint32_t t0 = xt_ccount();
+    uint32_t t0 = task_cpu_cycles();
     display_fill_rect(0, 0, DISP_W, DISP_H, 0x0000u);
-    return (xt_ccount() - t0) / 80u;
+    return (task_cpu_cycles() - t0) / 80u;
 }

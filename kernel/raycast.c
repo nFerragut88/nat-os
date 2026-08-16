@@ -1,6 +1,7 @@
 /* nat-os — grid raycaster. See raycast.h for the camera-plane argument. */
 
 #include "raycast.h"
+#include "task.h"
 #include "timer.h"
 #include "desktop.h"
 #include "display.h"
@@ -313,7 +314,7 @@ void raycast_frame(void)
         int      face_x = 0;    /* crossed a vertical boundary (an E/W face) */
         uint32_t wall_u = 0;    /* position along the face, 0..ONE-1        */
 
-        t0 = xt_ccount();
+        t0 = task_cpu_cycles();
         while (steps < MAX_STEPS) {
             fx += sx;
             fy += sy;
@@ -341,7 +342,7 @@ void raycast_frame(void)
             }
         }
 
-        t_march += xt_ccount() - t0;
+        t_march += task_cpu_cycles() - t0;
 
         /* Perpendicular distance, in 16.16 cells. */
         int32_t dist = (int32_t)steps << (FP - STEP_SHIFT);
@@ -401,7 +402,7 @@ void raycast_frame(void)
 
         uint16_t wall = hue_shaded((uint32_t)(hx * 23 + hy * 41), shade);
 
-        t0 = xt_ccount();
+        t0 = task_cpu_cycles();
         for (int32_t y = 0; y < (int32_t)RAY_VIEW_H; y++) {
             uint16_t px;
             if (y < top) {
@@ -434,14 +435,14 @@ void raycast_frame(void)
             }
         }
 
-        t_compose += xt_ccount() - t0;
+        t_compose += task_cpu_cycles() - t0;
 
         /* Direct path only: with a framebuffer the whole view goes out once,
          * after every column has been composed. */
         if (!g_fb) {
-            t0 = xt_ccount();
+            t0 = task_cpu_cycles();
             display_blit(x, 0, RAY_COLW, RAY_VIEW_H, g_col, RAY_COLW);
-            t_blit += xt_ccount() - t0;
+            t_blit += task_cpu_cycles() - t0;
         }
         g_columns++;
     }
@@ -456,11 +457,11 @@ void raycast_frame(void)
          * here makes the button and the frame one transfer. */
         desktop_overlay_into(g_fb, RAY_VIEW_W, RAY_VIEW_H);
 
-        t0 = xt_ccount();
+        t0 = task_cpu_cycles();
         display_lock();
         display_blit(0, 0, RAY_VIEW_W, RAY_VIEW_H, g_fb, RAY_VIEW_W);
         display_unlock();
-        t_blit += xt_ccount() - t0;
+        t_blit += task_cpu_cycles() - t0;
     } else {
         display_unlock();
     }

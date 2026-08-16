@@ -149,6 +149,15 @@ uint32_t task_age_rescues(void);
 int      task_stack_tightest(void);    /* id with the least headroom */
 const char *task_name(int id);         /* creation name, or "?" */
 int      task_exists(int id);          /* slot is occupied by a real task */
+/* Cycles the calling task has actually run, current slice included.
+ *
+ * The clock to time work with. xt_ccount() measures wall-clock and therefore
+ * counts every preemption as though it were the work — the same full-screen
+ * fill measures 43 ms single-threaded and 249-362 ms from a task. Two reads of
+ * this around a section give what the section really cost. */
+uint32_t task_cpu_cycles(void);
+uint32_t task_cpu_cycles_of(int id);
+
 void     task_smash_guard(void);       /* test hook: break the running guard */
 
 /* Give up the rest of the current slice by bringing the tick forward.

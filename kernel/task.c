@@ -46,6 +46,36 @@ static uint32_t g_stacks[TASK_MAX][TASK_STACK_WORDS];
  * cheaper than debugging it, and leaves one code path to be correct about. */
 static int g_current = -1;
 
+/* ---- CPU time accounting ------------------------------------------------
+ *
+ * Cycles each task has actually RUN, as opposed to how much wall-clock passed
+ * while it was trying to.
+ *
+ * Every timing figure in this kernel used to be a pair of xt_ccount() reads
+ * around some work, which counts every tick, every other task's slice and every
+ * interrupt that landed in the middle as though it were the work itself. The
+ * measured cost of a full-screen fill was 43 ms before the scheduler existed
+ * and 249-362 ms from a task afterwards — the same bytes to the same panel,
+ * differing by eight times in nothing but bookkeeping.
+ *
+ * Charged at the switch, which is the only place that knows a task stopped
+ * running. Time spent inside the level-3 handler is charged to whichever task
+ * it interrupted; that is a small and deliberate inaccuracy, and the
+ * alternative is accounting inside the ISR that measures the ISR.
+ *
+ * MEASURED, and the correction is not uniform. A full-screen fill from the
+ * SHELL task read 249-362 ms wall-clock and 63-79 ms of work — the shell runs
+ * at NORMAL and is preempted constantly, so nearly all of that was other tasks.
+ * The raycaster's blit did not move at all: 55.5 ms either way, because the
+ * display task runs at HIGH and is barely interrupted, so wall-clock was
+ * already very close to its work.
+ *
+ * Which means the fix matters most exactly where the old numbers were least
+ * trusted, and changes nothing where they were quietly correct. A conclusion
+ * drawn from one task's timings could not have been carried to another's. */
+static uint32_t g_run_cycles[TASK_MAX];
+static uint32_t g_slice_start;      /* ccount when the running task got the CPU */
+
 /* -1 until a task registers as idle. Kept out of the round robin and used only
  * when nothing else can run. */
 static int g_idle_id = -1;
@@ -228,9 +258,12 @@ uint32_t task_schedule(uint32_t current_sp)
 {
     /* On the very first switch there is no task to save — the interrupted
      * context is the boot path, which is deliberately discarded. */
+    uint32_t now = xt_ccount();
     if (g_current >= 0) {
         g_tasks[g_current].sp = current_sp;
+        g_run_cycles[g_current] += now - g_slice_start;
     }
+    g_slice_start = now;
 
     /* Round robin from the one after current, so no task can starve another.
      * With g_current == -1 the first candidate is 0, so the first switch enters
@@ -390,6 +423,30 @@ int task_stack_intact(int id)
 /* Test hook: clobber the running task's guard word so the next context switch
  * finds it. Exists for the same reason `hang` and `fault` do — an enforcement
  * path that has never been seen to fire is an assumption, not a mechanism. */
+/* Cycles the CALLING task has run, including the slice it is in right now.
+ *
+ * This is the clock to measure work with. Two reads around a section give the
+ * cycles that section actually consumed, with every preemption in between
+ * excluded — which is the whole difference from xt_ccount().
+ *
+ * The critical section is not optional: without it a tick landing between the
+ * two loads returns an accumulated total from before the switch added to a
+ * slice start from after it, which reads as a wildly negative interval. */
+uint32_t task_cpu_cycles(void)
+{
+    uint32_t crit = crit_enter();
+    uint32_t v = (g_current >= 0)
+               ? g_run_cycles[g_current] + (xt_ccount() - g_slice_start)
+               : xt_ccount();
+    crit_exit(crit);
+    return v;
+}
+
+uint32_t task_cpu_cycles_of(int id)
+{
+    return (id >= 0 && id < TASK_MAX) ? g_run_cycles[id] : 0u;
+}
+
 void task_smash_guard(void)
 {
     if (g_current >= 0 && g_tasks[g_current].stack_base) {
