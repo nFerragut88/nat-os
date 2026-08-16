@@ -38,7 +38,7 @@ uint32_t rom_call3(uint32_t fn, uint32_t a, uint32_t b, uint32_t c);
 /* Output captured from libphy.a's own printf. The blob is windowed and cannot
  * call back into this call0 kernel, so its shim buffers instead — a data
  * pointer crosses the ABI boundary safely where a call would not. */
-const char *phy_host_log(void);
-void        phy_host_log_clear(void);
+extern char     phy_host_log_buf[];
+extern uint32_t phy_host_log_len;
 
 #endif /* NATOS_WINDOW_H */

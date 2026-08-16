@@ -117,20 +117,24 @@ $elf = Join-Path $build "natos.elf"
 # __divsf3, the one helper the ROM lacks.
 $sdk = "$env:USERPROFILE\.platformio\packages\framework-arduinoespressif32\tools\sdk\esp32"
 $phylibs = @()
-if ($false) {   # DISABLED: see below
-    # The newlib ROM scripts assign memcpy/sprintf as STRONG symbols, which
-    # silently redirected the kernel's own call0 memcpy to a WINDOWED ROM
-    # function. Boot panicked with IllegalInstruction at 0x4000c336.
-
+if (Test-Path "$root\vendor\phy\libphy_natos.a") {
+    # ONLY esp32.rom.ld, and only the patched archive.
+    #
+    # The first attempt linked Espressif's newlib and libgcc ROM scripts too,
+    # which define memcpy and sprintf by BARE ASSIGNMENT rather than PROVIDE.
+    # That silently redirected the kernel's own call0 memcpy to a windowed ROM
+    # routine and panicked the board on boot.
+    #
+    # libphy_natos.a is libphy.a with its memcpy, sprintf and soft-float
+    # references renamed by objcopy, answered instead in vendor/windowed/. So no
+    # script needs to supply them, and esp32.rom.ld -- whose every entry is
+    # PROVIDE, verified -- is the only one linked. Nothing the kernel defines
+    # can be displaced, because nothing strong is defined at all.
     $phylibs = @(
-        "$sdk\ld\libphy.a",
-        "-T", "$sdk\ld\esp32.rom.ld",
-        "-T", "$sdk\ld\esp32.rom.libgcc.ld",
-        "-T", "$sdk\ld\esp32.rom.newlib-funcs.ld",
-        "-T", "$sdk\ld\esp32.rom.newlib-nano.ld",
-        "-lgcc"
+        "$root\vendor\phy\libphy_natos.a",
+        "-T", "$sdk\ld\esp32.rom.ld"
     )
-    Write-Host "  linking libphy.a + ROM symbol tables" -ForegroundColor DarkGray
+    Write-Host "  linking libphy_natos.a + esp32.rom.ld (PROVIDE only)" -ForegroundColor DarkGray
 }
 
 $ldflags = @(

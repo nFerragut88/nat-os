@@ -431,6 +431,21 @@ static void execute(char *line)
         uart_put_hex(r);
         uart_puts("\n");
     }
+    else if (str_eq(line, "phyver")) {
+        /* First call into Espressif's RADIO blob.
+         *
+         * phy_version_print() takes no arguments and touches no RF hardware;
+         * it reports through phy_printf, which is our windowed shim writing to
+         * a buffer. So this exercises the whole chain -- call0 -> window bridge
+         * -> blob -> windowed shim -> buffer -> call0 -- without going near the
+         * radio. If the blob is linked and running it states its own version. */
+        extern void phy_version_print(void);
+        phy_host_log_len = 0; phy_host_log_buf[0] = 0;
+        rom_call3((uint32_t)&phy_version_print, 0u, 0u, 0u);
+        uart_puts("   libphy says: ");
+        uart_puts(phy_host_log_buf);
+        uart_puts("\n");
+    }
     else if (str_eq(line, "3d")) {
         int on = !str_eq(arg, "off");
         desktop_set_active(!on);

@@ -88,6 +88,50 @@ cannot displace anything nat-os defines.
 
 Not attempted yet. The kernel was restored to its working state first.
 
+## It runs
+
+```
+> phyver
+   libphy says: phy_version: 4791, 2c4672b, Dec 20 2023, 16:06:06
+```
+
+Espressif's radio blob, executing inside nat-os, reporting its own build. The
+chain is call0 shell -> `rom_call3` -> `CALL8` -> blob -> the blob calling BACK
+into our windowed `phy_printf` -> buffer -> call0 reads it. Both directions
+across the ABI boundary, in one call.
+
+`phy_version_print` was chosen because it takes no arguments and touches no RF.
+
+### Two failures on the way, both mine, both the same shape
+
+**1. Linker scripts displacing the kernel's own symbols.** Covered above. Fixed
+by renaming the blob's references with `objcopy` and linking only
+`esp32.rom.ld`, whose entries are all `PROVIDE`.
+
+**2. Calling a windowed function from call0 by accident.** The log buffer was
+first exposed as `phy_host_log()` / `phy_host_log_clear()`. Both live in the
+windowed file, so both are windowed; the kernel called them directly, the callee
+executed `ENTRY` without the caller having rotated the window, and it fell off
+the end of the function into padding — `IllegalInstruction` at `0x4008a810`.
+
+The comment at the top of `phy_host.c` describes that exact hazard. I wrote it,
+then walked into it from the other direction in the same file. The buffer is now
+exported as **data**: reading a symbol needs no calling convention, and a call
+across this boundary always does.
+
+### The check that should run before every flash
+
+```
+nm natos.elf | awk '$1 ~ /^4000[0-9a-f]{4}$/'
+```
+
+Any kernel symbol resolved to a ROM address is the displacement bug. After the
+fix the only two are `ets_delay_us` and `phy_get_romfuncs` — both requested by
+libphy, both weak. All 683 other symbols stay in nat-os's own regions.
+
+Relocation is not displacement: `memcpy` moving from `4008a5e8` to `4008aa34`
+is code shifting, and fine. `memcpy` becoming `4000c0bc` is the bug.
+
 ## What this does NOT establish
 
 Linking is not running, and the gap is the whole remaining risk:
