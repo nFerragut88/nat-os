@@ -81,3 +81,37 @@ int phyinit_run(void)
                              PHY_RF_CAL_FULL);
     return (int)g_phy_result;
 }
+
+/* ---- PHY stack instrumentation -----------------------------------------
+ *
+ * See window.S for why the PHY runs on a stack of its own. These make its
+ * usage measurable, because the interesting failure -- a StoreProhibited
+ * inside a window-overflow spill -- gives a fault address that cannot
+ * distinguish "ran out of stack" from "something else entirely".
+ */
+extern uint32_t _phy_stack[], _phy_stack_top[];
+
+#define PHY_STACK_FILL 0xEEEEEEEEu
+
+void phy_stack_prime(void)
+{
+    for (uint32_t *p = _phy_stack; p < _phy_stack_top; p++) {
+        *p = PHY_STACK_FILL;
+    }
+}
+
+uint32_t phy_stack_size(void)
+{
+    return (uint32_t)((char *)_phy_stack_top - (char *)_phy_stack);
+}
+
+/* Scans from the LOW end: the stack grows down, so the first word still
+ * holding the fill pattern marks the deepest point ever reached. */
+uint32_t phy_stack_used(void)
+{
+    uint32_t *p = _phy_stack;
+    while (p < _phy_stack_top && *p == PHY_STACK_FILL) {
+        p++;
+    }
+    return (uint32_t)((char *)_phy_stack_top - (char *)p);
+}

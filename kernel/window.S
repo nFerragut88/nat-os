@@ -401,20 +401,96 @@ win_call_bridge:                    /* call0 -> windowed -> call0, round trip */
     .type phy_stack_call, @function
 phy_stack_call:
     movi    a8, _phy_stack_top
-    addi    a8, a8, -32
+    addi    a8, a8, -64
     s32i    a1,  a8, 0              /* the stack we came from */
     s32i    a0,  a8, 4
     s32i    a12, a8, 8              /* callee-saved under call0; call8 eats them */
     s32i    a13, a8, 12
     s32i    a14, a8, 16
     s32i    a15, a8, 20
+
+    /* THE BASE FRAME MUST LOOK LIKE A WINDOWED ONE.
+     *
+     * This is what the StoreProhibited actually was, and it is an ABI
+     * requirement that call0 code has no reason to know about.
+     *
+     * _WindowOverflow8 spills a4..a7 relative to the CALLER'S stack pointer,
+     * which it fetches with `l32e a0, a1, -12`. Every windowed frame is
+     * required to hold its caller's sp in that slot; ENTRY does not write it,
+     * the caller's prologue does. phy_stack_call is call0 and wrote nothing
+     * there, so the handler loaded a fresh .bss zero and spilled to 0 - 32.
+     *
+     * That is also why the faulting PC looked like the CALL8 itself. The spill
+     * faults inside the overflow handler, which runs with PS.EXCM set, so the
+     * second fault vectors to the double-exception handler while EPC1 still
+     * holds the instruction that caused the ORIGINAL window overflow.
+     *
+     * The slot points at the very top of the private stack, so the 32 bytes
+     * the handler writes below it (top-32 .. top-20) land above this frame's
+     * own saves (top-64 .. top-32) and collide with nothing.
+     *
+     * Two earlier theories were wrong and are recorded because the measurements
+     * that killed them were the useful part: it was not stack DEPTH -- the
+     * fault came 272 bytes into 6144 -- and it was not stale WINDOWSTART bits,
+     * since declaring a single live frame did not change it either. */
+    movi    a9,  _phy_stack_top
+    addi    a10, a8, -12            /* s32i takes no negative offset */
+    s32i    a9,  a10, 0
+
     mov     a1,  a8                 /* switch */
+
+    /* Mask interrupts for the duration.
+     *
+     * Not for atomicity — to stop a context switch happening while windowed
+     * frames are live. nat-os's level-3 handler saves a0..a15 and nothing else:
+     * it does not save WINDOWBASE or WINDOWSTART and does not spill the window.
+     * A switch in the middle of blob code therefore leaves another task running
+     * with this one's frames still marked live in the register file. */
+    rsil    a9, 3
+    s32i    a9,  a1, 24
+
+    /* Declare exactly one live frame: this one.
+     *
+     * THIS is what the StoreProhibited was. A CALL8 that runs out of physical
+     * registers raises a window overflow, and the handler spills the OLDEST
+     * live frame to the stack pointer recorded in it. Those bits survive from
+     * whatever windowed code ran before — a different task, a previous
+     * excursion — and by then their stack pointers are stale or garbage. The
+     * spill writes there and faults.
+     *
+     * The measurement that found it: the fault was 272 bytes into a 6144-byte
+     * stack. Depth was never the cause, which is what the private stack had
+     * been introduced to fix.
+     *
+     * WINDOWSTART is deliberately NOT restored afterwards. The bits describe
+     * frames whose registers this excursion has already overwritten, so
+     * putting them back would re-mark frames whose contents are gone. A call0
+     * kernel's correct steady state is one live frame, and that is what this
+     * leaves behind. */
+    rsr.windowbase  a9
+    movi    a11, 1
+    ssl     a9
+    sll     a11, a11
+    wsr.windowstart a11
+    rsync
 
     mov     a10, a3
     mov     a11, a4
     mov     a12, a5
     callx8  a2
     mov     a2,  a10
+
+    /* Back to one live frame, then unmask. */
+    rsr.windowbase  a9
+    movi    a11, 1
+    ssl     a9
+    sll     a11, a11
+    wsr.windowstart a11
+    rsync
+
+    l32i    a9,  a1, 24
+    wsr.ps  a9
+    rsync
 
     l32i    a0,  a1, 4
     l32i    a12, a1, 8
@@ -427,6 +503,8 @@ phy_stack_call:
 
     .section .bss
     .align 16
+    .global _phy_stack
+    .global _phy_stack_top
 _phy_stack:
     .space 6144
 _phy_stack_top:

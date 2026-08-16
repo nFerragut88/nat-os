@@ -57,4 +57,14 @@ extern uint32_t phy_host_log_len;
  * stack problem. See the note in window.S. */
 uint32_t phy_stack_call(uint32_t fn, uint32_t a, uint32_t b);
 
+/* Fills the PHY stack with a pattern, and reports how much of it has since
+ * been touched. The point is to settle a question rather than argue it: when a
+ * PHY call dies inside a window-overflow spill, "the stack was too small" and
+ * "something else is wrong" look identical from the fault address alone. If
+ * the call consumes the whole stack the cause is depth; if it dies having used
+ * a fraction of it, depth was never the problem. */
+void     phy_stack_prime(void);
+uint32_t phy_stack_used(void);
+uint32_t phy_stack_size(void);
+
 #endif /* NATOS_WINDOW_H */

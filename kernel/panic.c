@@ -14,6 +14,7 @@
 
 #include "panic.h"
 #include "uart.h"
+#include "window.h"
 #include "watchdog.h"
 #include "store.h"
 #include "display.h"
@@ -205,6 +206,15 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
     uart_puts("  ps       : ");
     uart_put_hex(ps);
     uart_puts("\n");
+
+    /* How deep the PHY got before dying. Meaningless unless a PHY call was in
+     * flight, but when one was, this is the difference between a stack that
+     * ran out and a fault that merely happened to land in a spill. */
+    uart_puts("  phystack : ");
+    uart_put_dec(phy_stack_used());
+    uart_puts(" of ");
+    uart_put_dec(phy_stack_size());
+    uart_puts(" bytes used\n");
 
     halt_forever();
 }

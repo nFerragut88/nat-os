@@ -209,3 +209,78 @@ anything else:
 
 Nothing on the normal boot path is affected: `chan` is opt-in, and phyinit,
 macinit, macirq, macrx and the 3D view all work.
+
+---
+
+# It receives
+
+```
+802.11 frame: BEACON  len=348
+bssid 44:25:38:19:0d:1a   ssid "TC7NR"
+```
+
+A real beacon from a real access point, decoded on a kernel built `-mabi=call0`
+running Espressif's PHY blob through hand-written window handlers.
+
+## What the fault actually was
+
+Three theories, two of them wrong, and the measurements that killed them were
+worth more than the fix:
+
+**1. Stack depth.** `chip_v7_set_chan_nomac` died with StoreProhibited at a
+`call8`, so the PHY was given a private 6 KB stack. The fault moved forward but
+did not go away — which looked like progress and was not. Priming the stack with
+a pattern and reporting the high-water mark from the panic handler settled it:
+**272 bytes of 6144 used.** Depth had never been the problem. Without that
+number the obvious next step was a bigger stack, and it would have failed too.
+
+**2. Stale WINDOWSTART bits.** nat-os's context switch saves a0..a15 and neither
+saves nor spills the register window, so frames from an earlier task can still be
+marked live. Declaring exactly one live frame before entering the blob changed
+nothing.
+
+**3. The base frame was not a windowed frame.** This was it.
+
+`_WindowOverflow8` — the handler in this very repository, line 69 — spills
+`a4..a7` relative to the caller's stack pointer, which it fetches with:
+
+```asm
+    l32e    a0, a1, -12             /* a0 <- call[j-1]'s sp */
+```
+
+Every windowed frame must hold its caller's stack pointer at `sp - 12`. `ENTRY`
+does not write it; the caller's prologue does. `phy_stack_call` is call0 code and
+wrote nothing there, so the handler read a fresh `.bss` zero and spilled to
+`0 - 32`.
+
+That also explains the misleading fault address. The spill faults *inside* the
+overflow handler, which runs with `PS.EXCM` set, so the second fault vectors to
+the double-exception handler while `EPC1` still holds the instruction that caused
+the original overflow — the `call8`. The reported PC was never where the store
+was.
+
+The fix is one store: put a valid stack pointer at `sp - 12` before `callx8`.
+
+## The receive path
+
+Frames do not begin at the start of the DMA buffer — the hardware prepends a
+**40-byte receive control header** (RSSI, rate, channel, timestamp). Measured,
+not documented: found by locating where the beacon actually started, which is
+unmistakable because address1 of a beacon is `ff:ff:ff:ff:ff:ff` and cannot land
+at the right offset by accident.
+
+Evidence the frames are genuine rather than uninitialised memory:
+
+- `has_data` set by hardware on 3 of 4 descriptors, all initialised to 0
+- the bytes CHANGE between captures — different RSSI and timestamps each run
+- the 802.11 header decodes: type 0 subtype 8, broadcast address1, addr2 == addr3
+- the SSID tag parses to printable ASCII naming a real network
+
+## Not done
+
+- **Interrupts never fire.** `irq fires=0` while DMA fills descriptors happily.
+  Routing installs and the line is not disabled, so either source 0 is not the
+  right index or the MAC's own interrupt mask has not been enabled.
+- **Descriptors are never recycled.** Four buffers fill and reception stops.
+  `has_data` must be cleared and ownership returned to the hardware.
+- **Transmit** is untouched.

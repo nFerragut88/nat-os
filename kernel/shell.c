@@ -577,8 +577,36 @@ static void execute(char *line)
         uart_puts("  next dscr=");
         uart_put_hex(wifimac_rx_next_dscr());
         uart_puts("\n");
+        wifi_frame_info_t fi;
+        if (wifimac_frame_info(&fi) == 0) {
+            static const char hx[] = "0123456789abcdef";
+            static const char *sub[16] = {
+                "assoc-req","assoc-resp","reassoc-req","reassoc-resp",
+                "probe-req","probe-resp","?","?","BEACON","atim",
+                "disassoc","auth","deauth","action","?","?" };
+            uart_puts("   802.11 frame: ");
+            uart_puts(fi.fc_type == 0u ? sub[fi.fc_subtype]
+                      : (fi.fc_type == 1u ? "control" : "data"));
+            uart_puts("  len=");
+            uart_put_dec(fi.length);
+            uart_puts("\n   bssid ");
+            for (int i = 0; i < 6; i++) {
+                char b[4];
+                b[0] = i ? ':' : ' ';
+                b[1] = hx[(fi.addr3[i] >> 4) & 0xF];
+                b[2] = hx[fi.addr3[i] & 0xF];
+                b[3] = 0;
+                uart_puts(b + (i ? 0 : 1));
+            }
+            if (fi.ssid[0]) {
+                uart_puts("   ssid \"");
+                uart_puts(fi.ssid);
+                uart_puts("\"");
+            }
+            uart_puts("\n");
+        }
         uint32_t len = 0;
-        uint8_t  buf[24];
+        uint8_t  buf[64];
         int n = wifimac_rx_peek(&len, buf, sizeof buf);
         if (n < 0) {
             uart_puts("   no frame captured yet\n");

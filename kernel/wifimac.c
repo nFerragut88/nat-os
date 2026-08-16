@@ -474,6 +474,7 @@ int wifimac_set_channel(uint32_t ch)
      * inside ram_chip_i2c_readReg -- the PHY's analog RF register access -- and
      * with all three calls in a row there was no way to tell which one had
      * reached it. A panic prints nothing about where it came from; these do. */
+    phy_stack_prime();          /* so the panic can report the high water */
     uart_puts("   deinit_mac...");
     deinit_mac();
     uart_puts(" ok\n   set_chan_nomac...");
@@ -491,3 +492,57 @@ int wifimac_set_channel(uint32_t ch)
 }
 
 uint32_t wifimac_channel(void) { return g_channel; }
+
+/* ---- reading a captured frame ------------------------------------------
+ *
+ * The DMA buffer does not start with 802.11. The hardware prepends a receive
+ * control header -- RSSI, rate, channel, timestamp -- and the frame follows it.
+ * Measured at 40 bytes on this silicon by finding where the beacon actually
+ * began: frame control 0x80, then a broadcast address1 of ff:ff:ff:ff:ff:ff,
+ * which is unmistakable and cannot land at the right offset by chance.
+ *
+ * Taken as a measured constant rather than a documented one, because that is
+ * what it is. If a future capture decodes as nonsense, this offset is the first
+ * thing to re-derive.
+ */
+#define RX_CTRL_BYTES 40u
+
+int wifimac_frame_info(wifi_frame_info_t *out)
+{
+    for (dma_list_item *it = g_rx_chain; it; it = it->next) {
+        if (!it->has_data || it->length <= RX_CTRL_BYTES + 24u) {
+            continue;
+        }
+        const uint8_t *p = (const uint8_t *)it->packet + RX_CTRL_BYTES;
+
+        out->fc_type    = (uint8_t)((p[0] >> 2) & 0x3u);
+        out->fc_subtype = (uint8_t)((p[0] >> 4) & 0xFu);
+        out->length     = it->length;
+        for (int i = 0; i < 6; i++) {
+            out->addr1[i] = p[4 + i];
+            out->addr2[i] = p[10 + i];
+            out->addr3[i] = p[16 + i];
+        }
+
+        /* Beacon (type 0, subtype 8): a 24-byte header, then 12 fixed bytes
+         * (timestamp, interval, capability), then tagged parameters. Tag 0 is
+         * the SSID and is required to come first. */
+        out->ssid[0] = 0;
+        if (out->fc_type == 0u && out->fc_subtype == 8u) {
+            const uint8_t *tag = p + 24 + 12;
+            if (tag[0] == 0u) {
+                uint32_t n = tag[1];
+                if (n > sizeof(out->ssid) - 1u) {
+                    n = sizeof(out->ssid) - 1u;
+                }
+                for (uint32_t i = 0; i < n; i++) {
+                    uint8_t c = tag[2 + i];
+                    out->ssid[i] = (c >= 32u && c < 127u) ? (char)c : '?';
+                }
+                out->ssid[n] = 0;
+            }
+        }
+        return 0;
+    }
+    return -1;
+}

@@ -54,6 +54,16 @@ void     wifimac_irq_enable(void);
 uint32_t wifimac_irq_fires(void);
 uint32_t wifimac_irq_status(void);
 
+/* A decoded 802.11 frame header from the first filled descriptor. */
+typedef struct {
+    uint8_t  fc_type, fc_subtype;
+    uint8_t  addr1[6], addr2[6], addr3[6];
+    uint32_t length;
+    char     ssid[33];          /* beacons only; empty otherwise */
+} wifi_frame_info_t;
+
+int wifimac_frame_info(wifi_frame_info_t *out);
+
 /* Builds the receive descriptor chain and arms the receiver in promiscuous
  * mode. Returns 0, or negative if macinit has not run (-1), it is already
  * armed (-2), DRAM ran out (-3), or the hardware never acknowledged the chain
