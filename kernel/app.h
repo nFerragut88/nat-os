@@ -42,9 +42,12 @@
  * program cannot touch — the same argument as the viewport itself
  * (UM-NATOS-016 §2), applied to a pixel the user owns rather than one the
  * application does. */
-#define APP_VIEW_Y0     168u
-#define APP_VIEW_PITCH   28u
-#define APP_VIEW_H       26u
+/* Strips start below the launcher and run to the bottom of the panel:
+ * 224 + 4 * 24 = 320 exactly. They are only drawn when something occupies
+ * them. */
+#define APP_VIEW_Y0     224u
+#define APP_VIEW_PITCH   24u
+#define APP_VIEW_H       22u
 /* The kernel's column: the program's NAME and its close button.
  *
  * The name is there because without it the area is unreadable. Four empty

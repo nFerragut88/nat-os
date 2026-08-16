@@ -1150,13 +1150,19 @@ static void task_display(void)
          * repaints unconditionally because every frame differs. */
         if (desktop_active()) {
             desktop_frame();
+        } else if (desktop_art()) {
+            /* The colour artwork, now a view you open rather than a permanent
+             * band along the bottom of the screen. Same ownership rule as the
+             * 3D view: it has the whole region and a close button. */
+            spectrum_region(0u,   26u,           frame, 0u);
+            spectrum_region(26u,  DESK_H - 52u,  frame, 48u);
+            spectrum_region(DESK_H - 26u, 26u,   frame, 96u);
         } else {
             raycast_frame();
         }
 
         /* Close buttons last, so they sit over whatever drew beneath them. */
         desktop_chrome();
-        spectrum_region(SPEC_Y, SPEC_H, frame, 96u);
 
         frame++;
 
@@ -1516,10 +1522,16 @@ void kmain(void)
      * left for the operator to launch from the shell — it is a demonstration,
      * not something that should be running by default. */
     shell_register(PROGRAMS, PROGRAM_COUNT);
-    /* Order matters: ping addresses application 1, so pong must take that
-     * slot. Slots are handed out lowest-free-first. */
-    start_program("ping");
-    start_program("pong");
+    /* Nothing starts on its own any more.
+     *
+     * ping and pong used to be launched here to keep the IPC counters live.
+     * They exchange messages rather than drawing, so the only evidence of them
+     * on screen was two close buttons floating in an otherwise empty band — a
+     * boot that presents the user with two controls whose purpose is to destroy
+     * programs they did not start.
+     *
+     * Launch them from the menu, ping first: it addresses application 1, and
+     * slots are handed out lowest-free-first, so pong must land in that slot. */
 
     /* Checked, because the unchecked version cost this kernel its idle task.
      * task_create() returns -1 when the table is full, kmain made nine calls

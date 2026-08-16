@@ -22,7 +22,10 @@
 #include <stdint.h>
 
 #define RAY_VIEW_W 240u
-#define RAY_VIEW_H 168u
+/* The 3D view fills whatever the launcher region is, so this tracks DESK_H.
+ * It grew from 168 when the colour strip and the application strips stopped
+ * being drawn at boot — that space belongs to whichever view is open. */
+#define RAY_VIEW_H 224u
 
 void raycast_init(void);
 
