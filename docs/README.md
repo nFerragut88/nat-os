@@ -50,7 +50,7 @@ true" is the difference between a working boot and a silent reboot.
 | [UM-NATOS-018](UM-NATOS-018-persistence.md) | Persistence, and a Read Defect That Looked Like the Wrong Thing | SPI flash driver, a checksummed record that survives a power cycle, the inherited clock divider that shifted every read by a bit, and two hypotheses tested against stale firmware |
 | [UM-NATOS-019](UM-NATOS-019-failure-handling.md) | Failure Handling, and Three Mechanisms That Had Never Fired | Stack guards enforced in the scheduler, the watchdog erasing its own panic reports, measured stack margins, a UART receive path one byte behind, and a fault reported to flash and to the panel |
 | [UM-NATOS-020](UM-NATOS-020-sdcard.md) | microSD over SPI, and a Pad Table That Is Not in Pin Order | SPI mode and why, per-stage error codes, the IO_MUX entry that is the UART's receive pad, and a cross-check whose samples could not have caught it |
-| [UM-NATOS-021](UM-NATOS-021-launcher.md) | The Launcher, and Four Defects It Found by Existing | Icon grid and hybrid cursor, launch by name, status text that lied about state, selection read at the worst moment, the missing idle task, and a close button an application cannot reach |
+| [UM-NATOS-021](UM-NATOS-021-launcher.md) | The Launcher, and Four Defects It Found by Existing | Icon grid and hybrid cursor, launch by name, status text that lied about state, selection read at the worst moment, the missing idle task, a close button an application cannot reach, and a correct diagnosis fixed at twenty times the necessary scope |
 
 ## Reading order
 
@@ -182,3 +182,13 @@ Reproducing a build: **005** alone is sufficient.
 > from the UART's receive pad. The check was real, it was performed, and it
 > could not have failed. Samples must STRADDLE the thing being verified, not
 > merely agree with it. UM-NATOS-020 §4.2.
+
+> **Standing rule for fixes — a correct diagnosis does not license a fix of
+> arbitrary scope.** Chrome drawn over a view that repaints every pixel every
+> frame will strobe; that diagnosis was reached twice and was right both times.
+> The first fix reserved rows for it, which moved the region boundary, the
+> application strips, the colour strip and the grid — four files of constants —
+> and produced a screen that looked wrong for reasons never found, while every
+> measurement insisted the renderer was correct. The second wrote 324 pixels
+> into a buffer that was already being sent. Prefer the fix whose blast radius
+> matches the defect. UM-NATOS-021 §6.6.

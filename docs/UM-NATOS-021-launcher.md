@@ -1,7 +1,7 @@
 # UM-NATOS-021 — The Launcher, and Four Defects It Found by Existing
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.1 · 2026-08-15 · Status: **Complete, verified on hardware** — §6 added, icons and a close button outside the viewport
+Revision 1.2 · 2026-08-15 · Status: **Complete, verified on hardware** — §6.5 added, chrome that cannot flicker; §6.6 a fix whose scope was wrong
 
 ---
 
@@ -180,7 +180,10 @@ image because there is nowhere else to put them yet.
 ### 6.2 The close button is outside the viewport, and that is the point
 
 Every running program gets an X, and the 3D view gets one in place of the
-invisible top-left corner gesture it had.
+invisible top-left corner gesture it had. The two are drawn by different
+mechanisms and §6.5 explains why: the application buttons sit in the strips,
+which no full-region view touches, and the 3D view's button sits in the middle
+of something that repaints continuously.
 
 The X sits in a column the application's viewport **no longer covers**:
 `APP_VIEW_W` is `DISP_W` minus the chrome width, and the kernel owns those
@@ -228,6 +231,70 @@ rendering artefact. It was found while writing §9 of this report.
 A mark too small to be read wrongly is also too small to be read at all. The
 underline spans the cell.
 
+### 6.5 Chrome over a repainting view has to be part of the same draw
+
+The 3D view's close button was first drawn immediately after the view, every
+frame, by the same routine that draws the application buttons. It strobed badly
+enough that the view read as broken.
+
+The raycaster **repaints every pixel every frame**. Anything drawn over it
+therefore survives only until the next frame begins, and drawing it later in the
+sequence cannot help — "later" ends about sixty milliseconds afterwards. The
+button and the frame beneath it are not two draws to be ordered. They have to be
+**one draw**.
+
+`desktop_overlay_into()` writes the button into the view's framebuffer, in that
+buffer's own coordinates, and the raycaster calls it immediately before blitting.
+It is a pure function: it writes pixels and calls nothing. The frame and the
+button reach the panel in a single transfer, and there is no moment at which one
+exists without the other.
+
+The hit test did not change. The stamped button lands on exactly the coordinates
+`desktop_chrome_touch()` already tested, which is worth stating because a
+control drawn by one mechanism and tested by another is a standing invitation
+for the two to drift.
+
+**With `fb off` there is no buffer to stamp into** — that path blits column by
+column straight to the panel — so the button is drawn the old way and does
+flicker. An invisible exit is worse than a visible strobing one: the way out of
+the view would exist and be unfindable. `fb off` is a diagnostic mode rather
+than how it runs.
+
+### 6.6 The same diagnosis, at twenty times the scope
+
+*This section is about a fix that was reverted, and it is here because the
+mistake was not in the reasoning.*
+
+The first attempt reached exactly the conclusion above — chrome cannot be drawn
+over a view that repaints continuously — and implemented it by **reserving rows**
+at the foot of the region for a chrome bar the views would not touch.
+
+That is a correct solution. It also meant moving the region boundary, and
+therefore the application strips, and therefore the colour strip, and the
+launcher grid was resized to use the space freed by removing things that had
+been on screen at boot. Four files of constants moved together.
+
+The result was a screen that looked wrong, and **the cause was never found**.
+Every measurement said the renderer was correct: the wall band landed at the
+right rows, the composed framebuffer held a dark ceiling, an orange wall and a
+dark floor at the expected offsets, `display_blit` was verified including its
+contiguous fast path, and eleven self-tests passed throughout. Three rounds of
+instrumenting the raycaster produced three rounds of evidence that the raycaster
+was fine.
+
+It was reverted to the last confirmed-good state. The fix in §6.5 does the same
+job by writing 324 pixels into a buffer that was about to be sent anyway.
+
+The lesson is not about compositing:
+
+> A correct diagnosis does not license a fix of arbitrary scope. The first
+> attempt and the second share a diagnosis and differ by a factor of twenty in
+> what they touch — and the larger one broke something that was never
+> explained, in a subsystem it had no business affecting.
+
+The compile-time assertions added afterwards (§8) are the mechanical part of
+that lesson: the layout is agreed across four files and nothing enforced it.
+
 ## 7. Verification
 
 ```
@@ -251,6 +318,9 @@ strip reports which. Confirmed on hardware by the user.
 | Minimum press | 2 ticks, rejects contact chatter |
 | SPI cost when idle | 0 bytes |
 | Icon glyphs | 8 × 8, drawn at 3× |
+| Layout assertions | 6, spanning four files |
+| Overlay cost per frame | 324 pixels into a buffer already being sent |
+| Reverted attempt | ~200 lines, four files, cause never found |
 | Kernel-owned column | 60 px of 240 (name + close button) |
 | Application viewport width | 180 px, was 240 |
 | Defects exposed in other subsystems | 4 |
@@ -262,6 +332,13 @@ strip reports which. Confirmed on hardware by the user.
   cannot be brought forward.
 - **No way to stop a program from the launcher.** `kill` exists only in the
   shell; the icon grid can start and cannot stop.
+- **The `fb off` path still flickers.** §6.5. There is no buffer to stamp into,
+  so the button is drawn over the panel and strobes. Accepted for a diagnostic
+  mode; it would not be acceptable as the normal path.
+- **Nothing tests the overlay.** The button's position is agreed between
+  `desktop_overlay_into()` and `desktop_chrome_touch()` by two matching
+  constants, and no assertion ties them together — the exact drift the layout
+  assertions were added to prevent elsewhere.
 - **The running marker is per-name, not per-instance.** Two instances of the
   same program would share one underline. §6.4.
 - **Faulted programs cannot be dismissed.** A program that faults keeps its slot
@@ -284,5 +361,7 @@ strip reports which. Confirmed on hardware by the user.
 - UM-NATOS-014 §10 — the lock contention this exposed
 - UM-NATOS-019 — verifying that a mechanism exists is not verifying it works
 - UM-NATOS-016 §2 — the fixed viewport model the launcher does not change
-- `kernel/desktop.c` — grid, cursor, press latching, status strip
+- `kernel/desktop.c` — grid, cursor, press latching, status strip,
+  `desktop_overlay_into()`
+- `kernel/raycast.c` — calls the overlay immediately before its blit
 - `kernel/shell.c` — `shell_launch()`, the single lookup path
