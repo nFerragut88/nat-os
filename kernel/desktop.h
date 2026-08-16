@@ -86,6 +86,15 @@ void desktop_chrome(void);
  * consumed, in which case nothing else should see it. */
 int  desktop_chrome_touch(uint32_t x, uint32_t y);
 
+/* Stamps the close button into a full-region view's framebuffer, in that
+ * buffer's coordinates, so it reaches the panel in the same transfer as the
+ * frame beneath it. Draws nothing while the launcher owns the region.
+ *
+ * A button drawn OVER a view that repaints every pixel every frame is visible
+ * only between repaints, which strobes badly enough to make the view look
+ * broken. Ordering the draws cannot fix that; they have to be one draw. */
+void desktop_overlay_into(uint16_t *fb, uint32_t w, uint32_t h);
+
 uint32_t desktop_closes(void);
 uint32_t desktop_taps(void);
 

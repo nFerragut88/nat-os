@@ -329,8 +329,63 @@ void desktop_chrome(void)
         }
     }
 
-    if (!g_active) {
+    /* The 3D view's close button is normally NOT drawn here — see
+     * desktop_overlay_into(). Drawing it over a view that repaints every pixel
+     * every frame makes it visible only in the gap between one repaint and the
+     * next, which strobes. It is stamped into that view's framebuffer instead,
+     * so it goes out as part of the same blit.
+     *
+     * The exception is the framebuffer being off, where there is no buffer to
+     * stamp into: that path blits column by column straight to the panel. The
+     * button is drawn here in that case and DOES flicker. An invisible control
+     * is worse than a flickering one — the way out of the view would exist and
+     * be unfindable — and `fb off` is a diagnostic mode, not how it runs.
+     *
+     * The application close buttons above are unaffected either way: they sit in
+     * the strips, which no full-region view touches. */
+    if (!g_active && !raycast_framebuffer()) {
         draw_close(DISP_W - 20u, 2u, 18u, 18u, COLOR_WHITE);
+    }
+}
+
+/* Stamps the close button into a view's framebuffer, in the buffer's own
+ * coordinates. Pure: it writes pixels and calls nothing.
+ *
+ * Called by whichever view owns the region, immediately before it blits, so the
+ * button and the frame beneath it reach the panel in one transfer. That is the
+ * whole fix for the flicker — not ordering the draws differently, but making
+ * them the same draw. */
+void desktop_overlay_into(uint16_t *fb, uint32_t w, uint32_t h)
+{
+    if (g_active || !fb) {
+        return;                 /* the launcher draws its own chrome normally */
+    }
+
+    const uint32_t bw = 18u, bh = 18u;
+    if (w < bw + 2u || h < bh + 2u) {
+        return;
+    }
+    const uint32_t bx = w - bw - 2u;     /* matches the hit test in
+                                          * desktop_chrome_touch() */
+    const uint32_t by = 2u;
+
+    for (uint32_t row = 0; row < bh; row++) {
+        uint16_t *line = fb + (by + row) * w + bx;
+        for (uint32_t col = 0; col < bw; col++) {
+            line[col] = COLOR_BLACK;
+        }
+    }
+
+    /* Same diagonal cross as draw_close(), one 2x2 square per step. */
+    uint32_t n = bw - 6u;
+    for (uint32_t i = 0; i < n; i++) {
+        for (uint32_t dy = 0; dy < 2u; dy++) {
+            uint16_t *line = fb + (by + 3u + i + dy) * w + bx;
+            line[3u + i]           = COLOR_WHITE;
+            line[3u + i + 1u]      = COLOR_WHITE;
+            line[3u + (n - 1u - i)]      = COLOR_WHITE;
+            line[3u + (n - 1u - i) + 1u] = COLOR_WHITE;
+        }
     }
 }
 

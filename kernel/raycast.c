@@ -2,6 +2,7 @@
 
 #include "raycast.h"
 #include "timer.h"
+#include "desktop.h"
 #include "display.h"
 #include "heap.h"
 #include "xtensa.h"
@@ -274,6 +275,13 @@ void raycast_frame(void)
     if (g_fb) {
         /* One window for the entire view. Stride equals width, so this takes
          * the contiguous path and streams 80,640 bytes without another setup. */
+        /* Chrome goes into the buffer, not on top of the panel afterwards.
+         * This view repaints every pixel every frame, so anything drawn over it
+         * survives only until the next frame begins — the close button drawn
+         * that way strobed hard enough to make the view look broken. Stamping it
+         * here makes the button and the frame one transfer. */
+        desktop_overlay_into(g_fb, RAY_VIEW_W, RAY_VIEW_H);
+
         t0 = xt_ccount();
         display_lock();
         display_blit(0, 0, RAY_VIEW_W, RAY_VIEW_H, g_fb, RAY_VIEW_W);
