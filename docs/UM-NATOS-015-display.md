@@ -323,6 +323,21 @@ arbitrarily.
 Cost: one comparison per hit and one multiply per column, unmeasurable against a
 41.9 ms blit.
 
+#### Wall texture
+
+Four panels per cell with a narrow dark seam between them, positioned in **world
+space** so perspective compresses them as a wall recedes. A flat colour gives the
+eye no scale; evenly spaced marks that converge do. The same trick as the face
+shading, one level finer.
+
+The seam position comes from where along the face the ray landed — the fraction
+of whichever coordinate did *not* change cell at the hit. Computed once per
+column, so it costs a shift and a compare.
+
+Vertical only, and that is a cost decision rather than an aesthetic one:
+horizontal courses would need per-pixel work inside the compose loop, which is
+the one place in this renderer where a cost multiplies by 168.
+
 #### Navigation belongs to the camera, not the driver
 
 The camera's wander was rewritten from reactive probing to a heading chosen once
@@ -386,6 +401,7 @@ self-tests all still passing.
 | Image size | 18,896 B |
 | Rays per frame | 240, one per column |
 | Frame cost, march / compose / blit | 2.6 / 13.9 / 41.9 ms |
+| Cost of face shading and wall seams | unmeasurable — 9.1 fps before and after |
 | Share of frame spent on the bus | 72% |
 | Framebuffer | on by default — §5.7's conclusion overturned in §5.8 |
 | SPI clock ceiling on this board | 40 MHz (80 MHz is electrically fine and visibly noisy) |
@@ -414,6 +430,9 @@ self-tests all still passing.
 - **No gamma correction.** The gamma tables (`0xE0`/`0xE1`) are left at panel
   defaults, so colours are correct in channel but not calibrated in response.
 
+- **Wall texture is vertical only.** Panel seams run floor to ceiling; there
+  are no horizontal courses, because those need per-pixel work where this
+  renderer's costs multiply by 168.
 - **Face shading is by orientation only.** There is no light source and no
   falloff across a face; two walls of the same orientation are equally bright
   regardless of where they are. It is a depth cue, not lighting.

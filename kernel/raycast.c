@@ -311,6 +311,7 @@ void raycast_frame(void)
         int      hit = 0, steps = 0;
         int32_t  hx = 0, hy = 0;
         int      face_x = 0;    /* crossed a vertical boundary (an E/W face) */
+        uint32_t wall_u = 0;    /* position along the face, 0..ONE-1        */
 
         t0 = xt_ccount();
         while (steps < MAX_STEPS) {
@@ -331,6 +332,11 @@ void raycast_frame(void)
                  * is arbitrary and X wins. At 1/8 of a cell per step that is a
                  * corner hit, where either answer is defensible. */
                 face_x = (((fx - sx) >> FP) != hx);
+
+                /* Where along the wall face the ray landed, as a fraction of a
+                 * cell. The face runs along the axis that did NOT change cell,
+                 * so that is the coordinate to take the fraction of. */
+                wall_u = (uint32_t)((face_x ? fy : fx) & (ONE - 1));
                 break;
             }
         }
@@ -373,6 +379,23 @@ void raycast_frame(void)
          * dim differences band badly; the floor of 40 in the distance falloff
          * above stops far walls going black. */
         if (!face_x) {
+            shade = (shade * 5u) / 8u;
+        }
+
+        /* Panel seams.
+         *
+         * Four panels per cell with a narrow dark seam between them. The seams
+         * are positioned in WORLD space, so perspective compresses them as a
+         * wall recedes — which is the point: a flat colour gives the eye no
+         * scale, and evenly spaced marks that converge do. It is the same trick
+         * as the face shading, one level finer.
+         *
+         * Per column rather than per pixel, so it costs a shift and a compare
+         * against a 42 ms blit. That also means the seams are vertical only;
+         * horizontal courses would need per-pixel work in the compose loop and
+         * are not obviously worth it. */
+        uint32_t u = wall_u >> 10;              /* 0..63 across the cell */
+        if ((u & 15u) < 2u) {
             shade = (shade * 5u) / 8u;
         }
 
