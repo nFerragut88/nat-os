@@ -3,6 +3,7 @@
 #include "desktop.h"
 #include "display.h"
 #include "raycast.h"
+#include "notes.h"
 #include "shell.h"
 #include "app.h"
 #include "timer.h"
@@ -87,8 +88,8 @@ static const uint8_t GLYPHS[COLS * ROWS][8] = {
     { 0x03, 0x07, 0x0E, 0x1C, 0x38, 0x70, 0xE0, 0xC0 },
     /* paint — a brush with a broad head */
     { 0x18, 0x18, 0x18, 0x3C, 0x7E, 0x7E, 0x3C, 0x18 },
-    /* blit — two overlapping frames */
-    { 0x7C, 0x44, 0x5F, 0x51, 0x7D, 0x05, 0x1F, 0x00 },
+    /* notes — a page with ruled lines */
+    { 0x7E, 0x42, 0x7A, 0x42, 0x7A, 0x42, 0x7E, 0x00 },
     /* ping — a ball travelling right */
     { 0x00, 0x00, 0x30, 0x78, 0x78, 0x30, 0x0C, 0x06 },
     /* pong — paddle and ball */
@@ -128,14 +129,20 @@ static const desk_icon_t ICONS[COLS * ROWS] = {
     { "squares",  "squares",  COLOR_GREEN,   DESK_ACTION_NONE },
     { "draw",     "draw",     COLOR_YELLOW,  DESK_ACTION_NONE },
     { "paint",    "paint",    COLOR_MAGENTA, DESK_ACTION_NONE },
-    { "blit",     "blit",     COLOR_WHITE,   DESK_ACTION_NONE },
+    { "notes",    0,          COLOR_WHITE,   DESK_ACTION_NOTES },
     { "ping",     "ping",     COLOR_CYAN,    DESK_ACTION_NONE },
     { "pong",     "pong",     COLOR_GREEN,   DESK_ACTION_NONE },
     { "rogue",    "gfxrogue", COLOR_YELLOW,  DESK_ACTION_NONE },
     { "3D view",  0,          COLOR_RED,     DESK_ACTION_3D   },
 };
 
-static int      g_active = 1;
+/* Which view owns the region. A mode rather than a set of booleans, so "who is
+ * drawing" cannot have two answers at once. */
+#define MODE_LAUNCHER 0
+#define MODE_3D       1
+#define MODE_NOTES    2
+static int      g_mode = MODE_LAUNCHER;
+#define g_active (g_mode == MODE_LAUNCHER)
 static int      g_sel = 0;              /* cell under the cursor */
 static uint32_t g_cx, g_cy;             /* cursor, in region coordinates */
 static int      g_dirty = 1;
@@ -166,11 +173,12 @@ static int      g_msg_sel = -1;
 static int      g_msg_ok;
 static uint32_t g_msg_tick;
 
-int      desktop_active(void) { return g_active; }
+int      desktop_active(void) { return g_mode == MODE_LAUNCHER; }
+int      desktop_notes(void)  { return g_mode == MODE_NOTES; }
 
 void desktop_set_active(int on)
 {
-    g_active = on ? 1 : 0;
+    g_mode  = on ? MODE_LAUNCHER : MODE_3D;
     g_dirty  = 1;
 }
 uint32_t desktop_taps(void)   { return g_taps; }
@@ -393,7 +401,7 @@ void desktop_overlay_into(uint16_t *fb, uint32_t w, uint32_t h)
 int desktop_chrome_touch(uint32_t x, uint32_t y)
 {
     if (!g_active && x >= DISP_W - 22u && y < 22u) {
-        g_active = 1;               /* leave the 3D view */
+        g_mode  = MODE_LAUNCHER;    /* leave whichever view is open */
         g_dirty  = 1;
         return 1;
     }
@@ -461,10 +469,18 @@ static void open_selected(void)
     g_msg_sel  = g_sel;
     g_msg_tick = timer_ticks();
 
+    if (ic->action == DESK_ACTION_NOTES) {
+        g_mode    = MODE_NOTES;
+        notes_open();
+        g_msg_ok  = 1;
+        g_msg_sel = -1;
+        return;
+    }
+
     if (ic->action == DESK_ACTION_3D) {
         /* Hand the region over. The raycaster repaints every frame, so nothing
          * needs erasing first. */
-        g_active  = 0;
+        g_mode    = MODE_3D;
         g_msg_ok  = 1;
         g_msg_sel = -1;         /* nothing to report over a view we just left */
         return;
@@ -484,8 +500,8 @@ void desktop_touch(uint32_t x, uint32_t y, int down)
          * left and right thirds of the same region, and anything subtler would
          * be indistinguishable from turning. */
         if (down && x < 36u && y < 18u) {
-            g_active = 1;
-            g_dirty  = 1;
+            g_mode  = MODE_LAUNCHER;
+            g_dirty = 1;
         }
         return;
     }

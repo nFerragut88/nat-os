@@ -54,6 +54,7 @@ typedef struct {
 
 #define DESK_ACTION_NONE   0
 #define DESK_ACTION_3D     1    /* hand the region to the raycaster */
+#define DESK_ACTION_NOTES  2    /* hand the region to the note pad    */
 
 void desktop_init(void);
 
@@ -69,6 +70,10 @@ void desktop_touch(uint32_t x, uint32_t y, int down);
 /* Non-zero while the launcher owns the region. Cleared by opening the 3D view
  * and set again by a touch in the top-left corner, which is the way back. */
 int  desktop_active(void);
+
+/* Which view owns the region. Exactly one answer, rather than a boolean per
+ * view that could disagree with itself. */
+int  desktop_notes(void);
 
 /* Force the launcher on or off without touching the glass. Exists so the
  * renderer can be measured from the console: with the launcher active the

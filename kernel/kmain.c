@@ -25,6 +25,7 @@
 #include "display.h"
 #include "raycast.h"
 #include "desktop.h"
+#include "notes.h"
 #include "touch.h"
 #include "critical.h"
 #include "mutex.h"
@@ -1163,6 +1164,8 @@ static void task_display(void)
          * repaints unconditionally because every frame differs. */
         if (desktop_active()) {
             desktop_frame();
+        } else if (desktop_notes()) {
+            notes_frame();
         } else {
             raycast_frame();
         }
@@ -1274,9 +1277,14 @@ static void task_touch(void)
         /* Close buttons see the touch first. They occupy a column outside every
          * application viewport, so a press there is unambiguous — no consumer
          * below has a claim on those pixels. */
+        /* The note pad takes touches before anything else while it owns the
+         * region, except the close button — which is checked first below, so a
+         * press on the X is never also a keypress. */
         if (down && desktop_chrome_touch(t.x, t.y)) {
             /* Consumed. Deliberately not passed on: a press that closes a
              * program must not also select an icon underneath it. */
+        } else if (desktop_notes()) {
+            notes_touch(t.x, t.y, down);
         } else {
             desktop_touch(t.x, t.y, down);
         }
