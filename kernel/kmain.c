@@ -29,6 +29,7 @@
 #include "messages.h"
 #include "calib.h"
 #include "touch.h"
+#include "intr.h"
 #include "critical.h"
 #include "mutex.h"
 #include "shell.h"
@@ -1248,6 +1249,11 @@ static void task_display(void)
  * the picture was being checked (UM-NATOS-016 §3.4). Raw ADC values distinguish
  * "not answering" from "answering, mapped wrongly".
  */
+/* How long the touch task waits on PENIRQ before sampling anyway. Three ticks
+ * is 30 ms: brisk enough to be usable on its own if the interrupt never fires,
+ * and rare enough that an idle panel is not being clocked for nothing. */
+#define TOUCH_IDLE_TICKS 3u
+
 static void task_touch(void)
 {
     touch_state_t t;
@@ -1374,8 +1380,41 @@ static void task_touch(void)
              */
         }
 
-        /* Polled at roughly 30 Hz. Fast enough to track a finger, slow enough
-         * that the panel is not being clocked continuously for nothing. */
+        /* Two rates, chosen by whether anything is happening.
+         *
+         * While a finger is DOWN, poll every tick. The press interrupt cannot
+         * help here — it fired once, at the start — and the release has to be
+         * found by sampling, so this is the rate that decides how a drag feels.
+         *
+         * While UP, wait on PENIRQ with a timeout. A press releases the wait
+         * immediately, so idle costs nothing and response is better than the
+         * poll ever gave. The timeout is what makes this safe rather than
+         * clever: if PENIRQ does not fire — wrong edge, wrong routing, a pad
+         * that never asserts — the sleep still expires and this becomes the
+         * polling loop it replaced. The fallback IS the old behaviour, which is
+         * why the interrupt could be wired in without risking input entirely.
+         *
+         * The comment this replaces claimed roughly 30 Hz. task_sleep(1) at a
+         * 10 ms tick is 100 Hz; the figure had been wrong by 3x since it was
+         * written, which is worth noting given how much of this session was
+         * spent on frame rates measured against that same clock. */
+        /* Polling, deliberately, despite PENIRQ now being a working interrupt.
+         *
+         * The matrix underneath is verified: an injected edge routes to CPU line
+         * 23, reaches _handler_level3, and runs touch_isr (`irqtest`). What is
+         * NOT verified is a finger doing the same thing. Real taps register in
+         * the driver — 24 touch events, PENIRQ read low 30 times — while the
+         * armed edge detector latched nothing, and that gap is unexplained.
+         *
+         * So the consumer is switched off and the infrastructure kept. Shipping
+         * touch input on an interrupt whose end-to-end path has never once been
+         * observed to work would be trading a mechanism that demonstrably works
+         * for one that only should, and this project has spent enough of its
+         * time on measurements that were assumed rather than taken.
+         *
+         * touch_irq_wait() is intact and is one line from being reinstated. See
+         * UM-NATOS-023 for the four failures found on the way here and the
+         * evidence for what is still wrong. */
         task_sleep(1u);
     }
 }
@@ -1425,6 +1464,7 @@ void kmain(void)
     mutex_init(&g_shared_lock);
 
     touch_init();
+    touch_irq_init();       /* PENIRQ -> matrix -> CPU line 23; see intr.h */
 
     raycast_init();
     desktop_init();

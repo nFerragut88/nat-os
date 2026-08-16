@@ -100,6 +100,16 @@ typedef struct {
     uint32_t z;
 } touch_log_t;
 
+/* PENIRQ, wired as this kernel's first peripheral interrupt. See touch.c. */
+void     touch_irq_init(void);
+void     touch_irq_wait(uint32_t timeout_ticks);
+uint32_t touch_irq_fires(void);     /* falling edges seen by the handler */
+uint32_t touch_irq_waits(void);     /* times the task actually waited */
+int      touch_irq_last_reg(void);  /* task id the waiter registered as */
+int      touch_irq_seen(void);      /* waiter value the handler read back */
+uint32_t touch_irq_armed_rb(void);  /* PIN_REG as it read back after arming */
+uint32_t touch_irq_wakes(void);     /* those that released a waiting task */
+
 uint32_t           touch_log_count(void);
 const touch_log_t *touch_log_entry(uint32_t i);
 void               touch_log_clear(void);

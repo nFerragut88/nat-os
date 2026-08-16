@@ -140,8 +140,17 @@ _handler_level3:
     wsr.ps   a2
     rsync
 
-    /* Tick bookkeeping and comparator re-arm. */
-    call0    timer_isr
+    /* Service whichever level-3 sources are actually pending.
+     *
+     * This called timer_isr directly until the interrupt matrix existed, which
+     * was correct while CCOMPARE1 was the only source that could reach level 3.
+     * It stops being correct the moment a second one is routed: timer_isr
+     * advances the tick deadline by a whole interval every time it runs, so a
+     * GPIO interrupt arriving here would silently push the clock forward — the
+     * same corruption as the yield bug in timer.c, from the other direction.
+     *
+     * intr_dispatch reads the INTERRUPT register and dispatches on fact. */
+    call0    intr_dispatch
 
     /* Hand the current stack pointer to the scheduler; it returns the stack
      * pointer to resume on, which may belong to a different task. From this

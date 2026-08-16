@@ -4,6 +4,9 @@
 #include "display.h"
 #include "gpio.h"
 #include "xtensa.h"
+#include "intr.h"
+#include "task.h"
+#include "critical.h"
 
 #define PIN_CLK   25u
 #define PIN_MOSI  32u
@@ -205,6 +208,110 @@ void touch_init(void)
     gpio_clear(PIN_CLK);        /* mode 0 idles low */
 }
 
+/* ---- PENIRQ as an interrupt --------------------------------------------
+ *
+ * The pin idles high and is pulled low by the panel while a finger bridges it,
+ * so a press is a FALLING edge. Edge rather than level, deliberately: a level
+ * trigger stays asserted for the whole time a finger is down, and since the
+ * handler cannot clear a condition the finger is causing, the machine would
+ * re-enter this handler until the finger lifted and never run a task again.
+ * That is the failure intr_dispatch() defends against, and it is better not to
+ * arm it in the first place.
+ *
+ * Only the press is caught. Releases are found by the sampling that the press
+ * starts — see the wait protocol below — because a resistive panel's release is
+ * exactly the transition it reports least reliably (UM-NATOS-017 §7.1), and a
+ * missed release edge would leave the pointer stuck down forever.
+ */
+static volatile int      g_irq_waiter = -1;   /* task to wake, -1 = nobody */
+static volatile uint32_t g_irq_fires;
+static volatile uint32_t g_irq_wakes;
+static volatile uint32_t g_irq_waits;   /* times a task actually waited */
+static volatile int      g_irq_flag;    /* an edge arrived with nobody waiting */
+static volatile int      g_irq_last_reg = -2;  /* what the waiter registered AS */
+static volatile int      g_irq_seen_by_isr = -2; /* what the ISR read back */
+static volatile uint32_t g_irq_armed_rb;    /* PIN_REG read back after arming */
+
+static void touch_isr(void)
+{
+    /* Clear FIRST. The pin is shared with every other GPIO on the same
+     * interrupt source, and a status bit left set holds that source asserted. */
+    gpio_int_clear(PIN_IRQ);
+    g_irq_fires++;
+
+    int w = g_irq_waiter;
+    g_irq_seen_by_isr = w;
+    if (w >= 0) {
+        g_irq_waiter = -1;
+        g_irq_wakes++;
+        task_wake(w);
+    } else {
+        /* Nobody was waiting. That is usually this driver interrupting itself
+         * — the controller drives PENIRQ during a conversion, so every read
+         * generates edges while the task is awake — but it is also what a
+         * genuine edge looks like if it lands in the gap between registering as
+         * the waiter and actually going to sleep.
+         *
+         * Latching it costs nothing and closes that gap: the next wait sees the
+         * flag and returns immediately instead of sleeping through an event
+         * that already happened. */
+        g_irq_flag = 1;
+    }
+}
+
+void touch_irq_init(void)
+{
+    intr_route(INTR_SRC_GPIO_PRO, INTR_LINE_GPIO, touch_isr);
+    gpio_int_enable(PIN_IRQ, GPIO_INT_FALLING);
+}
+
+/* Waits for a press, or for `timeout_ticks` to pass, whichever comes first.
+ *
+ * The registration and the sleep must not be separated by an interrupt: if
+ * PENIRQ fired between "I am the waiter" and "I am asleep", the ISR would wake a
+ * task that is still running and the sleep that followed would run its full
+ * timeout with the event already gone. Registering inside a critical section
+ * closes that window — the same reasoning task_block()'s comment gives for not
+ * yielding itself.
+ */
+void touch_irq_wait(uint32_t timeout_ticks)
+{
+    uint32_t crit = crit_enter();
+    if (g_irq_flag) {
+        g_irq_flag = 0;
+        crit_exit(crit);
+        return;                     /* an edge is already outstanding */
+    }
+    g_irq_waiter = task_current();
+    g_irq_last_reg = g_irq_waiter;
+    g_irq_waits++;
+
+    /* Arm here and nowhere else: the pen is up, no conversion is in flight, and
+     * a waiter is registered, so the only edge that can arrive is a finger. */
+    gpio_int_enable(PIN_IRQ, GPIO_INT_FALLING);
+    /* Read back what the arm actually left in the register, from inside the
+     * window itself. Sampling it from the shell showed zero three times running,
+     * which cannot be chance when the window is 93% of the cycle — so the
+     * question is whether the arm sticks, and only the armed task can answer
+     * without the sampling being correlated with something. */
+    g_irq_armed_rb = GPIO_REG(GPIO_PIN_REG(PIN_IRQ));
+    crit_exit(crit);
+
+    task_sleep(timeout_ticks);      /* cut short by touch_isr via task_wake() */
+
+    crit = crit_enter();
+    gpio_int_disable(PIN_IRQ);      /* disarm before any SPI can run */
+    g_irq_waiter = -1;              /* timed out, or already woken */
+    crit_exit(crit);
+}
+
+uint32_t touch_irq_waits(void) { return g_irq_waits; }
+int      touch_irq_last_reg(void) { return g_irq_last_reg; }
+int      touch_irq_seen(void)     { return g_irq_seen_by_isr; }
+uint32_t touch_irq_armed_rb(void) { return g_irq_armed_rb; }
+uint32_t touch_irq_fires(void) { return g_irq_fires; }
+uint32_t touch_irq_wakes(void) { return g_irq_wakes; }
+
 /* Maps a raw reading onto the panel, clamping rather than wrapping.
  *
  * MEASURED, not assumed. A single left-to-right drag swept raw X across
@@ -251,6 +358,21 @@ int touch_read(touch_state_t *out)
         g_irq_low++;
     }
 
+    /* Mask PENIRQ for the duration of the burst.
+     *
+     * The comment above says a conversion drives this pin regardless of whether
+     * anything is touching, and that is exactly as true of the INTERRUPT as of
+     * the level. Every read therefore manufactured its own edges: 3900 of them
+     * across a handful of taps, none caused by a finger, each one indexing the
+     * "an edge arrived with nobody waiting" latch and making the idle wait
+     * return immediately forever. The driver was interrupting itself into a
+     * busy loop.
+     *
+     * Masking here means the only edges that survive are the ones a finger
+     * caused. An edge genuinely missed during the burst costs nothing: the burst
+     * only runs while the task is awake and already sampling. */
+    gpio_int_disable(PIN_IRQ);
+
     gpio_clear(PIN_CS);
 
     /* Throwaway. Powers the reference up and absorbs the inaccurate first
@@ -284,6 +406,18 @@ int touch_read(touch_state_t *out)
     uint32_t ry = (sy[1] + sy[2] + sy[3]) / 3u;
 
     gpio_set(PIN_CS);
+
+    /* Deliberately does NOT re-arm. Arming happens in touch_irq_wait().
+     *
+     * Re-arming here looked right and was the second version of this bug. The
+     * pad is still held LOW by a finger at this point, and enabling falling-edge
+     * detection against an already-low pin latches an edge immediately — so
+     * every read produced an interrupt, always while the task was awake and had
+     * no waiter registered. The counters said 100 edges and 0 wakes, which is
+     * exactly what a self-inflicted edge looks like from the outside.
+     *
+     * The interrupt is only ever useful while the task is idle and the pen is
+     * up. Arming it anywhere else can only manufacture events. */
 
     for (int i = 0; i < 4; i++) {
         out->sx[i] = sx[i];

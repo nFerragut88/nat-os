@@ -175,6 +175,11 @@ void task_block(void);
 void task_unblock(int id);
 int  task_state_of(int id);
 
+/* Like task_unblock(), but also releases a SLEEPING task — so a sleep becomes a
+ * timeout that an interrupt can cut short. Safe to call from an ISR. See the
+ * comment at the definition for why a peripheral wait needs both halves. */
+void task_wake(int id);
+
 /* Registers a task as the idle task: it is chosen only when nothing else is
  * runnable, rather than taking an equal share of the round robin. Without one,
  * a system where every task blocks has nothing to run. */

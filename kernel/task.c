@@ -488,6 +488,35 @@ void task_unblock(int id)
     }
 }
 
+void task_wake(int id)
+{
+    if (id < 0 || id >= TASK_MAX) {
+        return;
+    }
+    /* Deliberately takes SLEEPING as well as BLOCKED, which is the whole
+     * difference from task_unblock().
+     *
+     * A task waiting on hardware wants two things at once: to be released the
+     * instant the device speaks, and to be released anyway if it never does. A
+     * plain block gives the first without the second, and a task blocked on a
+     * peripheral that has failed is deaf forever. A plain sleep gives the second
+     * without the first.
+     *
+     * Sleeping with a deadline and letting an interrupt cut it short gives both,
+     * and the failure mode is the good one: if the interrupt never arrives, the
+     * deadline still fires and the caller falls back to polling. That is how the
+     * touch task survives a PENIRQ that does not work — it degrades to exactly
+     * what it did before this existed rather than to nothing.
+     *
+     * Safe from an ISR. It only promotes a state to READY; wake_tick is left
+     * alone, and the scheduler's sleep sweep ignores a task that is no longer
+     * SLEEPING. */
+    if (g_tasks[id].state == TASK_BLOCKED ||
+        g_tasks[id].state == TASK_SLEEPING) {
+        g_tasks[id].state = TASK_READY;
+    }
+}
+
 void task_set_priority(int id, int prio)
 {
     if (id < 0 || id >= TASK_MAX) {

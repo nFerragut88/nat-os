@@ -15,6 +15,7 @@
 #include "sd.h"
 #include "touch.h"
 #include "calib.h"
+#include "intr.h"
 #include "desktop.h"
 #include "uart.h"
 #include "vm.h"
@@ -95,6 +96,8 @@ static void cmd_help(void)
               "    sd            probe the microSD card\n"
               "    sdread <lba>  read and dump one 512 B block\n"
               "    cal           calibrate the touch panel\n"
+              "    calshow       last calibration result and readings\n"
+              "    intr          interrupt matrix counters\n"
               "    help          this\n");
 }
 
@@ -260,6 +263,47 @@ static void execute(char *line)
     }
     else if (str_eq(line, "calshow")) {
         calib_report();
+    }
+    else if (str_eq(line, "intr")) {
+        /* The interrupt matrix, reported rather than printed from the handler.
+         * An ISR that writes to the UART changes the timing of the thing it is
+         * measuring, and console_lock() inside a level-3 handler would deadlock
+         * against a task holding it. */
+        uart_puts("   tick  line ");
+        uart_put_dec(INTR_LINE_TIMER1);
+        uart_puts("  serviced ");
+        uart_put_dec(intr_count(INTR_LINE_TIMER1));
+        uart_puts("\n   gpio  line ");
+        uart_put_dec(INTR_LINE_GPIO);
+        uart_puts("  serviced ");
+        uart_put_dec(intr_count(INTR_LINE_GPIO));
+        uart_puts("\n   penirq edges ");
+        uart_put_dec(touch_irq_fires());
+        uart_puts("  wakes ");
+        uart_put_dec(touch_irq_wakes());
+        uart_puts("  waits ");
+        uart_put_dec(touch_irq_waits());
+        uart_puts("\n   registered as ");
+        uart_put_dec((unsigned int)touch_irq_last_reg());
+        uart_puts("  armed rb ");
+        uart_put_hex(touch_irq_armed_rb());
+        uart_puts("  isr saw ");
+        uart_put_dec((unsigned int)touch_irq_seen());
+        uart_puts("\n   spurious     ");
+        uart_put_dec(intr_spurious());
+        uart_puts("  masked mask ");
+        uart_put_hex(intr_disabled_mask());
+        uart_puts("\n");
+        if (intr_spurious()) {
+            uart_puts("   a line fired with no handler and was masked to stop a hang\n");
+        }
+        intr_dump();
+    }
+    else if (str_eq(line, "irqtest")) {
+        intr_selftest();
+    }
+    else if (str_eq(line, "irqpoke")) {
+        intr_poke();
     }
     else if (str_eq(line, "cal")) {
         uart_puts("   tap the centre of each cross; four of them\n");

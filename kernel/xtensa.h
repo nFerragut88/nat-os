@@ -60,6 +60,22 @@ static inline void xt_enable_interrupt(uint32_t bit)
     xt_set_intenable(xt_get_intenable() | (1u << bit));
 }
 
+static inline void xt_disable_interrupt(uint32_t bit)
+{
+    xt_set_intenable(xt_get_intenable() & ~(1u << bit));
+}
+
+/* Which CPU interrupt lines are asserting RIGHT NOW, regardless of whether they
+ * are enabled. A handler must mask this with INTENABLE before acting on it:
+ * INTERRUPT reports the hardware's opinion, and a line can be pending for a
+ * peripheral this kernel has not enabled and cannot service. */
+static inline uint32_t xt_get_interrupt(void)
+{
+    uint32_t v;
+    __asm__ volatile ("rsr.interrupt %0" : "=a"(v));
+    return v;
+}
+
 /* ---- processor state ---- */
 
 static inline uint32_t xt_get_ps(void)
