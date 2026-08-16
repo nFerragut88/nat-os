@@ -25,6 +25,8 @@
 #include "window.h"
 #include "phyinit.h"
 #include "wifi_osi_impl.h"
+#include "wifimac.h"
+#include "xtensa.h"
 
 uint32_t osi_add_probe(uint32_t a, uint32_t b);
 uint32_t osi_add_probe(uint32_t a, uint32_t b) { return a + b; }
@@ -119,6 +121,9 @@ static void cmd_help(void)
               "    wintest [n]   run windowed-ABI code, recursion depth n\n"
               "    vendorcall [n] call a -mabi=windowed compiled object\n"
               "    romcall       call crc32_le in the ESP32 ROM\n"
+              "    ositest       exercise the WiFi OSI table end to end\n"
+              "    macinit       bring up the WiFi MAC (needs phyinit first)\n"
+              "    maclive       which MAC registers move on their own\n"
               "    help          this\n"
               "  bring-up probes (they poke at live hardware):\n"
               "    irqtest       find the PRO CPU interrupt-enable bit\n"
@@ -470,6 +475,103 @@ static void execute(char *line)
             uart_puts("\n   phy log: ");
             uart_puts(phy_host_log_buf);
             uart_puts("\n");
+        }
+    }
+    else if (str_eq(line, "macinit")) {
+        /* Liveness is sampled BEFORE the write as well as after.
+         *
+         * Without the before-reading, "words changed" after init proves only
+         * that words change -- not that the write caused it. The pair is the
+         * measurement; either number alone is an anecdote. */
+        uint32_t addr0 = 0, addr1 = 0;
+        uint32_t live0 = wifimac_liveness(&addr0);
+        uart_puts("   before: ctrl=");
+        uart_put_hex(*(volatile uint32_t *)WIFIMAC_CTRL_REG);
+        uart_puts("  moving words=");
+        uart_put_dec(live0);
+        uart_puts("\n");
+
+        int r = wifimac_init();
+        if (r == -1) {
+            uart_puts("   refused: run 'phyinit' first (it must return 0)\n");
+        } else if (r == -2) {
+            uart_puts("   already initialised this boot\n");
+        } else {
+            uint32_t live1 = wifimac_liveness(&addr1);
+            uart_puts("   after:  ctrl=");
+            uart_put_hex(wifimac_ctrl_after());
+            uart_puts(" (was ");
+            uart_put_hex(wifimac_ctrl_before());
+            uart_puts(")  moving words=");
+            uart_put_dec(live1);
+            if (addr1) {
+                uart_puts("  first at ");
+                uart_put_hex(addr1);
+            }
+            uart_puts("\n   ");
+            uart_puts(live1 > live0
+                      ? "MAC IS RUNNING - counters advance that did not before\n"
+                      : "no new movement; the MAC is readable but may be idle\n");
+        }
+    }
+    else if (str_eq(line, "maclive")) {
+        uint32_t addrs[16], khz[16];
+        uint32_t n = wifimac_movers(addrs, khz, 16u);
+        uart_puts("   moving words=");
+        uart_put_dec(n);
+        uart_puts("  (delta is per millisecond)\n");
+        uint32_t shown = n < 16u ? n : 16u;
+        for (uint32_t i = 0; i < shown; i++) {
+            uart_puts("   ");
+            uart_put_hex(addrs[i]);
+            uart_puts("  ");
+            uart_put_dec(khz[i]);
+            uart_puts(" kHz");
+            /* ~1000/ms is 1 MHz, the 802.11 TSF rate. Flagged rather than
+             * asserted: the tolerance is wide because the 1 ms window is a
+             * busy-wait an interrupt can stretch. */
+            if (khz[i] > 900u && khz[i] < 1100u) {
+                uart_puts("   <- 1 MHz, looks like the TSF timer");
+            }
+            uart_puts("\n");
+        }
+    }
+    else if (str_eq(line, "sleeptest")) {
+        /* Does task_sleep actually sleep? Found while bringing up the MAC:
+         * a 500 ms sleep returned in about a microsecond, and two independent
+         * clocks agreed on that, so it is not a measurement artefact. */
+        uint32_t c0 = xt_ccount();
+        task_sleep(50u);                        /* 50 ticks = 500 ms */
+        uint32_t ms = (xt_ccount() - c0) / 80000u;
+        uart_puts("   task_sleep(50 ticks) took ");
+        uart_put_dec(ms);
+        uart_puts(" ms; expected ~500\n");
+    }
+    else if (str_eq(line, "mactsf")) {
+        /* Two independent clocks over half a second. The MAC's counter has no
+         * connection to the CPU's CCOUNT, so agreement to a fraction of a
+         * percent is not something a misread register or a noisy address can
+         * produce -- it is the difference between "a number changed" and "this
+         * is a 1 MHz timebase". */
+        uint32_t cycles = 0;
+        uint32_t ticks = wifimac_tsf_check(500u, &cycles);
+        uint32_t ms = cycles / 80000u;
+        uart_puts("   tsf advanced ");
+        uart_put_dec(ticks);
+        uart_puts(" over ");
+        uart_put_dec(ms);
+        uart_puts(" ms of cpu time");
+        /* Guarded, and the guard earns its place: the first run of this
+         * panicked with IntegerDivideByZero because the command was typed
+         * during boot, before the scheduler existed. task_sleep() returns
+         * immediately when there is no current task, so the interval was a
+         * handful of cycles and ms rounded to zero. */
+        if (ms == 0u) {
+            uart_puts("\n   no interval elapsed - is the scheduler running yet?\n");
+        } else {
+            uart_puts(" -> ");
+            uart_put_dec(ticks / ms);
+            uart_puts(" kHz\n");
         }
     }
     else if (str_eq(line, "ositest")) {
