@@ -2,11 +2,9 @@
 
 #include "display.h"
 #include "gpio.h"
-#include "uart.h"
 #include "mutex.h"
 #include "task.h"
 #include "xtensa.h"
-#include "critical.h"
 
 #define PIN_MOSI 13u
 #define PIN_SCLK 14u
@@ -152,9 +150,7 @@ typedef struct {
     uint32_t next;
 } dma_desc_t;
 
-static dma_desc_t g_desc  __attribute__((aligned(4)));
-static dma_desc_t g_desc2 __attribute__((aligned(4)));   /* the pipeline's other half */
-static int        g_dma_busy;   /* a transfer is in flight */
+static dma_desc_t g_desc __attribute__((aligned(4)));
 
 /* Set once by display_init(), so a panic before the panel exists draws nothing
  * rather than writing to an unconfigured controller. */
@@ -164,16 +160,8 @@ static int g_ready;
 static volatile int g_panic_mode;
 
 static int      g_dma_ok;     /* 0 disables DMA for the rest of the run */
-/* How many timeouts before DMA is abandoned. One was too few: see the wait
- * loop below for why most of them were not the engine's fault. */
-#define DMA_TIMEOUT_GIVE_UP 8u
-
 static uint32_t g_dma_timeouts;
 static uint32_t g_dma_transfers;
-static uint32_t g_took_dma;     /* spi_tx chose the DMA branch */
-static uint32_t g_took_fifo;    /* spi_tx chose the FIFO branch */
-static uint32_t g_wait_cycles;    /* spent waiting for the engine */
-static uint32_t g_setup_cycles;   /* spent programming it */
 
 static void spi2_dma_init(void)
 {
@@ -196,136 +184,37 @@ static void spi2_dma_init(void)
 /* Returns 1 if the transfer completed, 0 if it timed out. A timeout disables
  * DMA permanently rather than retrying: a DMA engine that missed one completion
  * has no reason to be trusted with the next, and the FIFO path still works. */
-/* Starting and waiting are separate so a caller can do useful work in between.
- *
- * The blocking spi2_dma_tx() below is these two back to back, which is what
- * every caller wanted until the raycaster's full-screen blit made the gap worth
- * filling: 224 transfers per frame, each with the CPU idle for the whole of it.
- *
- * The descriptor is a parameter rather than a global because a pipelined caller
- * has one transfer in flight while it prepares the next, and the engine is
- * still reading the first descriptor at that moment. One descriptor would be
- * rewritten underneath a live transfer. */
-static void spi2_dma_start(dma_desc_t *d, const uint8_t *data, uint32_t n)
+static int spi2_dma_tx(const uint8_t *data, uint32_t n)
 {
-    uint32_t t_enter = xt_ccount();
     GPIO_REG(SPI2_DMA_INT_CLR) = 0xFFFFFFFFu;
 
-    d->flags = (n & 0xFFFu)              /* size   */
-             | ((n & 0xFFFu) << 12)      /* length */
-             | (1u << 30)                /* eof    */
-             | (1u << 31);               /* owned by the DMA engine */
-    d->buf   = (uint32_t)data;
-    d->next  = 0;
+    g_desc.flags = (n & 0xFFFu)              /* size   */
+                 | ((n & 0xFFFu) << 12)      /* length */
+                 | (1u << 30)                /* eof    */
+                 | (1u << 31);               /* owned by the DMA engine */
+    g_desc.buf   = (uint32_t)data;
+    g_desc.next  = 0;
 
-    GPIO_REG(SPI2_DMA_OUT_LINK) = ((uint32_t)d & 0xFFFFFu) | DMA_OUTLINK_START;
+    GPIO_REG(SPI2_DMA_OUT_LINK) = ((uint32_t)&g_desc & 0xFFFFFu) | DMA_OUTLINK_START;
 
     GPIO_REG(SPI2_MOSI_DLEN) = n * 8u - 1u;
     GPIO_REG(SPI2_CMD)       = SPI_USR_BIT;
 
-    g_dma_busy = 1;
-    g_bytes   += n;
-    g_setup_cycles += xt_ccount() - t_enter;
-}
-
-/* Returns 0 if the engine stalled, having disabled DMA for the rest of the run.
- *
- * Bounded wait. 2,000,000 cycles is ~25 ms at 80 MHz, far beyond the ~100 us a
- * 480-byte transfer needs, and short enough that a stuck engine costs one frame
- * rather than the system. */
-static int spi2_dma_wait(void)
-{
-    if (!g_dma_busy) {
-        return 1;
-    }
-
-    uint32_t t_enter = xt_ccount();
-
-    /* Bounded by CPU TIME, not wall-clock, and that is the whole fix.
-     *
-     * This loop used xt_ccount(), which advances while the task is descheduled.
-     * A preemption longer than the bound therefore looked exactly like a
-     * stalled engine — and since the timeout permanently disables DMA, one
-     * unlucky task switch cost 84% of the display's throughput for the rest of
-     * the run. The raycaster issues ~2,900 waits a second, so "unlucky" became
-     * "within eight seconds" every time.
-     *
-     * task_cpu_cycles() excludes descheduled time, so the bound now means what
-     * it says: 25 ms of THIS TASK ACTUALLY RUNNING with the transfer still
-     * unfinished. A 480-byte transfer needs 96 us.
-     *
-     * Sampled every 256 spins because it takes a critical section, and a poll
-     * loop that enters one per iteration would cost more than the transfer. */
-    uint32_t start = task_cpu_cycles();
-    uint32_t spins = 0;
+    /* Bounded wait. 2,000,000 cycles is ~25 ms at 80 MHz, far beyond the ~100 us
+     * a 480-byte transfer needs, and short enough that a stuck engine costs one
+     * frame rather than the system. */
+    uint32_t start = xt_ccount();
     while (GPIO_REG(SPI2_CMD) & SPI_USR_BIT) {
-        if ((++spins & 0xFFu) != 0u) {
-            continue;
-        }
-        if ((task_cpu_cycles() - start) > 2000000u) {
+        if ((xt_ccount() - start) > 2000000u) {
             g_dma_timeouts++;
-            g_dma_busy  = 0;
-
-            /* One timeout no longer condemns the engine.
-             *
-             * Permanent disable on the first failure was chosen when a timeout
-             * was believed to mean a genuinely stuck engine. Most of them were
-             * not stuck at all, and the cost of being wrong was the whole
-             * fallback. Reset it and let it earn its way back; give up only if
-             * it keeps failing, which is what a real fault looks like. */
-            GPIO_REG(SPI2_DMA_CONF) |= DMA_OUT_RST | DMA_AHBM_FIFO_RST | DMA_AHBM_RST;
-            GPIO_REG(SPI2_DMA_CONF) &= ~(DMA_OUT_RST | DMA_AHBM_FIFO_RST | DMA_AHBM_RST);
-            GPIO_REG(SPI2_DMA_CONF) |= DMA_OUTDSCR_BURST | DMA_OUT_DATA_BURST;
-
-            if (g_dma_timeouts < DMA_TIMEOUT_GIVE_UP) {
-                return 0;       /* this transfer falls back; DMA stays enabled */
-            }
             g_dma_ok = 0;
-
-            /* Say so, once and loudly.
-             *
-             * Falling back to the FIFO path is the right call — a stalled
-             * engine has not earned the next transfer. Doing it SILENTLY was
-             * not: every span becomes 64-byte transactions, a full screen goes
-             * from 320 transfers to 2,400, and the fill measured 43 ms at boot
-             * takes 79 ms forever after. Nothing surfaced that. It was found by
-             * chasing a 1.8x gap between init and runtime through preemption,
-             * interrupt masking, CPU clock, SPI divider and transaction size,
-             * all of which were innocent.
-             *
-             * A degradation nobody can see is indistinguishable from the
-             * hardware simply being slow, which is exactly the conclusion it
-             * led to.*
-             * ISOLATED: about eight seconds of the 3D view is enough. Boot and
-             * the launcher never trigger it; opening the raycaster reliably
-             * does. It is NOT caused by the DMA pipelining added the same day
-             * — yesterday's telemetry already showed the blit at 1.92 B/us,
-             * which is this fallback's rate, so the 3D view has been running on
-             * the FIFO path the whole time it has existed.
-             *
-             * Why the engine stalls is still unknown. Worth noting before
-             * anyone acts on it: if the stall is spurious, resetting the engine
-             * and retrying would restore 43 ms fills, and the permanent
-             * disable is then costing 84% of the throughput to guard against a
-             * fault that may not be real. */
-            uart_puts("\n  !! display DMA timed out - FIFO path for the rest of"
-                      " this run\n"
-                      "     expect roughly half the throughput; 'bytes' shows"
-                      " dma_on=0\n");
             return 0;
         }
     }
 
-    g_dma_busy = 0;
     g_dma_transfers++;
-    g_wait_cycles += xt_ccount() - t_enter;
+    g_bytes += n;
     return 1;
-}
-
-static int spi2_dma_tx(const uint8_t *data, uint32_t n)
-{
-    spi2_dma_start(&g_desc, data, n);
-    return spi2_dma_wait();
 }
 
 uint32_t display_dma_transfers(void) { return g_dma_transfers; }
@@ -434,14 +323,12 @@ static void spi_tx(const uint8_t *data, uint32_t n)
      * descriptor setup costs more than it saves. Commands and their few
      * parameter bytes are all in that range. */
     if (g_dma_ok && !g_panic_mode && n > 64u) {
-        g_took_dma++;
         if (spi2_dma_tx(data, n)) {
             return;
         }
         /* Fell through: DMA timed out and is now disabled. The FIFO path
          * below still works, so the display degrades rather than stopping. */
     }
-    g_took_fifo++;
     spi2_tx(data, n);
 #else
     for (uint32_t i = 0; i < n; i++) {
@@ -495,90 +382,14 @@ static void set_window(uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1)
  * of how it sits in memory. Sent as one transfer: with a hardware FIFO the
  * per-call overhead dominates if this is done a byte at a time. */
 static uint8_t g_txbuf[LINE_MAX * 2u];
-static uint8_t g_txbuf2[LINE_MAX * 2u];     /* filled while g_txbuf is in flight */
-
-/* The panel wants big-endian; the framebuffer is little-endian. This is the
- * conversion that used to sit between every transfer and the next, with the bus
- * idle throughout. */
-static void swap_into(uint8_t *dst, const uint16_t *px, uint32_t n)
-{
-    for (uint32_t i = 0; i < n; i++) {
-        dst[i * 2u]      = (uint8_t)(px[i] >> 8);
-        dst[i * 2u + 1u] = (uint8_t)px[i];
-    }
-}
 
 static void push_pixels(const uint16_t *px, uint32_t n)
 {
-    swap_into(g_txbuf, px, n);
+    for (uint32_t i = 0; i < n; i++) {
+        g_txbuf[i * 2u]      = (uint8_t)(px[i] >> 8);
+        g_txbuf[i * 2u + 1u] = (uint8_t)px[i];
+    }
     spi_tx(g_txbuf, n * 2u);
-}
-
-/* Sends a contiguous run of pixels with the conversion overlapped against the
- * transfer.
- *
- * The serial version alternated: convert a span with the bus idle, transfer it
- * with the CPU idle, repeat. Two resources, each roughly half idle, for 224
- * spans a frame. Here span N+1 is converted into the other buffer while span N
- * is still going out, so the conversion disappears behind the transfer and the
- * bus stops waiting for it.
- *
- * Falls back to the blocking path if DMA is unavailable or stalls mid-run —
- * a degraded frame rate is a better outcome than a torn frame or a hang. *
- * MEASURED GAIN: inconclusive. The raycaster's blit went 55.9 ms to 55.5 ms,
- * which is inside the noise. The conversion this hides is only about 4 ms of
- * that total, and the figure it is measured against turns out to be wall-clock
- * across preemptions rather than transfer time — see display_fill_bench().
- * Kept because it is correct and costs one 480-byte buffer, not because it was
- * shown to be faster. */
-static void push_pixels_stream(const uint16_t *px, uint32_t total)
-{
-    if (!g_dma_ok || g_panic_mode || total <= LINE_MAX) {
-        while (total) {
-            uint32_t chunk = (total > LINE_MAX) ? LINE_MAX : total;
-            push_pixels(px, chunk);
-            px    += chunk;
-            total -= chunk;
-        }
-        return;
-    }
-
-    uint8_t     *buf[2]  = { g_txbuf, g_txbuf2 };
-    dma_desc_t  *desc[2] = { &g_desc, &g_desc2 };
-    int cur = 0;
-
-    uint32_t chunk = (total > LINE_MAX) ? LINE_MAX : total;
-    swap_into(buf[cur], px, chunk);
-    spi2_dma_start(desc[cur], buf[cur], chunk * 2u);
-    px    += chunk;
-    total -= chunk;
-
-    while (total) {
-        int nxt = 1 - cur;
-        uint32_t next_chunk = (total > LINE_MAX) ? LINE_MAX : total;
-
-        /* The whole point: this runs while the previous span is on the wire. */
-        swap_into(buf[nxt], px, next_chunk);
-
-        if (!spi2_dma_wait()) {
-            /* The engine stalled and DMA is now off for the run. Finish what is
-             * left the slow way rather than leaving the window half written. */
-            while (total) {
-                uint32_t c = (total > LINE_MAX) ? LINE_MAX : total;
-                push_pixels(px, c);
-                px    += c;
-                total -= c;
-            }
-            return;
-        }
-
-        spi2_dma_start(desc[nxt], buf[nxt], next_chunk * 2u);
-        px    += next_chunk;
-        total -= next_chunk;
-        cur    = nxt;
-    }
-
-    (void)spi2_dma_wait();
 }
 
 static void push_end(void)
@@ -822,7 +633,13 @@ void display_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h,
          * column has 168 rows of one pixel each, so the row-by-row path issues
          * 168 two-byte transfers and a raycaster column costs ~170 ms. The same
          * data as one stream is a single transfer. */
-        push_pixels_stream(src, w * h);
+        uint32_t total = w * h;
+        while (total) {
+            uint32_t chunk = (total > LINE_MAX) ? LINE_MAX : total;
+            push_pixels(src, chunk);
+            src   += chunk;
+            total -= chunk;
+        }
     } else {
         for (uint32_t row = 0; row < h; row++) {
             /* push_pixels byte-swaps into the transmit buffer, so the source is
@@ -927,75 +744,5 @@ void display_text(uint32_t x, uint32_t y, const char *s, uint16_t fg, uint16_t b
 }
 
 uint32_t display_bytes_written(void) { return g_bytes; }
-uint32_t display_spi_clock_live(void) { return GPIO_REG(SPI2_CLOCK); }
-
-/* Splits a transfer's cost into time the BUS was busy and time the CPU spent
- * programming it. If the bus figure alone accounts for the wall-clock, the
- * panel is the limit and no software change will help; if setup dominates, the
- * transactions are too small and the fix is fewer, larger ones. */
-uint32_t display_took_dma(void)  { return g_took_dma; }
-uint32_t display_took_fifo(void) { return g_took_fifo; }
-uint32_t display_wait_us(void)  { return g_wait_cycles / 80u; }
-uint32_t display_setup_us(void) { return g_setup_cycles / 80u; }
-void     display_reset_profile(void) { g_wait_cycles = 0; g_setup_cycles = 0; }
-int      display_dma_enabled(void)    { return g_dma_ok; }
 uint32_t display_fill_cycles(void)   { return g_last_fill_cycles; }
 int      display_owner(void)         { return mutex_owner(&g_lock); }
-
-/* Times a full-screen fill at runtime and returns the cost in microseconds.
- *
- * The same work display_init() measures at 43 ms, but run from a task with the
- * scheduler live. init's figure is single-threaded — nothing else exists yet —
- * so the difference between the two is time the display task spent descheduled
- * rather than time the panel spent receiving.
- *
- * That distinction decides what the raycaster's 55 ms blit means: whether the
- * bus is slow, or the measurement is wall-clock across preemptions. */
-uint32_t display_fill_bench(void)
-{
-    uint32_t t0 = task_cpu_cycles();
-    display_fill_rect(0, 0, DISP_W, DISP_H, 0x0000u);
-    return (task_cpu_cycles() - t0) / 80u;
-}
-
-/* The same fill with interrupts masked for its whole duration.
- *
- * display_fill_bench() removed preemption from the MEASUREMENT; this removes it
- * from the RUN. The difference between the two is everything interrupts cost
- * while a task is nominally running: the handler itself, the scheduler it
- * calls, and — the reason this is worth knowing — whatever those do to the
- * instruction cache this kernel executes from flash through.
- *
- * If the masked figure matches init's 43 ms, the whole gap is interrupt-borne
- * and no amount of DMA tuning will touch it. If it does not, the cause is
- * somewhere else entirely and the search moves.
- *
- * Masking for ~50 ms makes the tick late once. timer.c bounds its deadline in
- * both directions and counts it, which is exactly the case that was built for. */
-uint32_t display_fill_bench_masked(void)
-{
-    /* The lock is taken BEFORE masking, and this is not a detail.
-     *
-     * The first version masked first and called display_fill_rect(), which
-     * takes the draw lock. If the display task held it, the shell blocked —
-     * and a blocked task with interrupts masked can never be switched back in.
-     * The board deadlocked and the hardware watchdog reset it: rst:0x7
-     * TG0WDT_SYS_RESET.
-     *
-     * The panic-mode note forty lines up says exactly this about exactly this
-     * lock. Reading it would have been cheaper than the reset.
-     *
-     * Acquiring first works because the lock is recursive: the acquisition
-     * inside display_fill_rect() is already owned by this task and cannot
-     * block. Nothing waits while interrupts are off. */
-    display_lock();
-
-    uint32_t crit = crit_enter();
-    uint32_t t0 = xt_ccount();
-    display_fill_rect(0, 0, DISP_W, DISP_H, 0x0000u);
-    uint32_t d = xt_ccount() - t0;
-    crit_exit(crit);
-
-    display_unlock();
-    return d / 80u;
-}
