@@ -71,6 +71,15 @@ int phyinit_run(void)
         return -1;
     }
 
+    /* Prime the PHY stack here, once, rather than at each call site.
+     *
+     * The panic handler reports its high-water mark, and an UNPRIMED stack is
+     * all zeros -- which the scan reads as "entirely used" and prints as
+     * 6144 of 6144. That is not a big number, it is a missing measurement, and
+     * it appeared in a real panic report during transmit bring-up looking
+     * exactly like a stack exhaustion that had not happened. */
+    phy_stack_prime();
+
     /* Ungate the radio's clock before anything reaches its registers. */
     *(volatile uint32_t *)DPORT_WIFI_CLK_EN_REG |= DPORT_WIFI_CLK_WIFI_BT_COMMON;
 

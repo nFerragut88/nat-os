@@ -588,6 +588,18 @@ static void execute(char *line)
         wifimac_beacon_stop();
         uart_puts("   stopped\n");
     }
+    else if (str_eq(line, "probe")) {
+        /* Ten, spaced by the caller re-running this: APs answer probe requests
+         * but not reliably on the first try, and a single unanswered one would
+         * be weak evidence either way. */
+        for (int i = 0; i < 10; i++) {
+            wifimac_probe_request();
+            task_sleep(2u);
+        }
+        uart_puts("   sent 10 probe requests\n   frames addressed to us=");
+        uart_put_dec(wifimac_rx_to_us());
+        uart_puts("  (any non-zero means something HEARD us)\n");
+    }
     else if (str_eq(line, "txstat")) {
         uart_puts("   tx handed to hardware=");
         uart_put_dec(wifimac_tx_sent());

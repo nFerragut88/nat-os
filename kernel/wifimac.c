@@ -103,6 +103,18 @@ int wifimac_init(void)
 
     *(volatile uint32_t *)DPORT_WIFI_CLK_EN_REG |= DPORT_WIFI_CLK_WIFI_EN;
 
+    /* ram_tx_pwctrl_bg_init() was called here and had to be removed.
+     *
+     * It is not something open-mac calls, and merely REFERENCING it pulled
+     * further objects out of libphy.a, after which register_chipv7_phy died
+     * with IllegalInstruction inside set_rx_gain_testchip_70 -- a function on
+     * the calibration path that this kernel does not touch and had been
+     * working for days.
+     *
+     * The lesson is about the link, not the radio: with a blob this tangled,
+     * naming a symbol changes which objects are pulled in and can break code
+     * that was already correct. Reference only what open-mac references. */
+
     volatile uint32_t *ctrl = (volatile uint32_t *)WIFIMAC_CTRL_REG;
     g_before = *ctrl;
     *ctrl = g_before & MAC_INIT_MASK;
@@ -322,6 +334,9 @@ static uint8_t  g_beacon_frame[128];
 static uint32_t g_beacon_len, g_beacon_due;
 static int      g_beacon_on;
 
+static uint8_t           g_my_mac[6];
+static uint32_t          g_rx_to_us;
+static uint32_t          g_rx_to_us_subtype;
 static uint32_t          g_rx_frames;
 static uint32_t          g_rx_recycled;
 static wifi_frame_info_t g_rx_latest;
@@ -419,6 +434,7 @@ int wifimac_rx_start(void)
     if (update_rx_chain() != 0) {
         return -4;
     }
+    efuse_factory_mac(g_my_mac);
     g_rx_ready = 1;
     /* HIGH, matching the display.
      *
@@ -681,6 +697,22 @@ uint32_t wifimac_rx_service(void)
             decode_frame(item, &g_rx_latest);
             note_network(&g_rx_latest);
             g_rx_frames++;
+
+            /* Anything unicast to OUR address is proof the transmitter
+             * reached the air: no station sends to this MAC unless it first
+             * heard from it. A completion bit cannot establish that, and
+             * neither can beaconing -- a radio cannot hear itself. */
+            int mine = 1;
+            for (int b = 0; b < 6; b++) {
+                if (g_rx_latest.addr1[b] != g_my_mac[b]) {
+                    mine = 0;
+                    break;
+                }
+            }
+            if (mine) {
+                g_rx_to_us++;
+                g_rx_to_us_subtype = g_rx_latest.fc_subtype;
+            }
         }
 
         recycle_item(item);
@@ -909,6 +941,21 @@ uint32_t wifimac_tx_reap(void)
     *(volatile uint32_t *)WIFI_TXQ_CLR_STATE_COMPLETE |= (1u << slot);
     g_tx_pending = 0;
     g_tx_done++;
+
+    /* Transmit power control needs servicing, and open-mac does it here --
+     * tx_pwctrl_background(1, 0) on every fourth completion. That call is not
+     * decoration: 20 probe requests produced 20 completions and zero answers
+     * from any access point, so the MAC was reporting success while nothing
+     * useful reached the air. A completion bit says the frame left the queue,
+     * not that it left the antenna with any power behind it.
+     *
+     * Windowed, so it goes through phy_stack_call. That masks interrupts for
+     * its duration, which also makes it safe against the shell entering the
+     * PHY on the same private stack. */
+    extern int tx_pwctrl_background(int, int);
+    if ((g_tx_done & 3u) == 0u) {
+        phy_stack_call((uint32_t)&tx_pwctrl_background, 1u, 0u);
+    }
     return st;
 }
 
@@ -954,4 +1001,34 @@ uint32_t wifimac_build_beacon(uint8_t *out, const uint8_t mac[6],
     out[n++] = (uint8_t)channel;
 
     return n;
+}
+
+uint32_t wifimac_rx_to_us(void)         { return g_rx_to_us; }
+uint32_t wifimac_rx_to_us_subtype(void) { return g_rx_to_us_subtype; }
+
+/* A probe request, which is the cleanest question this kernel can ask the air.
+ *
+ * A beacon is a statement; nothing has to answer it, so silence proves nothing.
+ * A broadcast probe request with a wildcard SSID obliges every AP in range to
+ * send a probe RESPONSE addressed to this station -- and one arriving is
+ * unforgeable evidence that the transmitter works, because a radio cannot hear
+ * itself and nobody sends to this MAC without having heard it first.
+ */
+int wifimac_probe_request(void)
+{
+    uint8_t f[64];
+    uint32_t n = 0;
+
+    f[n++] = 0x40; f[n++] = 0x00;                   /* probe request */
+    f[n++] = 0x00; f[n++] = 0x00;                   /* duration */
+    for (int i = 0; i < 6; i++) { f[n++] = 0xFF; }  /* addr1 broadcast */
+    for (int i = 0; i < 6; i++) { f[n++] = g_my_mac[i]; }    /* addr2 us */
+    for (int i = 0; i < 6; i++) { f[n++] = 0xFF; }  /* addr3 broadcast bssid */
+    f[n++] = 0x00; f[n++] = 0x00;                   /* seq, filled by tx */
+
+    f[n++] = 0x00; f[n++] = 0x00;                   /* SSID tag, wildcard */
+    f[n++] = 0x01; f[n++] = 0x04;                   /* supported rates */
+    f[n++] = 0x82; f[n++] = 0x84; f[n++] = 0x8B; f[n++] = 0x96;
+
+    return wifimac_tx(f, n, 0u);                    /* 1 Mbps */
 }

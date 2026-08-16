@@ -108,6 +108,16 @@ uint32_t wifimac_tx_reap(void);
  * completion cannot stop transmission for good. */
 int      wifimac_tx_busy(void);
 uint32_t wifimac_tx_forced(void);
+/* Frames seen addressed to THIS station -- the only unforgeable proof that
+ * transmit reaches the air, since a radio cannot hear itself. */
+uint32_t wifimac_rx_to_us(void);
+uint32_t wifimac_rx_to_us_subtype(void);
+
+/* Broadcast probe request with a wildcard SSID. Every AP in range is obliged
+ * to answer one; a beacon obliges nobody, so silence after a beacon proves
+ * nothing while silence after this is informative. */
+int      wifimac_probe_request(void);
+
 uint32_t wifimac_tx_sent(void);
 uint32_t wifimac_tx_done(void);
 
