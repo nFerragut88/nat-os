@@ -55,6 +55,7 @@ typedef struct {
 #define DESK_ACTION_NONE   0
 #define DESK_ACTION_3D     1    /* hand the region to the raycaster */
 #define DESK_ACTION_NOTES  2    /* hand the region to the note pad    */
+#define DESK_ACTION_TERM   3    /* hand the region to the shell       */
 
 void desktop_init(void);
 
@@ -74,6 +75,10 @@ int  desktop_active(void);
 /* Which view owns the region. Exactly one answer, rather than a boolean per
  * view that could disagree with itself. */
 int  desktop_notes(void);
+
+/* True while the on-screen shell owns the region. Same contract as
+ * desktop_notes(): kmain routes touches to the app rather than the launcher. */
+int  desktop_term(void);
 
 /* Force the launcher on or off without touching the glass. Exists so the
  * renderer can be measured from the console: with the launcher active the

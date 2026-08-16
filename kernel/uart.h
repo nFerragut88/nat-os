@@ -2,6 +2,10 @@
 #ifndef NATOS_UART_H
 #define NATOS_UART_H
 
+/* A second destination for everything printed, or 0 for none. See uart.c. */
+typedef void (*uart_tee_fn)(char c);
+void uart_set_tee(uart_tee_fn fn);
+
 void uart_putc(char c);
 void uart_puts(const char *s);
 void uart_put_hex(unsigned int value);

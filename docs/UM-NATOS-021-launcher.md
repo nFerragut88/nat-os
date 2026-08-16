@@ -44,13 +44,13 @@ answers it.
 
 ```
   0   +----------+----------+----------+
-      | counter  | squares  | draw     |   launcher: 3 x 3 grid
-      +----------+----------+----------+   cells 80 x 51
-      | paint    | blit     | ping     |
+      | shell    | squares  | draw     |   launcher: 3 x 3 grid
+      +----------+----------+----------+   cells 80 x 70
+      | paint    | notes    | ping     |
       +----------+----------+----------+
       | pong     | rogue    | 3D view  |
       +----------+----------+----------+
- 154  | started counter                |   status strip, expires ~2 s
+ 154  | started squares                |   status strip, expires ~2 s
  168  +-------------------+------+-----+
       | application 0     | name |  X  |   four strips, pitch 28, height 26
       +-------------------+------+-----+   the right 60 px are the KERNEL's
@@ -376,7 +376,6 @@ strip reports which. Confirmed on hardware by the user.
 
 | Quantity | Value |
 |---|---|
-| Grid | 3 × 3, cells 80 × 51 px |
 | Status strip | 14 px, message expires ~2 s |
 | Double-tap window | 60 ticks (~600 ms) |
 | Minimum press | 2 ticks, rejects contact chatter |
@@ -402,8 +401,10 @@ strip reports which. Confirmed on hardware by the user.
   nothing has tested whether that is enough to be useful.
 - **No focus, no windows, no z-order.** §2. Applications occupy fixed strips and
   cannot be brought forward.
-- **No way to stop a program from the launcher.** `kill` exists only in the
-  shell; the icon grid can start and cannot stop.
+- **No way to stop a program from the launcher itself.** `kill` exists only in
+  the shell, and the icon grid can start but not stop. Since UM-NATOS-026 the
+  shell is *on* the grid, so `kill` no longer needs a host attached — but it is
+  still a command typed into another app, not something the launcher does.
 - **The `fb off` path still flickers.** §6.5. There is no buffer to stamp into,
   so the button is drawn over the panel and strobes. Accepted for a diagnostic
   mode; it would not be acceptable as the normal path.

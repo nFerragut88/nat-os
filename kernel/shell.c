@@ -252,6 +252,35 @@ static void cmd_mem(void)
     uart_puts("\n");
 }
 
+static void execute(char *line);   /* defined below */
+
+/* Runs one command line from somewhere other than the UART.
+ *
+ * execute() splits its argument in place, so a caller's string cannot be passed
+ * straight through — it would be modified, and a string literal would fault.
+ * The copy is also the length check: a line longer than the shell's own buffer
+ * is refused rather than truncated into a different command.
+ *
+ * This is the whole interface the on-screen shell needs. It deliberately does
+ * not bypass execute(): a command typed on the panel takes exactly the same
+ * path, with the same parsing and the same output, as one typed over serial. */
+void shell_run_line(const char *line)
+{
+    static char buf[LINE_MAX];
+    uint32_t i = 0;
+
+    while (line[i] && i < LINE_MAX - 1u) {
+        buf[i] = line[i];
+        i++;
+    }
+    if (line[i]) {
+        uart_puts("   line too long\n");
+        return;
+    }
+    buf[i] = 0;
+    execute(buf);
+}
+
 static void execute(char *line)
 {
     while (*line == ' ') {

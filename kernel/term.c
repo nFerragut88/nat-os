@@ -1,0 +1,355 @@
+/* nat-os — the shell, on the panel. See term.h. */
+
+#include "term.h"
+#include "shell.h"
+#include "display.h"
+#include "desktop.h"
+#include "uart.h"
+#include "timer.h"
+
+/* ---- layout -------------------------------------------------------------
+ *
+ * The same 224-row region the launcher and the note pad own, split three ways.
+ * The keyboard is the fixed cost — four rows of 26 is 104 rows, nearly half the
+ * region — and everything else fits in what is left.
+ */
+#define HDR_H      22u
+#define KEY_ROWS   4u
+#define KEY_COLS   3u
+#define KEY_H      26u
+#define KEY_W      (DISP_W / KEY_COLS)              /* 80 */
+#define KB_Y       (DESK_H - KEY_ROWS * KEY_H)      /* 224 - 104 = 120 */
+
+#define INPUT_H    11u
+#define INPUT_Y    (KB_Y - INPUT_H)                 /* 109 */
+#define OUT_Y      HDR_H
+#define OUT_H      (INPUT_Y - OUT_Y)                /* 87 */
+
+#define CHAR_W     6u
+#define LINE_H     9u
+#define TERM_COLS  39u                              /* 240/6, less a margin */
+#define TERM_ROWS  (OUT_H / LINE_H)                 /* 9 */
+
+_Static_assert(KB_Y + KEY_ROWS * KEY_H == DESK_H,
+               "keyboard must end exactly at the region boundary");
+_Static_assert(OUT_Y + OUT_H == INPUT_Y, "output pane must meet the input line");
+_Static_assert(TERM_ROWS >= 6u, "an output pane under six lines is not worth having");
+
+/* A terminal, deliberately not the note pad's LCD. Two full-region native apps
+ * that look alike are two apps a user has to read the header to tell apart. */
+#define TRM_BG   0x0000u        /* black                    */
+#define TRM_FG   0x07E0u        /* phosphor green           */
+#define TRM_DIM  0x03E0u        /* half-bright, key faces   */
+#define TRM_KEY  0x2124u        /* key body                 */
+
+/* ---- multi-tap keypad ---------------------------------------------------
+ *
+ * The same scheme and the same key sizes as the note pad (UM-NATOS-022 §3),
+ * for the same reason: 80 px keys survive touch error that 24 px keys do not.
+ * The calibration that made that necessary has since been fixed
+ * (UM-NATOS-017 §7.4), so this is now a choice rather than a workaround — but
+ * shell commands are lowercase words and multi-tap types those adequately.
+ *
+ * This is a SECOND copy of the note pad's cycling logic. That is duplication
+ * and is recorded as such rather than pretended away: factoring it out means
+ * changing a working app to serve a new one, which is a worse trade tonight
+ * than two copies with a comment. If a third consumer appears, factor it then.
+ *
+ * The bottom row differs from the note pad's. There is no `save`; the third key
+ * is `run`, because a shell's terminating key submits.
+ */
+static const char *const KEYS[KEY_ROWS][KEY_COLS] = {
+    { ".,-1",  "abc2", "def3"  },
+    { "ghi4",  "jkl5", "mno6"  },
+    { "pqrs7", "tuv8", "wxyz9" },
+    { "<",     " 0",   ">"     },   /* delete, space/zero, run */
+};
+
+static const char *const FACES[KEY_ROWS][KEY_COLS] = {
+    { "1 .,-", "2 abc", "3 def"  },
+    { "4 ghi", "5 jkl", "6 mno"  },
+    { "7 pqrs","8 tuv", "9 wxyz" },
+    { "del",   "space", "run"    },
+};
+
+#define CYCLE_TICKS 80u         /* ~800 ms, as the note pad */
+
+static int      g_live_row = -1, g_live_col = -1;
+static uint32_t g_live_index;
+static uint32_t g_live_tick;
+
+/* ---- state --------------------------------------------------------------- */
+
+#define INPUT_MAX 40u
+
+static char     g_input[INPUT_MAX];
+static uint32_t g_inlen;
+
+/* The output pane is a ring of fixed-width lines rather than a byte stream.
+ * A stream would need re-wrapping on every draw, and the wrap is already
+ * decided at capture time by where the newlines fall. */
+static char     g_out[TERM_ROWS][TERM_COLS + 1u];
+static uint32_t g_row;          /* line being written */
+static uint32_t g_col;
+
+static uint32_t g_commands;
+static int      g_kb_drawn;
+static int      g_out_dirty = 1;
+static int      g_in_dirty  = 1;
+static int      g_was_down;
+
+uint32_t term_commands(void) { return g_commands; }
+
+static void out_newline(void)
+{
+    g_row = (g_row + 1u) % TERM_ROWS;
+    g_col = 0;
+    for (uint32_t i = 0; i <= TERM_COLS; i++) {
+        g_out[g_row][i] = 0;
+    }
+}
+
+/* Installed as the UART tee for exactly the duration of one command.
+ *
+ * Runs inside uart_putc(), so it must not print, must not lock, and must not be
+ * slow — the shell calls it once per character of its own output. */
+static void capture(char c)
+{
+    if (c == '\r') {
+        return;
+    }
+    if (c == '\n') {
+        out_newline();
+        return;
+    }
+    if (g_col >= TERM_COLS) {
+        out_newline();          /* hard wrap; the alternative is losing it */
+    }
+    g_out[g_row][g_col++] = c;
+    g_out[g_row][g_col] = 0;
+}
+
+static void out_puts(const char *s)
+{
+    for (const char *p = s; *p; p++) {
+        capture(*p);
+    }
+}
+
+void term_open(void)
+{
+    g_kb_drawn  = 0;
+    g_out_dirty = 1;
+    g_in_dirty  = 1;
+    g_was_down  = 0;
+    g_live_row  = -1;
+
+    if (g_commands == 0u) {
+        out_puts("nat-os shell");
+        out_newline();
+        out_puts("type a command, then run");
+        out_newline();
+        out_puts("try: help  mem  ps  adc  i2c");
+        out_newline();
+    }
+}
+
+static void draw_header(void)
+{
+    display_fill_rect(0, 0, DISP_W, HDR_H, TRM_DIM);
+    display_text(4, 7, "shell", TRM_BG, TRM_DIM, 1u);
+
+    /* Same coordinates desktop_chrome_touch() tests, so the drawing and the hit
+     * test sit in one file and cannot drift — the note pad's rule, and the
+     * reason its close button was once invisible (UM-NATOS-022 §7). */
+    for (uint32_t i = 0; i < 10u; i++) {
+        display_fill_rect(DISP_W - 17u + i, 6u + i, 2u, 2u, TRM_BG);
+        display_fill_rect(DISP_W - 17u + (9u - i), 6u + i, 2u, 2u, TRM_BG);
+    }
+}
+
+static void draw_key(uint32_t r, uint32_t c, int live)
+{
+    uint32_t x = c * KEY_W;
+    uint32_t y = KB_Y + r * KEY_H;
+
+    uint16_t bg = live ? TRM_FG : TRM_KEY;
+    uint16_t fg = live ? TRM_BG : TRM_FG;
+
+    display_fill_rect(x + 1u, y + 1u, KEY_W - 2u, KEY_H - 2u, bg);
+
+    const char *label = FACES[r][c];
+    uint32_t tw = 0;
+    for (const char *p = label; *p; p++) {
+        tw += CHAR_W;
+    }
+    uint32_t tx = x + (KEY_W > tw ? (KEY_W - tw) / 2u : 1u);
+    display_text(tx, y + (KEY_H - 8u) / 2u, label, fg, bg, 1u);
+}
+
+static void draw_keyboard(void)
+{
+    display_fill_rect(0, KB_Y, DISP_W, DESK_H - KB_Y, TRM_BG);
+    for (uint32_t r = 0; r < KEY_ROWS; r++) {
+        for (uint32_t c = 0; c < KEY_COLS; c++) {
+            draw_key(r, c, 0);
+        }
+    }
+}
+
+/* Draws the ring oldest-first, so the newest line sits at the bottom where a
+ * terminal puts it. */
+static void draw_output(void)
+{
+    display_fill_rect(0, OUT_Y, DISP_W, OUT_H, TRM_BG);
+    for (uint32_t i = 0; i < TERM_ROWS; i++) {
+        uint32_t src = (g_row + 1u + i) % TERM_ROWS;
+        if (g_out[src][0]) {
+            display_text(2, OUT_Y + i * LINE_H, g_out[src], TRM_FG, TRM_BG, 1u);
+        }
+    }
+}
+
+static void draw_input(void)
+{
+    display_fill_rect(0, INPUT_Y, DISP_W, INPUT_H, TRM_BG);
+    display_text(2, INPUT_Y + 2u, ">", TRM_DIM, TRM_BG, 1u);
+    if (g_inlen) {
+        display_text(2u + CHAR_W + 2u, INPUT_Y + 2u, g_input, TRM_FG, TRM_BG, 1u);
+    }
+    /* Block cursor, so an empty line still shows where typing will land. */
+    display_fill_rect(2u + CHAR_W + 2u + g_inlen * CHAR_W, INPUT_Y + 2u,
+                      CHAR_W - 1u, 8u, TRM_DIM);
+}
+
+/* Ends any live multi-tap cycle. The character already sits in the buffer; this
+ * only stops the next tap on that key from replacing it. */
+static void commit(void)
+{
+    g_live_row = -1;
+    g_live_col = -1;
+}
+
+static void submit(void)
+{
+    commit();
+    if (g_inlen == 0u) {
+        return;
+    }
+
+    out_puts("> ");
+    out_puts(g_input);
+    out_newline();
+
+    /* Tee installed for exactly this call.
+     *
+     * Left installed, the reporter task's telemetry — several lines a second —
+     * would fill the pane with output nobody asked for. execute() takes the
+     * console lock for its whole run, so while this is set the only writer is
+     * the command itself. */
+    uart_set_tee(capture);
+    shell_run_line(g_input);
+    uart_set_tee(0);
+
+    g_commands++;
+    g_inlen = 0;
+    g_input[0] = 0;
+    g_out_dirty = 1;
+    g_in_dirty  = 1;
+}
+
+void term_frame(void)
+{
+    if (!g_kb_drawn) {
+        display_fill_rect(0, 0, DISP_W, DESK_H, TRM_BG);
+        draw_header();
+        draw_keyboard();
+        g_kb_drawn  = 1;
+        g_out_dirty = 1;
+        g_in_dirty  = 1;
+    }
+
+    /* A live key expires on its own, which is what lets two letters from one
+     * key be typed without a different key in between. */
+    if (g_live_row >= 0 && (timer_ticks() - g_live_tick) > CYCLE_TICKS) {
+        int r = g_live_row, c = g_live_col;
+        commit();
+        draw_key((uint32_t)r, (uint32_t)c, 0);
+    }
+
+    if (g_out_dirty) {
+        draw_output();
+        g_out_dirty = 0;
+    }
+    if (g_in_dirty) {
+        draw_input();
+        g_in_dirty = 0;
+    }
+}
+
+void term_touch(uint32_t x, uint32_t y, int down)
+{
+    if (!down) {
+        g_was_down = 0;
+        return;
+    }
+    if (g_was_down) {
+        return;                 /* one press, one action (UM-NATOS-021 §4.2) */
+    }
+    g_was_down = 1;
+
+    if (y < KB_Y || y >= DESK_H || x >= DISP_W) {
+        return;                 /* header close is handled before this is called */
+    }
+
+    uint32_t r = (y - KB_Y) / KEY_H;
+    uint32_t c = x / KEY_W;
+    if (r >= KEY_ROWS || c >= KEY_COLS) {
+        return;
+    }
+
+    const char *seq = KEYS[r][c];
+
+    if (seq[0] == '<' && seq[1] == 0) {
+        commit();
+        if (g_inlen) {
+            g_input[--g_inlen] = 0;
+            g_in_dirty = 1;
+        }
+        return;
+    }
+    if (seq[0] == '>' && seq[1] == 0) {
+        submit();
+        return;
+    }
+
+    /* Cycling: a repeat tap on the live key replaces the character it just
+     * produced; any other key commits the old one and starts fresh. */
+    int same = (g_live_row == (int)r && g_live_col == (int)c);
+    if (same) {
+        uint32_t n = 0;
+        while (seq[n]) {
+            n++;
+        }
+        g_live_index = (g_live_index + 1u) % n;
+        if (g_inlen) {
+            g_input[g_inlen - 1u] = seq[g_live_index];
+        }
+    } else {
+        if (g_live_row >= 0) {
+            draw_key((uint32_t)g_live_row, (uint32_t)g_live_col, 0);
+        }
+        if (g_inlen + 1u >= INPUT_MAX) {
+            return;             /* full: refuse rather than silently drop */
+        }
+        g_live_index = 0;
+        g_input[g_inlen++] = seq[0];
+        g_input[g_inlen] = 0;
+        g_live_row = (int)r;
+        g_live_col = (int)c;
+        draw_key(r, c, 1);
+    }
+
+    g_live_tick = timer_ticks();
+    g_in_dirty  = 1;
+}

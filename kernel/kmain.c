@@ -26,6 +26,7 @@
 #include "raycast.h"
 #include "desktop.h"
 #include "notes.h"
+#include "term.h"
 #include "messages.h"
 #include "calib.h"
 #include "touch.h"
@@ -1171,6 +1172,8 @@ static void task_display(void)
             desktop_frame();
         } else if (desktop_notes()) {
             notes_frame();
+        } else if (desktop_term()) {
+            term_frame();
         } else {
             raycast_frame();
         }
@@ -1303,6 +1306,8 @@ static void task_touch(void)
              * program must not also select an icon underneath it. */
         } else if (desktop_notes()) {
             notes_touch(t.x, t.y, down);
+        } else if (desktop_term()) {
+            term_touch(t.x, t.y, down);
         } else {
             desktop_touch(t.x, t.y, down);
         }

@@ -51,8 +51,26 @@ static unsigned int tx_fifo_used(void)
     return (REG(UART_STATUS_REG) >> UART_TXFIFO_CNT_SHIFT) & UART_TXFIFO_CNT_MASK;
 }
 
+/* Optional second destination for everything printed.
+ *
+ * Exists so the on-screen shell can show a command's output on the panel. The
+ * shell writes to the UART because that is where a shell writes; teeing here
+ * means it does not need to know it is being watched, and no output path grows
+ * a second case.
+ *
+ * Installed only around a single command's execution, never left on: the
+ * reporter task prints several lines a second, and a tee left installed would
+ * fill the screen buffer with telemetry the user did not ask for. */
+static uart_tee_fn g_tee;
+
+void uart_set_tee(uart_tee_fn fn) { g_tee = fn; }
+
 void uart_putc(char c)
 {
+    if (g_tee) {
+        g_tee(c);
+    }
+
     /* Spin rather than drop. Boot output that silently truncates is worse than
      * slow boot output — a lost line looks identical to a crash. */
     while (tx_fifo_used() >= UART_TXFIFO_DEPTH) {

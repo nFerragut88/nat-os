@@ -55,6 +55,7 @@ true" is the difference between a working boot and a silent reboot.
 | [UM-NATOS-023](UM-NATOS-023-interrupts.md) | The Interrupt Matrix, and Four Ways to Deliver an Edge to Nobody | The first peripheral interrupt this kernel routes: sources vs lines, a shared vector that could only have been right by accident, a PRO CPU enable bit that had to be measured, and four failures in which an edge was delivered perfectly to something that could not act on it |
 | [UM-NATOS-024](UM-NATOS-024-adc.md) | The ADC, and a Wrong Bit in a Right Register | SAR ADC1, the board's light sensor confirmed rather than assumed, and a one-bit error invisible to every read-back because it sat inside a twelve-bit field |
 | [UM-NATOS-025](UM-NATOS-025-i2c.md) | I2C, and Why a Preempted Master Is Legal | Bit-banged two-wire master on the last two free pins, clock stretching as the reason preemption is safe, and a self-test for the failure where a missing pull-up makes every address answer |
+| [UM-NATOS-026](UM-NATOS-026-onscreen-shell.md) | The Shell on the Panel, and Not a Menu of It | The real shell reached from a multi-tap keypad rather than a second command set that would drift from it; output captured by teeing the UART for exactly one command |
 
 ## Reading order
 
@@ -90,6 +91,7 @@ Reproducing a build: **005** alone is sufficient.
 | Interrupts | **Matrix verified, no consumer** — peripheral interrupts routable for the first time; PENIRQ proven by injection but never observed to fire from a finger, so touch stays polled, UM-NATOS-023 §6, §7 |
 | ADC | **Working on hardware** — SAR ADC1, 8 channels; the light sensor on GPIO34 moved 265 counts against a 47-count control group, UM-NATOS-024 §6 |
 | I2C | **Bus verified, nothing attached** — bit-banged on GPIO22/27; both lines drive and release correctly, no byte has yet been transferred, UM-NATOS-025 §7, §8 |
+| On-screen shell | **Working on hardware** — all 25 commands reachable with no host attached; one command set, not two, UM-NATOS-026 §2 |
 | Application input | **Live** — `SYS TOUCH` confined to the asking application's viewport; 81 delivered, 109,211 withheld, 0 confinement failures, UM-NATOS-017 §8 |
 | Application messaging | **Live** — copied through a kernel mailbox, never shared memory; 278 sent / 277 delivered / 0 bad buffers, UM-NATOS-013 §8 |
 | Application bitmaps | **Live** — `SYS BLIT`, arena-bounded source and viewport-clipped destination, UM-NATOS-012 §10 |
@@ -99,7 +101,7 @@ Reproducing a build: **005** alone is sufficient.
 | Failure handling | **Enforced** — guards checked on every switch across every task slot; `hang`/`fault`/`smash` each trigger their path on demand, UM-NATOS-019 §5 |
 | Fault reporting | **Three ways** — flash record read back by the next boot, UART report, and the reason drawn on the panel; ordered by decreasing reliability, UM-NATOS-019 §6–7 |
 | microSD | **Reading** — SPI mode, per-stage errors, bounded on an empty slot; FAT16 header read at LBA 240, UM-NATOS-020 §5.2 |
-| Launcher | **Live** — 3×3 icon grid, hybrid cursor, double-tap to launch by name; close button per program in a column outside every viewport, so a program cannot hide its own exit, UM-NATOS-021 §6.2 |
+| Launcher | **Live** — 3×3 icon grid including an on-screen shell, hybrid cursor, double-tap to launch by name; close button per program in a column outside every viewport, so a program cannot hide its own exit, UM-NATOS-021 §6.2 |
 | Notes | **Live** — multi-tap keypad, 8 messages of 160 characters in flash, verified across a power cycle and a reflash, UM-NATOS-022 §6 |
 | Stack margins | **Measured** — worst task uses 444 B of 2,048; minimum margin 78%, UM-NATOS-019 §3.1 |
 | Version control | **Initialised 2026-08-14** |

@@ -39,4 +39,12 @@ void shell_begin(void);
  * task stays preemptible and a user holding a key cannot starve the system. */
 void shell_poll(void);
 
+/* Runs one command line from somewhere other than the serial port.
+ *
+ * The on-screen shell uses this. It takes the same path as a typed line — same
+ * parsing, same output — so an on-panel command cannot diverge from the serial
+ * one it looks like. Lines longer than the shell's buffer are refused rather
+ * than truncated, because a truncated command is a DIFFERENT command. */
+void shell_run_line(const char *line);
+
 #endif /* NATOS_SHELL_H */

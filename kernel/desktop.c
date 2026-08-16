@@ -4,6 +4,7 @@
 #include "display.h"
 #include "raycast.h"
 #include "notes.h"
+#include "term.h"
 #include "shell.h"
 #include "app.h"
 #include "timer.h"
@@ -83,8 +84,8 @@ _Static_assert(APP_CHROME_W < DISP_W,
 #define GLYPH_PX 4u                     /* scale: 8x8 -> 32x32 */
 
 static const uint8_t GLYPHS[COLS * ROWS][8] = {
-    /* counter — stacked bars, tallest last */
-    { 0x00, 0x08, 0x18, 0x38, 0x78, 0xF8, 0xF8, 0x00 },
+    /* shell — a prompt caret and a cursor block */
+    { 0x00, 0x40, 0x60, 0x70, 0x60, 0x40, 0x0E, 0x00 },
     /* squares — a grid */
     { 0x00, 0x66, 0x66, 0x00, 0x00, 0x66, 0x66, 0x00 },
     /* draw — a pencil on the diagonal */
@@ -128,7 +129,7 @@ static void draw_glyph(const uint8_t *g, uint32_t x, uint32_t y, uint16_t fg)
 }
 
 static const desk_icon_t ICONS[COLS * ROWS] = {
-    { "counter",  "counter",  COLOR_CYAN,    DESK_ACTION_NONE },
+    { "shell",    0,          COLOR_CYAN,    DESK_ACTION_TERM },
     { "squares",  "squares",  COLOR_GREEN,   DESK_ACTION_NONE },
     { "draw",     "draw",     COLOR_YELLOW,  DESK_ACTION_NONE },
     { "paint",    "paint",    COLOR_MAGENTA, DESK_ACTION_NONE },
@@ -144,6 +145,7 @@ static const desk_icon_t ICONS[COLS * ROWS] = {
 #define MODE_LAUNCHER 0
 #define MODE_3D       1
 #define MODE_NOTES    2
+#define MODE_TERM     3
 static int      g_mode = MODE_LAUNCHER;
 #define g_active (g_mode == MODE_LAUNCHER)
 static int      g_sel = 0;              /* cell under the cursor */
@@ -178,6 +180,7 @@ static uint32_t g_msg_tick;
 
 int      desktop_active(void) { return g_mode == MODE_LAUNCHER; }
 int      desktop_notes(void)  { return g_mode == MODE_NOTES; }
+int      desktop_term(void)   { return g_mode == MODE_TERM; }
 
 void desktop_invalidate(void) { g_dirty = 1; }
 
@@ -484,6 +487,13 @@ static void open_selected(void)
     g_opens++;
     g_msg_sel  = g_sel;
     g_msg_tick = timer_ticks();
+
+    if (ic->action == DESK_ACTION_TERM) {
+        g_mode    = MODE_TERM;
+        term_open();
+        g_opens++;
+        return;
+    }
 
     if (ic->action == DESK_ACTION_NOTES) {
         g_mode    = MODE_NOTES;
