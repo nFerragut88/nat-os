@@ -485,8 +485,12 @@ its own viewport — which is the entire point of the syscall.
 
 - **No multi-touch.** A resistive panel cannot report two points; a second
   finger produces a reading somewhere between them.
-- **No IRQ-driven wakeup.** PENIRQ is polled, not wired to an interrupt. Doing
-  so would let the system idle until touched instead of sampling at 100 Hz.
+- **No IRQ-driven wakeup — but no longer for want of an interrupt.** PENIRQ is
+  now routed through the interrupt matrix to CPU line 23 and its handler runs
+  (UM-NATOS-023 §6). What has never been observed is a *finger* causing that to
+  happen, so the touch task still polls at 100 Hz and the consumer is switched
+  off (§7 there). The gap moved from "not wired" to "wired and unexplained",
+  which is progress of a sort and is not the same as working.
 - **No debounce or gesture recognition.** Every sample is independent; there is
   no tap, hold, drag or double-tap concept.
 - **No pointer-up event.** An application sees only that a touch is or is not

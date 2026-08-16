@@ -35,7 +35,7 @@ different route than that report anticipated.
 | Component | Role |
 |---|---|
 | `kernel/flash.c` | SPI1 user-mode read, sector erase, page program |
-| `kernel/store.c` | One checksummed record: magic, version, boots, frames |
+| `kernel/store.c` | One checksummed record: magic, version, boots, frames, the last fault, and the touch calibration |
 | `kernel/linker.ld` | `.dram.rodata` extended to `flash.o` and `store.o` |
 
 The record is validated whole. A magic word and version identify it; a checksum
@@ -299,16 +299,41 @@ rated for a hundred thousand, on a sector used by nothing else.
 
 | Quantity | Value |
 |---|---|
-| Record size | 20 B (magic, version, boots, frames, checksum) |
+| Record size | 52 B, record version 3 — see below |
 | Sector used | 4,096 B at `0x200000` |
 | Flash user clock | ~8 MHz (80 MHz / 1 / 10) |
 | Bootloader clock (inherited) | fast cache-read divider — **unusable for user commands** |
 | Max transaction | 64 B; page program capped at 60 B + 4 B header |
-| Save cadence | every 256 frames ≈ 60 s at the measured 4.4 fps |
+| Save cadence | every 256 frames — see the note below on what that interval became |
 | Erase cost | tens of ms, interrupts masked |
 | Registers saved/restored per transaction | 6 |
 | Boots survived in test | 16 |
 | Hypotheses tested against stale firmware | 2 |
+
+### 7.1 The record has grown twice since this was written
+
+Revision 1.0 described a four-field record of 20 B. It is now **13 words, 52 B,
+at record version 3**, and both additions came from other reports:
+
+| words | added by |
+|---|---|
+| magic, version, boots, frames | this report |
+| fault kind, detail, EPC, boot | UM-NATOS-019 §6 — the panic recorded to flash |
+| cal x-min/max, y-min/max | UM-NATOS-017 §7.4 — the on-device touch calibration |
+| checksum | this report |
+
+Nothing broke as it grew, because the version field does exactly what §3 says it
+is for: an older record fails validation and resets to defaults rather than
+being read with the wrong layout. That is the mechanism working, but it is worth
+noting that **no upgrade path was ever written** — a version bump silently
+discards the boot counter, the frame total and the calibration, which is why the
+panel had to be recalibrated after the field was added.
+
+**The save cadence figure also moved.** 256 frames was ≈ 60 s at the 4.4 fps
+measured here; after the lock contention fix (UM-NATOS-014 §10) the renderer runs
+several times faster, so the same 256 frames is now well under half that. The
+constant was chosen from a measured rate, and the rate changed underneath it —
+the flash sees more erases per hour than this report's wear analysis assumed.
 
 ## 8. What this does not establish
 

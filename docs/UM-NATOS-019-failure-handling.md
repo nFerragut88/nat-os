@@ -105,9 +105,14 @@ Three separate weaknesses, each individually reasonable:
    continued — scheduling tasks whose stacks had already written into a
    neighbour's, and printing numbers that were by then meaningless.
 
-Checking now happens in `task_schedule()`: all eight tasks, every switch, and a
-break calls `kernel_panic_msg()`. Eight word loads per tick is not a cost worth
-weighing against continuing to run on corrupted memory.
+Checking now happens in `task_schedule()`: every task slot, every switch, and a
+break calls `kernel_panic_msg()`. A word load per slot per tick is not a cost
+worth weighing against continuing to run on corrupted memory.
+
+> Written as "all eight tasks" when `TASK_MAX` was 8. It is now 12
+> (UM-NATOS-021 §5), and the check is written against `TASK_MAX` rather than a
+> literal, so it followed. The prose did not — which is the argument for
+> describing a loop by its bound rather than by the bound's value on the day.
 
 ### 3.1 The margins, which were never known
 

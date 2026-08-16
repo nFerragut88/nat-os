@@ -1,27 +1,66 @@
 # UM-NATOS-007 — Development Roadmap M1–M5
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.0 · 2026-08-14 · Status: current
+Revision 1.1 · 2026-08-16 · Status: **all milestones complete** — §2 state updated, §2.1 added
 
 ---
 
 ## 1. Abstract
 
-This report defines the remaining milestones to a working operating system,
-each with its technical content, principal risk, and exit criteria. Milestones
-are ordered so that each one's correctness can be established before the next
-depends on it.
+This report defines the milestones to a working operating system, each with its
+technical content, principal risk, and exit criteria. Milestones are ordered so
+that each one's correctness can be established before the next depends on it.
+
+**All five are complete**, each with a verification report carrying its own PASS.
+The plan sections below (§3-§7) are left exactly as written at M0: they are the
+plan, and a plan rewritten after the fact to match what happened is not a record
+of anything. §2.1 covers the work that came after M5, none of which was planned
+here.
 
 ## 2. Milestone summary
 
-| ID | Deliverable | Principal risk | State |
-|---|---|---|---|
-| M0 | Kernel boots, self-checks pass | Link map errors | **Complete** |
-| M1 | Timer interrupt and tick counter | Vector installation; silent faults | Next |
-| M2 | Two native tasks, preemptive switching | Context save correctness | — |
-| M3 | Heap allocator and VM memory model | Fragmentation; arena sizing | — |
-| M4 | Bytecode interpreter executing a program | Instruction set design | — |
-| M5 | Two VM applications time-sliced in bounded arenas | Isolation enforcement | — |
+| ID | Deliverable | Principal risk | State | Verified by |
+|---|---|---|---|---|
+| M0 | Kernel boots, self-checks pass | Link map errors | **Complete** | UM-NATOS-006 |
+| M1 | Timer interrupt and tick counter | Vector installation; silent faults | **Complete** | UM-NATOS-008 |
+| M2 | Two native tasks, preemptive switching | Context save correctness | **Complete** | UM-NATOS-009 |
+| M3 | Heap allocator and VM memory model | Fragmentation; arena sizing | **Complete** | UM-NATOS-010 |
+| M4 | Bytecode interpreter executing a program | Instruction set design | **Complete** | UM-NATOS-012 |
+| M5 | Two VM applications time-sliced in bounded arenas | Isolation enforcement | **Complete** | UM-NATOS-013 |
+
+Every principal risk in that column materialised except one. Vector installation
+did produce silent resets; context save correctness cost the LOOP-state defect
+that made every task switch to itself (UM-NATOS-009); isolation enforcement is
+the only one that went in cleanly first time.
+
+### 2.1 What came after M5, none of it planned here
+
+| Work | Report | State |
+|---|---|---|
+| Display driver, DMA, framebuffer | UM-NATOS-015 | working |
+| Display syscalls, viewport confinement | UM-NATOS-016 | working |
+| Touchscreen, and an axis inverted for three months | UM-NATOS-017 | working |
+| Flash persistence | UM-NATOS-018 | working |
+| Panic, watchdog, stack guards | UM-NATOS-019 | working |
+| microSD | UM-NATOS-020 | reading only |
+| Launcher, icons, close buttons | UM-NATOS-021 | working |
+| Note pad, multi-tap keypad, saved messages | UM-NATOS-022 | working |
+| Interrupt matrix | UM-NATOS-023 | **infrastructure only** |
+| SAR ADC1 and the board's light sensor | UM-NATOS-024 | working |
+| Bit-banged I2C | UM-NATOS-025 | **bus only, no byte transferred** |
+
+Two things are worth noting about that list.
+
+**It is longer than the plan it follows.** Eleven reports of unplanned work
+against five of planned, which says the milestones were a plan for a kernel and
+what got built afterwards was a device.
+
+**The one structural item on it is missing.** Every driver above is reachable
+only from the kernel. The VM has twelve syscalls, all hardcoded, and no device
+model - so an application cannot read the light sensor, scan the I2C bus or
+receive a keypress (UM-NATOS-022 §2). Each new peripheral has meant a kernel
+edit plus a hand-written syscall, which was tolerable at two and is the obvious
+next piece of *architecture* rather than more drivers.
 
 ---
 

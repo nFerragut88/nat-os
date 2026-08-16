@@ -93,10 +93,10 @@ Reproducing a build: **005** alone is sufficient.
 | Application input | **Live** — `SYS TOUCH` confined to the asking application's viewport; 81 delivered, 109,211 withheld, 0 confinement failures, UM-NATOS-017 §8 |
 | Application messaging | **Live** — copied through a kernel mailbox, never shared memory; 278 sent / 277 delivered / 0 bad buffers, UM-NATOS-013 §8 |
 | Application bitmaps | **Live** — `SYS BLIT`, arena-bounded source and viewport-clipped destination, UM-NATOS-012 §10 |
-| DRAM budget | **Measured** — 158,000 B allocatable today (167,680 before `TASK_MAX` rose to 8); a full framebuffer is unnecessary, UM-NATOS-010 §7.2 |
+| DRAM budget | **Measured at M3** — 167,680 B allocatable then, 158,000 B after `TASK_MAX` rose to 8; it has since risen to 12 and three drivers have been added, so the current figure is lower and unremeasured, UM-NATOS-010 §7.2 |
 | Flash cache | **Enabled** — `.rodata` mapped from flash, UM-NATOS-011 |
 | Persistence | **Live** — checksummed record in a flash sector at 2 MB; boot counter and a cumulative frame count survived 16 resets, UM-NATOS-018 §6 |
-| Failure handling | **Enforced** — guards checked on every switch across all eight tasks; `hang`/`fault`/`smash` each trigger their path on demand, UM-NATOS-019 §5 |
+| Failure handling | **Enforced** — guards checked on every switch across every task slot; `hang`/`fault`/`smash` each trigger their path on demand, UM-NATOS-019 §5 |
 | Fault reporting | **Three ways** — flash record read back by the next boot, UART report, and the reason drawn on the panel; ordered by decreasing reliability, UM-NATOS-019 §6–7 |
 | microSD | **Reading** — SPI mode, per-stage errors, bounded on an empty slot; FAT16 header read at LBA 240, UM-NATOS-020 §5.2 |
 | Launcher | **Live** — 3×3 icon grid, hybrid cursor, double-tap to launch by name; close button per program in a column outside every viewport, so a program cannot hide its own exit, UM-NATOS-021 §6.2 |

@@ -575,7 +575,54 @@ def notes_screen():
     return _wrap(600, sy + sh + 44, b)
 
 
+def adc_ldrscan():
+    """Every ADC1 channel watched at once while a hand passed over the board."""
+    b = _DEFS
+    chans = [
+        ("ch0", "gpio36", 12,  "touch penirq"),
+        ("ch1", "gpio37", 8,   "header"),
+        ("ch2", "gpio38", 0,   "header"),
+        ("ch3", "gpio39", 14,  "touch miso"),
+        ("ch4", "gpio32", 0,   "touch mosi"),
+        ("ch5", "gpio33", 47,  "touch cs"),
+        ("ch6", "gpio34", 265, "the light sensor"),
+        ("ch7", "gpio35", 4,   "header"),
+    ]
+    full = 280.0
+    x0, w0 = 150.0, 330.0
+    y = 30
+    b += (f'<text x="24" y="20" {_FONT} font-size="10" font-weight="600" '
+          f'fill="{INK}">channel</text>'
+          f'<text x="{x0}" y="20" {_FONT} font-size="10" font-weight="600" '
+          f'fill="{INK}">counts moved while the light changed</text>')
+    for name, pad, spread, note in chans:
+        hot = spread > 150
+        bw = (spread / full) * w0
+        b += (f'<text x="24" y="{y + 13}" {_MONO} font-size="9.5" '
+              f'fill="{ACCENT if hot else INK}">{name} {pad}</text>')
+        b += (f'<rect x="{x0}" y="{y}" width="{w0}" height="17" rx="2" '
+              f'fill="{PANEL}" stroke="{RULE}" stroke-width="1"/>')
+        if bw > 0.5:
+            b += (f'<rect x="{x0}" y="{y}" width="{bw}" height="17" rx="2" '
+                  f'fill="{OURS}" stroke="{ACCENT}" stroke-width="1"/>')
+        b += (f'<text x="{x0 + w0 + 10}" y="{y + 13}" {_MONO} font-size="9" '
+              f'fill="{ACCENT if hot else SOFT}">{spread}</text>')
+        b += (f'<text x="{x0 + 6}" y="{y + 13}" {_FONT} font-size="8.5" '
+              f'fill="{SOFT if not hot else ACCENT}">{note}</text>')
+        y += 24
+    b += (f'<text x="24" y="{y + 16}" {_FONT} font-size="9" fill="{SOFT}">'
+          f'The four touch pins are the control group: pins that should not '
+          f'respond to light, measuring the noise floor</text>'
+          f'<text x="24" y="{y + 30}" {_FONT} font-size="9" fill="{SOFT}">'
+          f'while the experiment runs. 265 counts against a worst case of 47 is '
+          f'what makes ch6 a sensor rather than a plausible number.</text>')
+    return _wrap(600, y + 44, b)
+
+
 FIGURES = {
+    "adc_ldrscan": (adc_ldrscan, "Every ADC1 channel watched while a hand passed over the board. "
+                    "The touch pins are the control group."),
+
     "boot_chain": (boot_chain, "The four boot stages. Only L2 upward is project code; "
                                "the interface to L1 is the image header alone."),
     "memory_map": (memory_map, "Kernel address layout. .rodata is kept out of IRAM because "

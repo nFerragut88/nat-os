@@ -103,7 +103,18 @@ static void cmd_help(void)
               "    adc           read every ADC1 channel\n"
               "    ldrscan       watch all ADC channels for movement\n"
               "    i2c           check the bus and scan it\n"
-              "    help          this\n");
+              "    3d [off]      3D view or launcher\n"
+              "    taps          dump the touch press log\n"
+              "    tapsclear     empty it\n"
+              "    hang          wedge the kernel; the watchdog should reset it\n"
+              "    help          this\n"
+              "  bring-up probes (they poke at live hardware):\n"
+              "    irqtest       find the PRO CPU interrupt-enable bit\n"
+              "    irqpoke       inject one GPIO edge\n"
+              "    adcprobe      sweep the RTC sensor-pad mux\n"
+              "    adcconv       prove an ADC conversion really runs\n"
+              "    adcdrive      sweep against gpio32 - DRIVES touch MOSI\n"
+              "    ldr           watch the light sensor only\n");
 }
 
 static void cmd_ps(void)

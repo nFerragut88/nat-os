@@ -316,7 +316,9 @@ feeding it, at which point it becomes a genuine hang detector.
   there is no way to wait for an event.
 - ~~No priorities.~~ Superseded by §11. What remains is that LOW starves
   absolutely: there is no aging and no anti-starvation of any kind.
-- **Fixed ceiling.** `TASK_MAX = 4`, 2 KB stacks, statically allocated.
+- ~~Fixed ceiling, `TASK_MAX = 4`.~~ Now 12 (UM-NATOS-021 §5). What remains
+  is that stacks are still 2 KB and statically allocated: the ceiling moved,
+  it did not stop being a ceiling.
 - ~~No idle task.~~ Added with blocking, and it executes `WAITI` rather than
   spinning.
 - **Single core.** APP_CPU is untouched.
