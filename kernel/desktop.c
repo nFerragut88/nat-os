@@ -47,6 +47,65 @@
  * several taps and every single tap reads as a double. */
 #define TAP_MIN_TICKS 2u
 
+/* ---- icons ---------------------------------------------------------------
+ *
+ * 8x8 monochrome glyphs, one byte per row, MSB leftmost, drawn at 3x.
+ *
+ * A bitmap rather than a routine per icon: nine bespoke drawing functions is
+ * more code than nine constants and makes every icon a place a bug can hide.
+ * A bitmap is also editable by anyone who can count to eight, which matters
+ * more than elegance for something whose only requirement is being recognisable
+ * at 24 pixels.
+ *
+ * Still not an asset pipeline (UM-NATOS-011 §6). These are in the image because
+ * there is nowhere else to put them yet. */
+#define GLYPH_PX 3u                     /* scale: 8x8 -> 24x24 */
+
+static const uint8_t GLYPHS[COLS * ROWS][8] = {
+    /* counter — stacked bars, tallest last */
+    { 0x00, 0x08, 0x18, 0x38, 0x78, 0xF8, 0xF8, 0x00 },
+    /* squares — a grid */
+    { 0x00, 0x66, 0x66, 0x00, 0x00, 0x66, 0x66, 0x00 },
+    /* draw — a pencil on the diagonal */
+    { 0x03, 0x07, 0x0E, 0x1C, 0x38, 0x70, 0xE0, 0xC0 },
+    /* paint — a brush with a broad head */
+    { 0x18, 0x18, 0x18, 0x3C, 0x7E, 0x7E, 0x3C, 0x18 },
+    /* blit — two overlapping frames */
+    { 0x7C, 0x44, 0x5F, 0x51, 0x7D, 0x05, 0x1F, 0x00 },
+    /* ping — a ball travelling right */
+    { 0x00, 0x00, 0x30, 0x78, 0x78, 0x30, 0x0C, 0x06 },
+    /* pong — paddle and ball */
+    { 0xC0, 0xC0, 0xC6, 0xCF, 0xCF, 0xC6, 0xC0, 0xC0 },
+    /* rogue — a wall */
+    { 0xFF, 0x91, 0x91, 0xFF, 0x19, 0x19, 0xFF, 0x00 },
+    /* 3D view — an isometric cube */
+    { 0x18, 0x3C, 0x7E, 0xFF, 0xFF, 0x7E, 0x3C, 0x18 },
+};
+
+/* One draw call per run of set pixels, not one per pixel. A row of eight
+ * becomes a single 24-pixel rectangle instead of eight 3-pixel ones, which
+ * matters because every one of them takes the draw lock. */
+static void draw_glyph(const uint8_t *g, uint32_t x, uint32_t y, uint16_t fg)
+{
+    for (uint32_t row = 0; row < 8u; row++) {
+        uint8_t bits = g[row];
+        uint32_t col = 0;
+        while (col < 8u) {
+            if (!(bits & (0x80u >> col))) {
+                col++;
+                continue;
+            }
+            uint32_t run = 0;
+            while (col + run < 8u && (bits & (0x80u >> (col + run)))) {
+                run++;
+            }
+            display_fill_rect(x + col * GLYPH_PX, y + row * GLYPH_PX,
+                              run * GLYPH_PX, GLYPH_PX, fg);
+            col += run;
+        }
+    }
+}
+
 static const desk_icon_t ICONS[COLS * ROWS] = {
     { "counter",  "counter",  COLOR_CYAN,    DESK_ACTION_NONE },
     { "squares",  "squares",  COLOR_GREEN,   DESK_ACTION_NONE },
@@ -69,7 +128,9 @@ static uint32_t g_press_tick;
 static uint32_t g_last_tap_tick;
 static int      g_last_tap_sel = -1;
 
-static uint32_t g_taps, g_opens;
+static uint32_t g_taps, g_opens, g_closes;
+
+uint32_t desktop_closes(void) { return g_closes; }
 
 /* Diagnostics for the selection itself.
  *
@@ -169,16 +230,18 @@ static void draw_icon(int i)
     uint32_t y = cell_y(i);
     const desk_icon_t *ic = &ICONS[i];
 
-    uint32_t ix = x + (CELL_W - ICON_W) / 2u;
-    uint32_t iy = y + 6u;
+    uint32_t gw = 8u * GLYPH_PX;
+    uint32_t ix = x + (CELL_W - gw) / 2u;
+    uint32_t iy = y + 5u;
 
     /* Selected cell gets a filled backing rather than a border: a one-pixel
      * outline on this panel is legible only if you already know it is there. */
+    uint16_t bg = (i == g_sel) ? COLOR_GREY : COLOR_BLACK;
     if (i == g_sel) {
         display_fill_rect(x + 1u, y + 1u, CELL_W - 2u, CELL_H - 2u, COLOR_GREY);
     }
 
-    display_fill_rect(ix, iy, ICON_W, ICON_H, ic->colour);
+    draw_glyph(GLYPHS[i], ix, iy, ic->colour);
 
     /* Running programs are marked, so the launcher shows state rather than just
      * offering actions. Without it, double-tapping a program already running
@@ -193,13 +256,89 @@ static void draw_icon(int i)
             }
         }
     }
+    /* A running program is marked by underlining its label rather than by a dot
+     * in the corner of the icon. The dot was four pixels and read as a
+     * rendering artefact; a full-width rule under the name cannot. */
+    uint32_t lx = x + 4u;
+    uint32_t ly = y + 5u + gw + 4u;
+    display_text(lx, ly, ic->label, COLOR_WHITE, bg, 1u);
     if (running) {
-        display_fill_rect(ix + ICON_W - 6u, iy + 2u, 4u, 4u, COLOR_BLACK);
+        display_fill_rect(lx, ly + 9u, CELL_W - 8u, 1u, ic->colour);
+    }
+}
+
+/* ---- close buttons -------------------------------------------------------
+ *
+ * One per running application, drawn in the column app.h reserves outside every
+ * viewport, plus one for the 3D view.
+ *
+ * Drawn every frame rather than on change. The X sits outside the application's
+ * viewport so the application cannot paint over it, but the cost of being wrong
+ * about that is a user who cannot close a program, and repainting sixteen
+ * pixels four times a frame is cheaper than being sure. */
+#define CHROME_X (DISP_W - APP_CHROME_W)
+#define CLOSE_X  (DISP_W - APP_CLOSE_W)
+
+static void draw_close(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint16_t fg)
+{
+    display_fill_rect(x, y, w, h, COLOR_BLACK);
+
+    /* A diagonal cross, one square per step, so it reads as an X rather than a
+     * smear at this size. */
+    uint32_t n = (w < h ? w : h) - 6u;
+    for (uint32_t i = 0; i < n; i++) {
+        display_fill_rect(x + 3u + i, y + 3u + i, 2u, 2u, fg);
+        display_fill_rect(x + 3u + (n - 1u - i), y + 3u + i, 2u, 2u, fg);
+    }
+}
+
+void desktop_chrome(void)
+{
+    for (int id = 0; id < APP_MAX; id++) {
+        uint32_t y = APP_VIEW_Y0 + (uint32_t)id * APP_VIEW_PITCH;
+
+        if (app_state(id) == APP_RUNNING) {
+            /* Name, then the X. The name is what makes the strip legible: a
+             * program that draws nothing is otherwise indistinguishable from an
+             * empty slot that somehow grew a button. */
+            display_fill_rect(CHROME_X, y, APP_NAME_W, APP_VIEW_H, COLOR_BLACK);
+            display_text(CHROME_X + 1u, y + 9u, app_name(id),
+                         COLOR_GREY, COLOR_BLACK, 1u);
+            draw_close(CLOSE_X, y, APP_CLOSE_W, APP_VIEW_H, COLOR_RED);
+        } else {
+            /* Clear the whole column when the slot empties, or the name and X
+             * outlive the program and offer to close something already gone. */
+            display_fill_rect(CHROME_X, y, APP_CHROME_W, APP_VIEW_H, COLOR_BLACK);
+        }
     }
 
-    uint32_t lx = x + 4u;
-    display_text(lx, y + ICON_H + 12u, ic->label, COLOR_WHITE,
-                 (i == g_sel) ? COLOR_GREY : COLOR_BLACK, 1u);
+    if (!g_active) {
+        draw_close(DISP_W - 20u, 2u, 18u, 18u, COLOR_WHITE);
+    }
+}
+
+/* Non-zero if the touch was consumed by a close button. */
+int desktop_chrome_touch(uint32_t x, uint32_t y)
+{
+    if (!g_active && x >= DISP_W - 22u && y < 22u) {
+        g_active = 1;               /* leave the 3D view */
+        g_dirty  = 1;
+        return 1;
+    }
+
+    if (x < CLOSE_X) {
+        return 0;               /* the name is a label, not a button */
+    }
+    for (int id = 0; id < APP_MAX; id++) {
+        uint32_t top = APP_VIEW_Y0 + (uint32_t)id * APP_VIEW_PITCH;
+        if (y >= top && y < top + APP_VIEW_H && app_state(id) == APP_RUNNING) {
+            app_kill(id);
+            g_closes++;
+            g_dirty = 1;            /* the launcher's running marks changed */
+            return 1;
+        }
+    }
+    return 0;
 }
 
 void desktop_frame(void)

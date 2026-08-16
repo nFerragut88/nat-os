@@ -25,8 +25,40 @@
 #define NATOS_APP_H
 
 #include <stdint.h>
+#include "display.h"
 
 #define APP_MAX 4
+
+/* ---- where an application may draw, and where it may not ----------------
+ *
+ * Exported because the close button depends on the exact boundary. The kernel
+ * reserves a column at the right of every strip and draws the X there, so the
+ * viewport handed to the application STOPS short of it.
+ *
+ * That is isolation, not layout. If the close button lived inside the viewport
+ * an application could paint over it, draw a decoy elsewhere, or simply fill
+ * its strip and hide the way out. Putting it outside means the one control the
+ * user needs in order to escape a misbehaving program is the one control that
+ * program cannot touch — the same argument as the viewport itself
+ * (UM-NATOS-016 §2), applied to a pixel the user owns rather than one the
+ * application does. */
+#define APP_VIEW_Y0     168u
+#define APP_VIEW_PITCH   28u
+#define APP_VIEW_H       26u
+/* The kernel's column: the program's NAME and its close button.
+ *
+ * The name is there because without it the area is unreadable. Four empty
+ * strips with two X floating in them is what a user actually saw, and the
+ * honest reading of that is "what are those" — the programs starting at boot
+ * exchange messages rather than drawing, so nothing identified them. A close
+ * button for something you cannot name is worse than no close button.
+ *
+ * 7 characters at 6 px, then the X. Everything left of it belongs to the
+ * application. */
+#define APP_NAME_W       44u
+#define APP_CLOSE_W      16u
+#define APP_CHROME_W    (APP_NAME_W + APP_CLOSE_W)
+#define APP_VIEW_W      (DISP_W - APP_CHROME_W)
 
 typedef enum {
     APP_FREE = 0,

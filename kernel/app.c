@@ -20,11 +20,8 @@ typedef struct {
 
 static app_t g_apps[APP_MAX];
 
-/* Where applications may draw. Above this the kernel keeps its status area;
- * below it the colour strip. Neither is reachable from an application. */
-#define APP_VIEW_Y0    168u
-#define APP_VIEW_PITCH 28u
-#define APP_VIEW_H     26u
+/* The strip geometry now lives in app.h, because the close button has to agree
+ * with it exactly. See the note there. */
 
 /* Releases the arena and records why the application stopped. Kept in one place
  * because "terminating an application releases its arena completely" is an exit
@@ -90,7 +87,7 @@ int app_start(const char *name, const uint8_t *img, uint32_t len,
          * only coordinates it can express are inside it. Same property as its
          * arena, applied to pixels. */
         vm_set_viewport(&a->vm, 0u, APP_VIEW_Y0 + (uint32_t)id * APP_VIEW_PITCH,
-                        DISP_W, APP_VIEW_H);
+                        APP_VIEW_W, APP_VIEW_H);
         vm_set_app_id(&a->vm, id);
 
         /* A fresh application must not inherit mail addressed to whoever held

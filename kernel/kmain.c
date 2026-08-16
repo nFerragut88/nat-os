@@ -1153,6 +1153,9 @@ static void task_display(void)
         } else {
             raycast_frame();
         }
+
+        /* Close buttons last, so they sit over whatever drew beneath them. */
+        desktop_chrome();
         spectrum_region(SPEC_Y, SPEC_H, frame, 96u);
 
         frame++;
@@ -1255,7 +1258,15 @@ static void task_touch(void)
 
         /* Routed on every sample, pressed or not: a double-tap is two
          * press-RELEASE pairs, so the launcher needs to see the releases. */
-        desktop_touch(t.x, t.y, down);
+        /* Close buttons see the touch first. They occupy a column outside every
+         * application viewport, so a press there is unambiguous — no consumer
+         * below has a claim on those pixels. */
+        if (down && desktop_chrome_touch(t.x, t.y)) {
+            /* Consumed. Deliberately not passed on: a press that closes a
+             * program must not also select an icon underneath it. */
+        } else {
+            desktop_touch(t.x, t.y, down);
+        }
 
         /* Latch the raw and mapped values on EVERY press, whoever consumes it.
          *

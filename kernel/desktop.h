@@ -35,6 +35,7 @@
 #define NATOS_DESKTOP_H
 
 #include <stdint.h>
+#include "app.h"
 
 /* The launcher owns the same region the 3D view does. Only one of them draws at
  * a time — see desktop_active(). */
@@ -76,6 +77,16 @@ void desktop_set_active(int on);
 
 /* Counters, for the reporter — a launcher that never sees a tap and a touch
  * path that never delivers one look identical on the glass. */
+/* Draws the close buttons: one per running application in the column app.h
+ * reserves outside every viewport, plus one for the 3D view. Called every
+ * frame, whichever owner is drawing the region above. */
+void desktop_chrome(void);
+
+/* Offers a touch to the close buttons first. Returns non-zero if it was
+ * consumed, in which case nothing else should see it. */
+int  desktop_chrome_touch(uint32_t x, uint32_t y);
+
+uint32_t desktop_closes(void);
 uint32_t desktop_taps(void);
 
 /* First and last sample of the most recent press, and the cell each landed in.
