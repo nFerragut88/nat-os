@@ -1,7 +1,7 @@
 # nat-os — Engineering Documentation
 
 **Used Medias LLC — Embedded Systems Division**
-Document set: `UM-NATOS-001` … `UM-NATOS-021`
+Document set: `UM-NATOS-001` … `UM-NATOS-022`
 Project: nat-os — a from-scratch operating system for the ESP32
 Hardware: developed and verified on the ESP32-2432S028R ("Cheap Yellow Display")
 Last revised: 2026-08-15
@@ -51,6 +51,7 @@ true" is the difference between a working boot and a silent reboot.
 | [UM-NATOS-019](UM-NATOS-019-failure-handling.md) | Failure Handling, and Three Mechanisms That Had Never Fired | Stack guards enforced in the scheduler, the watchdog erasing its own panic reports, measured stack margins, a UART receive path one byte behind, and a fault reported to flash and to the panel |
 | [UM-NATOS-020](UM-NATOS-020-sdcard.md) | microSD over SPI, and a Pad Table That Is Not in Pin Order | SPI mode and why, per-stage error codes, the IO_MUX entry that is the UART's receive pad, and a cross-check whose samples could not have caught it |
 | [UM-NATOS-021](UM-NATOS-021-launcher.md) | The Launcher, and Four Defects It Found by Existing | Icon grid and hybrid cursor, launch by name, status text that lied about state, selection read at the worst moment, the missing idle task, a close button an application cannot reach, and a correct diagnosis fixed at twenty times the necessary scope |
+| [UM-NATOS-022](UM-NATOS-022-notes.md) | The Note Pad, and a Workaround Wearing a Costume | Multi-tap keypad, messages saved to flash and read back after a power cycle, and a keypad whose key size is a touch calibration fault in disguise |
 
 ## Reading order
 
@@ -93,6 +94,7 @@ Reproducing a build: **005** alone is sufficient.
 | Fault reporting | **Three ways** — flash record read back by the next boot, UART report, and the reason drawn on the panel; ordered by decreasing reliability, UM-NATOS-019 §6–7 |
 | microSD | **Reading** — SPI mode, per-stage errors, bounded on an empty slot; FAT16 header read at LBA 240, UM-NATOS-020 §5.2 |
 | Launcher | **Live** — 3×3 icon grid, hybrid cursor, double-tap to launch by name; close button per program in a column outside every viewport, so a program cannot hide its own exit, UM-NATOS-021 §6.2 |
+| Notes | **Live** — multi-tap keypad, 8 messages of 160 characters in flash, verified across a power cycle and a reflash, UM-NATOS-022 §6 |
 | Stack margins | **Measured** — worst task uses 444 B of 2,048; minimum margin 78%, UM-NATOS-019 §3.1 |
 | Version control | **Initialised 2026-08-14** |
 | JTAG debug probe | Ordered, not in hand |
@@ -192,3 +194,10 @@ Reproducing a build: **005** alone is sufficient.
 > measurement insisted the renderer was correct. The second wrote 324 pixels
 > into a buffer that was already being sent. Prefer the fix whose blast radius
 > matches the defect. UM-NATOS-021 §6.6.
+
+> **Standing rule for workarounds — tolerating a defect is not fixing it.** The
+> note pad's keys are 80 px because the touch mapping reads about 24 px low on
+> X; a 24 px key was destroyed by that error and an 80 px key absorbs it. The
+> app works, the fault is untouched, and every future element finer than 80 px
+> will meet it again. Record which one you did, at the place a reader would
+> otherwise assume the generous version. UM-NATOS-022 §3.3.

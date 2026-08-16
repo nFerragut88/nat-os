@@ -515,6 +515,66 @@ def sd_init_stages():
     return _wrap(600, y + 36, b)
 
 
+def notes_screen():
+    """The note pad's layout, and who owns which pixels."""
+    b = _DEFS
+    sx, sy = 150.0, 24.0
+    sw, sh = 240.0, 168.0        # 1:1 with the panel
+
+    b += (f'<rect x="{sx}" y="{sy}" width="{sw}" height="{sh}" fill="{PANEL}" '
+          f'stroke="{INK}" stroke-width="1.5"/>')
+
+    # header
+    b += (f'<rect x="{sx}" y="{sy}" width="{sw}" height="22" fill="{INK}"/>')
+    b += (f'<text x="{sx + 5}" y="{sy + 15}" {_MONO} font-size="9" '
+          f'fill="{PANEL}">WRITE</text>')
+    b += (f'<text x="{sx + 176}" y="{sy + 15}" {_MONO} font-size="9" '
+          f'fill="{PANEL}">@ 03</text>')
+    b += (f'<text x="{sx + 224}" y="{sy + 15}" {_MONO} font-size="11" '
+          f'fill="{PANEL}">x</text>')
+
+    # text area
+    b += (f'<text x="{sx + 5}" y="{sy + 38}" {_MONO} font-size="9" '
+          f'fill="{SOFT}">hello_</text>')
+
+    # keypad 3 x 4, keys 80 x 26 starting at y = 64
+    faces = [["1 .,?!", "2 abc", "3 def"],
+             ["4 ghi",  "5 jkl", "6 mno"],
+             ["7 pqrs", "8 tuv", "9 wxyz"],
+             ["del",    "space", "save"]]
+    for r in range(4):
+        for c in range(3):
+            kx = sx + c * 80.0
+            ky = sy + 64.0 + r * 26.0
+            live = (r == 0 and c == 1)
+            b += (f'<rect x="{kx + 1}" y="{ky + 1}" width="78" height="24" '
+                  f'fill="{ACCENT if live else RULE}" stroke="{INK}" '
+                  f'stroke-width="0.5"/>')
+            b += (f'<text x="{kx + 40}" y="{ky + 17}" {_MONO} font-size="8.5" '
+                  f'fill="{PANEL if live else INK}" '
+                  f'text-anchor="middle">{faces[r][c]}</text>')
+
+    # annotations
+    ann = [
+        (sy + 11, "header — tap to swap WRITE / INBOX; owns its close button"),
+        (sy + 40, "text — in INBOX, left half pages back, right half forward"),
+        (sy + 100, "keypad — 80 x 26; the lit key is still cycling"),
+    ]
+    for y, label in ann:
+        b += (f'<line x1="{sx - 6}" y1="{y}" x2="24" y2="{y}" '
+              f'stroke="{FAINT}" stroke-width="1" stroke-dasharray="2 2"/>')
+        b += (f'<text x="24" y="{y - 3}" {_FONT} font-size="8.5" '
+              f'fill="{SOFT}">{label}</text>')
+
+    b += (f'<text x="24" y="{sy + sh + 18}" {_FONT} font-size="9" fill="{SOFT}">'
+          f'Keys are 80 px wide because the touch mapping reads about 24 px low '
+          f'on X. That fault is not fixed — it is</text>'
+          f'<text x="24" y="{sy + sh + 32}" {_FONT} font-size="9" fill="{SOFT}">'
+          f'absorbed. A 24 px key was destroyed by it: typing `e` produced `w`, '
+          f'reliably.</text>')
+    return _wrap(600, sy + sh + 44, b)
+
+
 FIGURES = {
     "boot_chain": (boot_chain, "The four boot stages. Only L2 upward is project code; "
                                "the interface to L1 is the image header alone."),
@@ -544,6 +604,9 @@ FIGURES = {
                                      "itself. Recovery and evidence are in direct "
                                      "conflict, and the watchdog silently won until "
                                      "the conflict was measured."),
+    "notes_screen": (notes_screen, "The note pad. Key size is a consequence of a "
+                                   "touch calibration fault the layout absorbs "
+                                   "rather than corrects."),
     "sd_init_stages": (sd_init_stages, "Card bring-up, and the error code each stage "
                                        "answers to. An empty slot and a wrong pin map "
                                        "produce identical silence, so the stage that "
