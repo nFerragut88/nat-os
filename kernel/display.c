@@ -164,6 +164,10 @@ static int g_ready;
 static volatile int g_panic_mode;
 
 static int      g_dma_ok;     /* 0 disables DMA for the rest of the run */
+/* How many timeouts before DMA is abandoned. One was too few: see the wait
+ * loop below for why most of them were not the engine's fault. */
+#define DMA_TIMEOUT_GIVE_UP 8u
+
 static uint32_t g_dma_timeouts;
 static uint32_t g_dma_transfers;
 static uint32_t g_took_dma;     /* spi_tx chose the DMA branch */
@@ -235,13 +239,48 @@ static int spi2_dma_wait(void)
         return 1;
     }
 
-    uint32_t start = xt_ccount();
-    uint32_t t_enter = start;
+    uint32_t t_enter = xt_ccount();
+
+    /* Bounded by CPU TIME, not wall-clock, and that is the whole fix.
+     *
+     * This loop used xt_ccount(), which advances while the task is descheduled.
+     * A preemption longer than the bound therefore looked exactly like a
+     * stalled engine — and since the timeout permanently disables DMA, one
+     * unlucky task switch cost 84% of the display's throughput for the rest of
+     * the run. The raycaster issues ~2,900 waits a second, so "unlucky" became
+     * "within eight seconds" every time.
+     *
+     * task_cpu_cycles() excludes descheduled time, so the bound now means what
+     * it says: 25 ms of THIS TASK ACTUALLY RUNNING with the transfer still
+     * unfinished. A 480-byte transfer needs 96 us.
+     *
+     * Sampled every 256 spins because it takes a critical section, and a poll
+     * loop that enters one per iteration would cost more than the transfer. */
+    uint32_t start = task_cpu_cycles();
+    uint32_t spins = 0;
     while (GPIO_REG(SPI2_CMD) & SPI_USR_BIT) {
-        if ((xt_ccount() - start) > 2000000u) {
+        if ((++spins & 0xFFu) != 0u) {
+            continue;
+        }
+        if ((task_cpu_cycles() - start) > 2000000u) {
             g_dma_timeouts++;
-            g_dma_ok    = 0;
             g_dma_busy  = 0;
+
+            /* One timeout no longer condemns the engine.
+             *
+             * Permanent disable on the first failure was chosen when a timeout
+             * was believed to mean a genuinely stuck engine. Most of them were
+             * not stuck at all, and the cost of being wrong was the whole
+             * fallback. Reset it and let it earn its way back; give up only if
+             * it keeps failing, which is what a real fault looks like. */
+            GPIO_REG(SPI2_DMA_CONF) |= DMA_OUT_RST | DMA_AHBM_FIFO_RST | DMA_AHBM_RST;
+            GPIO_REG(SPI2_DMA_CONF) &= ~(DMA_OUT_RST | DMA_AHBM_FIFO_RST | DMA_AHBM_RST);
+            GPIO_REG(SPI2_DMA_CONF) |= DMA_OUTDSCR_BURST | DMA_OUT_DATA_BURST;
+
+            if (g_dma_timeouts < DMA_TIMEOUT_GIVE_UP) {
+                return 0;       /* this transfer falls back; DMA stays enabled */
+            }
+            g_dma_ok = 0;
 
             /* Say so, once and loudly.
              *
