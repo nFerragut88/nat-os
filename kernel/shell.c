@@ -258,6 +258,9 @@ static void execute(char *line)
         desktop_set_active(!on);
         uart_puts(on ? "   3D view\n" : "   launcher\n");
     }
+    else if (str_eq(line, "calshow")) {
+        calib_report();
+    }
     else if (str_eq(line, "cal")) {
         uart_puts("   tap the centre of each cross; four of them\n");
         calib_start();

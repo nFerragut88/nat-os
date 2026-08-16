@@ -16,6 +16,11 @@
 #include <stdint.h>
 
 void calib_start(void);
+
+/* Prints the last run's raw readings and the calibration in use. Held rather
+ * than only printed at the moment of measurement, because that moment is
+ * precisely when nobody is watching the serial line. */
+void calib_report(void);
 int  calib_running(void);
 
 /* Fed the RAW channel values, not mapped coordinates: mapping is what is being

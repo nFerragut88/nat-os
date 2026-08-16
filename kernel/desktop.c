@@ -179,6 +179,8 @@ static uint32_t g_msg_tick;
 int      desktop_active(void) { return g_mode == MODE_LAUNCHER; }
 int      desktop_notes(void)  { return g_mode == MODE_NOTES; }
 
+void desktop_invalidate(void) { g_dirty = 1; }
+
 void desktop_set_active(int on)
 {
     g_mode  = on ? MODE_LAUNCHER : MODE_3D;

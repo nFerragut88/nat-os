@@ -80,6 +80,11 @@ int  desktop_notes(void);
  * raycaster does not run at all, and its timers read zero. */
 void desktop_set_active(int on);
 
+/* Forces a full repaint. For anything that took the panel and gave it back —
+ * the calibration routine clears the screen, and the launcher only repaints
+ * when something has changed, so without this it hands back a blank panel. */
+void desktop_invalidate(void);
+
 /* Counters, for the reporter — a launcher that never sees a tap and a touch
  * path that never delivers one look identical on the glass. */
 /* Draws the close buttons: one per running application in the column app.h
