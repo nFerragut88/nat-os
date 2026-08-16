@@ -6,6 +6,7 @@
 #include "desktop.h"
 #include "uart.h"
 #include "timer.h"
+#include "audio.h"
 
 /* ---- layout -------------------------------------------------------------
  *
@@ -399,6 +400,15 @@ void term_touch(uint32_t x, uint32_t y, int down)
     }
 
     const char *seq = KEYS[r][c];
+
+    /* Click on every accepted press.
+     *
+     * This is what the audio was built for. Multi-tap's worst property is that
+     * a press registering is INVISIBLE — UM-NATOS-022 §3.4 notes the press that
+     * "did not register" is usually one that did, which then replaces the
+     * letter you wanted. A click resolves that with feedback that costs none of
+     * the 224 rows every other part of this interface is competing for. */
+    audio_click();
 
     if (seq[0] == '<' && seq[1] == 0) {
         commit();

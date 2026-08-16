@@ -104,8 +104,8 @@ static void cmd_help(void)
               "    adc           read every ADC1 channel\n"
               "    ldrscan       watch all ADC channels for movement\n"
               "    i2c           check the bus and scan it\n"
-              "    tone <hz>     sound a tone on DAC2; 'tone 0' stops it\n"
-              "    beep          a short 1 kHz beep\n"
+              "    tone <hz>     tone on gpio26; 'tone 0' stops. try 3000, not 440\n"
+              "    beep          a short 3 kHz beep\n"
               "    3d [off]      3D view or launcher\n"
               "    taps          dump the touch press log\n"
               "    tapsclear     empty it\n"
@@ -322,8 +322,23 @@ static void execute(char *line)
     }
     else if (str_eq(line, "findspk")) { audio_find_speaker(); }
     else if (str_eq(line, "spktest")) { audio_probe_square(); }
+    else if (str_eq(line, "audio")) { audio_dump(); }
+    else if (str_eq(line, "spkhold")) {
+        int pin = parse_int(arg);
+        uint32_t mux = 0x3FF49028u;             /* gpio26 */
+        if (pin == 25) { mux = 0x3FF49024u; }
+        else if (pin == 4) { mux = 0x3FF49048u; }
+        else if (pin == 16) { mux = 0x3FF4904Cu; }
+        else if (pin == 17) { mux = 0x3FF49050u; }
+        else if (pin != 26) { pin = 26; }
+        uart_puts("   warbling on gpio ");
+        uart_put_dec((unsigned int)pin);
+        uart_puts(" for 15 s - put the speaker to your ear\n");
+        audio_hold((uint32_t)pin, mux, 15u);
+        uart_puts("   done\n");
+    }
     else if (str_eq(line, "beep")) {
-        audio_beep(1000u, 20u);
+        audio_beep(3000u, 20u);
         uart_puts("   beep\n");
     }
     else if (str_eq(line, "hang")) {

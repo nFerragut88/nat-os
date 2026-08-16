@@ -5,6 +5,7 @@
 #include "display.h"
 #include "timer.h"
 #include "messages.h"
+#include "audio.h"
 
 /* ---- layout --------------------------------------------------------------
  *
@@ -357,6 +358,7 @@ void notes_touch(uint32_t x, uint32_t y, int down)
 
     const char *seq = KEYS[r][c];
     g_keys++;
+    audio_click();          /* see term.c: multi-tap needs press feedback */
 
     /* While reading, the letter keys do nothing: an inbox is not an edit box,
      * and a stray tap should not silently start composing over a message the

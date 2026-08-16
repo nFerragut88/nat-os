@@ -56,6 +56,7 @@ true" is the difference between a working boot and a silent reboot.
 | [UM-NATOS-024](UM-NATOS-024-adc.md) | The ADC, and a Wrong Bit in a Right Register | SAR ADC1, the board's light sensor confirmed rather than assumed, and a one-bit error invisible to every read-back because it sat inside a twelve-bit field |
 | [UM-NATOS-025](UM-NATOS-025-i2c.md) | I2C, and Why a Preempted Master Is Legal | Bit-banged two-wire master on the last two free pins, clock stretching as the reason preemption is safe, and a self-test for the failure where a missing pull-up makes every address answer |
 | [UM-NATOS-026](UM-NATOS-026-onscreen-shell.md) | The Shell on the Panel, and Not a Menu of It | The real shell reached from a multi-tap keypad rather than a second command set that would drift from it; output captured by teeing the UART for exactly one command |
+| [UM-NATOS-027](UM-NATOS-027-audio.md) | Audio, and Three Ways to Be Silent | Hardware PWM on the speaker pin, a click on every keypress, and three stacked faults where each one made the next invisible — including a self-check that could not fail by construction |
 
 ## Reading order
 
@@ -92,6 +93,7 @@ Reproducing a build: **005** alone is sufficient.
 | ADC | **Working on hardware** — SAR ADC1, 8 channels; the light sensor on GPIO34 moved 265 counts against a 47-count control group, UM-NATOS-024 §6 |
 | I2C | **Bus verified, nothing attached** — bit-banged on GPIO22/27; both lines drive and release correctly, no byte has yet been transferred, UM-NATOS-025 §7, §8 |
 | On-screen shell | **Working on hardware** — all 25 commands reachable with no host attached; one command set, not two, UM-NATOS-026 §2 |
+| Audio | **Working on hardware** — LEDC hardware PWM on GPIO26, no CPU while sounding; a click on every keypress. Tones only, and 440 Hz is inaudible on this speaker while 3 kHz is clear, UM-NATOS-027 §4 |
 | Application input | **Live** — `SYS TOUCH` confined to the asking application's viewport; 81 delivered, 109,211 withheld, 0 confinement failures, UM-NATOS-017 §8 |
 | Application messaging | **Live** — copied through a kernel mailbox, never shared memory; 278 sent / 277 delivered / 0 bad buffers, UM-NATOS-013 §8 |
 | Application bitmaps | **Live** — `SYS BLIT`, arena-bounded source and viewport-clipped destination, UM-NATOS-012 §10 |
