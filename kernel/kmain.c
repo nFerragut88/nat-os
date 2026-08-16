@@ -1240,8 +1240,16 @@ static void task_display(void)
          *
          * So this is now the limiter, and it is safe to shorten for two reasons
          * that did not hold before: scheduler ageing bounds the starvation it
-         * used to cause, and applications no longer block waiting for the panel. */
-        task_sleep(2u);
+         * used to cause, and applications no longer block waiting for the panel.
+         *
+         * Now a yield, for the same reason as the touch task: this was
+         * task_sleep(2u) against a task_sleep that never slept, so the renderer
+         * has always run flat out and every frame-rate figure above was
+         * measured that way. A real 20 ms sleep on top of 31 ms of work took
+         * the frame period from ~32 ms to ~51 ms — the fix was correct and the
+         * consequence here was a slower view. The yield restores the timing
+         * these numbers were taken under. */
+        task_yield();
     }
 }
 
@@ -1425,7 +1433,20 @@ static void task_touch(void)
          * touch_irq_wait() is intact and is one line from being reinstated. See
          * UM-NATOS-023 for the four failures found on the way here and the
          * evidence for what is still wrong. */
-        task_sleep(1u);
+        /* Yields rather than sleeps, and that is a RESTORATION, not a change.
+         *
+         * This was task_sleep(1u). Until task_sleep was fixed it did not sleep
+         * at all — it returned in ~107 cycles — so this loop had always polled
+         * flat out, and every tuning decision about touch responsiveness was
+         * made against that behaviour. Making the sleep real dropped the poll
+         * rate from continuous to 100 Hz in one step and taps started being
+         * missed.
+         *
+         * A yield reproduces exactly what this loop was doing before, on a
+         * clock that is now correct. Whether 100 Hz polling would actually be
+         * enough is a separate question worth answering deliberately, with the
+         * panel in front of someone — not by inheriting it from a bug. */
+        task_yield();
     }
 }
 
