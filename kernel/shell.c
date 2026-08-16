@@ -117,7 +117,9 @@ static void cmd_help(void)
               "    adcprobe      sweep the RTC sensor-pad mux\n"
               "    adcconv       prove an ADC conversion really runs\n"
               "    adcdrive      sweep against gpio32 - DRIVES touch MOSI\n"
-              "    ldr           watch the light sensor only\n");
+              "    ldr           watch the light sensor only\n"
+              "    findspk       square wave on each candidate speaker pin\n"
+              "    spktest       prove the square-wave generator works\n");
 }
 
 static void cmd_ps(void)

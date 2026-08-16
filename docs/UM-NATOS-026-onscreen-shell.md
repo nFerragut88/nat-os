@@ -1,7 +1,7 @@
 # UM-NATOS-026 — The Shell on the Panel, and Not a Menu of It
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.0 · 2026-08-16 · Status: **Complete, verified on hardware**
+Revision 1.1 · 2026-08-16 · Status: **Complete, verified on hardware** — §4.1 added, scrollback
 
 ---
 
@@ -81,6 +81,38 @@ The output pane is a **ring of fixed-width lines**, not a byte stream. A stream
 would need re-wrapping on every draw, and the wrap is already decided at capture
 time by where the newlines fall.
 
+### 4.1 Scrollback
+
+Nine visible lines was the wrong size for the two commands most worth running.
+`help` produces about thirty lines and `adc` about fifteen, so the pane showed
+the end of a list whose beginning was the part being asked for.
+
+The ring now holds **48 lines** — a little over three screens of `help` — while
+still showing nine. The bound is deliberate rather than generous: this is a
+fixed allocation in a kernel with no paging, so scrollback that grew with output
+would be an unbounded allocation driven by whatever the user typed. 48 lines
+costs under 2 KB of `.bss`.
+
+**Tapping the output pane scrolls it**: upper half back, lower half forward,
+half a screen per tap. A line per tap would be nine taps to move one screen,
+which on a panel this slow is not a control but a chore; half-screens also leave
+two lines of overlap so the reader need not remember what the last line was.
+
+A **scrollbar appears on the right only when there is something to scroll**. It
+is the affordance as much as the indicator — nothing else on screen says the
+pane can be scrolled, and a gesture with no visible cue is a feature only its
+author knows about.
+
+Lines are addressed by **distance back from the write cursor**, never forward
+from an origin. A ring has no origin once it has wrapped, and counting forward
+from one means recomputing where it moved to on every draw. The arithmetic was
+checked by simulating 70 lines through the 48-line ring and comparing the window
+against a plain list at all 40 scroll positions.
+
+Submitting a command snaps to the newest; scrolling stays put while reading.
+Output only ever arrives because a command was submitted, so a pane that jumped
+mid-read would be worse than one that does not follow.
+
 ## 5. The keypad is a second copy
 
 `term.c` carries its own multi-tap cycling logic, duplicating the note pad's.
@@ -129,10 +161,11 @@ than diverting it, so attaching a host does not change what the panel shows.
 
 ## 8. What this does not establish
 
-- **Nine lines is not much.** `help` and `adc` produce more than that and the
-  oldest scrolls off. The ring keeps the newest, which is right for most
-  commands and wrong for `help` — the one output where the top matters.
-- **No scrollback.** What leaves the ring is gone; there is no way to look back.
+- **48 lines is still a bound.** `help` is about thirty lines, so a `help`
+  followed by anything long pushes its start out of the ring. What leaves is
+  gone — there is no paging to flash and no way to look further back.
+- **Scrolling is by tap, so it costs presses.** Reaching the top of a full ring
+  is nine taps.
 - **No history, no editing.** `del` removes the last character. There is no
   cursor movement, no recall of the previous command, and re-running a
   fifteen-tap command means fifteen taps again.
