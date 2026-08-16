@@ -256,7 +256,19 @@ static int spi2_dma_wait(void)
              *
              * A degradation nobody can see is indistinguishable from the
              * hardware simply being slow, which is exactly the conclusion it
-             * led to. */
+             * led to.*
+             * ISOLATED: about eight seconds of the 3D view is enough. Boot and
+             * the launcher never trigger it; opening the raycaster reliably
+             * does. It is NOT caused by the DMA pipelining added the same day
+             * — yesterday's telemetry already showed the blit at 1.92 B/us,
+             * which is this fallback's rate, so the 3D view has been running on
+             * the FIFO path the whole time it has existed.
+             *
+             * Why the engine stalls is still unknown. Worth noting before
+             * anyone acts on it: if the stall is spurious, resetting the engine
+             * and retrying would restore 43 ms fills, and the permanent
+             * disable is then costing 84% of the throughput to guard against a
+             * fault that may not be real. */
             uart_puts("\n  !! display DMA timed out - FIFO path for the rest of"
                       " this run\n"
                       "     expect roughly half the throughput; 'bytes' shows"
