@@ -26,6 +26,7 @@
 #include "raycast.h"
 #include "desktop.h"
 #include "notes.h"
+#include "messages.h"
 #include "touch.h"
 #include "critical.h"
 #include "mutex.h"
@@ -1436,6 +1437,14 @@ void kmain(void)
             uart_put_dec((unsigned int)(-sd_rc));
         }
         uart_puts("\n");
+    }
+
+    uart_puts("  messages     : ");
+    {
+        int found = (msg_load() == 0);
+        uart_puts(found ? "loaded " : "empty (");
+        uart_put_dec(msg_count());
+        uart_puts(found ? " saved\n" : " )\n");
     }
 
     uart_puts("  display      : ");

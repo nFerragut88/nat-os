@@ -351,7 +351,18 @@ void desktop_chrome(void)
      *
      * The application close buttons above are unaffected either way: they sit in
      * the strips, which no full-region view touches. */
-    if (!g_active && !raycast_framebuffer()) {
+    /* Who draws the close button depends on who owns the region:
+     *
+     *   3D view, framebuffer on   the raycaster stamps it into the buffer, so
+     *                             it and the frame arrive in one transfer
+     *   3D view, framebuffer off  drawn here, and it flickers; fb off is a
+     *                             diagnostic mode
+     *   note pad                  the app draws it in its own header
+     *
+     * The middle case is the only one this branch is for. It used to be the
+     * only case considered, which is why the note pad's button was invisible:
+     * present, hit-testable, and drawn by nobody. */
+    if (g_mode == MODE_3D && !raycast_framebuffer()) {
         draw_close(DISP_W - 20u, 2u, 18u, 18u, COLOR_WHITE);
     }
 }
