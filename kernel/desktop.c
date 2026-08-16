@@ -334,14 +334,22 @@ void desktop_chrome(void)
     }
 
     if (!g_active) {
-        draw_close(DISP_W - 20u, 2u, 18u, 18u, COLOR_WHITE);
+        /* A bar the open view never draws into, so this is painted once per
+         * frame over pixels nobody else touched — no flicker, whatever the view
+         * above is doing. */
+        display_fill_rect(0, DESK_BAR_Y, DISP_W, DESK_BAR_H, COLOR_BLACK);
+        display_text(4, DESK_BAR_Y + 4u,
+                     desktop_art() ? "colours" : "3D view",
+                     COLOR_GREY, COLOR_BLACK, 1u);
+        draw_close(DISP_W - DESK_BAR_H, DESK_BAR_Y, DESK_BAR_H, DESK_BAR_H,
+                   COLOR_WHITE);
     }
 }
 
 /* Non-zero if the touch was consumed by a close button. */
 int desktop_chrome_touch(uint32_t x, uint32_t y)
 {
-    if (!g_active && x >= DISP_W - 22u && y < 22u) {
+    if (!g_active && x >= DISP_W - DESK_BAR_H - 6u && y >= DESK_BAR_Y) {
         g_mode  = MODE_LAUNCHER;    /* leave whichever view is open */
         g_dirty  = 1;
         return 1;

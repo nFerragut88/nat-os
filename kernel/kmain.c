@@ -1154,9 +1154,9 @@ static void task_display(void)
             /* The colour artwork, now a view you open rather than a permanent
              * band along the bottom of the screen. Same ownership rule as the
              * 3D view: it has the whole region and a close button. */
-            spectrum_region(0u,   26u,           frame, 0u);
-            spectrum_region(26u,  DESK_H - 52u,  frame, 48u);
-            spectrum_region(DESK_H - 26u, 26u,   frame, 96u);
+            spectrum_region(0u,  26u,               frame, 0u);
+            spectrum_region(26u, DESK_BAR_Y - 52u,  frame, 48u);
+            spectrum_region(DESK_BAR_Y - 26u, 26u,  frame, 96u);
         } else {
             raycast_frame();
         }

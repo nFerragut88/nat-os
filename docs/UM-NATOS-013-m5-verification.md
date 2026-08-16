@@ -7,6 +7,14 @@ Revision 1.1 · 2026-08-15 · Status: **PASS** — all three exit criteria met o
 
 ## 1. Abstract
 
+> **Revision note, 2026-08-15.** `ping` and `pong` are no longer started by
+> `kmain` at boot. They exchange messages rather than drawing, so on screen they
+> appeared only as two close buttons in an otherwise empty band — controls
+> offering to destroy programs the user had not started (UM-NATOS-021 §6.5).
+> The messaging evidence below is unchanged and still reproducible; it is now
+> **opt-in**, by launching them from the menu with ping first. The `ipc` counters
+> in the reporter read zero until you do.
+
 Milestone 5 runs multiple bytecode applications concurrently, each confined to
 its own arena, with an application that misbehaves terminated without affecting
 the others. It adds an application table and lifecycle, a third level of

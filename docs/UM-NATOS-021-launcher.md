@@ -1,7 +1,7 @@
 # UM-NATOS-021 — The Launcher, and Four Defects It Found by Existing
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.1 · 2026-08-15 · Status: **Complete, verified on hardware** — §6 added, icons and a close button outside the viewport
+Revision 1.2 · 2026-08-15 · Status: **Complete, verified on hardware** — §2.1 relaid out, §6.5 added on chrome that cannot flicker
 
 ---
 
@@ -44,25 +44,28 @@ answers it.
 
 ```
   0   +----------+----------+----------+
-      | counter  | squares  | draw     |   launcher: 3 x 3 grid
-      +----------+----------+----------+   cells 80 x 51
+      | counter  | squares  | draw     |   launcher: 3 x 4 grid
+      +----------+----------+----------+   cells 80 x 52
       | paint    | blit     | ping     |
+      +----------+----------+----------+   ten cells used of twelve;
+      | pong     | rogue    | 3D view  |   the empty two cannot be selected
       +----------+----------+----------+
-      | pong     | rogue    | 3D view  |
-      +----------+----------+----------+
- 154  | started counter                |   status strip, expires ~2 s
- 168  +-------------------+------+-----+
-      | application 0     | name |  X  |   four strips, pitch 28, height 26
+      | colours  |          |          |
+ 208  +----------+----------+----------+
+      | status / chrome bar            |   launch messages, or the open
+ 224  +-------------------+------+-----+   view's name and close button
+      | application 0     | name |  X  |   four strips, pitch 24, height 22
       +-------------------+------+-----+   the right 60 px are the KERNEL's
       | application 1     | name |  X  |
       ...
- 288  +--------------------------------+
-      | colour strip                   |
  320  +--------------------------------+
 ```
 
 Everything left of the name belongs to the application. The name and the X do
 not — see §6.2.
+
+**Nothing below row 208 is drawn at boot.** The strips appear when a program
+occupies them, and nothing starts on its own; §6.5 explains why that changed.
 
 The 3D view is an icon rather than a permanent fixture: it becomes something you
 open, returning via the top-left corner.
@@ -228,6 +231,47 @@ rendering artefact. It was found while writing §9 of this report.
 A mark too small to be read wrongly is also too small to be read at all. The
 underline spans the cell.
 
+### 6.5 Chrome over a repainting view cannot be ordered into working
+
+*Added in revision 1.2.*
+
+Two things held permanent screen space without earning it: a band of application
+strips, and an animated colour strip along the bottom. Asked what that area was,
+the answer was that the strips were empty and the X boxes in them belonged to
+`ping` and `pong` — started automatically by `kmain`, exchanging messages rather
+than drawing. A boot that hands the user two controls whose only purpose is to
+destroy programs they did not start.
+
+Nothing starts on its own now, and the colour artwork became a menu entry: open
+it and it takes the region with a close button, exactly as the 3D view does.
+Both are expressed as a **mode** rather than a pile of booleans, so "who owns the
+region" has one answer.
+
+That freed 154 rows, and the grid grew to 3 × 4. The grid is sized by the
+**screen** rather than by the current program list, so adding a program does not
+mean re-deciding the layout: two of the twelve cells are empty, draw nothing,
+and cannot be selected.
+
+#### The flicker, and why ordering could not fix it
+
+The close button for a full-region view was first drawn *after* the view, each
+frame. It strobed badly.
+
+The raycaster repaints **every pixel every frame**, so anything drawn over it is
+visible only in the gap between one repaint and the next — at 16 fps with a
+29 ms blit, that gap is most of the frame missing. Drawing the button later in
+the sequence does not help, because "later" only lasts until the next frame
+begins.
+
+The fix is ownership, not ordering. The region now ends at row 208 and a 16-row
+bar below it belongs to the kernel; **no view draws into those rows**, so the
+button is painted over pixels nothing else touched. `RAY_VIEW_H` shrank from 224
+to 208 accordingly, which also returned 7,680 bytes of framebuffer.
+
+It read as "the 3D view is broken". The frames were correct throughout — a
+strobing element in the corner is enough to make a working view look faulty,
+which is worth remembering before debugging the renderer.
+
 ## 7. Verification
 
 ```
@@ -250,7 +294,9 @@ strip reports which. Confirmed on hardware by the user.
 | Double-tap window | 60 ticks (~600 ms) |
 | Minimum press | 2 ticks, rejects contact chatter |
 | SPI cost when idle | 0 bytes |
+| Grid | 3 × 4, cells 80 × 52; ten cells used of twelve |
 | Icon glyphs | 8 × 8, drawn at 3× |
+| Chrome bar | 16 rows, owned by the kernel, no view draws there |
 | Kernel-owned column | 60 px of 240 (name + close button) |
 | Application viewport width | 180 px, was 240 |
 | Defects exposed in other subsystems | 4 |
@@ -269,6 +315,11 @@ strip reports which. Confirmed on hardware by the user.
   shell. The new chrome makes that visible without addressing it.
 - **The chrome column is fixed width.** 60 px regardless of how long the name
   is, and names are truncated to fit rather than scaled or scrolled.
+- **Two grid cells are empty.** They draw nothing and reject touches, which is
+  deliberate and looks like a bug until you know that.
+- **`ping` and `pong` no longer start at boot**, so the IPC counters read zero
+  until someone launches them — ping first, since it addresses application 1 and
+  slots go lowest-free-first. Continuous messaging evidence is now opt-in.
 - **Double-tap timing is unmeasured.** 600 ms and the 2-tick minimum press were
   reasoned, not derived from anyone's actual tapping. The counters exist to
   settle them and nobody has.

@@ -22,10 +22,14 @@
 #include <stdint.h>
 
 #define RAY_VIEW_W 240u
-/* The 3D view fills whatever the launcher region is, so this tracks DESK_H.
- * It grew from 168 when the colour strip and the application strips stopped
- * being drawn at boot — that space belongs to whichever view is open. */
-#define RAY_VIEW_H 224u
+/* The 3D view fills the launcher region MINUS the chrome bar at its foot.
+ *
+ * It briefly filled the whole region, and the close button drawn on top of it
+ * flickered badly: the raycaster repaints every pixel every frame, so the X was
+ * visible only in the gap between one repaint and the next. Drawing chrome over
+ * something that repaints continuously cannot be made to work by ordering the
+ * draws — the view has to not own those rows. */
+#define RAY_VIEW_H 208u
 
 void raycast_init(void);
 

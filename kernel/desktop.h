@@ -48,6 +48,12 @@
  * open from the menu. */
 #define DESK_H  224u
 
+/* The foot of the region, owned by the kernel whichever view is open. It holds
+ * the close button, and no view draws into it — which is what stops the button
+ * flickering against a view that repaints every frame. */
+#define DESK_BAR_H  16u
+#define DESK_BAR_Y  (DESK_H - DESK_BAR_H)
+
 /* A launchable entry. `prog` is looked up in the shell's program table by name,
  * so the desktop holds no image pointers of its own and cannot fall out of step
  * with what is actually loadable — the defect that made PROGRAMS[4] silently
