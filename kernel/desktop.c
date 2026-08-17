@@ -327,6 +327,29 @@ static void draw_close(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint16_t 
 
 void desktop_chrome(void)
 {
+    /* Not over a full-width view.
+     *
+     * The strips live in a column app.h reserves outside every APPLICATION
+     * viewport, which is why painting them every frame is safe there. The 3D
+     * view is not an application: RAY_VIEW_W is 240 and so is DISP_W, so it
+     * owns the whole width including this column -- and repainting the column
+     * every frame paints over the right edge of a view that had just drawn it.
+     *
+     * That is what the missing close button was. A static test pattern blitted
+     * through the raycaster's own call showed clean colour bars and a hole
+     * exactly where the top-right block had been written, which is this loop
+     * running immediately afterwards. Killing the running applications made it
+     * worse rather than better, because an empty slot fills the column with
+     * solid black while a running one at least draws a name.
+     *
+     * The close button for this view is stamped into the framebuffer by the
+     * raycaster instead, so it arrives as part of the same transfer -- the fix
+     * already applied to the flicker further down this file. Applications
+     * remain closable from the launcher. */
+    if (g_mode == MODE_3D) {
+        return;
+    }
+
     for (int id = 0; id < APP_MAX; id++) {
         uint32_t y = APP_VIEW_Y0 + (uint32_t)id * APP_VIEW_PITCH;
 
@@ -382,9 +405,15 @@ void desktop_chrome(void)
  * button and the frame beneath it reach the panel in one transfer. That is the
  * whole fix for the flicker — not ordering the draws differently, but making
  * them the same draw. */
+/* Instrumented: too many plausible explanations for a missing close button
+ * were eliminated by reading code, so this counts which branch actually runs. */
+uint32_t g_overlay_calls, g_overlay_skips;
+
 void desktop_overlay_into(uint16_t *fb, uint32_t w, uint32_t h)
 {
+    g_overlay_calls++;
     if (g_active || !fb) {
+        g_overlay_skips++;
         return;                 /* the launcher draws its own chrome normally */
     }
 

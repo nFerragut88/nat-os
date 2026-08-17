@@ -407,6 +407,13 @@ static void task_report(void)
         if (desktop_last_cell() < 0) { uart_putc('-'); }
         else { uart_put_dec((unsigned int)desktop_last_cell()); }
 
+        {
+            extern uint32_t g_overlay_calls, g_overlay_skips;
+            uart_puts("  | overlay c/s=");
+            uart_put_dec(g_overlay_calls);
+            uart_putc('/');
+            uart_put_dec(g_overlay_skips);
+        }
         uart_puts("  act/tap/open=");
         uart_put_dec((unsigned int)desktop_active());
         uart_putc('/');

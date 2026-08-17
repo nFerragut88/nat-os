@@ -206,6 +206,12 @@ void raycast_init(void)
 }
 
 int raycast_framebuffer(void)   { return g_fb != 0; }
+
+/* The buffer itself, for diagnostics that need to write into it. Distinct from
+ * raycast_framebuffer(), which answers "is it on" and returns a BOOLEAN -- a
+ * distinction that cost a panic when a test treated the latter as a pointer and
+ * stored through the address 0x00000001. */
+uint16_t *raycast_fb_ptr(void)  { return g_fb; }
 uint32_t raycast_fb_bytes(void) { return g_fb ? (RAY_VIEW_W * RAY_VIEW_H * 2u) : 0u; }
 
 int raycast_set_framebuffer(int on)

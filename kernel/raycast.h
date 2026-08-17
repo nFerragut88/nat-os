@@ -46,6 +46,7 @@ void raycast_init(void);
  * released on disable. Returns 0 on success. */
 int  raycast_set_framebuffer(int on);
 int  raycast_framebuffer(void);
+uint16_t *raycast_fb_ptr(void);   /* the buffer; NOT the on/off flag above */
 uint32_t raycast_fb_bytes(void);
 
 /* Advances the camera one step and draws one frame. Walks forward until a wall

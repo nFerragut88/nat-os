@@ -588,6 +588,53 @@ static void execute(char *line)
         wifimac_beacon_stop();
         uart_puts("   stopped\n");
     }
+    else if (str_eq(line, "blittest")) {
+        /* Splits "the picture is wrong" into its two possible causes.
+         *
+         * A STATIC pattern through the exact call the raycaster uses -- same
+         * buffer, same width, same stride, same contiguous path. If this shows
+         * clean vertical bars with a white block in the top-right corner, the
+         * blit is sound and the raycaster's composition is at fault. If it is
+         * torn, the transport is, and the renderer was never the problem.
+         *
+         * The white block sits where the close button goes, so "the X is
+         * missing" gets an answer at the same time. */
+        uint16_t *fb = raycast_fb_ptr();
+        if (!fb) {
+            uart_puts("   no framebuffer (try 'fb on')\n");
+        } else {
+            /* Address first. The first run of this panicked with
+             * StoreProhibited writing into the buffer, so where it points and
+             * how big it is matter more than the pattern. */
+            uart_puts("   fb=");
+            uart_put_hex((uint32_t)fb);
+            uart_puts("  need=");
+            uart_put_dec(RAY_VIEW_W * RAY_VIEW_H * 2u);
+            uart_puts(" bytes  heap free=");
+            uart_put_dec(heap_free_bytes());
+            uart_puts("\n");
+            desktop_set_active(1);          /* stop the renderer overwriting it */
+            static const uint16_t bars[6] = {
+                COLOR_RED, COLOR_GREEN, COLOR_BLUE,
+                COLOR_YELLOW, COLOR_WHITE, COLOR_BLACK };
+            for (uint32_t y = 0; y < RAY_VIEW_H; y++) {
+                for (uint32_t x = 0; x < RAY_VIEW_W; x++) {
+                    fb[y * RAY_VIEW_W + x] = bars[(x / 40u) % 6u];
+                }
+            }
+            for (uint32_t y = 2; y < 20u; y++) {
+                for (uint32_t x = RAY_VIEW_W - 20u; x < RAY_VIEW_W - 2u; x++) {
+                    fb[y * RAY_VIEW_W + x] = COLOR_WHITE;
+                }
+            }
+            display_blit(0, 0, RAY_VIEW_W, RAY_VIEW_H, fb, RAY_VIEW_W);
+            uart_puts("   6 vertical bars + white block top-right, ");
+            uart_put_dec(RAY_VIEW_W);
+            uart_puts("x");
+            uart_put_dec(RAY_VIEW_H);
+            uart_puts(" via the raycaster's own blit call\n");
+        }
+    }
     else if (str_eq(line, "spiclk")) {
         /* Live, while the view is on screen. The driver's own note says a panel
          * clocked too fast shows noise on the glass with every counter
