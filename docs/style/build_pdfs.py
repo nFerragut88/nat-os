@@ -136,7 +136,15 @@ def main(argv):
 
     rendered = []
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True)
+        # Playwright's bundled Chromium if it has been downloaded, otherwise the
+        # Chrome already on the machine. Without the fallback this script needs
+        # a ~150 MB browser download in whichever virtualenv happens to have
+        # playwright installed, which is a lot of ceremony for rendering a
+        # markdown file.
+        try:
+            browser = pw.chromium.launch(headless=True)
+        except Exception:
+            browser = pw.chromium.launch(headless=True, channel="chrome")
         page = browser.new_page()
         for src in sources:
             html, docid = to_html(src)
