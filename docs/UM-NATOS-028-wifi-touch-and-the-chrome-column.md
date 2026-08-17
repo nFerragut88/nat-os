@@ -596,10 +596,43 @@ put the launcher into repaint mode and erased the test block itself. **A
 diagnostic that changes the state it is measuring is worse than no
 diagnostic**, and this one was believed for several rounds.
 
-**Next step**, for whoever picks this up: find what an application start does
-that a 3D view open does not. `app_start()` and the launcher's dirty handling
-are the obvious places, and the question is narrow enough to answer by reading
-rather than by flashing.
+**Everything ruled out so far**, each by direct measurement rather than
+argument:
+
+| theory | how it died |
+|---|---|
+| DMA fell back to the FIFO path | `dma=320/0` — the guard has never fired |
+| Touch scheduling | identical blit across all four priority/poll combinations |
+| Applications overdrawing the view | killed them all; `drawskip` froze; no change |
+| Panel signal integrity | clock 40 -> 10 MHz changes appearance, does not fix |
+| The chrome column | `APP_VIEW_Y0` 224 == `RAY_VIEW_H` 224; they never overlap |
+| Movement catch-up burst | fixed by `raycast_open()`; symptom unchanged |
+| Touch calibration | was genuinely broken and is fixed; symptom unchanged |
+| An arena overlapping the framebuffer | `fb 0x3ffbcd70..0x3ffd7170`, arenas from `0x3ffd7590` — clear |
+
+**What is known for certain:**
+
+- The renderer runs at FULL RATE throughout. A 54-second capture of a real
+  tap-driven session shows `act=0` and frames climbing steadily at ~8 fps for
+  the entire bad period. This is not slowness.
+- The framebuffer holds a real rendered scene, and the camera wanders normally
+  rather than being stuck in geometry.
+- Transport is clean: a static colour-bar pattern renders correctly through the
+  raycaster's own blit call.
+- The picture is **garbled**, not frozen, not blank.
+- Starting a program REPAIRS it, without leaving the view.
+
+That last fact is the whole remaining mystery and no mechanism for it has been
+found. `app_start()` allocates an arena, copies an image, initialises a VM,
+sets a viewport and clears IPC. None of that touches the panel, the framebuffer
+or the display driver.
+
+**Next step for a fresh session:** instrument `app_start()` itself — take an
+`fbsum` immediately before and immediately after a program launch while the
+view is visibly bad, and see which of those five operations changes the buffer.
+That converts the one unexplained fact into a measurement instead of a
+hypothesis, which is the move that has worked every other time in this report
+and was reached for too late each time.
 
 ---
 

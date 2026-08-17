@@ -211,6 +211,14 @@ uint32_t app_arena_bytes(int id)
     return (id >= 0 && id < APP_MAX) ? g_apps[id].bytes : 0u;
 }
 
+/* Where the arena actually sits, so an overlap against the framebuffer can be
+ * checked rather than assumed. Both come from the same heap, and the
+ * framebuffer is by far the largest allocation in the system. */
+uint32_t app_arena_base(int id)
+{
+    return (id >= 0 && id < APP_MAX) ? g_apps[id].base : 0u;
+}
+
 int app_fault(int id)
 {
     return (id >= 0 && id < APP_MAX) ? vm_fault(&g_apps[id].vm) : 0;

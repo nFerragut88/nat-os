@@ -610,7 +610,36 @@ static void execute(char *line)
             uart_put_dec(zero);
             uart_puts("  equal-to-first=");
             uart_put_dec(same);
-            uart_puts("\n   rows 0/60/120/180 first px: ");
+            /* Does any application's arena overlap the live framebuffer?
+             *
+             * The framebuffer is a 107 KB heap allocation and an arena is
+             * another heap allocation. If the allocator ever hands out a block
+             * that overlaps the framebuffer, a program writing to its OWN
+             * memory scribbles straight into the rendered image -- which is
+             * what a garbled view that depends on which programs are running
+             * would look like. Unverified either way; this reports it. */
+            uart_puts("\n   fb spans ");
+            uart_put_hex((uint32_t)fb);
+            uart_puts(" .. ");
+            uart_put_hex((uint32_t)fb + n * 2u);
+            uart_puts("\n");
+            for (int id = 0; id < APP_MAX; id++) {
+                if (app_state(id) == APP_FREE) {
+                    continue;
+                }
+                uint32_t b = app_arena_base(id);
+                uint32_t e = b + app_arena_bytes(id);
+                int overlap = (b < (uint32_t)fb + n * 2u) && (e > (uint32_t)fb);
+                uart_puts("   app ");
+                uart_put_dec((unsigned)id);
+                uart_puts(" arena ");
+                uart_put_hex(b);
+                uart_puts(" .. ");
+                uart_put_hex(e);
+                uart_puts(overlap ? "  *** OVERLAPS THE FRAMEBUFFER ***\n"
+                                  : "  clear\n");
+            }
+            uart_puts("   rows 0/60/120/180 first px: ");
             for (uint32_t r = 0; r < 4u; r++) {
                 uart_put_hex(fb[(r * 60u) * RAY_VIEW_W + 8u]);
                 uart_puts(" ");

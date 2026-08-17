@@ -89,6 +89,7 @@ const char *app_name(int id);
 uint32_t    app_instructions(int id);
 uint32_t    app_published(int id);
 uint32_t    app_arena_bytes(int id);
+uint32_t    app_arena_base(int id);
 int         app_fault(int id);
 uint32_t    app_fault_detail(int id);
 int         app_live_count(void);
