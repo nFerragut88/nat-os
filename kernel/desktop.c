@@ -327,28 +327,22 @@ static void draw_close(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint16_t 
 
 void desktop_chrome(void)
 {
-    /* Not over a full-width view.
+    /* The strips are BELOW a full-width view, and that is load-bearing.
      *
-     * The strips live in a column app.h reserves outside every APPLICATION
-     * viewport, which is why painting them every frame is safe there. The 3D
-     * view is not an application: RAY_VIEW_W is 240 and so is DISP_W, so it
-     * owns the whole width including this column -- and repainting the column
-     * every frame paints over the right edge of a view that had just drawn it.
+     * APP_VIEW_Y0 is 224 and RAY_VIEW_H is 224, so slot 0 begins exactly where
+     * the 3D view ends and nothing here can touch it. An earlier fix returned
+     * from this function outright in MODE_3D, on the theory that the chrome was
+     * painting over the view. The geometry says otherwise, and the cost of the
+     * blanket guard was that the strip band was never repainted while the view
+     * was open -- so a program starting behind the view left a stale band that
+     * only looked right once it had painted over every pixel itself. That is
+     * the "wrong for ten to thirty seconds, then fine" report.
      *
-     * That is what the missing close button was. A static test pattern blitted
-     * through the raycaster's own call showed clean colour bars and a hole
-     * exactly where the top-right block had been written, which is this loop
-     * running immediately afterwards. Killing the running applications made it
-     * worse rather than better, because an empty slot fills the column with
-     * solid black while a running one at least draws a name.
-     *
-     * The close button for this view is stamped into the framebuffer by the
-     * raycaster instead, so it arrives as part of the same transfer -- the fix
-     * already applied to the flicker further down this file. Applications
-     * remain closable from the launcher. */
-    if (g_mode == MODE_3D) {
-        return;
-    }
+     * The assertion below is the part worth keeping: it fails the build if the
+     * view ever grows tall enough to reach the strips, rather than leaving a
+     * future overlap to be rediscovered from the glass. */
+    _Static_assert(APP_VIEW_Y0 >= RAY_VIEW_H,
+                   "app strips must stay below the 3D view, or chrome overwrites it");
 
     for (int id = 0; id < APP_MAX; id++) {
         uint32_t y = APP_VIEW_Y0 + (uint32_t)id * APP_VIEW_PITCH;

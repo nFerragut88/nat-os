@@ -555,4 +555,52 @@ for the screwdriver.
 
 ---
 
+## 10. Open: the startup glitch, and a very good clue
+
+Not everything got solved, and the unsolved part has the sharpest clue in the
+whole report.
+
+**Symptom.** Opening the 3D view sometimes shows a wrong picture for ten to
+thirty seconds, then it comes good on its own. A second program (`gfxrogue`)
+was observed glitching over the same period and recovering at the same moment.
+
+**What is measured and known:**
+
+- With **no applications running**, the view is correct **immediately**. That
+  is a clean A/B and rules out the renderer in isolation.
+- In steady state there is no contention to speak of: 18-19 frames per
+  reporter interval, `cont=0`, `dlock blk=0`, with or without applications.
+- There is no periodic stall. A 55-second capture shows `dHold` steady at
+  ~2000 ms per interval and frames advancing uniformly.
+- The camera is not burying itself in a wall — it wanders normally from the
+  first sample.
+- **Opening `gfxrogue` makes the 3D view correct.** Starting another program
+  REPAIRS it.
+
+That last one is the interesting one. If a second program starting fixes the
+first, the view is missing an initialisation step that an application start
+happens to perform, rather than being actively corrupted by anything.
+
+**A wrong turn worth recording.** The first fix returned from
+`desktop_chrome()` outright in `MODE_3D`, reasoning that the chrome column was
+painting over a full-width view. The geometry disagrees: `APP_VIEW_Y0` is 224
+and `RAY_VIEW_H` is 224, so the strips begin exactly where the view ends. The
+guard has been narrowed to a `_Static_assert` that fails the build if the view
+ever grows into the strips — which is the check that should have been written
+first, since it answers the overlap question at compile time instead of from
+the glass.
+
+The blittest that produced that theory was also contaminated: it called
+`desktop_set_active(1)` to stop the renderer overwriting the pattern, which
+put the launcher into repaint mode and erased the test block itself. **A
+diagnostic that changes the state it is measuring is worse than no
+diagnostic**, and this one was believed for several rounds.
+
+**Next step**, for whoever picks this up: find what an application start does
+that a 3D view open does not. `app_start()` and the launcher's dirty handling
+are the obvious places, and the question is narrow enough to answer by reading
+rather than by flashing.
+
+---
+
 *Filed under: things that were not the WiFi's fault.*
