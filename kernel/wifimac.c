@@ -1105,3 +1105,46 @@ uint32_t wifimac_txpwr_get(void)
     extern int phy_get_most_tpw(void);
     return phy_stack_call((uint32_t)&phy_get_most_tpw, 0u, 0u);
 }
+
+/* ---- the MAC hardware init chain ---------------------------------------
+ *
+ * The part of open-mac's hwinit() that nat-os had never run. Receive works
+ * without it because the RX path is a descriptor chain and a DMA engine;
+ * transmit does not, because the transmit machinery -- queues, access
+ * categories, RF switch timing -- is built here and nowhere else.
+ *
+ * All four live in libpp, the MAC blob, which until now was linked but never
+ * referenced. Every one is WINDOWED and goes through phy_stack_call.
+ *
+ * Separate steps on purpose. Referencing a single unlinked libphy symbol
+ * previously broke PHY calibration outright, and this pulls in far more than
+ * one symbol, so each stage is callable and reportable on its own. If the
+ * board dies, WHICH call it died in is the first thing worth knowing.
+ */
+static int g_hw_stage;
+
+int wifimac_hwinit_step(uint32_t step)
+{
+    extern int ic_mac_init(void);
+    extern int hal_init(void);
+    extern int ic_enable_rx(void);
+    extern int hal_mac_tsf_reset(int);
+
+    if (!g_attempted) {
+        return -1;                  /* macinit has not run */
+    }
+
+    switch (step) {
+    case 0: phy_stack_call((uint32_t)&ic_mac_init, 0u, 0u);       break;
+    case 1: phy_stack_call((uint32_t)&hal_init, 0u, 0u);          break;
+    case 2: phy_stack_call((uint32_t)&ic_enable_rx, 0u, 0u);      break;
+    case 3: phy_stack_call((uint32_t)&hal_mac_tsf_reset, 0u, 0u); break;
+    default: return -2;
+    }
+    if ((int)step >= g_hw_stage) {
+        g_hw_stage = (int)step + 1;
+    }
+    return 0;
+}
+
+int wifimac_hw_stage(void) { return g_hw_stage; }

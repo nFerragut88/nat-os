@@ -454,3 +454,81 @@ libphy is on the link line today.
    problem the project has been deferring, and transmit is what triggers it.
 3. **It is the payoff.** The OSI table, the window handlers and the mixed-ABI
    bridges were all built for exactly this moment. Nothing else needs them.
+
+
+---
+
+# libpp linked and called; transmit still silent
+
+## The IRAM fear was unfounded
+
+Linking libpp and referencing `ic_mac_init`, `hal_init`, `ic_enable_rx` and
+`hal_mac_tsf_reset` cost **2,459 bytes**, not the 48 KB this file has warned
+about since MAC-NEXT.md.
+
+| | |
+|---|---|
+| text before | 116,692 |
+| text after | 119,151 |
+| IRAM | 131,072 |
+
+That earlier number came from a `--whole-archive` measurement, which pulls every
+object. A real link pulls only what is referenced. The budget problem this
+project has been deferring for weeks turns out not to exist at this scale --
+worth knowing before it shaped any more decisions.
+
+Archive order matters: libpp goes BEFORE libphy on the link line, and again
+after, because the two call each other and a static archive only satisfies
+references seen to its left.
+
+## All four stages run
+
+```
+ic_mac_init ... returned
+hal_init ... returned
+ic_enable_rx ... returned
+hal_mac_tsf_reset ... returned
+```
+
+No crash, no watchdog. This is the first time nat-os has executed the MAC blob,
+and it means the OSI table, the window handlers and the mixed-ABI bridges hold
+up under the code they were built for. That was never certain.
+
+## Order matters, and it is the opposite of what was expected
+
+Running hwinit BEFORE `macrx` leaves receive dead: 0 frames, and the chain
+acknowledge fires once and never again. The blob configures the MAC's receive
+path for itself and the hand-rolled descriptor chain no longer takes.
+
+Running `macrx` and `chan` FIRST, then hwinit, leaves receive working -- 23
+frames before, 46 after, still climbing. That is the order to use.
+
+## Transmit is still silent
+
+Probe requests after the full chain: **still zero answers**. Twenty frames
+completed by the MAC, nothing from two access points that are being received
+continuously.
+
+So the missing piece is not `ic_mac_init`/`hal_init`/`ic_enable_rx`/
+`hal_mac_tsf_reset`, and it is not transmit power. Both plausible explanations
+are now eliminated by measurement rather than by argument.
+
+## What is still unrun from hwinit
+
+```
+adc2_wifi_acquire()
+esp_wifi_power_domain_on()
+wifi_module_enable()            <- nat-os ungates the clock by hand instead
+periph_module_reset(0x19)       <- NEVER DONE: the MAC is never reset
+esp_phy_common_clock_enable()
+coex_bt_high_prio()
+wifi_station_start_openmac()
+```
+
+`periph_module_reset(0x19)` is the most interesting: nat-os has never reset the
+WiFi peripheral, only ungated it. A MAC left in whatever state the ROM bootloader
+put it in would plausibly receive while refusing to transmit.
+
+`lmacInit` and `lmacInitAc` are also present in libpp and unreferenced. The
+low-MAC layer is where transmit queues and access categories live, which is
+exactly the machinery a transmitter needs and a receiver does not.

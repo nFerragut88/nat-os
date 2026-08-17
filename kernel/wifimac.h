@@ -127,6 +127,12 @@ int      wifimac_txpwr_cal(void);
 int      wifimac_txpwr_set(uint32_t tpw);
 uint32_t wifimac_txpwr_get(void);
 
+/* One stage of open-mac's MAC hardware init, from libpp. 0=ic_mac_init,
+ * 1=hal_init, 2=ic_enable_rx, 3=hal_mac_tsf_reset. Stepwise because this pulls
+ * a large blob into the link and a crash needs to name its stage. */
+int      wifimac_hwinit_step(uint32_t step);
+int      wifimac_hw_stage(void);
+
 uint32_t wifimac_tx_sent(void);
 uint32_t wifimac_tx_done(void);
 

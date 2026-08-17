@@ -588,6 +588,27 @@ static void execute(char *line)
         wifimac_beacon_stop();
         uart_puts("   stopped\n");
     }
+    else if (str_eq(line, "hwinit")) {
+        /* One stage per invocation. This is the first code to call into libpp,
+         * the MAC blob, and if it takes the board down the stage number is the
+         * only thing that will survive. */
+        static const char *names[4] = {
+            "ic_mac_init", "hal_init", "ic_enable_rx", "hal_mac_tsf_reset" };
+        int step = *arg ? parse_int(arg) : wifimac_hw_stage();
+        if (step < 0 || step > 3) {
+            uart_puts("   usage: hwinit [0..3]  (0 ic_mac_init, 1 hal_init,"
+                      " 2 ic_enable_rx, 3 hal_mac_tsf_reset)\n");
+        } else {
+            uart_puts("   calling ");
+            uart_puts(names[step]);
+            uart_puts(" ...\n");
+            int r = wifimac_hwinit_step((uint32_t)step);
+            uart_puts(r == 0 ? "   returned\n" : "   refused: run macinit first\n");
+            uart_puts("   next stage would be ");
+            uart_put_dec((unsigned)wifimac_hw_stage());
+            uart_puts("\n");
+        }
+    }
     else if (str_eq(line, "txpwr")) {
         /* One step per invocation, so the probe test after each says which
          * step mattered. "txpwr" alone just reports. */

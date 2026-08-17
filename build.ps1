@@ -130,11 +130,21 @@ if (Test-Path "$root\vendor\phy\libphy_natos.a") {
     # script needs to supply them, and esp32.rom.ld -- whose every entry is
     # PROVIDE, verified -- is the only one linked. Nothing the kernel defines
     # can be displaced, because nothing strong is defined at all.
+    # libpp_natos.a goes BEFORE libphy: it is the caller, and a static archive
+    # only satisfies references the linker has already seen to its left.
+    # Listing it after would leave ic_mac_init and friends unresolved even
+    # though they are sitting in the archive.
+    #
+    # Repeated at the end too, because the two archives call each other and a
+    # single pass in either order leaves something behind. Cheaper to reason
+    # about than --start-group, and equivalent for two libraries.
     $phylibs = @(
+        "$root\vendor\phy\libpp_natos.a",
         "$root\vendor\phy\libphy_natos.a",
+        "$root\vendor\phy\libpp_natos.a",
         "-T", "$sdk\ld\esp32.rom.ld"
     )
-    Write-Host "  linking libphy_natos.a + esp32.rom.ld (PROVIDE only)" -ForegroundColor DarkGray
+    Write-Host "  linking libpp_natos.a + libphy_natos.a + esp32.rom.ld" -ForegroundColor DarkGray
 }
 
 $ldflags = @(
