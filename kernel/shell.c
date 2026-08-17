@@ -588,6 +588,36 @@ static void execute(char *line)
         wifimac_beacon_stop();
         uart_puts("   stopped\n");
     }
+    else if (str_eq(line, "fbsum")) {
+        /* What is actually IN the framebuffer, sampled without touching the
+         * panel. The renderer runs at full rate while the picture is wrong, and
+         * transport is proven clean, so the remaining question is whether the
+         * buffer holds a rendered scene or something else. */
+        uint16_t *fb = raycast_fb_ptr();
+        if (!fb) {
+            uart_puts("   no framebuffer\n");
+        } else {
+            uint32_t n = RAY_VIEW_W * RAY_VIEW_H;
+            uint32_t zero = 0, same = 0;
+            uint16_t first = fb[0];
+            for (uint32_t i = 0; i < n; i++) {
+                if (fb[i] == 0u)     { zero++; }
+                if (fb[i] == first)  { same++; }
+            }
+            uart_puts("   fb pixels=");
+            uart_put_dec(n);
+            uart_puts("  zero=");
+            uart_put_dec(zero);
+            uart_puts("  equal-to-first=");
+            uart_put_dec(same);
+            uart_puts("\n   rows 0/60/120/180 first px: ");
+            for (uint32_t r = 0; r < 4u; r++) {
+                uart_put_hex(fb[(r * 60u) * RAY_VIEW_W + 8u]);
+                uart_puts(" ");
+            }
+            uart_puts("\n");
+        }
+    }
     else if (str_eq(line, "blittest")) {
         /* Splits "the picture is wrong" into its two possible causes.
          *
