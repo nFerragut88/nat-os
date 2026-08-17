@@ -129,8 +129,30 @@ python docs/style/build_book_pdf.py
 ```
 
 It needs `markdown`, `playwright` and `pypdf`, and it re-derives the gutter from
-the measured page count rather than trusting the number above. Cover art is a
-separate KDP upload and is not generated here.
+the measured page count rather than trusting the number above.
+
+### Cover
+
+`../pdf/nat-os-cover-6x9-kdp.pdf` is the matching wrap — back, spine and front
+in one flat file, 13.088 × 9.25 in with 0.125 in bleed. The spine width is read
+from the interior PDF's real page count, so the two cannot drift apart, and the
+2 × 1.2 in barcode area at the back cover's bottom right is left clear.
+
+```
+python docs/style/build_cover.py
+```
+
+The four screens on it are **reconstructions, not photographs** — no screenshot
+of the running board exists in this repository. `docs/style/os_screens.py`
+redraws the panel at its native 240 × 320 using the kernel's own data: the 5×8
+font parsed out of `display.c`, the 8×8 icons out of `desktop.c`, the map out of
+`raycast.c`, the real raycasting algorithm, and every colour as its RGB565
+constant quantised through 16 bits. Change any of those in the kernel and the
+images change, which is the only thing that makes them honest. The back cover
+says so too.
+
+`../cover/cover-proof.png` is a 96 dpi proof for looking at before uploading
+anything.
 
 ## Licence
 
