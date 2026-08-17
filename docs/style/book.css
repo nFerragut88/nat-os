@@ -1,0 +1,264 @@
+/* nat-os — print stylesheet for the 6x9 paperback interior.
+ *
+ * Targets Amazon KDP's paperback specification, which is why several values
+ * here look arbitrary and are not:
+ *
+ *   - trim is 6 x 9 in, set on @page and again on page.pdf() so Chromium's
+ *     MediaBox comes out at exactly 432 x 648 pt
+ *   - margins are MIRRORED. KDP requires a larger inside margin (the gutter)
+ *     because the binding swallows it, and the gutter must therefore swap
+ *     sides on facing pages. @page :left / :right is what does that, and it
+ *     is verified working in Chromium: page 1 lays out at 1.2in from the left
+ *     and page 2 at 0.4in, both 4.4in wide, in the test that established this.
+ *   - the gutter width is a function of PAGE COUNT (KDP's table), so it is
+ *     substituted by the builder rather than written here.
+ *
+ * Chromium draws the running footer inside the top/bottom margins passed to
+ * page.pdf(), NOT inside the @page margin box, which is why this file sets no
+ * @page content and leaves top/bottom to the builder.
+ */
+
+/* --GUTTER--, --OUTER--, --TOPMAR--, --BOTMAR-- are substituted by the builder. */
+@page {
+    size: 6in 9in;
+    margin: --TOPMAR-- --OUTER-- --BOTMAR-- --GUTTER--;
+}
+/* Verso: gutter on the RIGHT. Recto: gutter on the LEFT. */
+@page :left  { margin-left: --OUTER--;  margin-right: --GUTTER--; }
+@page :right { margin-left: --GUTTER--; margin-right: --OUTER--;  }
+
+html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+body {
+    /* Cambria is a print-first face and ships with Windows, so it embeds
+     * without a download step. The fallbacks matter only on other machines. */
+    font-family: Cambria, Charter, Georgia, "Times New Roman", serif;
+    font-size: 9.6pt;
+    line-height: 1.36;
+    color: #000;
+    margin: 0;
+    text-align: left;       /* ragged right: justified text with 4.75in of
+                             * measure and long identifiers opens rivers */
+    orphans: 2;
+    widows: 2;
+    -webkit-hyphens: none;
+    hyphens: none;
+}
+
+/* ---- front matter ------------------------------------------------------ */
+
+.titlepage, .copyright, .toc-page { break-after: page; }
+
+.titlepage {
+    text-align: center;
+    padding-top: 1.7in;
+}
+.titlepage .title {
+    font-size: 26pt;
+    line-height: 1.15;
+    font-weight: normal;
+    letter-spacing: 0.01em;
+    margin: 0 0 0.18in 0;
+}
+.titlepage .rule {
+    width: 1.6in; height: 1px; background: #000;
+    margin: 0.22in auto;
+}
+.titlepage .subtitle {
+    font-size: 12.5pt;
+    font-style: italic;
+    margin: 0 0 0.9in 0;
+}
+.titlepage .strap {
+    font-size: 10pt;
+    line-height: 1.6;
+}
+.titlepage .org {
+    margin-top: 1.5in;
+    font-size: 9.5pt;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.copyright {
+    font-size: 8.6pt;
+    line-height: 1.5;
+    padding-top: 4.4in;
+}
+.copyright p { margin: 0 0 0.9em 0; }
+
+/* ---- contents ---------------------------------------------------------- */
+
+.toc-page h1 {
+    break-before: auto;
+    font-size: 17pt;
+    margin: 0 0 0.32in 0;
+    padding: 0;
+    border: 0;
+}
+.toc-part {
+    font-family: "Segoe UI", Calibri, Arial, sans-serif;
+    font-size: 8.4pt;
+    font-weight: 600;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: #333;
+    margin: 0.24in 0 0.09in 0;
+    break-after: avoid;
+}
+.toc-row {
+    display: flex;
+    align-items: baseline;
+    font-size: 9.3pt;
+    margin: 0.5pt 0;
+    break-inside: avoid;
+}
+.toc-row .n     { width: 1.9em; flex: none; }
+.toc-row .t     { flex: 0 1 auto; }
+.toc-row .dots  { flex: 1 1 auto; border-bottom: 1px dotted #999; margin: 0 4px 0.18em 4px; min-width: 12px; }
+.toc-row .p     { flex: none; font-variant-numeric: tabular-nums; }
+
+/* ---- chapter openers --------------------------------------------------- */
+
+h1 {
+    break-before: page;
+    break-after: avoid;
+    font-family: "Segoe UI", Calibri, Arial, sans-serif;
+    font-size: 18pt;
+    font-weight: 600;
+    line-height: 1.2;
+    margin: 0.15in 0 0.09in 0;
+    padding: 0 0 0.07in 0;
+    border-bottom: 1.6px solid #000;
+}
+h2 {
+    break-after: avoid;
+    font-family: "Segoe UI", Calibri, Arial, sans-serif;
+    font-size: 11.4pt;
+    font-weight: 600;
+    margin: 1.15em 0 0.34em 0;
+}
+h3 {
+    break-after: avoid;
+    font-family: "Segoe UI", Calibri, Arial, sans-serif;
+    font-size: 10pt;
+    font-weight: 600;
+    margin: 0.95em 0 0.28em 0;
+}
+h4 {
+    break-after: avoid;
+    font-family: "Segoe UI", Calibri, Arial, sans-serif;
+    font-size: 9.4pt;
+    font-weight: 600;
+    font-style: italic;
+    margin: 0.85em 0 0.24em 0;
+}
+
+p { margin: 0 0 0.52em 0; }
+
+/* The "> Sources: / Code:" block that opens most chapters. It is a blockquote
+ * in the markdown, so it is caught by the generic rule below and then narrowed
+ * by this one via the class the builder adds. */
+.chapmeta {
+    font-family: "Segoe UI", Calibri, Arial, sans-serif;
+    font-size: 8.1pt;
+    line-height: 1.42;
+    color: #333;
+    background: #f2f4f6;
+    border: 0;
+    border-left: 2px solid #b6bec8;
+    padding: 5px 8px;
+    margin: 0 0 0.9em 0;
+    break-inside: avoid;
+}
+.chapmeta p { margin: 0; }
+.chapmeta code { font-size: 7.6pt; background: none; padding: 0; }
+
+/* ---- quotations from the reports --------------------------------------- */
+/* The book quotes the reports and the source comments constantly; these are
+ * the single most common block element after the paragraph, so they are styled
+ * to be distinct without being loud. */
+blockquote {
+    margin: 0.55em 0 0.7em 0;
+    padding: 0 0 0 10px;
+    border-left: 2px solid #9aa5b1;
+    color: #1a1a1a;
+    font-size: 9.2pt;
+    line-height: 1.34;
+}
+blockquote p { margin: 0 0 0.42em 0; }
+blockquote p:last-child { margin-bottom: 0; }
+blockquote blockquote { border-left-color: #c3cbd4; font-size: 8.9pt; }
+
+/* ---- code -------------------------------------------------------------- */
+/* 7.4pt Consolas gives ~84 characters across a 4.75in measure. The kernel is
+ * written to 79 columns, so the overwhelming majority of the 5,690 code lines
+ * in this book fit without wrapping; the ~255 that do not wrap rather than
+ * being clipped, because clipping would silently lose content. */
+pre {
+    font-family: Consolas, "DejaVu Sans Mono", "Courier New", monospace;
+    font-size: 7.4pt;
+    line-height: 1.28;
+    background: #f4f5f7;
+    border: 0.5px solid #dde1e6;
+    border-radius: 2px;
+    padding: 5px 7px;
+    margin: 0.5em 0 0.72em 0;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    word-break: normal;
+    tab-size: 4;
+}
+pre code { font-size: inherit; background: none; padding: 0; border: 0; }
+
+code {
+    font-family: Consolas, "DejaVu Sans Mono", "Courier New", monospace;
+    font-size: 8.3pt;
+    background: #f1f2f4;
+    padding: 0.5px 2px;
+    border-radius: 2px;
+    overflow-wrap: break-word;
+}
+
+/* ---- tables ------------------------------------------------------------ */
+table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 8.2pt;
+    line-height: 1.3;
+    margin: 0.5em 0 0.8em 0;
+}
+thead { display: table-header-group; }   /* repeat headers across page breaks */
+tr { break-inside: avoid; }
+th, td {
+    border: 0.5px solid #c8ced5;
+    padding: 2.6px 4.5px;
+    text-align: left;
+    vertical-align: top;
+    overflow-wrap: break-word;
+}
+th {
+    background: #eef0f3;
+    font-family: "Segoe UI", Calibri, Arial, sans-serif;
+    font-weight: 600;
+    font-size: 7.9pt;
+}
+td code, th code { font-size: 7.5pt; background: none; padding: 0; }
+
+/* ---- lists ------------------------------------------------------------- */
+ul, ol { margin: 0.3em 0 0.66em 0; padding-left: 1.35em; }
+li { margin: 0 0 0.26em 0; }
+li > ul, li > ol { margin: 0.24em 0 0.24em 0; }
+
+/* ---- rules ------------------------------------------------------------- */
+hr {
+    border: 0;
+    border-top: 0.5px solid #ccd2d8;
+    margin: 0.85em 0;
+}
+
+strong { font-weight: 600; }
+a { color: #000; text-decoration: none; }
+
+/* Long identifiers must not punch through the outer margin. */
+p, li, td, th, blockquote { overflow-wrap: break-word; }

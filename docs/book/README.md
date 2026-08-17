@@ -114,6 +114,24 @@ It is written to be read in two ways:
 - [Appendix F — Every measured number](F-measurements.md)
 - [Appendix G — Timeline from the commit history](G-timeline.md)
 
+## Print edition
+
+`../pdf/nat-os-book-6x9-kdp.pdf` is a print-ready interior for a 6 × 9 in
+paperback, laid out to Amazon KDP's paperback specification: mirrored margins
+with a 0.625 in gutter, unnumbered front matter, and a contents whose page
+numbers are read back out of the rendered PDF and re-verified against the
+finished file. 372 pages; spine width 0.8377 in on white paper.
+
+Rebuild it with:
+
+```
+python docs/style/build_book_pdf.py
+```
+
+It needs `markdown`, `playwright` and `pypdf`, and it re-derives the gutter from
+the measured page count rather than trusting the number above. Cover art is a
+separate KDP upload and is not generated here.
+
 ## Licence
 
 The kernel and this book are MIT — see `LICENSE`. The two binaries in `vendor/`
