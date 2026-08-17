@@ -59,6 +59,19 @@ true" is the difference between a working boot and a silent reboot.
 | [UM-NATOS-027](UM-NATOS-027-audio.md) | Audio, and Three Ways to Be Silent | Hardware PWM on the speaker pin, a click on every keypress, and three stacked faults where each one made the next invisible — including a self-check that could not fail by construction |
 | [UM-NATOS-028](UM-NATOS-028-wifi-touch-and-the-chrome-column.md) | WiFi, Touch, and the Column That Ate the 3D View | 802.11 receive working end to end; the TSF timer identified by behaviour; task_sleep found not to sleep; seven of this kernel's own instruments caught reporting confidently and wrongly; and a display fault that survived eight measured theories before a frozen-renderer test proved the repair happens downstream of the framebuffer |
 
+## The book
+
+[`book/`](book/README.md) is a long-form synthesis of this whole report set:
+thirty-one chapters and seven appendices that follow the system layer by layer,
+quote the code implementing each decision, and carry the defect stories through
+to the standing rules they produced. The reports remain the primary record; the
+book is the continuity between them.
+
+Start at [`book/README.md`](book/README.md) for its table of contents. If you
+only read three chapters, read **28** (every instrument in this kernel that has
+been caught reporting confidently and wrongly), **29** (the rules those failures
+produced), and **30** (the consolidated inventory of what is *not* established).
+
 ## Reading order
 
 New to the project: **001 → 002 → 004 → 003**. That gives the shape of the
