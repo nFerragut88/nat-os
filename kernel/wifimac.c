@@ -436,26 +436,23 @@ int wifimac_rx_start(void)
     }
     efuse_factory_mac(g_my_mac);
     g_rx_ready = 1;
-    /* HIGH, matching the display.
+    /* NORMAL, deliberately, and this was HIGH for a while.
      *
-     * At NORMAL this task ran about twice a second: 'fair maxwait=36' means a
-     * NORMAL task can wait 36 ticks -- 360 ms -- to be selected behind the
-     * HIGH-priority renderer, so a 10 ms sleep became a third of a second and
-     * beacons went out at 3 Hz instead of 10.
+     * Raising it to HIGH took beacons from 3 Hz to 9.4 Hz, which looked like a
+     * clean win because the raycaster blit did not move. It measured the wrong
+     * thing. The TOUCH task is NORMAL, and with two flat-out HIGH tasks instead
+     * of one it stopped being scheduled except when ageing rescued it -- about
+     * every 300 ms. The panel went from responsive to intermittent, which no
+     * counter in this kernel reports and which the user noticed immediately.
      *
-     * The measurement that pointed here was the one that ruled the obvious
-     * suspect OUT: update_rx_chain() spins on a hardware acknowledge and looked
-     * like the cost, but its worst observed wait is ONE iteration. It was never
-     * the radio; it was the scheduler.
+     * Background radio work does not outrank user input. Beacon timing is worth
+     * something; it is not worth the touchscreen, and especially not while
+     * transmit does not reach the air at all.
      *
-     * Equal priority rather than higher, deliberately. This task does a few
-     * register accesses and a memcpy per pass, so sharing a round-robin with
-     * the renderer costs the display almost nothing, while putting it ABOVE
-     * would let a busy channel preempt every frame. */
+     * Receive is unaffected in practice: at NORMAL it still drained 49 frames
+     * in 8 seconds, far above the beacon and scan rates anything here needs. */
     int rxid = task_create("wifirx", wifi_rx_task);
-    if (rxid >= 0) {
-        task_set_priority(rxid, TASK_PRIO_HIGH);
-    }
+    (void)rxid;
     return 0;
 }
 
