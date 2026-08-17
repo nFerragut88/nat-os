@@ -1433,20 +1433,25 @@ static void task_touch(void)
          * touch_irq_wait() is intact and is one line from being reinstated. See
          * UM-NATOS-023 for the four failures found on the way here and the
          * evidence for what is still wrong. */
-        /* Yields rather than sleeps, and that is a RESTORATION, not a change.
+        /* A real 10 ms sleep, at HIGH priority. Both halves matter.
          *
-         * This was task_sleep(1u). Until task_sleep was fixed it did not sleep
-         * at all — it returned in ~107 cycles — so this loop had always polled
-         * flat out, and every tuning decision about touch responsiveness was
-         * made against that behaviour. Making the sleep real dropped the poll
-         * rate from continuous to 100 Hz in one step and taps started being
-         * missed.
+         * This was task_sleep(1u) originally, back when task_sleep neither
+         * slept nor yielded -- so the loop polled repeatedly inside whatever
+         * slice it got, which is why touch felt continuous. Replacing it with
+         * task_yield() looked like a faithful restoration and was not: a yield
+         * gives up the CPU after EVERY poll, so the task sampled once per
+         * slice instead of many times, and a quick tap fell between samples.
+         * The panel started needing a press-and-hold.
          *
-         * A yield reproduces exactly what this loop was doing before, on a
-         * clock that is now correct. Whether 100 Hz polling would actually be
-         * enough is a separate question worth answering deliberately, with the
-         * panel in front of someone — not by inheriting it from a bug. */
-        task_yield();
+         * Sleeping fixes the rate only if the wake is honoured promptly, and
+         * at NORMAL it is not: the renderer is HIGH and never sleeps, so a
+         * NORMAL task runs when ageing rescues it, about every 300 ms. Hence
+         * HIGH here too -- see the priority table in kmain.
+         *
+         * 100 Hz sampling for one SPI transaction per pass is far less CPU
+         * than the old flat-out polling, and unlike it, the rate is a property
+         * of the clock rather than of whatever else happens to be running. */
+        task_sleep(1u);
     }
 }
 
@@ -1690,7 +1695,10 @@ void kmain(void)
      * anti-starvation, and a LOW task will simply never run while any NORMAL
      * task is runnable. */
     task_set_priority(id_disp,   TASK_PRIO_HIGH);
-    task_set_priority(id_touch,  TASK_PRIO_NORMAL);
+    /* HIGH, with the renderer. Touch is user INPUT: its latency is visible in
+     * a way no counter here reports, and it was starved at NORMAL by a display
+     * task that never sleeps. It costs one SPI read per 10 ms tick. */
+    task_set_priority(id_touch,  TASK_PRIO_HIGH);
     task_set_priority(id_shell,  TASK_PRIO_NORMAL);
     task_set_priority(id_apps,   TASK_PRIO_NORMAL);
     task_set_priority(id_report, TASK_PRIO_NORMAL);
