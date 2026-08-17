@@ -588,6 +588,20 @@ static void execute(char *line)
         wifimac_beacon_stop();
         uart_puts("   stopped\n");
     }
+    else if (str_eq(line, "spiclk")) {
+        /* Live, while the view is on screen. The driver's own note says a panel
+         * clocked too fast shows noise on the glass with every counter
+         * reporting success, so the only usable instrument is someone watching
+         * it change. */
+        int n = parse_int(arg);
+        if (n < 0 || n > 2) {
+            uart_puts("   usage: spiclk 0|1|2   (0=40MHz default, 1=20MHz, 2=10MHz)\n");
+        } else {
+            uart_puts("   panel clock reg = ");
+            uart_put_hex(display_spi_clock_preset((uint32_t)n));
+            uart_puts("\n");
+        }
+    }
     else if (str_eq(line, "touchcfg")) {
         /* touchcfg <prio 0-2> <sleep ticks, 0=yield>
          *

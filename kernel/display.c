@@ -106,6 +106,34 @@ static void delay_ms(uint32_t ms)
 static uint32_t g_spi2_clk_reg;
 static uint32_t g_spi2_dport;
 
+/* Runtime-selectable panel clock.
+ *
+ * The note above records that clocking this panel too fast puts visible noise
+ * on the glass while every counter in the kernel reports success. That is
+ * exactly the symptom being chased: identical code rendering cleanly at one
+ * moment and torn the next, with corrupt=0, dma=N/0 and no timeouts. The limit
+ * is the panel and the flex, and the only instrument that can measure it is a
+ * person looking at the screen -- so it needs to be changeable while they do.
+ *
+ * freq = 80 MHz / ((pre + 1) * (n + 1)); h and l set the duty cycle. */
+uint32_t display_spi_clock_preset(uint32_t which)
+{
+    static const uint32_t presets[3] = {
+        0x00001001u,        /* 0: n=1        -> 40 MHz, the long-standing default */
+        0x00003043u,        /* 1: n=3 h=1 l=3 -> 20 MHz */
+        0x000070C7u,        /* 2: n=7 h=3 l=7 -> 10 MHz */
+    };
+    if (which > 2u) {
+        return 0;
+    }
+    draw_lock();
+    GPIO_REG(SPI2_CLOCK) = presets[which];
+    g_spi2_clk_reg = GPIO_REG(SPI2_CLOCK);
+    draw_unlock();
+    return g_spi2_clk_reg;
+}
+
+
 
 /* ---- SPI2 DMA -----------------------------------------------------------
  *

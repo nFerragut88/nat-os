@@ -140,4 +140,9 @@ uint32_t display_dma_timeouts(void);
 /* Task id currently holding the draw lock, for deadlock diagnosis. */
 int display_owner(void);
 
+/* Selects a panel SPI clock: 0 = 40 MHz (default), 1 = 20 MHz, 2 = 10 MHz.
+ * Returns the register value read back. Exists because a panel clocked too
+ * fast corrupts pixels while every counter reports success -- see display.c. */
+uint32_t display_spi_clock_preset(uint32_t which);
+
 #endif /* NATOS_DISPLAY_H */
