@@ -1185,6 +1185,23 @@ static void task_display(void)
          * repaints unconditionally because every frame differs. */
         audio_service();    /* ends any beep whose deadline passed */
 
+        /* Calibration owns the whole panel while it runs.
+         *
+         * calib.c draws its instructions and one cyan cross, then waits for a
+         * tap. It had no way to say so, and this loop repainted over it on the
+         * very next frame -- so the crosses existed for a fraction of a frame
+         * and the user was asked to tap targets they could not see. The touch
+         * task already checks calib_running() to feed it RAW coordinates
+         * (below); the display task never did.
+         *
+         * Skipping every drawer here rather than teaching each one about
+         * calibration: there are four of them, and a mode that owns the screen
+         * should be expressed once. */
+        if (calib_running()) {
+            task_sleep(1u);
+            continue;
+        }
+
         if (desktop_active()) {
             desktop_frame();
         } else if (desktop_notes()) {

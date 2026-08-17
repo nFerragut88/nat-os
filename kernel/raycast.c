@@ -212,6 +212,28 @@ int raycast_framebuffer(void)   { return g_fb != 0; }
  * distinction that cost a panic when a test treated the latter as a pointer and
  * stored through the address 0x00000001. */
 uint16_t *raycast_fb_ptr(void)  { return g_fb; }
+
+/* Called when the view is handed the region, and the step every other desktop
+ * action already had. TERM has term_open(), NOTES has notes_open(), launching
+ * a program sets g_dirty -- opening the 3D view did nothing at all.
+ *
+ * What it needs is the movement clock reset. Walking is per TICK with a
+ * catch-up, and g_last_move_tick keeps advancing while the view is CLOSED, so
+ * reopening it after a spell in the launcher makes `elapsed` enormous. The
+ * clamp bounds that to MOVE_CATCHUP_MAX steps, but twenty steps applied in a
+ * single frame is precisely the case the comment above MOVE_CATCHUP_MAX warns
+ * about: the collision probe only checks each step's destination and not the
+ * path to it, so a burst walks straight through a wall. A camera inside
+ * geometry renders every column as one flat colour, and it stays that way
+ * until it wanders back out -- which is the "wrong for ten to thirty seconds,
+ * then fine" report.
+ *
+ * Resetting the clock means the first frame after opening applies one tick of
+ * movement, like every other frame. */
+void raycast_open(void)
+{
+    g_last_move_tick = timer_ticks();
+}
 uint32_t raycast_fb_bytes(void) { return g_fb ? (RAY_VIEW_W * RAY_VIEW_H * 2u) : 0u; }
 
 int raycast_set_framebuffer(int on)

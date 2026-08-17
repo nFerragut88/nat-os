@@ -186,6 +186,9 @@ void desktop_invalidate(void) { g_dirty = 1; }
 
 void desktop_set_active(int on)
 {
+    if (!on) {
+        raycast_open();         /* same entry step as the tap path */
+    }
     g_mode  = on ? MODE_LAUNCHER : MODE_3D;
     g_dirty  = 1;
 }
@@ -528,7 +531,12 @@ static void open_selected(void)
 
     if (ic->action == DESK_ACTION_3D) {
         /* Hand the region over. The raycaster repaints every frame, so nothing
-         * needs erasing first. */
+         * needs erasing first -- but it DOES need its movement clock reset,
+         * which is what raycast_open() is for. Every other action here calls an
+         * open function or marks the launcher dirty; this branch used to do
+         * neither, and the missing reset is what made a reopened view spend
+         * its first seconds inside a wall. */
+        raycast_open();
         g_mode    = MODE_3D;
         g_msg_ok  = 1;
         g_msg_sel = -1;         /* nothing to report over a view we just left */

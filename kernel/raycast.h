@@ -47,6 +47,11 @@ void raycast_init(void);
 int  raycast_set_framebuffer(int on);
 int  raycast_framebuffer(void);
 uint16_t *raycast_fb_ptr(void);   /* the buffer; NOT the on/off flag above */
+
+/* Call when the view is given the region. Resets the movement clock so the
+ * first frame does not apply a catch-up burst accumulated while it was closed.
+ * See the note in raycast.c. */
+void raycast_open(void);
 uint32_t raycast_fb_bytes(void);
 
 /* Advances the camera one step and draws one frame. Walks forward until a wall
