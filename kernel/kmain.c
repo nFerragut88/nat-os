@@ -79,7 +79,7 @@ static void m6_critical_test(void);
 
 /* Touch polling policy, tunable at runtime via the 'touchcfg' command. Default
  * matches the last configuration the 3D view was confirmed good in. */
-volatile uint32_t g_touch_sleep_ticks = 0;      /* 0 = yield after each poll */
+volatile uint32_t g_touch_sleep_ticks = 1;      /* 1 tick = 10 ms, 100 Hz */
 
 /* Creates a task or stops the kernel. See the note at the first call site. */
 static int must_create(const char *name, task_entry_fn entry)
@@ -1717,9 +1717,21 @@ void kmain(void)
      * anti-starvation, and a LOW task will simply never run while any NORMAL
      * task is runnable. */
     task_set_priority(id_disp,   TASK_PRIO_HIGH);
-    /* Starts at NORMAL -- the configuration the 3D view was last confirmed
-     * good in. 'touchcfg' raises it at runtime for testing. */
-    task_set_priority(id_touch,  TASK_PRIO_NORMAL);
+    /* HIGH, with the renderer, and polling on a real 10 ms sleep.
+     *
+     * This was suspected of causing the 3D view tearing and reverted; it was
+     * innocent. The tearing was desktop_chrome() painting over a full-width
+     * view, and touch scheduling was identical across all four
+     * priority/poll combinations. Confirmed on the panel afterwards.
+     *
+     * HIGH because touch is user INPUT: at NORMAL it runs only when ageing
+     * rescues it from behind a renderer that never sleeps, roughly every
+     * 300 ms, and a quick tap falls between samples. A real sleep rather than
+     * a yield because a yield surrenders the CPU after EVERY poll, sampling
+     * once per slice instead of many times. It costs one SPI read per tick.
+     *
+     * Measured: ~15 samples per reporter interval before, ~150 after. */
+    task_set_priority(id_touch,  TASK_PRIO_HIGH);
     task_set_priority(id_shell,  TASK_PRIO_NORMAL);
     task_set_priority(id_apps,   TASK_PRIO_NORMAL);
     task_set_priority(id_report, TASK_PRIO_NORMAL);
