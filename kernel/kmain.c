@@ -81,6 +81,16 @@ static void m6_critical_test(void);
  * matches the last configuration the 3D view was confirmed good in. */
 volatile uint32_t g_touch_sleep_ticks = 1;      /* 1 tick = 10 ms, 100 Hz */
 
+/* Stops every drawer in the display task, leaving whatever is on the panel and
+ * in the framebuffer exactly as it stands.
+ *
+ * This is a measurement tool. The raycaster rewrites the entire framebuffer
+ * every frame as the camera moves, so comparing the buffer before and after
+ * some event always differs for innocent reasons. With the renderer frozen,
+ * ANY change to the buffer was made by something else -- which is precisely
+ * the open question about why launching a program repairs a garbled view. */
+volatile int g_display_frozen = 0;
+
 /* Creates a task or stops the kernel. See the note at the first call site. */
 static int must_create(const char *name, task_entry_fn entry)
 {
@@ -1197,7 +1207,7 @@ static void task_display(void)
          * Skipping every drawer here rather than teaching each one about
          * calibration: there are four of them, and a mode that owns the screen
          * should be expressed once. */
-        if (calib_running()) {
+        if (calib_running() || g_display_frozen) {
             task_sleep(1u);
             continue;
         }

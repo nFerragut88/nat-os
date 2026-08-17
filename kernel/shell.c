@@ -588,6 +588,12 @@ static void execute(char *line)
         wifimac_beacon_stop();
         uart_puts("   stopped\n");
     }
+    else if (str_eq(line, "dfreeze")) {
+        extern volatile int g_display_frozen;
+        g_display_frozen = !str_eq(arg, "off");
+        uart_puts(g_display_frozen ? "   display task frozen; nothing repaints\n"
+                                   : "   display task running\n");
+    }
     else if (str_eq(line, "fbsum")) {
         /* What is actually IN the framebuffer, sampled without touching the
          * panel. The renderer runs at full rate while the picture is wrong, and
