@@ -65,6 +65,9 @@ static volatile uint32_t work_b_count, work_b_bad;
 
 static int id_report, id_a, id_b, id_vm, id_apps, id_shell, id_idle, id_disp, id_touch;
 
+/* Exposed so the shell can retune touch scheduling without a reflash. */
+int kmain_touch_task_id(void) { return id_touch; }
+
 /* Last touch seen, latched so the reporter can show it whenever it happens to
  * run. Without this, confirming a real touch needs a serial capture to coincide
  * with a finger, which is not a test anyone can repeat reliably. */
@@ -73,6 +76,10 @@ static volatile uint32_t g_last_rawx, g_last_rawy, g_last_x, g_last_y, g_last_z;
 /* Defined below with the other self-tests, but called from the reporter, which
  * is the only context where a running tick makes it meaningful. */
 static void m6_critical_test(void);
+
+/* Touch polling policy, tunable at runtime via the 'touchcfg' command. Default
+ * matches the last configuration the 3D view was confirmed good in. */
+volatile uint32_t g_touch_sleep_ticks = 0;      /* 0 = yield after each poll */
 
 /* Creates a task or stops the kernel. See the note at the first call site. */
 static int must_create(const char *name, task_entry_fn entry)
@@ -1451,7 +1458,15 @@ static void task_touch(void)
          * 100 Hz sampling for one SPI transaction per pass is far less CPU
          * than the old flat-out polling, and unlike it, the rate is a property
          * of the clock rather than of whatever else happens to be running. */
-        task_sleep(1u);
+        /* Runtime-tunable, so the two variables can be separated without a
+         * reflash each. Touch went from NORMAL+yield to HIGH+sleep in one
+         * step and the 3D view started tearing; which half did it is the
+         * question, and guessing has already cost two rounds. */
+        if (g_touch_sleep_ticks) {
+            task_sleep(g_touch_sleep_ticks);
+        } else {
+            task_yield();
+        }
     }
 }
 
@@ -1695,10 +1710,9 @@ void kmain(void)
      * anti-starvation, and a LOW task will simply never run while any NORMAL
      * task is runnable. */
     task_set_priority(id_disp,   TASK_PRIO_HIGH);
-    /* HIGH, with the renderer. Touch is user INPUT: its latency is visible in
-     * a way no counter here reports, and it was starved at NORMAL by a display
-     * task that never sleeps. It costs one SPI read per 10 ms tick. */
-    task_set_priority(id_touch,  TASK_PRIO_HIGH);
+    /* Starts at NORMAL -- the configuration the 3D view was last confirmed
+     * good in. 'touchcfg' raises it at runtime for testing. */
+    task_set_priority(id_touch,  TASK_PRIO_NORMAL);
     task_set_priority(id_shell,  TASK_PRIO_NORMAL);
     task_set_priority(id_apps,   TASK_PRIO_NORMAL);
     task_set_priority(id_report, TASK_PRIO_NORMAL);

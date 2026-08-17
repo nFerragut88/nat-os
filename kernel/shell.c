@@ -588,6 +588,30 @@ static void execute(char *line)
         wifimac_beacon_stop();
         uart_puts("   stopped\n");
     }
+    else if (str_eq(line, "touchcfg")) {
+        /* touchcfg <prio 0-2> <sleep ticks, 0=yield>
+         *
+         * Both knobs at runtime, because touch went from NORMAL+yield to
+         * HIGH+sleep in a single step and the 3D view started tearing. Which
+         * half caused it is the question, and reflashing per guess has already
+         * cost two rounds. */
+        extern volatile uint32_t g_touch_sleep_ticks;
+        extern int kmain_touch_task_id(void);
+        char *second = split(arg);
+        int prio = parse_int(arg);
+        int naps = parse_int(second);
+        if (prio >= 0 && prio <= 2 && naps >= 0) {
+            task_set_priority(kmain_touch_task_id(), prio);
+            g_touch_sleep_ticks = (uint32_t)naps;
+            uart_puts("   touch prio=");
+            uart_put_dec((unsigned)prio);
+            uart_puts(" sleep=");
+            uart_put_dec((unsigned)naps);
+            uart_puts(naps ? " ticks\n" : " (yield)\n");
+        } else {
+            uart_puts("   usage: touchcfg <prio 0..2> <sleep ticks, 0=yield>\n");
+        }
+    }
     else if (str_eq(line, "hwinit")) {
         /* One stage per invocation. This is the first code to call into libpp,
          * the MAC blob, and if it takes the board down the stage number is the

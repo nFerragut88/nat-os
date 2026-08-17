@@ -200,12 +200,30 @@ static int spi2_dma_tx(const uint8_t *data, uint32_t n)
     GPIO_REG(SPI2_MOSI_DLEN) = n * 8u - 1u;
     GPIO_REG(SPI2_CMD)       = SPI_USR_BIT;
 
-    /* Bounded wait. 2,000,000 cycles is ~25 ms at 80 MHz, far beyond the ~100 us
-     * a 480-byte transfer needs, and short enough that a stuck engine costs one
-     * frame rather than the system. */
+    /* Bounded wait, and the bound has to survive PREEMPTION.
+     *
+     * xt_ccount() is wall clock: it keeps running while this task is not. The
+     * old bound was 2,000,000 cycles -- ~25 ms at 80 MHz -- justified as "far
+     * beyond the ~100 us a 480-byte transfer needs", which is true of the
+     * TRANSFER and false of the WAIT. One scheduling round trip is longer than
+     * that, so a display task descheduled mid-transfer times out on a DMA
+     * engine that is working perfectly.
+     *
+     * The consequence is not a dropped frame. A timeout disables DMA
+     * PERMANENTLY and falls back to the FIFO path, so a single spurious trip
+     * breaks rendering until reboot -- and it presents as the blit getting
+     * FASTER (55.8 ms to 31.3 ms), because the fallback does different work.
+     * A performance number improving was the symptom.
+     *
+     * This is the same class of error as the frame timings earlier in this
+     * project: wall clock measured where work was meant. Raising the bound
+     * rather than switching clocks keeps the guard intact -- a genuinely stuck
+     * engine is still caught, it just costs half a second once instead of
+     * 25 ms. task_cpu_cycles() would be the principled fix, but it only
+     * advances at context switches and so cannot bound a spin inside one. */
     uint32_t start = xt_ccount();
     while (GPIO_REG(SPI2_CMD) & SPI_USR_BIT) {
-        if ((xt_ccount() - start) > 2000000u) {
+        if ((xt_ccount() - start) > 2000000u) {      /* ~25 ms at 80 MHz */
             g_dma_timeouts++;
             g_dma_ok = 0;
             return 0;
