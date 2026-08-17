@@ -1,7 +1,7 @@
 # UM-NATOS-028 — WiFi, Touch, and the Column That Ate the 3D View
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.0 · 2026-08-16 · Status: **Receive working, transmit not, display fixed**
+Revision 1.1 · 2026-08-16 · Status: **Receive working, transmit not, one display fault still open**
 
 ---
 
@@ -555,7 +555,7 @@ for the screwdriver.
 
 ---
 
-## 10. Open: the startup glitch, and a very good clue
+## 10. Open: the startup glitch, and the measurement that cracked it open
 
 Not everything got solved, and the unsolved part has the sharpest clue in the
 whole report.
@@ -622,17 +622,69 @@ argument:
 - The picture is **garbled**, not frozen, not blank.
 - Starting a program REPAIRS it, without leaving the view.
 
-That last fact is the whole remaining mystery and no mechanism for it has been
-found. `app_start()` allocates an arena, copies an image, initialises a VM,
-sets a viewport and clears IPC. None of that touches the panel, the framebuffer
-or the display driver.
+### 10.1 The measurement that finally said something
 
-**Next step for a fresh session:** instrument `app_start()` itself — take an
-`fbsum` immediately before and immediately after a program launch while the
-view is visibly bad, and see which of those five operations changes the buffer.
-That converts the one unexplained fact into a measurement instead of a
-hypothesis, which is the move that has worked every other time in this report
-and was reached for too late each time.
+The obvious experiment — compare the framebuffer before and after a launch —
+does not work as stated, and the reason is worth pausing on. The raycaster
+rewrites **every pixel** of the buffer every frame as the camera moves, so any
+two samples differ for entirely innocent reasons. A comparison whose result is
+"different" no matter what is not a measurement.
+
+So the renderer gets frozen first. `dfreeze` stops every drawer in the display
+task, which makes the buffer static and turns the question into a sharp one:
+with nothing rendering, **does launching a program change the framebuffer at
+all?**
+
+```
+BEFORE launch    equal-to-first=25088   rows 67e0 67e0 67e0 67e0
+CONTROL          equal-to-first=25088   rows 67e0 67e0 67e0 67e0
+AFTER launch     equal-to-first=25088   rows 67e0 67e0 67e0 67e0
+```
+
+The **control** row is the load-bearing one. Taken with nothing done in
+between, it proves the freeze holds the buffer still and the sampler is
+stable — without it, "no change" would be indistinguishable from a broken
+measurement. That is the same lesson as the contaminated blittest above,
+applied in advance for once.
+
+**Launching a program does not alter one sampled byte of the framebuffer.**
+
+This is the first positive result in the entire investigation, and it
+eliminates more than the previous eight negatives combined: the renderer, the
+framebuffer contents, the heap, and all five of `app_start()`'s operations.
+Whatever the repair is, it happens **downstream of the image**.
+
+### 10.2 A mechanism that finally fits
+
+Downstream of the image means the blit or the panel itself, and there is a
+candidate that explains the impossible part.
+
+The ILI9341 holds a **window**, set by `set_window()`, and pixel data streams
+into it with CS asserted. If a stream ever ends short, or CS is left asserted,
+the controller sits mid-window and the *next* pixels land at the wrong offset.
+That is what a garbled image is. Any other drawer issuing a fresh
+`set_window()` and `push_end()` resynchronises the controller — and
+applications draw constantly, while the raycaster alone only ever writes one
+full-screen window per frame.
+
+That accounts for every observation, including the one that looked like magic:
+code which never touches the image can repair the image, because it is not
+repairing the image — it is repairing the **panel's idea of where the image
+goes**.
+
+It also retires an earlier claim. "Transport is clean, proven with colour
+bars" tested a single blit from a fresh state. It did not test a blit issued
+after a previous one may have left the controller mid-window, which is a
+different question and the one that matters.
+
+**Status: untested.** It is a hypothesis with a mechanism, which is more than
+the previous eight had.
+
+**Next step:** with the view visibly garbled, force one clean `set_window()`
+and full-screen fill from the shell, touching no framebuffer. If the view
+repairs, it is panel desynchronisation, and the fix belongs in the blit path —
+re-asserting window and CS state per frame rather than assuming they survived.
+If it does not repair, the remaining suspect is the SPI/DMA stream itself.
 
 ---
 

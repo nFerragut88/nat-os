@@ -57,7 +57,7 @@ true" is the difference between a working boot and a silent reboot.
 | [UM-NATOS-025](UM-NATOS-025-i2c.md) | I2C, and Why a Preempted Master Is Legal | Bit-banged two-wire master on the last two free pins, clock stretching as the reason preemption is safe, and a self-test for the failure where a missing pull-up makes every address answer |
 | [UM-NATOS-026](UM-NATOS-026-onscreen-shell.md) | The Shell on the Panel, and Not a Menu of It | The real shell reached from a multi-tap keypad rather than a second command set that would drift from it; output captured by teeing the UART for exactly one command |
 | [UM-NATOS-027](UM-NATOS-027-audio.md) | Audio, and Three Ways to Be Silent | Hardware PWM on the speaker pin, a click on every keypress, and three stacked faults where each one made the next invisible — including a self-check that could not fail by construction |
-| [UM-NATOS-028](UM-NATOS-028-wifi-touch-and-the-chrome-column.md) | WiFi, Touch, and the Column That Ate the 3D View | 802.11 receive working end to end; the TSF timer identified by behaviour; task_sleep found not to sleep; and a 3D view fault that survived four confident wrong theories before a static test pattern found a chrome column painting over it |
+| [UM-NATOS-028](UM-NATOS-028-wifi-touch-and-the-chrome-column.md) | WiFi, Touch, and the Column That Ate the 3D View | 802.11 receive working end to end; the TSF timer identified by behaviour; task_sleep found not to sleep; seven of this kernel's own instruments caught reporting confidently and wrongly; and a display fault that survived eight measured theories before a frozen-renderer test proved the repair happens downstream of the framebuffer |
 
 ## Reading order
 
