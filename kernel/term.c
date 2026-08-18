@@ -303,8 +303,14 @@ static void draw_input(void)
 static char     g_keyq[KEYQ_MAX];
 static uint32_t g_keyq_head, g_keyq_count, g_keyq_dropped;
 
+/* Every character ever queued, never reset. `pending` and `dropped` cannot
+ * distinguish "nothing was typed" from "something was typed and a program
+ * consumed it" -- a total can. That ambiguity cost a debugging round. */
+static uint32_t g_keyq_total;
+
 static void keyq_push(char ch)
 {
+    g_keyq_total++;
     if (g_keyq_count == KEYQ_MAX) {
         g_keyq_head = (g_keyq_head + 1u) % KEYQ_MAX;
         g_keyq_count--;
@@ -327,6 +333,24 @@ int term_key_pop(uint32_t *out)
 
 uint32_t term_keys_pending(void) { return g_keyq_count; }
 uint32_t term_keys_dropped(void) { return g_keyq_dropped; }
+
+/* Put a character in as though it had been typed.
+ *
+ * The keypad only exists inside the terminal view and only settles a character
+ * when a different key is pressed or the multi-tap cycle expires, so testing
+ * anything downstream of it needs a person, a particular view, and correct
+ * timing. That is three ways for a test to fail for reasons unrelated to what
+ * it is testing -- and the `keys` device and the VM event path are both
+ * downstream of here.
+ *
+ * Same reasoning as the `echo` device: a path whose only source needs hardware
+ * or a human ships having exercised nothing but its refusal case. */
+void term_key_inject(uint32_t ch)
+{
+    keyq_push((char)ch);
+}
+
+uint32_t term_keys_queued(void) { return g_keyq_total; }
 
 /* Ends any live multi-tap cycle WITHOUT settling a character. Used by
  * backspace, where the live character is about to be deleted and must not be

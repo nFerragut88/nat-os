@@ -154,7 +154,27 @@ enum {
      * cannot answer is legal, and a program that cannot enumerate without dying
      * cannot enumerate. Faults stay what they have always been -- reaching
      * outside the arena. */
-    VM_SYS_DEVICE = 12
+    VM_SYS_DEVICE = 12,
+
+    /* Register a handler the KERNEL may call.
+     *
+     *   r0 = event id (VM_EVT_*)
+     *   r1 = code offset of the handler, or 0 to unregister
+     *   r2 = parameter -- for VM_EVT_TICK, the interval in ticks
+     *   -> r0 = 1 accepted, 0 refused
+     *
+     * This is a VM service, not a peripheral. UM-NATOS-031 says `sys device`
+     * is the last hand-written syscall, and that claim was about reaching
+     * HARDWARE: a new sensor is a table entry, not an opcode. Registering a
+     * handler is the same kind of thing as `exit` or `send` -- it is about the
+     * execution model itself, which no device table can express. Said plainly
+     * here so the earlier claim is not quietly broken.
+     *
+     * Until now an application was one linear thing with one program counter,
+     * and everything the kernel offered ran the other way: the program asks,
+     * the kernel answers. This is the first mechanism that lets the kernel call
+     * INTO a program, which is what `when` and `every` both need. */
+    VM_SYS_EVENT = 13
 };
 
 /* Fault codes. VM_FAULT_NONE is the only non-terminal value. */
@@ -178,6 +198,26 @@ enum {
     VM_RUN_FAULTED,         /* see vm_fault()                          */
     VM_RUN_QUANTUM          /* budget spent; call vm_run() again       */
 };
+
+/* ---- events -------------------------------------------------------------
+ *
+ * Two to begin with, chosen because they are the two halves of what a physical
+ * program actually wants: something happened, and time passed.
+ *
+ *   VM_EVT_TICK   fires every `param` ticks. This is `every 10ms`.
+ *                 The handler receives the current tick count in r0.
+ *   VM_EVT_KEY    fires when the panel keypad settles a character. This is
+ *                 `when key.pressed`. The handler receives it in r0.
+ *
+ * The key queue is SHARED and reading it is destructive, so an application
+ * registered for VM_EVT_KEY competes with the shell's `keys` command and with
+ * any other application doing the same. That is the same arrangement the
+ * touchscreen already has and it is a real limitation, not an oversight --
+ * per-application queues need a concept of focus, which this system does not
+ * have. */
+#define VM_EVT_TICK   0u
+#define VM_EVT_KEY    1u
+#define VM_EVT_COUNT  2u
 
 typedef struct {
     uint32_t reg[VM_REGS];
@@ -212,6 +252,32 @@ typedef struct {
      * and the preemption guarantee is worthless. */
     int      yield_now;
 
+    /* ---- event handlers -------------------------------------------------
+     *
+     * Delivery is a CALL injected by the kernel: the current pc is pushed onto
+     * the same return stack `call` uses, and pc is set to the handler. The
+     * handler's own `ret` therefore resumes the interrupted code with no new
+     * return mechanism and no second program counter.
+     *
+     * Registers are saved on entry and restored when the handler returns,
+     * which is detected by the return stack coming back to the depth it had
+     * before injection. That means a handler may use every register freely and
+     * the interrupted code cannot tell it ran -- the alternative was a calling
+     * convention, and a convention nobody can enforce is a convention every
+     * program gets wrong differently. */
+    uint32_t evt_handler[VM_EVT_COUNT]; /* code offset; 0 = not registered */
+    uint32_t evt_param[VM_EVT_COUNT];   /* TICK: interval in ticks         */
+    uint32_t evt_due[VM_EVT_COUNT];     /* TICK: next tick it is due       */
+    uint32_t evt_arg[VM_EVT_COUNT];     /* argument for a pending event    */
+    uint32_t evt_pending;               /* bit per event id                */
+
+    int      in_handler;
+    uint32_t handler_sp;                /* call_sp BEFORE the injection    */
+    uint32_t saved_reg[VM_REGS];
+
+    uint32_t evt_delivered;
+    uint32_t evt_dropped;               /* arrived while one was running   */
+
     uint32_t executed;                  /* instructions retired         */
     uint32_t exit_status;
 } vm_t;
@@ -243,6 +309,21 @@ int vm_in_bounds(const vm_t *vm, uint32_t off, uint32_t len);
 /* Records a fault exactly as the interpreter does. Exported for vmarg.c, which
  * lives outside this file because the device model will share it. */
 void vm_raise(vm_t *vm, int code, uint32_t detail);
+
+/* ---- event delivery, called by the application host --------------------
+ *
+ * vm_event_poll() decides whether anything is due for this vm and marks it
+ * pending; vm_event_dispatch() injects the call if one is. They are separate so
+ * the host can poll cheaply every tick and dispatch only when it is about to
+ * run the program.
+ *
+ * Both are no-ops for a vm with no handlers registered, which is every
+ * application written before this existed. */
+void vm_event_poll(vm_t *vm);
+int  vm_event_dispatch(vm_t *vm);       /* 1 if a handler was entered */
+
+uint32_t vm_events_delivered(const vm_t *vm);
+uint32_t vm_events_dropped(const vm_t *vm);
 
 /* Viewport containment, as numbers rather than as something to look at.
  * escapes must be 0 for any program, however hostile; max_y is the lowest row

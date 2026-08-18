@@ -72,6 +72,10 @@ SYSCALLS = {
     # table entry reached through `sys device`, not a thirteenth mnemonic here
     # and a fourteenth case in vm.c.
     "device": 12,
+    # A VM service rather than a peripheral: `device` is still the last syscall
+    # for reaching HARDWARE. Registering a handler is about the execution model
+    # itself, which no device table can express. See vm.h.
+    "event": 13,
 }
 
 ESCAPES = {"n": 10, "r": 13, "t": 9, "0": 0, "\\": 92, '"': 34, "'": 39}

@@ -1107,6 +1107,8 @@ static void execute(char *line)
         uart_put_dec(pending);
         uart_puts("  dropped ");
         uart_put_dec(term_keys_dropped());
+        uart_puts("  queued-ever ");
+        uart_put_dec(term_keys_queued());
         uart_puts("\n   ");
         if (!pending) {
             uart_puts("(nothing typed on the panel keypad)");
@@ -1172,6 +1174,30 @@ static void execute(char *line)
                 uart_put_hex(buf[i]);
             }
             uart_puts("\n");
+        }
+    }
+    else if (str_eq(line, "keyinject")) {
+        /* keyinject <char> [count]  -- type without fingers.
+         *
+         * The keypad needs a person, the terminal view, and correct multi-tap
+         * timing. Anything downstream of it -- the `keys` device, the VM event
+         * path -- would otherwise be testable only by asking somebody to tap,
+         * which is three ways for a test to fail for reasons unrelated to what
+         * it is testing. One of them already did. */
+        char *cc = arg;
+        char *cn = split(cc);
+        int n = *cn ? parse_int(cn) : 1;
+        if (!*cc || n < 1 || n > 16) {
+            uart_puts("   usage: keyinject <char> [count 1..16]\n");
+        } else {
+            for (int i = 0; i < n; i++) {
+                term_key_inject((uint32_t)(uint8_t)cc[0]);
+            }
+            uart_puts("   injected ");
+            uart_put_dec((unsigned int)n);
+            uart_puts(" x '");
+            uart_putc(cc[0]);
+            uart_puts("'\n");
         }
     }
     else if (str_eq(line, "i2cscan")) {

@@ -122,6 +122,15 @@ void app_tick(uint32_t quantum)
             continue;
         }
 
+        /* Events, before the program is resumed.
+         *
+         * Poll decides whether anything is due; dispatch injects the call. Both
+         * are no-ops for a program with no handlers registered, which is every
+         * program written before this existed -- the mechanism is opt-in and
+         * costs the others two loads and a branch. */
+        vm_event_poll(&a->vm);
+        vm_event_dispatch(&a->vm);
+
         int r = vm_run(&a->vm, quantum);
         if (r == VM_RUN_QUANTUM) {
             continue;               /* still going; next one gets a turn */

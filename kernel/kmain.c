@@ -49,6 +49,7 @@
 #include "generated/app_paint.h"
 #include "generated/app_blit.h"
 #include "generated/app_dev.h"
+#include "generated/app_evt.h"
 #include "generated/app_ping.h"
 #include "generated/app_pong.h"
 #include "uart.h"
@@ -830,6 +831,9 @@ static const shell_program_t PROGRAMS[] = {
     /* The first program that reaches a peripheral. Its arena is larger because
      * it holds a name buffer the kernel writes into. */
     { "dev",     vm_app_dev,   VM_APP_DEV_LEN,   768u, VM_APP_DEV_AT_PUBLISH },
+    /* The first program the kernel can call into. Its main flow is an empty
+     * spin; everything it prints comes from handlers the kernel entered. */
+    { "evt",     vm_app_evt,   VM_APP_EVT_LEN,   768u, VM_APP_EVT_AT_PUBLISH },
     { "ping",    vm_app_ping,  VM_APP_PING_LEN,  512u, 0u },
     { "pong",    vm_app_pong,  VM_APP_PONG_LEN,  512u, 0u },
 };

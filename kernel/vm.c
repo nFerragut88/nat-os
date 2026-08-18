@@ -11,6 +11,7 @@
 #include "vm.h"
 #include "vmarg.h"
 #include "device.h"
+#include "term.h"
 #include "arena.h"
 #include "display.h"
 #include "ipc.h"
@@ -26,6 +27,99 @@
  * directly can wrap and admit an access far outside the arena, which is exactly
  * what a hostile length would aim for. m4_selftest() cross-checks this against
  * arena_contains() so the duplication cannot drift unnoticed. */
+/* ---- event delivery -----------------------------------------------------
+ *
+ * See the note in vm.h. Delivery is a call the kernel injects; the handler's
+ * own `ret` unwinds it.
+ */
+
+uint32_t vm_events_delivered(const vm_t *vm) { return vm->evt_delivered; }
+uint32_t vm_events_dropped(const vm_t *vm)   { return vm->evt_dropped; }
+
+void vm_event_poll(vm_t *vm)
+{
+    /* Cheap enough to call every tick for every application: with nothing
+     * registered this is two loads and a branch. */
+    if (!vm->evt_handler[VM_EVT_TICK] && !vm->evt_handler[VM_EVT_KEY]) {
+        return;
+    }
+
+    if (vm->evt_handler[VM_EVT_TICK]) {
+        uint32_t now = timer_ticks();
+        if ((int32_t)(now - vm->evt_due[VM_EVT_TICK]) >= 0) {
+            /* Re-armed from NOW, not from the old deadline. Catching up on
+             * missed intervals would fire a burst the moment a slow handler
+             * finished, and this kernel has already been bitten once by a
+             * catch-up loop -- the raycaster walked through a wall applying
+             * twenty steps of movement in a single frame (UM-NATOS-028). A
+             * program that wants elapsed time can read the tick it is given. */
+            vm->evt_due[VM_EVT_TICK] = now + vm->evt_param[VM_EVT_TICK];
+            if (vm->evt_pending & (1u << VM_EVT_TICK)) {
+                vm->evt_dropped++;      /* previous one never ran */
+            }
+            vm->evt_arg[VM_EVT_TICK] = now;
+            vm->evt_pending |= (1u << VM_EVT_TICK);
+        }
+    }
+
+    if (vm->evt_handler[VM_EVT_KEY] && !(vm->evt_pending & (1u << VM_EVT_KEY))) {
+        /* Only taken from the queue when there is somewhere to put it. Popping
+         * a key we would then have to drop would consume it on behalf of a
+         * program that never saw it, and the queue is shared. */
+        uint32_t ch = 0;
+        if (term_key_pop(&ch)) {
+            vm->evt_arg[VM_EVT_KEY] = ch;
+            vm->evt_pending |= (1u << VM_EVT_KEY);
+        }
+    }
+}
+
+int vm_event_dispatch(vm_t *vm)
+{
+    if (!vm->evt_pending) {
+        return 0;
+    }
+
+    /* One deep, never re-entrant. An event arriving while a handler runs waits
+     * for it to finish; a second of the same kind is counted and dropped. The
+     * alternative is a handler interrupting itself, which needs either a
+     * second saved register file per nesting level or a rule nobody can
+     * enforce. */
+    if (vm->in_handler) {
+        return 0;
+    }
+
+    if (vm->call_sp >= VM_CALL_DEPTH) {
+        /* No room to push the return address. Leave it pending rather than
+         * faulting the program: it is inside a deep call of its own making and
+         * will unwind. */
+        return 0;
+    }
+
+    uint32_t id;
+    for (id = 0; id < VM_EVT_COUNT; id++) {
+        if (vm->evt_pending & (1u << id)) {
+            break;
+        }
+    }
+    if (id == VM_EVT_COUNT || !vm->evt_handler[id]) {
+        vm->evt_pending = 0;            /* handler was unregistered under it */
+        return 0;
+    }
+
+    for (uint32_t i = 0; i < VM_REGS; i++) {
+        vm->saved_reg[i] = vm->reg[i];
+    }
+    vm->handler_sp = vm->call_sp;
+    vm->call[vm->call_sp++] = vm->pc;   /* the handler's `ret` lands here */
+    vm->pc = vm->evt_handler[id];
+    vm->reg[0] = vm->evt_arg[id];       /* the tick, or the character */
+    vm->in_handler = 1;
+    vm->evt_pending &= ~(1u << id);
+    vm->evt_delivered++;
+    return 1;
+}
+
 int vm_in_bounds(const vm_t *vm, uint32_t off, uint32_t len)
 {
     if (off > vm->size) {
@@ -504,6 +598,58 @@ static int do_syscall(vm_t *vm, uint32_t num)
         }
     }
 
+    case VM_SYS_EVENT: {
+        uint32_t id     = vm->reg[0];
+        uint32_t offset = vm->reg[1];
+        uint32_t param  = vm->reg[2];
+
+        if (id >= VM_EVT_COUNT) {
+            vm->reg[0] = 0;             /* refused, not a fault */
+            return 0;
+        }
+
+        if (offset == 0u) {             /* unregister */
+            vm->evt_handler[id] = 0;
+            vm->evt_pending &= ~(1u << id);
+            vm->reg[0] = 1;
+            return 0;
+        }
+
+        /* The handler offset is a program-supplied quantity pointing at CODE,
+         * so it gets the same treatment as any other: bounds-checked in the
+         * offset domain, and instruction-aligned because the interpreter
+         * fetches four bytes and would otherwise decode a shifted word.
+         *
+         * A bad offset here is a FAULT rather than a refusal. Every other
+         * refusal in this system means "the device cannot answer that"; this
+         * one means the program handed the kernel an address to jump to that
+         * is not inside it, which is the same class of error as a bad store. */
+        if (!vm_in_bounds(vm, offset, VM_INSN_BYTES)) {
+            fault(vm, VM_FAULT_BOUNDS, offset);
+            return 1;
+        }
+        if (offset % VM_INSN_BYTES) {
+            fault(vm, VM_FAULT_ALIGN, offset);
+            return 1;
+        }
+
+        vm->evt_handler[id] = offset;
+        vm->evt_param[id]   = param;
+
+        if (id == VM_EVT_TICK) {
+            /* An interval of zero would fire every poll and starve the main
+             * flow, so it is clamped to one tick rather than refused -- a
+             * program asking for "as often as possible" gets exactly that. */
+            if (vm->evt_param[id] == 0u) {
+                vm->evt_param[id] = 1u;
+            }
+            vm->evt_due[id] = timer_ticks() + vm->evt_param[id];
+        }
+
+        vm->reg[0] = 1;
+        return 0;
+    }
+
     case VM_SYS_PUTD:
         uart_put_dec(vm->reg[0]);
         return 0;
@@ -781,6 +927,23 @@ int vm_run(vm_t *vm, uint32_t quantum)
                 return VM_RUN_FAULTED;
             }
             next = vm->call[--vm->call_sp];
+
+            /* Leaving an event handler.
+             *
+             * Detected by the return stack coming back to the depth it had
+             * before the kernel injected the call, which needs no marker in
+             * the stack and no cooperation from the handler -- a handler that
+             * simply returns is indistinguishable from any other function that
+             * simply returns, which is the point.
+             *
+             * The register file is restored here, so the interrupted code
+             * cannot tell a handler ran. */
+            if (vm->in_handler && vm->call_sp == vm->handler_sp) {
+                for (uint32_t i = 0; i < VM_REGS; i++) {
+                    vm->reg[i] = vm->saved_reg[i];
+                }
+                vm->in_handler = 0;
+            }
             break;
 
         case VM_OP_LDW: r[a] = load_u32(vm, r[b] + c, &ok); break;

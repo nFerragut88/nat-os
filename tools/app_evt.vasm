@@ -1,0 +1,103 @@
+; Application EVT — the first program the kernel can call INTO.
+;
+; Until this existed, an application was one linear thing with one program
+; counter, and every mechanism ran the other way: the program asks, the kernel
+; answers. `when key.pressed` and `every 10ms` both need the opposite, and both
+; need it from the VM rather than from a language.
+;
+; This registers two handlers and then does nothing at all. Its main loop is an
+; empty spin. Everything it prints is printed by code the kernel entered on its
+; own initiative.
+;
+; Delivery is a CALL the kernel injects: it pushes the interrupted pc onto the
+; same return stack `call` uses and sets pc to the handler, so `ret` below
+; resumes the spin with no new return mechanism anywhere. Registers are saved
+; and restored around it, which is why these handlers can use r0..r15 freely
+; without knowing what the main flow was holding.
+
+start:
+        ldi     r0, @msg_hello
+        sys     puts
+
+; ---- every 100 ticks, about one second --------------------------------------
+
+        ldi     r0, 0               ; VM_EVT_TICK
+        ldi     r1, @on_tick
+        ldi     r2, 100             ; interval in ticks
+        sys     event
+        brz     r0, failed
+
+; ---- when the panel keypad settles a character ------------------------------
+;
+; The key queue is SHARED and reading it is destructive, so this competes with
+; the shell's `keys` command and with any other program doing the same. Real,
+; and documented rather than hidden: per-application queues would need a concept
+; of focus that this system does not have.
+
+        ldi     r0, 1               ; VM_EVT_KEY
+        ldi     r1, @on_key
+        ldi     r2, 0
+        sys     event
+        brz     r0, failed
+
+        ldi     r0, @msg_armed
+        sys     puts
+
+; ---- the main flow, which does nothing --------------------------------------
+;
+; r10 counts spins purely so `ps` shows the program is alive. If the handlers
+; below ever fail to return correctly, this counter is where it will show:
+; a clobbered r10 means the register save/restore is wrong.
+
+        ldi     r10, 0
+        ldi     r11, 1
+        ldi     r13, @publish       ; set ONCE -- app_dev shipped with this bug,
+                                    ; a jump that landed past its own setup
+
+spin:
+        add     r10, r10, r11
+        stw     r10, r13, 0
+        jmp     spin
+
+failed:
+        ldi     r0, @msg_failed
+        sys     puts
+        ldi     r0, 1
+        sys     exit
+
+; ---- handlers ---------------------------------------------------------------
+;
+; Entered by the kernel. r0 holds the argument: the tick count for TICK, the
+; character for KEY. Both end in `ret`, which unwinds the injected call.
+
+on_tick:
+        ldi     r1, @msg_tick
+        mov     r2, r0              ; save the tick before puts overwrites r0
+        mov     r0, r1
+        sys     puts
+        mov     r0, r2
+        sys     putd
+        ldi     r0, @msg_nl
+        sys     puts
+        ret
+
+on_key:
+        mov     r2, r0              ; the character
+        ldi     r0, @msg_key
+        sys     puts
+        mov     r0, r2
+        sys     putc
+        ldi     r0, @msg_nl
+        sys     puts
+        ret
+
+        .align  4
+publish:
+        .word   0
+
+msg_hello:      .string "  [evt] registering handlers\n"
+msg_armed:      .string "  [evt] armed; main flow is now an empty spin\n"
+msg_failed:     .string "  [evt] registration REFUSED\n"
+msg_tick:       .string "  [evt] tick handler, t="
+msg_key:        .string "  [evt] key handler, got "
+msg_nl:         .string "\n"

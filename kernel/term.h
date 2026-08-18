@@ -48,4 +48,14 @@ int      term_key_pop(uint32_t *out);
 uint32_t term_keys_pending(void);
 uint32_t term_keys_dropped(void);
 
+/* Every character ever queued, never reset. `pending` and `dropped` cannot tell
+ * "nothing was typed" apart from "something was typed and a program consumed
+ * it"; a total can. */
+uint32_t term_keys_queued(void);
+
+/* Inject a character as though it had been typed. The keypad needs a person, a
+ * particular view, and correct multi-tap timing, which is three ways for a test
+ * of something DOWNSTREAM to fail for unrelated reasons. */
+void     term_key_inject(uint32_t ch);
+
 #endif /* NATOS_TERM_H */
