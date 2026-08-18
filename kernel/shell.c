@@ -28,6 +28,7 @@
 #include "wifimac.h"
 #include "efuse.h"
 #include "xtensa.h"
+#include "vmarg.h"
 
 uint32_t osi_add_probe(uint32_t a, uint32_t b);
 uint32_t osi_add_probe(uint32_t a, uint32_t b) { return a + b; }
@@ -913,6 +914,90 @@ static void execute(char *line)
         g_display_frozen = !str_eq(arg, "off");
         uart_puts(g_display_frozen ? "   display task frozen; nothing repaints\n"
                                    : "   display task running\n");
+    }
+    else if (str_eq(line, "vmargtest")) {
+        /* Drive known-BAD arguments through the harness and require each to be
+         * refused, with the right fault code.
+         *
+         * A harness that has never rejected anything and a harness that is
+         * never reached look identical from outside, and this kernel has been
+         * caught by that shape before -- an audio self-check that could not fail
+         * by construction (UM-NATOS-027), a viewport counter that only moved in
+         * one drawing mode (UM-NATOS-028). The cases below are the ones the four
+         * hand-written sites were each reasoned about individually to survive.
+         *
+         * Runs against a fabricated vm_t over a local buffer: no arena, no
+         * application, nothing to clean up, and it can be run at any time. */
+        static uint8_t sandbox[64];
+        vm_t t;
+        for (uint32_t i = 0; i < sizeof sandbox; i++) {
+            sandbox[i] = (uint8_t)(i + 1u);     /* no NUL until forced below */
+        }
+        t.base = (uint32_t)sandbox;
+        t.size = sizeof sandbox;
+        t.pc   = 0;
+
+        vm_span_t s;
+        char sbuf[16];
+        int pass = 0, total = 0;
+
+        #define WANT(desc, expr, expect_ok, expect_fault)                      \
+            do {                                                              \
+                total++;                                                      \
+                t.fault = VM_FAULT_NONE;                                      \
+                int r = (expr);                                               \
+                int good = (r == (expect_ok)) &&                              \
+                           (t.fault == (expect_fault));                       \
+                if (good) { pass++; }                                         \
+                uart_puts(good ? "   ok   " : "   FAIL ");                    \
+                uart_puts(desc);                                              \
+                if (!good) {                                                  \
+                    uart_puts("  (rc=");                                      \
+                    uart_put_dec((unsigned int)r);                            \
+                    uart_puts(" fault=");                                     \
+                    uart_puts(vm_fault_name(t.fault));                        \
+                    uart_puts(")");                                           \
+                }                                                             \
+                uart_puts("\n");                                              \
+            } while (0)
+
+        WANT("span inside the arena is accepted",
+             vmarg_span(&t, 0, 64, 1, &s), 1, VM_FAULT_NONE);
+        WANT("span one byte past the end is refused",
+             vmarg_span(&t, 0, 65, 1, &s), 0, VM_FAULT_BOUNDS);
+        WANT("offset past the end is refused",
+             vmarg_span(&t, 65, 1, 1, &s), 0, VM_FAULT_BOUNDS);
+        WANT("off+len WRAPPING is refused (the whole point)",
+             vmarg_span(&t, 0xFFFFFFF0u, 0x20u, 1, &s), 0, VM_FAULT_BOUNDS);
+        WANT("misaligned offset is refused",
+             vmarg_span(&t, 3, 4, 4, &s), 0, VM_FAULT_ALIGN);
+        WANT("items within the ceiling are accepted",
+             vmarg_items(&t, 0, 16, 2, 32, 2, &s), 1, VM_FAULT_NONE);
+        WANT("count over the ceiling is refused BEFORE multiplying",
+             vmarg_items(&t, 0, 0x80000000u, 2, 32, 2, &s), 0, VM_FAULT_BOUNDS);
+        WANT("count*elem that would wrap is refused",
+             vmarg_items(&t, 0, 0x40000001u, 4, 1024, 1, &s), 0, VM_FAULT_BOUNDS);
+        WANT("zero count yields an empty span, not a fault",
+             vmarg_items(&t, 0, 0, 4, 16, 1, &s), 1, VM_FAULT_NONE);
+        WANT("unterminated string running off the end is refused",
+             vmarg_string(&t, 56, sbuf, sizeof sbuf), 0, VM_FAULT_BOUNDS);
+
+        sandbox[10] = 0;                /* now there IS a terminator */
+        WANT("terminated string is accepted",
+             vmarg_string(&t, 0, sbuf, sizeof sbuf), 1, VM_FAULT_NONE);
+        WANT("over-long string truncates rather than faulting",
+             vmarg_string(&t, 16, sbuf, 8), 1, VM_FAULT_NONE);
+        #undef WANT
+
+        uart_puts("   ");
+        uart_put_dec((unsigned int)pass);
+        uart_puts("/");
+        uart_put_dec((unsigned int)total);
+        uart_puts(" passed   checks=");
+        uart_put_dec(vmarg_checks());
+        uart_puts(" rejects=");
+        uart_put_dec(vmarg_rejects());
+        uart_puts(vmarg_rejects() ? "\n" : "  <- ZERO REJECTS, the test is inert\n");
     }
     else if (str_eq(line, "dmaoff")) {
         /* One variable: the transport. `dmaoff` puts every transfer on the

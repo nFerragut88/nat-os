@@ -224,6 +224,10 @@ const char *vm_fault_name(int fault);
  * arena_contains() rather than assumed to agree with it. */
 int vm_in_bounds(const vm_t *vm, uint32_t off, uint32_t len);
 
+/* Records a fault exactly as the interpreter does. Exported for vmarg.c, which
+ * lives outside this file because the device model will share it. */
+void vm_raise(vm_t *vm, int code, uint32_t detail);
+
 /* Viewport containment, as numbers rather than as something to look at.
  * escapes must be 0 for any program, however hostile; max_y is the lowest row
  * any application has actually painted and must never reach the panel bottom. */

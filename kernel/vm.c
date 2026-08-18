@@ -9,6 +9,7 @@
  */
 
 #include "vm.h"
+#include "vmarg.h"
 #include "arena.h"
 #include "display.h"
 #include "ipc.h"
@@ -32,11 +33,20 @@ int vm_in_bounds(const vm_t *vm, uint32_t off, uint32_t len)
     return len <= vm->size - off;
 }
 
-static void fault(vm_t *vm, int code, uint32_t detail)
+/* Exported so the argument harness can record a fault the same way the
+ * interpreter does. vmarg.c is deliberately outside this file -- the device
+ * model will use it and does not live here -- but a harness that could only
+ * REFUSE without diagnosing would replace a bounds bug with a silent one. */
+void vm_raise(vm_t *vm, int code, uint32_t detail)
 {
     vm->fault        = code;
     vm->fault_pc     = vm->pc;
     vm->fault_detail = detail;
+}
+
+static void fault(vm_t *vm, int code, uint32_t detail)
+{
+    vm_raise(vm, code, detail);
 }
 
 int vm_init(vm_t *vm, int arena_id)
@@ -250,19 +260,7 @@ static void vp_fill(vm_t *vm, uint32_t x, uint32_t y, uint32_t w, uint32_t h,
  * arena without a terminator faults rather than reading past it. */
 static int copy_string(vm_t *vm, uint32_t off, char *dst, uint32_t max)
 {
-    for (uint32_t n = 0; n < max - 1u; n++) {
-        int ok = 0;
-        uint32_t ch = load_u8(vm, off + n, &ok);
-        if (!ok) {
-            return 0;                   /* load_u8 recorded the fault */
-        }
-        dst[n] = (char)ch;
-        if (ch == 0u) {
-            return 1;
-        }
-    }
-    dst[max - 1u] = 0;
-    return 1;                           /* truncated, not a fault */
+    return vmarg_string(vm, off, dst, max);
 }
 
 static void vp_text(vm_t *vm, uint32_t x, uint32_t y, const char *s,
@@ -401,17 +399,14 @@ static int do_syscall(vm_t *vm, uint32_t num)
             return 0;
         }
 
-        /* Pixels are 16-bit; an odd offset would mean unaligned loads. Faults
-         * rather than silently reading a shifted image. */
-        if (off & 1u) {
-            fault(vm, VM_FAULT_ALIGN, off);
-            return 1;
-        }
-
-        uint32_t bytes = w * h * 2u;            /* <= 240*320*2, cannot wrap */
-        if (!vm_in_bounds(vm, off, bytes)) {
-            fault(vm, VM_FAULT_BOUNDS, off);
-            return 1;
+        /* Both checks are now the harness's, and this call IS the model it was
+         * generalised from: w and h are bounded above, so `w * h` cannot wrap,
+         * and vmarg_items() re-checks that count against the same ceiling
+         * before multiplying by the 2-byte element. Alignment is the `2` --
+         * pixels are 16-bit and an odd offset would read a shifted image. */
+        vm_span_t src;
+        if (!vmarg_items(vm, off, w * h, 2u, DISP_W * DISP_H, 2u, &src)) {
+            return 1;                   /* harness recorded the fault */
         }
 
         /* Clip to the viewport before drawing, exactly as vp_fill does. The
@@ -433,7 +428,7 @@ static int do_syscall(vm_t *vm, uint32_t num)
             return 0;
         }
         display_blit(vm->vx + x, vm->vy + y, cw, ch,
-                     (const uint16_t *)(vm->base + off), w);
+                     (const uint16_t *)src.ptr, w);
         display_unlock();
 
         g_blits++;
