@@ -1,7 +1,7 @@
 # UM-NATOS-031 — The Device Model, and What a Narrow Interface Survives
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.0 · 2026-08-18 · Status: **Shipped; five devices verified on hardware**
+Revision 1.1 · 2026-08-18 · Status: **Shipped; six devices and bulk transfer verified on hardware**
 
 ---
 
@@ -158,16 +158,53 @@ a hundred thousand cycles in an afternoon. And **writing an unchanged value does
 not mark the record dirty** — otherwise a program looping on a constant write
 forces an erase a minute, forever, while believing it is doing nothing.
 
-### 4.2 What still does not fit
+### 4.2 What did not fit, and the operation it earned
 
-`i2c_read()` and `i2c_write()` take **buffers**. So do the SD card and the
-network. A fifth operation for them is a real decision about the interface, and
-it should be driven by a device that needs it rather than guessed at now — which
-is the whole reason the model was kept narrow. `vmarg_items` is already there
-for that day.
+`i2c_read()` and `i2c_write()` take **buffers**. Revision 1.0 said a fifth
+operation for them should be driven by a device that needed it rather than
+guessed at. It was, in the same session:
 
-Three of the four remaining items on chapter 31's list want the same thing, so
-that day is close.
+```
+DEV_OP_XFER_OUT  r1=id r2=chan r3=arena offset r4=length   arena -> device
+DEV_OP_XFER_IN   same                                      device -> arena
+```
+
+Two operations rather than one with a direction flag. A caller passing the wrong
+direction to a combined operation gets a plausible-looking transfer the wrong
+way, and the two have genuinely different consequences for the arena: OUT only
+reads it, IN writes into it.
+
+**No arena pointer ever reaches a driver, in either direction.** Every byte
+crosses a 64-byte kernel bounce buffer. That is deliberately stricter than
+`SYS BLIT`, which lends `display_blit()` a const view of the arena — defensible
+for one known function reviewed beside its check, and not defensible for a
+device table, which is the *extensible* surface. Every future driver author
+would otherwise have to be trusted with the lifetime of a pointer they were
+handed. Sixty-four bytes removes the question.
+
+Two rules came out of writing it:
+
+- **Refuse, do not clamp.** A caller asking for more than the buffer holds is
+  refused. A silently shortened transfer is a program being lied to about how
+  much it moved.
+- **Validate the destination before the device acts.** On the IN path the arena
+  offset is checked before anything is asked to produce bytes, because a device
+  that has already had its side effect cannot be un-asked.
+
+### 4.3 `echo`, and why a loopback is not scaffolding
+
+The only transfer-capable peripheral is the I²C bus. On a bare board with
+nothing in the expansion header, the whole of `DEV_OP_XFER` would have shipped
+having exercised **nothing but its refusal path** — precisely the
+self-test-that-cannot-fail shape §2.1 and UM-NATOS-027 catalogue.
+
+So the table gained `echo`: a loopback that always answers, and can therefore
+prove the round trip. It refuses to return more bytes than it was given, because
+zero-filling the shortfall would let a round trip pass against a device that had
+lost half the data.
+
+It is the seventh entry in spirit and the sixth in the table, and it fitted
+without changing anything.
 
 ---
 
@@ -195,6 +232,15 @@ Nothing below is inferred.
 | `keys` after typing on the panel | **`[a][a][a][b][c]`**, 5 pending |
 | `dev 0 5` (bad channel) | refused, program survives |
 | `vmargtest` | 12/12, rejects=7 |
+| `devw 5 0 222 173 190` then `devr 5 0 3` | **`de ad be`** — round trip |
+| `devr 5 0 8` (more than was written) | refused |
+| `devw 3 80 1` (empty I²C bus) | refused, no fault |
+| **transfer from a program** | `app_dev` sends 4 bytes from its arena, reads them back to a *different* offset, compares equal |
+
+The last row is the one that counts. The shell calls `device_xfer_*` directly
+and never touches `vmarg_span` or `vmarg_store`, so only a real application
+exercises the arena handling — the same "diagnostic uses a different path" trap
+`beep` fell into (§7 rule 6), avoided here by testing what a program does.
 
 `tools/app_dev.vasm` is the end-to-end proof: the first program in this kernel's
 life to reach a peripheral. It enumerates the table, has the kernel write each
@@ -269,8 +315,9 @@ in a new place, found the same day.
 
 ## 8. What is left
 
-Applications still cannot: **read the SD card**, **use the network**, **receive
-text**, or **transfer in bulk**. Three of those want the same buffer operation.
+Applications still cannot: **read the SD card** or **use the network**. Both are
+now a table entry plus a driver rather than architecture — which is the whole
+point of the exercise.
 
 Also open, unchanged by this work: MISO reads all zeros so the panel cannot be
 read back (UM-NATOS-030 §7); the phantom touches at ~380 s are real,
