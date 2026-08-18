@@ -89,6 +89,51 @@ setup:
         ldi     r3, 777
         sys     device
 
+; ---- bulk transfer, out of the arena and back into it ----------------------
+;
+; The shell can drive a transfer too, but it calls device_xfer_* directly and so
+; never touches vmarg_span or vmarg_store. Only a PROGRAM exercises the arena
+; handling -- the part that copies out of confined memory, across the kernel's
+; bounce buffer, and back in again.
+;
+; Device 5 is `echo`, a loopback that exists so this can be proved on a bare
+; board: the only other transfer-capable device is the I2C bus, and with nothing
+; plugged into the header the whole path would ship having exercised nothing but
+; its refusal case.
+
+        ldi     r0, 5               ; DEV_OP_XFER_OUT
+        ldi     r1, 5               ; device 5, echo
+        ldi     r2, 0               ; channel 0
+        ldi     r3, @xfersrc        ; arena offset of the bytes to send
+        ldi     r4, 4
+        sys     device
+        brz     r0, xferbad
+
+        ldi     r0, 6               ; DEV_OP_XFER_IN
+        ldi     r1, 5
+        ldi     r2, 0
+        ldi     r3, @xferdst        ; a DIFFERENT offset, so a no-op would show
+        ldi     r4, 4
+        sys     device
+        brz     r0, xferbad
+
+        ldi     r6, @xfersrc
+        ldw     r5, r6, 0
+        ldi     r7, @xferdst
+        ldw     r8, r7, 0
+        sne     r9, r5, r8          ; 1 if they DIFFER
+        brnz    r9, xferbad
+
+        ldi     r0, @msg_xferok
+        sys     puts
+        jmp     xferdone
+
+xferbad:
+        ldi     r0, @msg_xferbad
+        sys     puts
+
+xferdone:
+
 ; ---- read the light sensor a bounded number of times, then STOP ------------
 ;
 ; This used to loop forever and beep whenever the room went dark, which made it
@@ -143,10 +188,19 @@ publish:
 namebuf:
         .space  16
 
+        .align  4
+xfersrc:
+        .byte   0xDE, 0xAD, 0xBE, 0xEF
+        .align  4
+xferdst:
+        .word   0
+
 msg_found:      .string "  [dev] device table: "
 msg_devices:    .string " entries\n"
 msg_dev:        .string "  [dev] "
 msg_colon:      .string " = "
+msg_xferok:     .string "  [dev] bulk transfer round trip OK (arena -> echo -> arena)\n"
+msg_xferbad:    .string "  [dev] bulk transfer FAILED\n"
 msg_light:      .string "  [dev] light = "
 msg_done:       .string "  [dev] 16 readings taken, exiting. last light = "
 msg_nl:         .string "\n"

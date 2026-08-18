@@ -145,6 +145,32 @@ static int i2c_dev_read(uint32_t caller, uint32_t chan, uint32_t *out)
     return 1;
 }
 
+/* The transfers the probe could not express, and the reason DEV_OP_XFER exists.
+ *
+ * The channel is still the address, so `xfer_out` to channel 0x50 writes those
+ * bytes to the device at 0x50. A NAK is a REFUSAL, not a fault: an address that
+ * nobody answers is a normal outcome of talking to a bus, and a program probing
+ * for a device it hopes is there must survive not finding it. */
+static int i2c_xfer_out(uint32_t caller, uint32_t chan, const uint8_t *buf,
+                        uint32_t len)
+{
+    (void)caller;
+    if (chan < I2C_ADDR_MIN || chan > I2C_ADDR_MAX) {
+        return 0;
+    }
+    return i2c_write((uint8_t)chan, buf, len) == I2C_OK;
+}
+
+static int i2c_xfer_in(uint32_t caller, uint32_t chan, uint8_t *buf,
+                       uint32_t len)
+{
+    (void)caller;
+    if (chan < I2C_ADDR_MIN || chan > I2C_ADDR_MAX) {
+        return 0;
+    }
+    return i2c_read((uint8_t)chan, buf, len) == I2C_OK;
+}
+
 /* ---- keys --------------------------------------------------------------- */
 
 /* Channel 0 pops the next settled keypress; channel 1 reports how many are
@@ -174,26 +200,89 @@ static int keys_read(uint32_t caller, uint32_t chan, uint32_t *out)
     return term_key_pop(out);
 }
 
+/* ---- echo --------------------------------------------------------------- */
+
+/* A loopback. Whatever is written to it can be read back.
+ *
+ * Not a peripheral, and it is here on purpose. The only device that transfers
+ * in bulk is the I2C bus, and proving the transfer path with it requires
+ * hardware plugged into the expansion header -- so on a bare board the whole of
+ * DEV_OP_XFER would ship having exercised nothing but its refusal path. That is
+ * exactly the shape of "self-test that cannot fail" this project keeps
+ * cataloguing, so the fix is a device that always answers.
+ *
+ * It proves the part that has nothing to do with I2C and everything to do with
+ * the kernel: that bytes leave an application's arena, cross the bounce buffer,
+ * reach a driver, come back, and land in the arena again unchanged.
+ *
+ * Channel 0 reads how many bytes are currently held. Cheap, no side effects,
+ * and no hardware anywhere near it. */
+static uint8_t  g_echo[DEVICE_XFER_MAX];
+static uint32_t g_echo_len;
+
+static int echo_read(uint32_t caller, uint32_t chan, uint32_t *out)
+{
+    (void)caller;
+    if (chan != 0u) {
+        return 0;
+    }
+    *out = g_echo_len;
+    return 1;
+}
+
+static int echo_xfer_out(uint32_t caller, uint32_t chan, const uint8_t *buf,
+                         uint32_t len)
+{
+    (void)caller;
+    if (chan != 0u || len > DEVICE_XFER_MAX) {
+        return 0;
+    }
+    for (uint32_t i = 0; i < len; i++) {
+        g_echo[i] = buf[i];
+    }
+    g_echo_len = len;
+    return 1;
+}
+
+static int echo_xfer_in(uint32_t caller, uint32_t chan, uint8_t *buf,
+                        uint32_t len)
+{
+    (void)caller;
+    /* Refuses to invent bytes it was never given. Returning zeros for the
+     * shortfall would let a round-trip test pass against a device that had
+     * silently lost half the data. */
+    if (chan != 0u || len > g_echo_len) {
+        return 0;
+    }
+    for (uint32_t i = 0; i < len; i++) {
+        buf[i] = g_echo[i];
+    }
+    return 1;
+}
+
 /* ---- the table ---------------------------------------------------------- */
 
 static const device_t DEVICES[] = {
-    { "light", 1u, DEV_F_READ  | DEV_F_SLOW, light_read, 0 },
-    { "beep",  1u, DEV_F_WRITE | DEV_F_SLOW, 0,          beep_write },
+    { "light", 1u, DEV_F_READ  | DEV_F_SLOW, light_read, 0, 0, 0 },
+    { "beep",  1u, DEV_F_WRITE | DEV_F_SLOW, 0,          beep_write, 0, 0 },
     /* Slow because the commit channel erases a flash sector. Marking the whole
      * device slow costs a slot-read its quantum, which is the safe direction to
      * be wrong in: a device that under-declares its cost lets a program starve
      * the renderer without either of them doing anything visibly wrong. */
     { "store", STORE_SLOTS_PER_BANK + 1u, DEV_F_READ | DEV_F_WRITE | DEV_F_SLOW,
-      store_dev_read, store_dev_write },
+      store_dev_read, store_dev_write, 0, 0 },
     /* 128 channels because the channel IS the address; the driver refuses the
      * reserved ranges. Slow: a probe is a full start/address/ack/stop on a
      * bit-banged bus, and a program sweeping every address must not do it on
      * the renderer's time. */
-    { "i2c",   128u, DEV_F_READ | DEV_F_SLOW, i2c_dev_read, 0 },
+    { "i2c",   128u, DEV_F_READ | DEV_F_SLOW | DEV_F_XFER,
+      i2c_dev_read, 0, i2c_xfer_out, i2c_xfer_in },
     /* NOT slow: popping a queued character is a couple of loads. A program
      * polling for input should not surrender its slice every time it asks and
      * finds nothing, which is the normal case for a keyboard. */
-    { "keys",  2u,   DEV_F_READ | DEV_F_CONSUME, keys_read, 0 },
+    { "keys",  2u,   DEV_F_READ | DEV_F_CONSUME, keys_read, 0, 0, 0 },
+    { "echo",  1u,   DEV_F_READ | DEV_F_XFER,
+      echo_read, 0, echo_xfer_out, echo_xfer_in },
 };
 
 #define DEVICE_COUNT ((int)(sizeof DEVICES / sizeof DEVICES[0]))
@@ -249,6 +338,40 @@ int device_read(uint32_t caller, uint32_t id, uint32_t chan, uint32_t *out)
         return 0;
     }
     if (!d->read(caller, chan, out)) {
+        g_refusals++;
+        return 0;
+    }
+    g_reads++;
+    return 1;
+}
+
+int device_xfer_out(uint32_t caller, uint32_t id, uint32_t chan,
+                    const uint8_t *buf, uint32_t len)
+{
+    const device_t *d = find(id);
+    if (!d || !d->xfer_out || chan >= d->channels || len == 0u ||
+        len > DEVICE_XFER_MAX) {
+        g_refusals++;
+        return 0;
+    }
+    if (!d->xfer_out(caller, chan, buf, len)) {
+        g_refusals++;
+        return 0;
+    }
+    g_writes++;
+    return 1;
+}
+
+int device_xfer_in(uint32_t caller, uint32_t id, uint32_t chan,
+                   uint8_t *buf, uint32_t len)
+{
+    const device_t *d = find(id);
+    if (!d || !d->xfer_in || chan >= d->channels || len == 0u ||
+        len > DEVICE_XFER_MAX) {
+        g_refusals++;
+        return 0;
+    }
+    if (!d->xfer_in(caller, chan, buf, len)) {
         g_refusals++;
         return 0;
     }

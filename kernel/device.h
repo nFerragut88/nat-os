@@ -58,6 +58,29 @@
 #define DEV_OP_INFO  4u     /* r1=id                  -> r0 = ok, r1 = channels,
                              *                           r2 = flags             */
 
+/* Bulk transfer. r1=id r2=chan r3=arena offset r4=length -> r0 = ok.
+ *
+ * Added because three of the four things an application still cannot do -- the
+ * SD card, the network, and I2C transfers -- all want the same thing, and
+ * UM-NATOS-031 §4.2 said this should be driven by a device that needs it rather
+ * than guessed at. i2c_write() and i2c_read() are that device.
+ *
+ * Two operations rather than one with a direction flag: a caller that passes
+ * the wrong direction to a combined operation gets a plausible-looking transfer
+ * in the wrong direction, and the two have genuinely different consequences for
+ * the arena -- OUT only reads it, IN writes into it. */
+#define DEV_OP_XFER_OUT 5u  /* arena -> device */
+#define DEV_OP_XFER_IN  6u  /* device -> arena */
+
+/* Ceiling on one transfer, and it is deliberately small.
+ *
+ * Every byte crosses a kernel bounce buffer (see below), so this is DRAM that
+ * exists whether or not anything transfers. 64 bytes covers an I2C register
+ * write, a sector header, a short packet; anything larger should be several
+ * transfers, which the caller has to be able to do anyway once a device is
+ * bigger than one buffer. */
+#define DEVICE_XFER_MAX 64u
+
 #define DEV_F_READ   (1u << 0)
 #define DEV_F_WRITE  (1u << 1)
 #define DEV_F_SLOW   (1u << 2)  /* costs milliseconds; ends the caller's slice */
@@ -71,6 +94,7 @@
  * than one that reports nothing, and this kernel has spent a day on instruments
  * that lied. Anything enumerating devices must skip these. */
 #define DEV_F_CONSUME (1u << 3)
+#define DEV_F_XFER    (1u << 4)  /* supports DEV_OP_XFER_OUT / _IN */
 
 /* Who is asking.
  *
@@ -94,6 +118,20 @@ typedef struct {
      * indefinitely, or retain the pointer it is given. */
     int (*read)(uint32_t caller, uint32_t chan, uint32_t *out);
     int (*write)(uint32_t caller, uint32_t chan, uint32_t value);
+
+    /* Bulk transfer. `buf` is a KERNEL buffer of `len` bytes, never an arena
+     * pointer -- the syscall copies in and out around these, so a driver cannot
+     * hold a pointer into a program's memory even briefly.
+     *
+     * That is stricter than SYS BLIT, which lends display_blit() a const view of
+     * the arena for the duration of the call. The difference is that the display
+     * driver is one known function reviewed alongside the check, and this is the
+     * EXTENSIBLE surface: every future device author would otherwise have to be
+     * trusted to understand the lifetime of a pointer they were handed. Copying
+     * costs DEVICE_XFER_MAX bytes and removes the question. */
+    int (*xfer_out)(uint32_t caller, uint32_t chan, const uint8_t *buf,
+                    uint32_t len);
+    int (*xfer_in)(uint32_t caller, uint32_t chan, uint8_t *buf, uint32_t len);
 } device_t;
 
 void device_init(void);
@@ -105,6 +143,13 @@ int         device_read(uint32_t caller, uint32_t id, uint32_t chan,
                         uint32_t *out);
 int         device_write(uint32_t caller, uint32_t id, uint32_t chan,
                          uint32_t value);
+
+/* Bulk transfer through a kernel buffer. `buf` must not be arena memory; the
+ * syscall is responsible for copying between it and the program. */
+int         device_xfer_out(uint32_t caller, uint32_t id, uint32_t chan,
+                            const uint8_t *buf, uint32_t len);
+int         device_xfer_in(uint32_t caller, uint32_t id, uint32_t chan,
+                           uint8_t *buf, uint32_t len);
 
 /* Does this device's work cost milliseconds? The syscall uses this to decide
  * whether to end the caller's slice, which is the fourth property chapter 31

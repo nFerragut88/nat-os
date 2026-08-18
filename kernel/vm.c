@@ -432,6 +432,72 @@ static int do_syscall(vm_t *vm, uint32_t num)
             return 0;
         }
 
+        case DEV_OP_XFER_OUT:
+        case DEV_OP_XFER_IN: {
+            /* The bounce buffer. Static, and the reason DEVICE_XFER_MAX is
+             * small: it exists whether or not anything transfers.
+             *
+             * Its purpose is that no arena pointer ever reaches a driver, in
+             * either direction. SYS BLIT lends display_blit() a const view of
+             * the arena, which is defensible for one known function reviewed
+             * beside the check; a device table is the EXTENSIBLE surface, and
+             * every future driver author would otherwise have to be trusted
+             * with the lifetime of a pointer they were handed. Copying costs
+             * 64 bytes and removes the question.
+             *
+             * Safe as a single static despite four applications: syscalls do
+             * not nest, and app_tick() runs one vm at a time. */
+            static uint8_t bounce[DEVICE_XFER_MAX];
+
+            uint32_t id   = vm->reg[1];
+            uint32_t chan = vm->reg[2];
+            uint32_t off  = vm->reg[3];
+            uint32_t len  = vm->reg[4];
+
+            /* Length is bounded BEFORE it is used to size anything. A caller
+             * asking for more than the buffer holds is refused, not clamped:
+             * a silently shortened transfer is a program being lied to about
+             * how much it moved. */
+            if (len == 0u || len > DEVICE_XFER_MAX) {
+                vm->reg[0] = 0;
+                return 0;
+            }
+
+            if (op == DEV_OP_XFER_OUT) {
+                vm_span_t src;
+                if (!vmarg_span(vm, off, len, 1u, &src)) {
+                    return 1;           /* harness recorded the fault */
+                }
+                for (uint32_t i = 0; i < len; i++) {
+                    bounce[i] = src.ptr[i];
+                }
+                vm->reg[0] = (uint32_t)device_xfer_out(caller, id, chan,
+                                                       bounce, len);
+            } else {
+                /* Validate the DESTINATION before the transfer, so a bad offset
+                 * costs nothing on the bus. A device asked to produce bytes
+                 * that then cannot be delivered has already had its side
+                 * effect. */
+                vm_span_t dst;
+                if (!vmarg_span(vm, off, len, 1u, &dst)) {
+                    return 1;
+                }
+                if (!device_xfer_in(caller, id, chan, bounce, len)) {
+                    vm->reg[0] = 0;
+                    return 0;
+                }
+                if (!vmarg_store(vm, off, bounce, len)) {
+                    return 1;
+                }
+                vm->reg[0] = 1;
+            }
+
+            if (device_is_slow(id)) {
+                vm->yield_now = 1;
+            }
+            return 0;
+        }
+
         default:
             vm->reg[0] = 0;             /* unknown operation: refused, alive */
             return 0;

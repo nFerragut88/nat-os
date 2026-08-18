@@ -979,7 +979,8 @@ static void execute(char *line)
                 uart_putc((flags & DEV_F_WRITE)   ? 'w' : '-');
                 uart_putc((flags & DEV_F_SLOW)    ? 's' : '-');
                 uart_putc((flags & DEV_F_CONSUME) ? 'c' : '-');
-                uart_puts("      ");
+                uart_putc((flags & DEV_F_XFER)    ? 'x' : '-');
+                uart_puts("     ");
                 /* Never sample a device whose read CONSUMES. Listing the table
                  * used to pop a keypress off `keys`, which is a diagnostic
                  * quietly altering the thing it reports. */
@@ -1084,6 +1085,60 @@ static void execute(char *line)
             n++;
         }
         uart_puts("\n");
+    }
+    else if (str_eq(line, "devw")) {
+        /* devw <id> <chan> <byte> [byte] [byte]  -- through DEV_OP_XFER_OUT.
+         *
+         * Takes a device id rather than being I2C-specific, because the point
+         * of the model is that the transport is a table entry. Three bytes is
+         * deliberate: this is a diagnostic for the transfer PATH, and a shell
+         * command parsing an arbitrary byte list would be more parser than
+         * test. */
+        char *cid = arg;
+        char *cch = split(cid);
+        char *c1  = split(cch);
+        char *c2  = split(c1);
+        char *c3  = split(c2);
+        int id   = parse_int(cid);
+        int chan = *cch ? parse_int(cch) : -1;
+        uint8_t buf[3];
+        uint32_t n = 0;
+        int bad = 0;
+        if (*c1) { int v = parse_int(c1); if (v < 0 || v > 255) { bad = 1; } else { buf[n++] = (uint8_t)v; } }
+        if (*c2) { int v = parse_int(c2); if (v < 0 || v > 255) { bad = 1; } else { buf[n++] = (uint8_t)v; } }
+        if (*c3) { int v = parse_int(c3); if (v < 0 || v > 255) { bad = 1; } else { buf[n++] = (uint8_t)v; } }
+
+        if (id < 0 || chan < 0 || n == 0u || bad) {
+            uart_puts("   usage: devw <id> <chan> <byte> [byte] [byte]\n");
+        } else {
+            uart_puts(device_xfer_out(DEVICE_CALLER_KERNEL, (uint32_t)id,
+                                      (uint32_t)chan, buf, n)
+                      ? "   written\n" : "   refused\n");
+        }
+    }
+    else if (str_eq(line, "devr")) {
+        /* devr <id> <chan> <count>  -- through DEV_OP_XFER_IN. */
+        char *cid = arg;
+        char *cch = split(cid);
+        char *cn  = split(cch);
+        int id   = parse_int(cid);
+        int chan = *cch ? parse_int(cch) : -1;
+        int want = *cn  ? parse_int(cn)  : 1;
+        uint8_t buf[DEVICE_XFER_MAX];
+
+        if (id < 0 || chan < 0 || want <= 0 || want > (int)DEVICE_XFER_MAX) {
+            uart_puts("   usage: devr <id> <chan> <count 1..64>\n");
+        } else if (!device_xfer_in(DEVICE_CALLER_KERNEL, (uint32_t)id,
+                                   (uint32_t)chan, buf, (uint32_t)want)) {
+            uart_puts("   refused\n");
+        } else {
+            uart_puts("  ");
+            for (int i = 0; i < want; i++) {
+                uart_puts(" ");
+                uart_put_hex(buf[i]);
+            }
+            uart_puts("\n");
+        }
     }
     else if (str_eq(line, "i2cscan")) {
         /* Sweep the bus THROUGH THE DEVICE TABLE.
