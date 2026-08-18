@@ -29,6 +29,7 @@
 #include "efuse.h"
 #include "xtensa.h"
 #include "vmarg.h"
+#include "device.h"
 
 uint32_t osi_add_probe(uint32_t a, uint32_t b);
 uint32_t osi_add_probe(uint32_t a, uint32_t b) { return a + b; }
@@ -418,8 +419,27 @@ static void execute(char *line)
         uart_puts("   done\n");
     }
     else if (str_eq(line, "beep")) {
-        audio_beep(3000u, 20u);
-        uart_puts("   beep\n");
+        /* Through the DEVICE TABLE, not straight to audio_beep().
+         *
+         * This used to call the driver directly, which made it a diagnostic for
+         * a path no application can take -- and a self-test that exercises a
+         * different route from the real one is how a broken system passes its
+         * own checks. Now it is `dev 1 0 <packed>` with the packing done for
+         * you, so using it also tests the model.
+         *
+         * Defaults are the old fixed values, so `beep` on its own still means
+         * what it always meant. */
+        char *chz = arg;
+        char *ctk = split(chz);
+        int hz = *chz ? parse_int(chz) : 3000;
+        int tk = *ctk ? parse_int(ctk) : 20;
+        if (hz <= 0 || tk <= 0) {
+            uart_puts("   usage: beep [hz] [ticks]\n");
+        } else {
+            uint32_t packed = ((uint32_t)hz << 16) | ((uint32_t)tk & 0xFFFFu);
+            uart_puts(device_write(1u, 0u, packed) ? "   beep\n"
+                                                   : "   refused\n");
+        }
     }
     else if (str_eq(line, "hang")) {
         /* Deliberately wedge the system to prove the hang detector works.
@@ -914,6 +934,90 @@ static void execute(char *line)
         g_display_frozen = !str_eq(arg, "off");
         uart_puts(g_display_frozen ? "   display task frozen; nothing repaints\n"
                                    : "   display task running\n");
+    }
+    else if (str_eq(line, "dev")) {
+        /* The device table from the terminal.
+         *
+         *   dev                     list every device
+         *   dev <id> <chan>         read
+         *   dev <id> <chan> <value> write
+         *
+         * app_dev.vasm proved a PROGRAM can reach a peripheral through the
+         * model, which was the point of building it. It is a poor way to ask a
+         * one-off question though: it has to be launched, it occupies a slot,
+         * and it polls forever to answer something asked once. The table is a
+         * kernel structure and the shell can read it directly.
+         *
+         * Deliberately the same entry points -- device_read/device_write, not
+         * the drivers underneath. A diagnostic that bypassed the table would
+         * report on a path no application can take, which is how a self-test
+         * ends up passing for a broken system. */
+        char *cid   = arg;
+        char *cchan = split(cid);
+        char *cval  = split(cchan);
+
+        if (!*cid) {
+            uart_puts("   id  name      chans  flags     value\n");
+            for (uint32_t i = 0; i < (uint32_t)device_count(); i++) {
+                uint32_t chans = 0, flags = 0;
+                device_info(i, &chans, &flags);
+                uart_puts("   ");
+                uart_put_dec(i);
+                uart_puts("   ");
+                const char *nm = device_name(i);
+                uint32_t w = 0;
+                while (nm && nm[w]) { uart_putc(nm[w]); w++; }
+                while (w < 10u)     { uart_putc(' ');   w++; }
+                uart_put_dec(chans);
+                uart_puts("      ");
+                uart_putc((flags & DEV_F_READ)  ? 'r' : '-');
+                uart_putc((flags & DEV_F_WRITE) ? 'w' : '-');
+                uart_putc((flags & DEV_F_SLOW)  ? 's' : '-');
+                uart_puts("       ");
+                if (flags & DEV_F_READ) {
+                    uint32_t v = 0;
+                    if (device_read(i, 0, &v)) {
+                        uart_put_dec(v);
+                    } else {
+                        uart_puts("refused");
+                    }
+                } else {
+                    uart_puts("-");
+                }
+                uart_puts("\n");
+            }
+            uart_puts("   reads=");
+            uart_put_dec(device_reads());
+            uart_puts(" writes=");
+            uart_put_dec(device_writes());
+            uart_puts(" refusals=");
+            uart_put_dec(device_refusals());
+            uart_puts("\n   usage: dev <id> <chan> [value]\n");
+        } else {
+            int id   = parse_int(cid);
+            int chan = *cchan ? parse_int(cchan) : 0;
+            if (id < 0 || chan < 0) {
+                uart_puts("   usage: dev <id> <chan> [value]\n");
+            } else if (*cval) {
+                int v = parse_int(cval);
+                if (v < 0) {
+                    uart_puts("   value must be a non-negative decimal\n");
+                } else {
+                    uart_puts(device_write((uint32_t)id, (uint32_t)chan,
+                                           (uint32_t)v)
+                              ? "   written\n" : "   refused\n");
+                }
+            } else {
+                uint32_t v = 0;
+                if (device_read((uint32_t)id, (uint32_t)chan, &v)) {
+                    uart_puts("   ");
+                    uart_put_dec(v);
+                    uart_puts("\n");
+                } else {
+                    uart_puts("   refused\n");
+                }
+            }
+        }
     }
     else if (str_eq(line, "vmargtest")) {
         /* Drive known-BAD arguments through the harness and require each to be
