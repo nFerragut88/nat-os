@@ -614,5 +614,5 @@ a good general principle:
 
 ---
 
-**Next:** the twelve syscalls, and the four resources an application cannot
+**Next:** the syscalls — twelve at the time, fourteen now — and the four resources an application cannot
 observe outside its own allocation.

@@ -67,6 +67,40 @@ fourth target is tapped — "exactly when nobody has a capture attached".
 | `intr` | Interrupt matrix counters: per-line service counts, spurious, disabled mask |
 | `tone <hz>` | Tone on GPIO26. `tone 0` stops. **Try 3000, not 440** |
 | `beep` | A short 3 kHz beep |
+| `light [threshold]` | One light reading, and a beep if it is below the threshold |
+
+`light` is what the `dev` demo application used to do as a resident loop, which
+meant the board beeped at the room whenever a shadow crossed it. A demo should
+demonstrate and then get out of the way; a thing you want on demand belongs at
+the prompt. Both halves go through the device table, so it exercises the same
+path an application takes rather than a private shortcut.
+
+## C.4b Devices and permissions
+
+| Command | Effect |
+|---|---|
+| `dev` | List every device: channels, flags, and a sample of channel 0 |
+| `dev <id> <chan>` | Read one channel |
+| `dev <id> <chan> <value>` | Write one channel |
+| `perms` | List every running application and the devices it may touch |
+| `perms <app> <dev> on\|off` | Grant or revoke one device, on a *running* application |
+
+`dev` goes through `device_read`/`device_write` — the same entry points an
+application uses — rather than calling the drivers underneath. A diagnostic that
+bypassed the table would report on a path no application can take, which is how
+a self-test ends up passing for a broken system.
+
+It never samples a device whose read **consumes**. Listing the table used to pop
+a keypress off `keys`, which is a diagnostic quietly altering the thing it
+reports; those show as `(consumes)` instead of a value.
+
+`perms` lists devices **by name rather than as a hex mask**, because a mask is
+exactly the kind of thing that gets misread on the wrong day. The mutator exists
+to make refusals testable — revoke a device from a program that is using it and
+the denial counter climbs while the program keeps running.
+
+Note what is absent: **no program can grant itself anything.** There is no
+`sys device` operation that reaches `device_grant()`.
 
 `i2c` refuses to let a scan be believed unless the bus test passed:
 

@@ -280,7 +280,7 @@ with the present tree is the shape of the whole book:
 | Timer / interrupt controller | L2 | **Not started** | `timer.c`, `intr.c`, a routable matrix |
 | Scheduler and context switch | L2 | **Not started** | `task.c`, 689 lines, three priority levels with ageing |
 | Heap allocator | L2 | **Not started** | `heap.c` with a ten-case structural check |
-| Bytecode VM | L4 | **Not started** | `vm.c`, 35 opcodes, 12 syscalls |
+| Bytecode VM | L4 | **Not started** | `vm.c`, 35 opcodes, 14 syscalls, a device table |
 | Display, touch, SD drivers | L3 | Not started | All three, plus ADC, I²C, audio, flash, WiFi |
 
 ## 1.7 The open architectural questions, revisited

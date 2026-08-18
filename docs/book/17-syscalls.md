@@ -26,6 +26,24 @@ enum {
 };
 ```
 
+> **Since written: fourteen, and the list is now closed.** Two were added.
+>
+> `VM_SYS_DEVICE = 12` reaches a table rather than a peripheral, so a new
+> device is an entry in `device.h` rather than a fifteenth service and a
+> fifteenth case here. It is **the last hand-written syscall for hardware**
+> (UM-NATOS-031).
+>
+> `VM_SYS_EVENT = 13` came afterwards anyway, and deliberately: it registers a
+> handler the *kernel* may call, which is about the execution model rather than
+> about a peripheral, and no device table can express it. Every service in the
+> list above runs one way — the program asks, the kernel answers. This is the
+> first that runs the other way.
+>
+> The comment above the enum was also wrong and is fixed in the tree: arguments
+> reach `r5`, not `r3` — `text` has always read six.
+>
+> Appendix B §B.4 and §B.5 carry the current definitions.
+
 They fall into three groups by *what crosses the boundary*, and each group needed
 a different kind of check:
 

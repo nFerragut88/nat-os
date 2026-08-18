@@ -29,7 +29,22 @@ someone relied on the system anyway.
 
 ## 30.2 Structural gaps — the ones that shape what can be built next
 
-### There is no device model
+### ~~There is no device model~~ — closed
+
+> **Closed** (UM-NATOS-031). `sys device` reaches a table of seven devices —
+> `light`, `beep`, `store`, `i2c`, `keys`, `echo`, `sd` — and a new peripheral is
+> a table entry rather than a kernel edit and an ISA change. Seven of the eight
+> things listed below as unreachable are reachable; only the network is left, and
+> that is blocked on transmit rather than on architecture.
+>
+> One thing the design did not survive intact, recorded because "we designed it
+> and it worked" is worth nothing without the entry that did not fit: the
+> deliberately narrow read/write interface **had to grow bulk transfer** when the
+> SD card and I²C were pushed through it (UM-NATOS-031 §4).
+>
+> It also opened a gap of its own, since every application could then reach every
+> device — closed in turn by per-application permissions (UM-NATOS-032), with the
+> caveat in §30.2 below.
 
 The largest gap in the system, and the only *structural* item on the post-M5 list
 that is missing. UM-NATOS-007 §2.1:
@@ -49,7 +64,17 @@ can reach it*. ADC, I²C, audio, persistence, microSD, text entry.
 > Any program wanting text input cannot have it. ... **the note pad takes text,
 > so text entry appears solved, and it is solved for exactly one program.**
 
-### Syscall validation is per-call, not systematic
+### ~~Syscall validation is per-call, not systematic~~ — closed
+
+> **Closed** (UM-NATOS-031 §2). `kernel/vmarg.c` is the shared harness: one place
+> where an `(offset, length)` pair from a program is checked, enforcing
+> offset-domain arithmetic, bound-before-multiply, and copy-don't-lend.
+>
+> It was built **before** the device model rather than after it, which is the
+> part worth keeping. The device model is the extensible surface — the whole
+> point is that people who have not read this book will add entries to it — and a
+> harness added afterwards would have been a harness the first three devices did
+> not use.
 
 > Every syscall added since checks its own arguments, and each was reasoned about
 > individually. **Nothing enforces that a future one will, and there is no shared
@@ -58,6 +83,23 @@ can reach it*. ADC, I²C, audio, persistence, microSD, text entry.
 Given that the whole isolation claim rests on those checks, this is the most
 dangerous gap in the book. Chapter 17's `SYS BLIT` shows how much care one
 syscall needed; nothing guarantees the next one gets it.
+
+### There is no image identity — and two things depend on it
+
+New, and the direct successor to the two items above. nat-os has **no way to say
+which program a set of bytes is**: no signature, no content hash, nothing. Anyone
+able to flash the board can put any bytes behind any name in the program table.
+
+Two features are limited by exactly this, and neither can be finished before it:
+
+- **Device permissions are containment, not security** (UM-NATOS-032 §3). They
+  bound accident, not intent. This must not be described as security in any
+  report until image identity exists.
+- **The `store` device banks persistence on a reusable application slot.** A
+  program granted `store` that lands in a slot an earlier program used reads what
+  that program left. It is *not* fixed by clearing the bank on retire, which
+  would delete the persistence the device exists to provide. The bank wants to be
+  keyed on which program, and that is the same missing piece.
 
 ### No host-side test path
 
@@ -109,7 +151,20 @@ Strongest untried lead: `periph_module_reset(0x19)`.
 > left in whatever state the ROM bootloader put it in would plausibly receive
 > while refusing to transmit. That asymmetry fits the symptom exactly.
 
-### The DMA stall, and the duplicate re-send it causes
+### ~~The DMA stall, and the duplicate re-send it causes~~ — closed
+
+> **Closed** (UM-NATOS-030, Ch. 18 §18.11), though not as described here. The
+> stall analysis below is correct and was entirely downstream: the actual defect
+> was `DMA_OUTLINK_START` defined as `(1u << 30)`, which is `OUTLINK_RESTART`.
+> Every DMA transfer ever issued asked the engine to resume the existing
+> descriptor chain rather than begin the one just written.
+>
+> The duplicate re-send *was* a real defect and is separately fixed —
+> `spi_tx()` now abandons a timed-out transfer rather than falling through. The
+> timeout bound stayed raised at ~500 ms, which was always the right change and
+> is now safe to keep because the thing it was masking is gone.
+>
+> Blit with DMA actually working: **31.4 ms**, against the 55.9 ms below.
 
 DMA disables itself within about eight seconds of the raycaster starting, on a
 spurious timeout caused by preemption landing between two adjacent lines. The
@@ -127,12 +182,29 @@ The latent defect underneath it is worse than the performance cost:
 Three attempted fixes, three breakages. Guidance for the next attempt is in
 Chapter 18 §18.9.
 
-### The 3D view's startup glitch
+### ~~The 3D view's startup glitch~~ — closed
 
-Garbled for ten to thirty seconds after opening; repaired by launching an
-unrelated program. Eight theories eliminated by direct measurement; a ninth has a
-mechanism and is untested. `display_resync()` is the instrument built to settle
-it.
+> **Closed.** Same one bit; same report. It was never a renderer fault and never
+> only the 3D view — every transfer wider than 32 pixels was affected
+> system-wide. `display_resync()` returned a correct negative, which is what
+> eliminated the controller's window state and left the DMA stream.
+>
+> Eleven theories were eliminated before the cause was found. All eleven were
+> correct, and several were performed on a system that had already fallen back to
+> the FIFO path, where the bug genuinely was not present. Chapter 28 §28.11.
+
+### MISO reads all zeros
+
+New, and it is why the framebuffer had to be dumped over the UART rather than
+read back off the panel. `panelid` gets `00 00 00 00 00` from both `0xD3` and
+`0x04`. Either the panel's SDO is not populated on this module or the read path
+is misconfigured, and **one negative does not separate them.**
+
+### Phantom touches
+
+New, and unexplained. Two independent unattended runs logged spurious presses at
+~374 s and ~390 s. In the first, they **launched a program into slot 2.** Real,
+reproducible, and with no proposed mechanism.
 
 ### PENIRQ never fires from a finger
 
@@ -181,8 +253,30 @@ Stated in `arena.h`, `task.h`, `vm.h`, and three reports:
 - **No condition variables or semaphores** in the kernel proper. There is no way
   to wait for an *event*, only for a lock or a deadline. (The WiFi OSI layer
   builds its own on `task_sleep`.)
-- **Priority inheritance drops a boost on the first release**, so nested holds of
-  two boosted mutexes lose it early. "Nothing in this kernel holds two."
+- **There is no priority inheritance.** Not "it has a limitation" — it does not
+  run. `task_boost()` and `task_unboost()` exist in `task.c` and are correct;
+  **nothing calls them.** `mutex.c` is 133 lines and contains no mention of
+  priority at all, and `git log -S task_boost` returns exactly one commit, whose
+  diff touches `kmain.c`, `task.c` and `task.h` and never `mutex.c`.
+
+  The feature was described as shipped in UM-NATOS-014 §9, in that commit
+  message, in this book's own front matter, and in the timeline. The mechanism
+  was built and never wired to a lock.
+
+  What actually prevents inversion is **ageing**, which is a different thing and
+  is genuinely implemented (Ch. 9). `task.c` even says so, in a comment written
+  while the dead code sat forty lines below it:
+
+  > The base priority is never modified: ageing is a property of the SELECTION,
+  > not of the task... That distinction is what keeps this separate from priority
+  > inheritance, which really does change a task's priority and really does have
+  > to undo it.
+
+  The old entry here read "priority inheritance drops a boost on the first
+  release, so nested holds of two boosted mutexes lose it early" — a precise
+  caveat about the nesting behaviour of a code path that never executes. **A
+  documented limitation is not evidence that the thing it limits exists**, and a
+  sufficiently specific caveat is good at looking like one.
 - **Critical sections are unbounded by convention only.** Nothing measures or
   enforces how long one is held.
 - **The mutex is untested against an ISR**, and nothing enforces the documented

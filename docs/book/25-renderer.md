@@ -485,9 +485,40 @@ same discipline as the ADC's four touch pins in Chapter 22 §22.13.
   is why the launcher can idle at zero SPI bytes and this cannot.
 - **Nothing measures whether the shading is legible.** Judged by one person on
   one panel.
-- **The startup glitch is open.** Chapter 27 §27.10 — a view that is garbled for
-  ten to thirty seconds after opening, repaired by launching an unrelated
-  program, with a mechanism proposed and untested.
+- ~~**The startup glitch is open.**~~ **Closed, and it was not this chapter's
+  fault** — see §25.14.
+
+## 25.14 The startup glitch was a display bug, not a renderer bug
+
+The "garbled for ten to thirty seconds, repaired by launching an unrelated
+program" fault is closed (UM-NATOS-030, Ch. 18 §18.11). The cause was one bit in
+`kernel/display.c`: `DMA_OUTLINK_START` was defined as `(1u << 30)`, which is
+`OUTLINK_RESTART`.
+
+Nothing in `raycast.c` was wrong. It is worth stating plainly, because this
+chapter spent its whole life as the prime suspect and the suspicion was
+structural rather than evidential: the renderer is the heaviest consumer in the
+system, it was the place the fault was *visible*, and a fault that appears in one
+consumer looks like that consumer's fault.
+
+It was, precisely, the opposite. Every transfer wider than 32 pixels was
+affected system-wide — the launcher, full-screen clears, longer text, the panic
+screen. The renderer issues 224 DMA transfers per frame inside a single window,
+more than everything else combined, so it expressed the defect hardest and
+first. **The renderer was the best instrument for a bug it did not contain.**
+
+Three of this chapter's observations are explained by it, and all three had been
+filed as separate mysteries:
+
+| observation | actual mechanism |
+|---|---|
+| Garbled on open, good later | The wall-clock timeout trips on a preempted display task at ~12 s, permanently disabling DMA — and the FIFO path never touches `SPI_DMA_OUT_LINK_REG`, so the picture becomes correct |
+| `gfxrogue` "repairs" it | Its 180 px fill is over the 64-byte DMA threshold, so it adds chances to be descheduled mid-wait and brings that timeout forward. It was killing the DMA engine faster, not repairing anything |
+| The `draw` application never repairs it | Its block is 20 px — 40 bytes a row, below the threshold, entirely FIFO, incapable of provoking the timeout. This was the observation that fitted no theory for hours, and it is the one that confirms this one |
+
+The frame numbers in §25.12 were all measured on the FIFO fallback and are
+therefore honest measurements of the wrong configuration. With DMA working the
+full-view blit is **31.4 ms** rather than 55.8 ms.
 
 ---
 

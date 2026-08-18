@@ -370,7 +370,115 @@ the instruments and was right:
 - *"no, it is a bug in the code, because the X button is also missing"* —
   correct against a confident hardware diagnosis (Ch. 27 §27.11)
 
-## 28.11 The tally
+Two more from the display defect (Ch. 18 §18.11), both from the person holding
+the board rather than from anything in the tree:
+
+- *"if I leave it on for a while, like maybe 5 minutes, then 3D view will open
+  immediately fine, without running gfxrogue at all"* — offered as an aside and
+  filed as a curiosity. It is the whole diagnosis. A fault that heals on a timer
+  has a timer in it, and this system had exactly one timer that could disable a
+  transport permanently.
+- *"the kernel has to let the tasks take turns, right? I am just thinking out
+  loud, I could be wrong"* — correct, and correct about the part that was
+  actually load-bearing. `gfxrogue`'s effect on the view was never about pixels;
+  it was about adding chances for the display task to be descheduled mid-wait.
+  The mechanism was scheduling, exactly as guessed, and the guess was made
+  against a confident and wrong analysis of the drawing path.
+
+Both were volunteered tentatively. Neither was acted on for hours. That is now
+five for five: **every time a human observation contradicted the instruments in
+this project, the human was right.**
+
+## 28.11 Shape 9 — a fallback path where the bug is genuinely absent
+
+This is the most expensive shape in the book, it was found last, and it subsumes
+eleven correct eliminations.
+
+The display's DMA path had a one-bit defect (Ch. 18 §18.11). It also had a
+wall-clock timeout that tripped spuriously on a preempted display task, and a
+timeout **permanently disabled DMA** and fell back to the 64-byte FIFO path.
+
+The FIFO path never touches `SPI_DMA_OUT_LINK_REG`.
+
+So within about twelve seconds of boot, the system moved itself into a
+configuration where the bug was not merely hidden but *genuinely not present*.
+Every subsequent measurement was correct. Every elimination was valid. All of
+them were performed on a machine that no longer had the defect.
+
+> Eleven theories were investigated and eliminated before this was found. All
+> eleven were downstream of it, and several were eliminated *correctly* — on a
+> system that had already fallen back to a path where the bug genuinely was not
+> present.
+
+What makes this different from Shape 6 (a startup artefact standing in for
+behaviour) is the direction: there, boot-time state was mistaken for steady
+state. Here, **steady state was the artefact**, and the interesting window was
+the first twelve seconds — the part everyone waited through before testing.
+
+The tell was available the whole time and read as noise: *"if I leave it on for
+five minutes, the 3D view opens fine."* A fault that heals on a timer is a fault
+with a *timer* in it, and this system had exactly one timer that could disable a
+transport permanently.
+
+**The self-healing symptom was the diagnosis.** It was filed as a mystery for a
+day.
+
+### And the corollary that made it worse
+
+The guard was raised — correctly, for sound independent reasons — and the device
+got *worse*, because the spurious timeout was the only thing keeping the display
+usable. This produced advice, written into this book, that amounted to "keep the
+configuration in which the defect is invisible" (Ch. 18 §18.9).
+
+> **Before fixing a defect, find out what depends on it.** The timeout bound was
+> genuinely wrong and had become load-bearing.
+
+## 28.12 Shape 10 — the instrument corrupted its own evidence
+
+Built to end this class of problem, and it manufactured a fault on its first run.
+
+`fbdump` sends the 3D view's framebuffer out over the UART as hex so a host can
+reassemble it as a PNG — the direct answer to "a counter cannot see a picture",
+and the right instrument for a system whose MISO reads all zeros and therefore
+cannot be read back off the glass.
+
+The first dump ran **without holding the console**. The reporter's periodic
+status line landed in the middle of the hex, shifting rows; the host parser
+silently discarded 61 malformed rows and reassembled the survivors as though they
+were contiguous. The result was a convincing rainbow-streaked mess.
+
+It was reported as proof of a render bug. It was proof of a dump bug.
+
+With `console_lock()` held across the dump, the same buffer is pristine — and
+that pristine image is what cut the search from "the system" to "between the
+buffer and the glass", which is where the defect actually was. The instrument was
+right the moment it stopped competing with the thing it was measuring.
+
+Three fixes, each closing a separate way to be wrong:
+
+1. **Hold the lock.** When a diagnostic and a subsystem share a resource, the
+   diagnostic will corrupt the evidence.
+2. **Index every row.** Position is now *read* rather than inferred from arrival
+   order.
+3. **Refuse incomplete input.** The host reads to an explicit `FBEND` terminator
+   and prints `rows received N/112, malformed M, missing [...]`. A fixed capture
+   window had silently truncated the dump at row 49, twice.
+
+> **`!! DUMP INCOMPLETE` is worth more than a plausible image.**
+
+### Two more from the same session
+
+**A constant hash called decisive.** `camfreeze` + `fbhash` was presented as
+settling render-versus-transport. It does not: a frozen camera stably rendering
+a *wrong* scene produces a constant hash too. The test was sound; the claim made
+for it was not. (Shape 2 — a test that cannot fail — in a new costume.)
+
+**Circular evidence about a guard.** The timeout bound was raised, `dmastat` then
+read `timeouts=0`, and that was taken as evidence the raise had been unnecessary.
+The raise is *why* it read zero. **A guard can only be shown unnecessary by
+measuring it in its absence.**
+
+## 28.13 The tally
 
 | Shape | Instances | Chapters |
 |---|---|---|
@@ -382,12 +490,24 @@ the instruments and was right:
 | Startup artefact standing in for behaviour | 4 | 12 ×3, 18 |
 | The harness did not run | 3 | 12, 19, 20 |
 | A misleading name | 2 | 25, 11 |
+| **A fallback path where the bug is absent** | **1** | **18, 25** |
+| **The instrument corrupted its own evidence** | **4** | **18 ×4** |
 
-Twenty-seven distinct instances. Against them: four defects that were genuinely
+Thirty-two distinct instances. Against them: four defects that were genuinely
 in a peripheral's protocol or wiring, and none at all that turned out to be
 faulty hardware.
 
 That ratio is the single most useful number in this book.
+
+The last two rows were added after this chapter was first written, by the defect
+in Chapter 18 §18.11. Note which shapes they are. Shape 9 cost eleven correct
+eliminations because the *system* moved the bug out of reach; Shape 10 was
+committed four times by instruments built specifically to stop this from
+happening again. The chapter's own thesis got a harder test than it wanted and
+passed it in the least comfortable way available:
+
+> The instruments were not merely unreliable in general. They were unreliable
+> *about the specific thing being investigated*, which is when it matters.
 
 ---
 

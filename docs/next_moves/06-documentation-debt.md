@@ -5,9 +5,8 @@
 This project's whole discipline is that the record must not lie. These are
 places where it currently does, through nothing worse than the tree moving on.
 
-> **Status 2026-08-18: 6.1, 6.2 and 6.3 are done.** 6.4 and 6.5 remain, and 6.4
-> has grown — UM-NATOS-032 joined the list of reports the book does not know
-> about.
+> **Status 2026-08-18: 6.1 through 6.4 are done.** Only 6.5 (rebuild the PDFs)
+> remains.
 
 ---
 
@@ -82,7 +81,7 @@ Fixed, plus what re-reading turned up that this item did not predict:
 Chapter 14 got since-written notes rather than a rewrite, since it is explicitly
 the M4 milestone chapter and its historical framing is the point.
 
-## 6.4 The book does not know about any of today
+## ~~6.4 The book does not know about any of today~~ — done
 
 `docs/book/` synthesises reports 001–028. Reports 029, 030, 031 and 032 exist
 now, and 030 in particular invalidates things the book says confidently about the
@@ -95,6 +94,40 @@ Not urgent — the reports are the primary record and the book says so. But if t
 book is ever rebuilt for print, chapters 18 (display), 25 (renderer), 28
 (instruments that lied) and 31 (next) all need revisiting, and 28 in particular
 gets a much better final example.
+
+**Outcome, 2026-08-18.** All four revisited, plus seven files this item did not
+name. Since-written notes rather than rewrites, so the wrong conclusions stay
+readable next to their corrections.
+
+- **18** — title changed (it was never a stall), §18.9's diagnosis marked wrong
+  and kept in full, §18.11 added for the one bit, the closing advice annotated
+  with how it aged. The first bullet of that advice — "the 55.9 ms blit is
+  correct" — was the one that misled, because 55.9 ms *was* the fallback path
+  where the bug is absent.
+- **25** — §25.14 added. Nothing in `raycast.c` was ever wrong; the renderer was
+  the best instrument for a bug it did not contain.
+- **28** — two new shapes. Shape 9, a fallback path where the bug is genuinely
+  absent, cost eleven correct eliminations. Shape 10, the instrument corrupting
+  its own evidence, was committed four times by tools built to prevent exactly
+  this. Tally 27 → 32, and the human-observation list went to five for five.
+- **30** — device model and syscall harness closed; DMA stall and 3D glitch
+  closed; MISO, phantom touches and image identity added.
+
+**And one thing this item did not anticipate.** Checking the front matter's
+feature table against `task.c` turned up a **false claim of a shipped feature**:
+priority inheritance does not run. `task_boost()` and `task_unboost()` exist and
+nothing calls them; `mutex.c` contains no mention of priority; and
+`git log -S task_boost` returns one commit whose diff never touches `mutex.c`.
+
+It was claimed in UM-NATOS-014 §9 (now withdrawn, rev 1.3), in that commit's own
+message, in the book's front matter, in `docs/README.md` and in the timeline.
+What actually bounds inversion is ageing, which is real. The claim survived
+because §9 shipped with a caveat precise enough to read as a report from someone
+who had run the code — **a documented limitation is not evidence that the thing
+it limits exists.**
+
+The oldest surviving error in the project, and the only one found by reading
+rather than measuring.
 
 ## 6.5 Rebuild the PDFs
 

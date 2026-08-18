@@ -6,6 +6,20 @@
 Compiled from the source tree, the 138-commit history, and engineering reports
 UM-NATOS-001 through UM-NATOS-028.
 
+> **Reports 029–032 are not synthesised into this book.** They are the primary
+> record and remain so; where they invalidate something here, the affected
+> chapter carries a since-written note rather than a silent edit. Four chapters
+> changed materially:
+>
+> - **Ch. 18** — the DMA stall is closed, and was never a stall. One bit.
+> - **Ch. 25** — the renderer's startup glitch was a display bug, not a renderer
+>   bug.
+> - **Ch. 28** — two new shapes, one of which cost eleven correct eliminations.
+> - **Ch. 30** — the device model and the syscall harness are built; a claim
+>   about priority inheritance is withdrawn.
+>
+> Appendix B was re-verified against the interpreter and is current.
+
 ---
 
 ## What this book is
@@ -35,9 +49,10 @@ It is written to be read in two ways:
 
 | | |
 |---|---|
-| **Scheduling** | Preemptive, three priority levels with ageing so no ready task waits more than ~600 ms; blocking, sleeping, priority inheritance |
+| **Scheduling** | Preemptive, three priority levels with ageing so no ready task waits more than ~600 ms; blocking and sleeping. **Not** priority inheritance — the mechanism exists and is unwired (Ch. 30 §30.5) |
 | **Memory** | Bump-and-free heap with a checkable invariant, per-application arenas, bounds-checked at every access |
-| **Applications** | Register-based bytecode VM, 35 opcodes, 12 syscalls; faults contained, runaway programs bounded |
+| **Applications** | Register-based bytecode VM, 35 opcodes, 14 syscalls; faults contained, runaway programs bounded; the kernel can call *into* a program via event handlers |
+| **Devices** | A table applications reach through one syscall — light, speaker, persistence, I²C, keypad, loopback, microSD — with per-application permissions |
 | **Display** | ILI9341 over SPI2 with DMA; per-application viewports that cannot be escaped |
 | **Input** | XPT2046 touch, gated on PENIRQ *and* pressure, confined per application |
 | **UI** | Touch launcher — icon grid, hybrid cursor, double-tap to start a program |

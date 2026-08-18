@@ -1,4 +1,11 @@
-# Chapter 18 — The Display: From 387 ms to 43 ms, and a Stall Still Open
+# Chapter 18 — The Display: From 387 ms to 43 ms, and a Stall That Was Never There
+
+> **The stall is closed** (UM-NATOS-030). The title of this chapter used to end
+> "and a Stall Still Open", and the change is not cosmetic: §18.9 investigates a
+> fault whose *mechanism was real and whose cause was somewhere else entirely*.
+> It is kept in full, wrong conclusions included, because what it gets wrong is
+> more instructive than what it gets right. Read §18.9's closing note before
+> acting on anything in it.
 
 > Sources: `docs/UM-NATOS-015-display.md`
 > Code: `kernel/display.c`, `kernel/display.h`, `kernel/gpio.h`
@@ -593,8 +600,24 @@ checked on a dark screen.
 
 ## 18.9 The DMA stall, and three failed fixes
 
-**Status: unresolved and deliberately left alone.** This section is the evidence,
-so the next attempt starts from it rather than from a fresh guess.
+> **Since written — this section's diagnosis is wrong, and usefully so.**
+>
+> Everything below about the *timeout* is correct: the wall-clock bound really
+> was too tight, a preempted display task really did trip it, and the fallback
+> really was silent. All of it was **downstream**. The actual defect was one bit
+> in a register constant — `DMA_OUTLINK_START` was defined as `(1u << 30)`, which
+> is `OUTLINK_RESTART` — so every DMA transfer this driver ever issued told the
+> engine to *resume the existing descriptor chain* rather than *begin the
+> descriptor just written*. See §18.13 and UM-NATOS-030.
+>
+> Read what follows as a record of eleven correct eliminations performed
+> downstream of an uneliminated cause. The section is left intact because the
+> failure mode it demonstrates — a subsystem falling back to a path where the bug
+> is genuinely absent, so that investigating the *working* path proves the bug is
+> not there — is the most expensive thing in this book.
+
+**Status when written: unresolved and deliberately left alone.** This section is
+the evidence, so the next attempt starts from it rather than from a fresh guess.
 
 ### What happens
 
@@ -700,6 +723,23 @@ And a separate finding about a change that was kept for the wrong reason:
 - Do not remove the guard to study the failure. That was the first mistake.
 - Verify on the glass before reporting a number.
 
+> **How that advice aged.** Four items; three held and one was actively
+> misleading.
+>
+> The duplicate re-send *was* a real defect and fixing it first *was* right —
+> `spi_tx()` now abandons the transfer on timeout instead of falling through to
+> `spi2_tx()`. "Verify on the glass" held. "Do not remove the guard" held.
+>
+> The first bullet is the one that misled. "The 55.9 ms blit is correct" was
+> true and had the causality backwards: 55.9 ms was the *FIFO fallback*, which
+> looked correct precisely because the FIFO path never touches
+> `SPI_DMA_OUT_LINK_REG` and therefore never expressed the bug. The advice
+> amounted to "keep the configuration in which the defect is invisible", which is
+> exactly what kept it invisible for a day.
+>
+> With DMA actually working the blit is **31.4 ms** and correct — faster *and*
+> right, a combination three failed attempts had established was unavailable.
+
 ## 18.10 `display_resync()`: a diagnostic for an open question
 
 Chapter 27 §27.10 ends with a hypothesis with a mechanism, and this function is
@@ -735,7 +775,68 @@ hypothesis is right; if it does not, the remaining suspect is the SPI/DMA stream
 itself. That is the correct shape for the ninth theory about a fault, after eight
 have been eliminated by measurement.
 
-## 18.11 Metrics
+> **It did not repair, and that was the answer.** The experiment was correctly
+> designed and returned a correct negative, which eliminated the controller's
+> window state and left "the SPI/DMA stream itself" — where the bug was. The
+> instrument worked; it just took two more theories to act on what it said.
+
+## 18.11 The one bit
+
+`SPI_DMA_OUT_LINK_REG` carries the descriptor address in bits 19:0, with
+`OUTLINK_STOP` at 28, `OUTLINK_START` at **29**, and `OUTLINK_RESTART` at **30**.
+This driver had:
+
+```c
+#define DMA_OUTLINK_START  (1u << 30)       /* wrong: that is RESTART */
+```
+
+Every DMA transfer nat-os had ever issued asked the engine to resume the existing
+descriptor chain from wherever it left off, rather than to begin the descriptor
+just written. The transfer completes. `SPI_USR` clears. No timeout fires. The
+byte counters advance. The boot self-test reports `dma=320/0`. And the pixels
+land progressively displaced.
+
+All three constants are now defined rather than only the one in use, so the next
+reader sees the adjacency that caused this:
+
+```c
+#define DMA_OUTLINK_STOP    (1u << 28)
+#define DMA_OUTLINK_START   (1u << 29)
+#define DMA_OUTLINK_RESTART (1u << 30)
+```
+
+**This was never only the 3D view.** `spi_tx()` sends anything over 64 bytes by
+DMA, so the defect touched every transfer wider than 32 pixels — full-screen
+clears, the colour strip, launcher repaints, `display_text()` on longer strings,
+the panic screen. Only small fills and command bytes escaped, on the FIFO path
+through the W registers. Graphical glitches elsewhere in the UI, previously
+attributed to unrelated causes, disappeared at the same time.
+
+The renderer was not the cause. It was the heaviest consumer — 224 DMA transfers
+per frame inside a single window, more than everything else in the system
+combined — so it expressed the defect most visibly. **It was a display bug the
+renderer exercised hardest, not a renderer bug that looked like a display bug.**
+
+### Why six instruments agreed
+
+| instrument | reading | truth |
+|---|---|---|
+| `SPI_USR` self-clearing | transfer complete | it was |
+| `display_dma_transfers()` | 110,507 and climbing | it was |
+| `display_dma_timeouts()` | 0 | correct |
+| `display_bytes_written()` | matches expectation | it does |
+| boot self-test `dma=320/0` | healthy | at boot, with nothing to preempt |
+| the panel | **wrong** | — |
+
+`OUTLINK_RESTART` is a legitimate command. The engine performed it and retired
+the transfer, so every counter attached to the machine reported the truth. The
+only instrument that disagreed was the one not attached to it.
+
+**A counter cannot see a picture.** Where the output is visual, get the output
+out of the machine and look at it — which is what `fbdump` finally did (Ch. 28
+§28.11).
+
+## 18.12 Metrics
 
 | Quantity | Value |
 |---|---|
@@ -753,8 +854,11 @@ have been eliminated by measurement.
 | SPI clock ceiling on this board | 40 MHz (80 MHz is electrically fine and visibly noisy) |
 | Blit improvement from one lock per frame | 194× |
 | Image size at this milestone | 18,896 B |
+| Full-view blit, FIFO fallback | 55.8 ms |
+| **Full-view blit, DMA actually working** | **31.4 ms** |
+| Characters changed to fix the "stall" | 1 |
 
-## 18.12 What this does not establish
+## 18.13 What this does not establish
 
 - **No descriptor chaining.** Each span is a single descriptor started and waited
   on individually. Chaining whole frames would remove most of the gap to the
@@ -768,9 +872,17 @@ have been eliminated by measurement.
   regions. This is the interesting gap: the frame cost is dominated by redrawing
   everything every frame, not by the transport.
 - **No gamma correction.** Gamma tables left at panel defaults.
-- **The DMA stall is open**, §18.9.
+- ~~**The DMA stall is open**, §18.9.~~ **Closed** — §18.11. It was never a
+  stall.
 - **Nothing measures whether the shading or icons are legible.** Judged by one
   person on one panel.
+- **MISO reads all zeros.** `panelid` gets `00 00 00 00 00` from both `0xD3` and
+  `0x04`. Either the panel's SDO is not populated on this module or the read path
+  is misconfigured, and one negative does not separate them. This is why the
+  framebuffer had to be dumped over the UART rather than read back off the glass.
+- **Descriptor chaining is still not done**, and now matters more: with DMA
+  actually working, the blit is 31.4 ms against a ~31 ms theoretical floor at
+  40 MHz, so the transport is no longer where the time goes.
 
 ---
 

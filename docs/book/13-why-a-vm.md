@@ -83,7 +83,7 @@ it is the reason there are only nine native tasks:
 The instruction set is ours, so it can be kept small. UM-NATOS-007 §6 set a
 ceiling of "roughly 40 opcodes — and resist convenience additions". The result
 is 35, and it has not moved since it was fixed. Chapter 14 §14.2 covers why
-twelve syscalls were added without adding a single opcode.
+fourteen syscalls were added without adding a single opcode.
 
 ### 4. Faults that stop a program rather than the system
 
@@ -292,10 +292,12 @@ Worth stating before Chapter 14 measures what it does claim.
   costs the display mutex and everyone's frame rate, and nothing measures or
   limits that per-application. Chapter 11's best-effort policy bounds the damage
   to the system without bounding it per program.
-- **There is no device model.** Twelve syscalls, all hardcoded. An application
-  cannot read the light sensor, scan the I²C bus, make a sound, save state, or
-  receive a keypress. Chapter 31 argues this is the single most valuable thing
-  left to build.
+- ~~**There is no device model.**~~ **Built** (UM-NATOS-031). `sys device`
+  reaches a table of seven devices, and an application can now read the light
+  sensor, scan the I²C bus, make a sound, save state, read a keypress and read
+  the microSD card. Chapter 31 argued this was the single most valuable thing
+  left to build; it was built, and it is the last hand-written syscall for
+  hardware.
 
 ---
 

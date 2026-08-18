@@ -28,7 +28,7 @@ Sizes are source bytes. 671,884 bytes across `kernel/` in total.
 | `timer.c` | 5,602 | CCOMPARE1 tick, three defects' worth of comments | 7 |
 | `timer.h` | 763 | | 7 |
 | `critical.h` | 1,341 | `crit_enter`/`crit_exit`, and a capitalised warning about misuse | 11 |
-| `mutex.c` | 3,785 | Direct handoff, the `granted` bitmask, non-owner refusal | 11 |
+| `mutex.c` | 3,785 | Direct handoff, the `granted` bitmask, non-owner refusal. **No priority handling of any kind** — see Ch. 30 §30.5 | 11, 30 |
 | `mutex.h` | 2,864 | | 11 |
 
 ### Memory
@@ -46,7 +46,9 @@ Sizes are source bytes. 671,884 bytes across `kernel/` in total.
 | File | Bytes | Contents | Chapter |
 |---|---|---|---|
 | `vm.h` | 11,572 | The ISA, the syscall table, the fault codes, `vm_t` | 13, 14 |
-| `vm.c` | 23,405 | Dispatch, checked accessors, `vp_fill`/`vp_text`, twelve syscalls | 14, 17 |
+| `vm.c` | 23,405 | Dispatch, checked accessors, `vp_fill`/`vp_text`, fourteen syscalls, event injection | 14, 17 |
+| `vmarg.c` | — | The shared argument harness: one place an `(offset, length)` from a program is checked | 17, 30 |
+| `device.c` | — | The device table — light, beep, store, i2c, keys, echo, sd — plus per-caller permissions | 30 |
 | `app.c` | 6,830 | Application table, `retire()`, `app_tick()` | 16 |
 | `app.h` | 4,126 | Strip geometry and the close-button argument | 16, 24 |
 | `ipc.c` | 2,631 | Mailboxes, copy-in/copy-out | 16 |

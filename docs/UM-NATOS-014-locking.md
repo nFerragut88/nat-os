@@ -1,7 +1,7 @@
 # UM-NATOS-014 — Locking Primitives
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.2 · 2026-08-15 · Status: **Complete, verified on hardware** — §10 added, the same defect from the other side
+Revision 1.3 · 2026-08-15 · Status: **Complete, verified on hardware** — §10 added, the same defect from the other side. **§9's central claim is WITHDRAWN: priority inheritance was never wired to a lock. See the correction at the head of §9.**
 
 ---
 
@@ -254,6 +254,47 @@ headroom 449 words.
   skipped independently.
 
 ## 9. Priority inheritance
+
+> ## CORRECTION — revision 1.3, 2026-08-18
+>
+> **This section describes a feature that does not run.** The claim in §9.2 —
+> "a task blocking on a held mutex raises the owner to its own priority" — is
+> **withdrawn**. No such thing happens.
+>
+> `task_boost()` and `task_unboost()` were added and are correct. **Nothing calls
+> them.** `mutex.c` is 133 lines and contains no mention of priority, boosting or
+> inheritance; `mutex_lock()` blocks the waiter with `task_block()` and
+> `mutex_unlock()` hands ownership to the next waiter, and neither touches the
+> owner's priority. The mutex stores `m->owner`, so inheritance *could* be
+> implemented — it simply was not.
+>
+> `git log -S task_boost -- kernel/` returns exactly one commit, `ee19907`
+> ("Scheduler priorities, with sleep and priority inheritance"). Its diff touches
+> `kmain.c`, `task.c` and `task.h`. It never touches `mutex.c`. The mechanism was
+> built in the same commit that announced the feature, and was never connected to
+> the only thing that could have used it.
+>
+> **What actually bounds inversion is ageing**, described in UM-NATOS-009 §11 and
+> genuinely implemented: effective priority is base plus an ageing credit
+> computed per candidate during selection, so a ready task reaches the front
+> within a bounded time whatever sits above it. That is a different mechanism
+> with different properties — it bounds *waiting time* generally rather than
+> bounding a *specific* inversion to the length of a critical section.
+>
+> §9.1 is still right that the hazard is real. §9.3 is still right, and is now
+> the section that matters: the renderer's actual fix was **holding the lock once
+> per frame instead of once per column, a 194× improvement**. That is what solved
+> the problem this section claims credit for, and it did so without inheritance.
+>
+> How it survived: §9.2 shipped with a *precise caveat* — "release restores the
+> base priority rather than tracking nested holds, so a task holding two boosted
+> mutexes loses the boost on the first release". A limitation that specific reads
+> as a report from someone who has run the code. It was reasoning about a path
+> that never executed. **A documented limitation is not evidence that the thing
+> it limits exists.**
+>
+> Found while re-verifying the book against the tree (next_moves/06 §6.4), from a
+> single line in the front matter that did not match `task.c`.
 
 Revision 1.1. §8 recorded that there was no priority inheritance, on the grounds
 that without priorities there could be no inversion. Priorities now exist

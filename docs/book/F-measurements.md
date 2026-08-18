@@ -162,12 +162,24 @@ Every quantitative claim in this book, in one place, with its grade
 | Bytes for init + clear | **153,634** = 240×320×2 + 34 command bytes | M | 18 |
 | SPI clock | 40 MHz (`sysclk/2`) | M | 18 |
 | At 80 MHz | works electrically, **visibly noisy** | M | 18 |
-| Blit after the DMA stall | 55.9 ms instead of a possible ~22 ms | M | 18 |
+| Blit on the FIFO fallback | 55.9 ms | M | 18 |
+| **Blit with DMA actually working** | **31.4 ms** | M | 18 |
 | Good transfers before the spurious stall | 63,910 | M | 18 |
 | Waits per second the raycaster issues | ~2,900 | D | 18 |
+| Theories eliminated before the one-bit cause was found | 11 | — | 18, 28 |
+| Characters changed to fix it | **1** | — | 18 |
 | Panic screen bytes drawn | ~176,000 (`fault` 175,955, `smash` 176,704) | M | 12 |
 
 ## F.10 The renderer
+
+> **Every frame number in this section was measured on the FIFO fallback**, i.e.
+> after the spurious timeout had permanently disabled DMA — which was the state
+> the 3D view ran in for its entire existence up to UM-NATOS-030. They are honest
+> measurements of the wrong configuration. The blit component in particular is
+> 41.9 ms here against 31.4 ms with DMA working, and the 72% bus share is
+> correspondingly overstated. **Not remeasured**, and left rather than adjusted
+> by arithmetic, because a derived number presented alongside measured ones is
+> how this project got into trouble twice already.
 
 | Quantity | Value | Grade | Ch |
 |---|---|---|---|

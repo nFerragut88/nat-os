@@ -1,7 +1,11 @@
 # Appendix E — Report Index and Cross-Reference
 
-The twenty-eight engineering reports under `docs/`, their revisions, and the
-chapters of this book that draw on each.
+The engineering reports under `docs/`, their revisions, and the chapters of this
+book that draw on each.
+
+The book synthesises 001–028. Reports **029–032** were written after it and are
+listed in §E.1b; they are not merged into the narrative, and where they
+invalidate a chapter, that chapter carries a since-written note.
 
 ---
 
@@ -22,8 +26,8 @@ chapters of this book that draw on each.
 | 011 | Flash Cache and Read-Only Data Placement | 1.0 | complete | 4 |
 | 012 | Milestone 4 Verification | 1.1 | **PASS** | 13, 14, 15, 17 |
 | 013 | Milestone 5 Verification | 1.1 | **PASS** | 16 |
-| 014 | Locking Primitives | 1.2 | complete | 11 |
-| 015 | Display Driver | 1.4 | complete | 18, 25 |
+| 014 | Locking Primitives | 1.3 | complete — **§9 withdrawn**, priority inheritance was never wired | 11, 30 |
+| 015 | Display Driver | 1.4 | complete — the DMA stall it left open is closed by 030 | 18, 25 |
 | 016 | Display Syscalls, and a Total System Freeze | 1.0 | complete | 17 |
 | 017 | Touchscreen, and a Verification Method That Failed Three Times | 1.2 | complete | 19, 28 |
 | 018 | Persistence, and a Read Defect That Looked Like the Wrong Thing | 1.0 | complete | 20 |
@@ -36,7 +40,25 @@ chapters of this book that draw on each.
 | 025 | I²C, and Why a Preempted Master Is Legal | 1.0 | **bus only** | 22 |
 | 026 | The Shell on the Panel, and Not a Menu of It | 1.1 | complete | 26 |
 | 027 | Audio, and Three Ways to Be Silent | 1.0 | working | 23 |
-| 028 | WiFi, Touch, and the Column That Ate the 3D View | 1.1 | **rx working, tx not** | 27, 9, 28 |
+| 028 | WiFi, Touch, and the Column That Ate the 3D View | 1.2 | **rx working, tx not**; §3.1 carries a withdrawn claim | 27, 9, 28 |
+
+## E.1b Written after the book
+
+| ID | Title | Rev | Status | Supersedes |
+|---|---|---|---|---|
+| 029 | Two Mysteries and a Novel That Called It | 1.0 | superseded by 030 as to cause | — |
+| 030 | One Bit | 1.0 | **fixed and confirmed on hardware** | Ch. 18 §18.9, Ch. 25 §25.13, Ch. 30 §30.3 |
+| 031 | The Device Model, and What a Narrow Interface Survives | 1.1 | **shipped**, seven devices + events verified | Ch. 30 §30.2 ×2, Ch. 31 |
+| 032 | Containment, and Why It Is Not Security | 1.0 | **shipped**, verified on hardware | 031 §4 |
+
+**Read 030 before anything in Chapter 18 §18.9.** That section eliminates eleven
+theories correctly and reaches the wrong conclusion, for a reason worth knowing:
+the system falls back to a path where the defect is genuinely absent.
+
+**031 and 032 are a pair.** The device model gave every application access to
+every device; permissions took it back. Neither is complete without the other,
+and both are bounded by the same missing piece — there is no image identity, so
+what exists is containment rather than security.
 
 ## E.2 Reading orders
 
@@ -90,9 +112,19 @@ these as a rule.
 | "A rising completion count means the frame went out" | 028 §3 (initial) | 028 §3 — a phone caught it |
 | "Referencing libphy costs 48 KB of IRAM" | `MAC-NEXT.md` | 028 §3 — 2,459 bytes |
 | "The chrome column paints over the 3D view" (post-relayout) | `desktop.c` guard | `desktop.c` — geometry says otherwise; narrowed to an assertion |
+| "`periph_module_reset()` returns a zero mask for WiFi" | 028 §3.1 | 028 §3.1 rev 1.2 — asserted from memory, never verified |
+| "The framebuffer dump shows a render bug" | during 030 | 030 §5.1 — the dump corrupted its own evidence; the buffer was pristine |
+| "`camfreeze` + `fbhash` settles render-versus-transport" | during 030 | 030 §5.3 — a frozen camera rendering a *wrong* scene hashes constant too |
+| "The raised timeout bound was unnecessary" | during 029 | 030 §5.4 — circular; the raise is why it read zero |
+| "The 55.9 ms blit is correct; keep it" | Ch. 18 §18.9 | Ch. 18 §18.9 note — that was the fallback path, where the bug is absent |
+| "A task blocking on a held mutex raises the owner's priority" | 014 §9, commit `ee19907` | 014 §9 rev 1.3 — `task_boost()` is never called |
 
-Twelve retractions across twenty-eight reports. Every one is still in the record
-next to its correction.
+Eighteen retractions. Every one is still in the record next to its correction.
+
+The last one is the oldest surviving error in the project and the only one found
+by *reading* rather than by measuring: three documents and a commit message
+described a feature, and the commit's own diff never touched the file that would
+have had to change.
 
 ## E.5 Predictions that came true
 
@@ -169,4 +201,5 @@ does work:
 9. **References** — other reports and the source files.
 
 Section 8 is the one the README calls "the most useful part", and Chapter 30 is
-all twenty-eight of them merged.
+all twenty-eight of them merged — plus, since 2026-08-18, the closures and new
+gaps from 029–032.

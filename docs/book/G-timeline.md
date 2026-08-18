@@ -98,6 +98,14 @@ Scheduler priorities, with sleep and priority inheritance
 The framebuffer commit is the one Chapter 18 §18.7 overturns. *"switchable"* is
 what made the overturning possible.
 
+*"Scheduler priorities, with sleep and priority inheritance"* is the one Chapter
+30 §30.5 overturns, and it is a different kind of overturning: the commit
+message describes a task blocking on a held mutex raising the owner's priority,
+and its own diff touches `kmain.c`, `task.c` and `task.h` and never `mutex.c`.
+The sleep and the priorities are real. The inheritance was never wired to a lock.
+**A commit message is a claim about a diff, and this one can be checked against
+it.**
+
 ```
 Close two standing risks: arm the hang detector, pin the panic path to DRAM
 Persistence: a record that survives a power cycle
