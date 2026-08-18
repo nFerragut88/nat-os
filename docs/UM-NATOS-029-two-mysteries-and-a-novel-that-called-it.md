@@ -47,18 +47,52 @@ Scheduler is refusing the Touch Controller a context switch:
 > Driver has priority inheritance. The 3D raycast renderer is in the middle of a
 > DMA transfer. Interrupting now would tear the framebuffer."*
 
-Every clause of that excuse turned out to be a live issue in this session, and
-one of them turned out to be false in a way that mattered.
+Every clause of that excuse turned out to be a live issue in this session. **Two
+of them turned out to be false**, and the source says so in both cases.
 
 | The novel says | The instruments say |
 |---|---|
 | the renderer holds the display | `dlock hold ms=7965` against ~7,860 ms of uptime — it holds the draw lock essentially without interruption |
 | Touch loses the argument | `drawskip` climbing into the thousands; `vp_fill()` uses `display_try_lock()` and simply gives up |
-| nobody is contending | `cont=0` — nothing ever blocks on the lock, because everything else yields rather than waits |
-| *"in the middle of a DMA transfer"* | **false.** DMA has been disabled since boot. It was all going out over the FIFO |
+| nobody is contending | true, and misleading. `cont=0` — nothing ever blocks on the lock, because everything else yields rather than waits |
+| *"has priority inheritance"* | **false.** nat-os has **ageing**. `mutex.c` contains no mention of priority at all |
+| *"in the middle of a DMA transfer"* | **false.** DMA has been disabled since seconds after boot. It was all going out over the FIFO |
 
-The Display Driver's excuse was load-bearing, and it was lying about the
-mechanism. It had been defending a transfer that was not happening.
+The Display Driver's excuse was load-bearing, and it was wrong about both
+mechanisms. It was defending a transfer that was not happening, using a
+scheduling feature this kernel does not implement.
+
+### 2.1 Ageing is not priority inheritance
+
+`task.c:284` draws the distinction itself, which is how the claim was settled:
+
+> *The base priority is never modified: ageing is a property of the SELECTION,
+> not of the task, so a task that finally runs returns to its declared priority
+> automatically rather than needing to be restored. That distinction is what
+> keeps this separate from priority inheritance, which really does change a
+> task's priority and really does have to undo it.*
+
+They solve overlapping problems and are not interchangeable. **Ageing** lifts a
+task that has waited too long, regardless of why it waited or who holds what —
+`g_age_rescues` counts 4,513 such decisions in a single dump, so the policy is
+doing constant real work. **Inheritance** lifts the specific task that is
+*blocking* you, and must undo the change afterwards.
+
+The irony is that the mechanism this kernel actually has is the better fit for
+the scene. Inheritance would be close to useless here, because it only helps
+when a high-priority task **blocks** on a lock — and in nat-os almost nothing
+blocks. `cont=0` is that fact. Applications call `display_try_lock()` and walk
+away; the only task that ever blocks on the panel is the display task itself
+(`dblk disp/apps/touch/shell=3630/0/0/0`), and ageing is what rescues it.
+
+A related check, since it was raised by the same passage and is the kind of
+thing that looks like a defect: `vp_fill()` takes `display_try_lock()` and then
+calls `display_fill_rect()`, which takes `draw_lock()` on the same mutex. That
+is **not** a recursive-acquire bug. `mutex_t` carries `owner` and `depth`, and
+`mutex_try_lock()` increments `depth` when the caller already owns it
+(`mutex.c:32`). `draw_lock()` further guards its telemetry on `depth == 1u`, so
+nested acquisitions cannot corrupt the hold-time measurement — which is what
+makes the 7,965 ms figure above worth quoting.
 
 This is offered as a curiosity rather than a method. But it is a real one: an
 author writing fiction about their own scheduler produced a more accurate

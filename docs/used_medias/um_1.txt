@@ -26,11 +26,11 @@ His intercom buzzed. It was the Timer Tick, his most reliable subordinate.
 
 "Already?" Scheduler sighed, shuffling the run queue. "Fine. Let's see... Application 3 has been waiting 610ms. Age it. Boost its priority. I don't care if it's been naughty—we have *rules*."
 
-A conflict was brewing. The high-priority Display Driver was demanding constant attention, rendering frames for the ILI9341 panel. But the lowly Touch Controller, who had the unglamorous job of interpreting the XPT2046's pressure readings, needed CPU time too. Without it, the cursor would stutter, and users would complain.
+A conflict was brewing. The Display Driver was demanding constant attention, rendering frames for the ILI9341 panel. But the Touch Controller, who had the unglamorous job of interpreting the XPT2046's pressure readings, needed CPU time too. Without it, the cursor would stutter, and users would complain. The two of them held the same rank — both HIGH, both entitled — which is precisely why neither could simply pull rank on the other.
 
 "I need a context switch," Touch Controller pleaded over the departmental channel. "My PENIRQ line just asserted!"
 
-"Impossible," Scheduler replied, not looking up from his lists. "The Display Driver has priority inheritance. The 3D raycast renderer is in the middle of a DMA transfer. Interrupting now would tear the framebuffer."
+"Impossible," Scheduler replied, not looking up from his lists. "The Display Driver is holding the panel lock, and I do not take a lock off a man who holds it. That is not a power I was given. The 3D raycast renderer is in the middle of a blit — two hundred and twenty-four transfers under a single chip select. Interrupting now would tear the framebuffer."
 
 "I don't care about your framebuffer! I have *pressure* data! Without me, the user can't click!"
 
@@ -38,7 +38,11 @@ A conflict was brewing. The high-priority Display Driver was demanding constant 
 
 The argument escalated. The Scheduler, true to his design, did not intervene with emotion. He had an algorithm for this.
 
-"Priority inheritance override," he announced coldly. "Touch, I'm boosting your priority to match the Display Driver's. But you get one millisecond. *One*. Then I'm context-switching back. Ageing will handle the rest."
+"Ageing," he announced coldly. "Not a boost. I do not touch a man's declared priority, and I do not hand out promotions I would then have to take back — that is somebody else's kernel. What I do is count. You have been waiting, Touch. Waiting earns credit. Credit is spent at selection, not stored on your record, and at thirty ticks it will outweigh the Display Driver's rank whether he has finished his blit or not. Then you run, and your credit resets to nothing, and you are simply HIGH again like everyone else."
+
+"And if he still isn't finished?"
+
+"Then he is late," said the Scheduler, "and lateness is his problem. Six hundred milliseconds. That is the bound. That is the *contract*."
 
 The room fell silent. The conflict was resolved—not with a manager's pleasing words, but with the iron logic of the scheduler's code. The system ticked on.
 
