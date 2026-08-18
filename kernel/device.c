@@ -12,6 +12,7 @@
 #include "store.h"
 #include "i2c.h"
 #include "term.h"
+#include "sd.h"
 
 static uint32_t g_reads, g_writes, g_refusals;
 
@@ -200,6 +201,92 @@ static int keys_read(uint32_t caller, uint32_t chan, uint32_t *out)
     return term_key_pop(out);
 }
 
+/* ---- sd ----------------------------------------------------------------- */
+
+/* A 512-byte block does not fit a 64-byte transfer, and raising the bounce
+ * buffer to 512 would cost that DRAM permanently for the benefit of one device.
+ *
+ * So the card is presented as a CURSOR instead. Writing channel 0 seeks to a
+ * block and loads it; transfers then stream out of that block sixty-four bytes
+ * at a time, which is also how a program actually consumes one -- read a header,
+ * pull a field, move on. Nothing about the interface had to change.
+ *
+ * The 512-byte cache is unavoidable: the card will only ever hand over a whole
+ * block, so somebody has to hold it. Better here, once, than in every program.
+ *
+ *   channel 0  write = seek to LBA and load it; read = current byte offset
+ *              xfer_in = next `len` bytes, advancing the offset
+ *   channel 1  read  = card type (0 none, 1 SDSC, 2 SDHC)
+ *   channel 2  write = set the byte offset within the loaded block
+ *
+ * Channel 2 exists because a cursor that can only advance makes reading a field
+ * at a known offset -- which is most of what anyone does with a block -- a
+ * matter of reading and discarding everything before it. Seeking within a block
+ * already in memory costs nothing and touches no hardware.
+ */
+static uint8_t  g_sd_block[SD_BLOCK_SIZE];
+static uint32_t g_sd_off = SD_BLOCK_SIZE;   /* nothing loaded yet */
+static uint32_t g_sd_lba;
+static int      g_sd_loaded;
+
+static int sd_dev_read(uint32_t caller, uint32_t chan, uint32_t *out)
+{
+    (void)caller;
+    if (chan == 1u) {
+        *out = (uint32_t)sd_type();
+        return 1;
+    }
+    if (chan != 0u || !g_sd_loaded) {
+        return 0;
+    }
+    *out = g_sd_off;
+    return 1;
+}
+
+static int sd_dev_write(uint32_t caller, uint32_t chan, uint32_t lba)
+{
+    (void)caller;
+    if (chan == 2u) {
+        /* Seek within the block already in memory. Refuses past the end
+         * rather than clamping to it: a program that asked for offset 600 has
+         * miscalculated, and silently parking it at 512 hides that. */
+        if (!g_sd_loaded || lba >= SD_BLOCK_SIZE) {
+            return 0;
+        }
+        g_sd_off = lba;
+        return 1;
+    }
+    if (chan != 0u) {
+        return 0;
+    }
+    if (sd_read_block(lba, g_sd_block) != 0) {
+        g_sd_loaded = 0;                /* a stale block must not survive a
+                                         * failed seek and be read as fresh */
+        return 0;
+    }
+    g_sd_lba    = lba;
+    g_sd_off    = 0;
+    g_sd_loaded = 1;
+    return 1;
+}
+
+static int sd_xfer_in(uint32_t caller, uint32_t chan, uint8_t *buf,
+                      uint32_t len)
+{
+    (void)caller;
+    /* Refuses at the end of the block rather than wrapping or zero-filling.
+     * A short read that looks like a full one is how a parser walks off the end
+     * of a structure believing it is still inside it. */
+    if (chan != 0u || !g_sd_loaded || len > SD_BLOCK_SIZE - g_sd_off) {
+        return 0;
+    }
+    for (uint32_t i = 0; i < len; i++) {
+        buf[i] = g_sd_block[g_sd_off + i];
+    }
+    g_sd_off += len;
+    return 1;
+}
+
 /* ---- echo --------------------------------------------------------------- */
 
 /* A loopback. Whatever is written to it can be read back.
@@ -283,6 +370,11 @@ static const device_t DEVICES[] = {
     { "keys",  2u,   DEV_F_READ | DEV_F_CONSUME, keys_read, 0, 0, 0 },
     { "echo",  1u,   DEV_F_READ | DEV_F_XFER,
       echo_read, 0, echo_xfer_out, echo_xfer_in },
+    /* Slow: a seek is a real block read over SPI. Not CONSUME -- reading
+     * channel 0 reports the cursor without moving it, and it is the TRANSFER
+     * that advances. */
+    { "sd",    3u,   DEV_F_READ | DEV_F_WRITE | DEV_F_XFER | DEV_F_SLOW,
+      sd_dev_read, sd_dev_write, 0, sd_xfer_in },
 };
 
 #define DEVICE_COUNT ((int)(sizeof DEVICES / sizeof DEVICES[0]))
