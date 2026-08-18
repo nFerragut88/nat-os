@@ -30,6 +30,18 @@ Seventeen reports later, the list of things applications cannot do has grown to:
 Every one of those is a kernel edit plus a hand-written syscall away, and the
 thirteenth syscall would be as ad-hoc as the twelfth.
 
+> **Since written.** The device model shipped (UM-NATOS-031) and seven of those
+> eight items are done — everything but the network, which is stuck on transmit
+> rather than on the interface. `sys device` was the thirteenth syscall and the
+> last one; a new peripheral is now a table entry.
+>
+> The chapter's four properties were preserved, and the harness below was built
+> first rather than after. Two things the chapter did not anticipate: the
+> narrow read/write interface had to grow bulk transfer (UM-NATOS-031 §4), and
+> "every application can reach every device" turned out to be a gap of its own —
+> closed by per-application permissions (UM-NATOS-032), which are containment
+> and not security until image identity exists.
+
 ### What a device model would have to do
 
 The confinement discipline of Chapter 17 is the constraint. Whatever replaces

@@ -18,6 +18,15 @@ typedef struct {
     uint32_t       len;
     uint32_t       arena_bytes;
     uint32_t       publish_off;
+
+    /* Which devices this program may touch: bit N grants device N. Declared
+     * here rather than inside the image so it sits next to the arena size,
+     * where both limits on a program are visible in one place and reviewable
+     * without disassembling anything.
+     *
+     * DEV_PERM_NONE for a program that has no business with hardware, which is
+     * most of them. Containment, not security -- see device.h. */
+    uint32_t       perms;
 } shell_program_t;
 
 void shell_register(const shell_program_t *table, int count);

@@ -3,6 +3,7 @@
 #include "app.h"
 #include "arena.h"
 #include "console.h"
+#include "device.h"
 #include "ipc.h"
 #include "display.h"
 #include "uart.h"
@@ -38,10 +39,18 @@ static void retire(app_t *a, app_state_t why)
      * last frame on the panel looking like a live one. */
     display_fill_rect(a->vm.vx, a->vm.vy, a->vm.vw, a->vm.vh, COLOR_BLACK);
 
-    /* Undelivered mail dies with the recipient. */
+    /* Undelivered mail dies with the recipient, and so do its capabilities.
+     *
+     * The revoke matters more than it looks. Application ids are SLOTS and slots
+     * are reused: without this, a program granted the SD card would leave that
+     * grant sitting in the bank, and the next program to land in the same slot
+     * would inherit hardware nobody granted it -- with the symptom appearing in
+     * an unrelated program, on a run that depends on what exited earlier. A
+     * capability that outlives its holder is not a capability. */
     for (int i = 0; i < APP_MAX; i++) {
         if (&g_apps[i] == a) {
             ipc_clear(i);
+            device_grant((uint32_t)i, DEV_PERM_NONE);
         }
     }
     a->base  = 0;

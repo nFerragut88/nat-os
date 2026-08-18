@@ -180,6 +180,9 @@ static void cmd_help(void)
               "    adc           read every ADC1 channel\n"
               "    ldrscan       watch all ADC channels for movement\n"
               "    i2c           check the bus and scan it\n"
+              "    dev [id ch [v]] device table; read or write a channel\n"
+              "    perms [a d on|off] what each application may touch\n"
+              "    light [thresh] one light reading, beep if dark\n"
               "    tone <hz>     tone on gpio26; 'tone 0' stops. try 3000, not 440\n"
               "    beep          a short 3 kHz beep\n"
               "    3d [off]      3D view or launcher\n"
@@ -250,12 +253,26 @@ static void cmd_progs(void)
     }
 }
 
+/* Start a program and grant it exactly what its table entry declares.
+ *
+ * Every launch path goes through here, because a path that started a program
+ * WITHOUT granting would produce one that silently cannot reach hardware, and a
+ * path that granted the wrong entry would hand it somebody else's capabilities.
+ * Both are quiet failures, and the second is the more dangerous. */
+static int launch_entry(const shell_program_t *p)
+{
+    int id = app_start(p->name, p->img, p->len, p->arena_bytes, p->publish_off);
+    if (id >= 0) {
+        device_grant((uint32_t)id, p->perms);
+    }
+    return id;
+}
+
 int shell_launch(const char *name)
 {
     for (int i = 0; i < g_prog_count; i++) {
         if (str_eq(g_progs[i].name, name)) {
-            return app_start(g_progs[i].name, g_progs[i].img, g_progs[i].len,
-                             g_progs[i].arena_bytes, g_progs[i].publish_off);
+            return launch_entry(&g_progs[i]);
         }
     }
     return -1;
@@ -265,14 +282,17 @@ static void cmd_run(const char *name)
 {
     for (int i = 0; i < g_prog_count; i++) {
         if (str_eq(g_progs[i].name, name)) {
-            int id = app_start(g_progs[i].name, g_progs[i].img, g_progs[i].len,
-                               g_progs[i].arena_bytes, g_progs[i].publish_off);
+            int id = launch_entry(&g_progs[i]);
             if (id < 0) {
                 uart_puts("   cannot start: no free slot or no memory\n");
             } else {
                 uart_puts("   started id=");
                 uart_put_dec((unsigned int)id);
-                uart_puts("\n");
+                uart_puts(g_progs[i].perms ? " perms=" : " perms=none\n");
+                if (g_progs[i].perms) {
+                    uart_put_hex(g_progs[i].perms);
+                    uart_puts("\n");
+                }
             }
             return;
         }
@@ -1063,6 +1083,90 @@ static void execute(char *line)
                 } else {
                     uart_puts("   refused\n");
                 }
+            }
+        }
+    }
+    else if (str_eq(line, "perms")) {
+        /* What each running application may touch, and the ability to change it
+         * while it runs.
+         *
+         *   perms                     list every live application
+         *   perms <app> <dev> on|off  grant or revoke one device
+         *
+         * The listing exists because a capability nobody can see is a capability
+         * nobody audits. The grants come from the PROGRAMS table, which is a
+         * source file -- so without this, checking what a running program holds
+         * means reading kmain.c and trusting that the build on the board matches
+         * it. This asks the kernel.
+         *
+         * The mutator exists to make refusals TESTABLE: revoke a device from a
+         * program that is using it and the denial counter moves while the
+         * program keeps running, which is the whole claim this feature makes.
+         *
+         * Note what is deliberately absent: a program cannot grant itself
+         * anything. There is no `sys device` operation that reaches
+         * device_grant(). Every grant comes from the kernel side -- this command
+         * or the launch table. */
+        char *capp = arg;
+        char *cdev = split(capp);
+        char *cset = split(cdev);
+
+        if (!*capp) {
+            uart_puts("   app  name        devices\n");
+            for (int id = 0; id < APP_MAX; id++) {
+                if (app_state(id) != APP_RUNNING) {
+                    continue;
+                }
+                uart_puts("   ");
+                uart_put_dec((unsigned int)id);
+                uart_puts("    ");
+                const char *nm = app_name(id);
+                uint32_t w = 0;
+                while (nm && nm[w]) { uart_putc(nm[w]); w++; }
+                while (w < 12u)     { uart_putc(' ');   w++; }
+
+                uint32_t p = device_perms((uint32_t)id);
+                if (!p) {
+                    uart_puts("(none)");
+                } else {
+                    /* Names, not a hex mask. A mask is exactly the kind of thing
+                     * that gets misread on the wrong day. */
+                    int first = 1;
+                    for (uint32_t d = 0; d < (uint32_t)device_count(); d++) {
+                        if (!((p >> d) & 1u)) {
+                            continue;
+                        }
+                        if (!first) { uart_puts(" "); }
+                        first = 0;
+                        const char *dn = device_name(d);
+                        while (dn && *dn) { uart_putc(*dn++); }
+                    }
+                }
+                uart_puts("\n");
+            }
+            uart_puts("   denials=");
+            uart_put_dec(device_denials());
+            uart_puts("\n   usage: perms <app> <dev> on|off\n");
+        } else if (!*cdev || !*cset) {
+            uart_puts("   usage: perms <app> <dev> on|off\n");
+        } else {
+            int aid = parse_int(capp);
+            int did = parse_int(cdev);
+            int on  = str_eq(cset, "on");
+            if (aid < 0 || aid >= APP_MAX || did < 0 || did >= device_count()) {
+                uart_puts("   no such application or device\n");
+            } else if (!on && !str_eq(cset, "off")) {
+                uart_puts("   last argument must be on or off\n");
+            } else {
+                uint32_t p = device_perms((uint32_t)aid);
+                p = on ? (p | (1u << did)) : (p & ~(1u << did));
+                device_grant((uint32_t)aid, p);
+                uart_puts(on ? "   granted " : "   revoked ");
+                const char *dn = device_name((uint32_t)did);
+                while (dn && *dn) { uart_putc(*dn++); }
+                uart_puts(" for app ");
+                uart_put_dec((unsigned int)aid);
+                uart_puts("\n");
             }
         }
     }

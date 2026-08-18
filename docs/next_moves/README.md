@@ -105,18 +105,26 @@ Each has its own file. Roughly in order of value, but they are independent.
 | # | move | size | blocked on |
 |---|---|---|---|
 | [01](01-wifi-transmit.md) | Make transmit reach the air | large, risky | accepting a link change |
-| [02](02-vm-events-and-frames.md) | VM entry points and a frame convention | medium | nothing |
-| [03](03-permissions.md) | Per-application device permissions | small | nothing |
+| ~~[02](02-vm-events-and-frames.md)~~ | ~~VM entry points~~ — **done**, UM-NATOS-031 rev 1.1 | — | — |
+| ~~[03](03-permissions.md)~~ | ~~Per-application device permissions~~ — **done**, UM-NATOS-032 | — | — |
 | [04](04-scheduler-timing.md) | A real-time path for control loops | medium | nothing needs it *yet* |
 | [05](05-open-unknowns.md) | Two unexplained behaviours | small | nothing |
 | [06](06-documentation-debt.md) | Claims that have gone stale | small | nothing |
 
-**If you only do one thing:** [02](02-vm-events-and-frames.md). It unblocks the
-language, it is not risky, and nothing else depends on the answer being a
-particular one.
+02 and 03 are done. Of what is left:
+
+**If you only do one thing:** [06](06-documentation-debt.md). It is the smallest
+and it is the one that decays — every report written on top of a stale claim
+inherits it.
 
 **If you want the satisfying one:** [01](01-wifi-transmit.md), knowing it may
 cost a working receive path and a day.
+
+**Note for 03's successor:** permissions shipped with a named prerequisite.
+There is no image identity — no signature, no content hash — so what exists is
+containment, not security, and the `store` device's per-slot banks have the same
+gap. UM-NATOS-032 §3 states both. Image identity closes both and is not on this
+list yet.
 
 ---
 

@@ -1,7 +1,9 @@
 # UM-NATOS-028 — WiFi, Touch, and the Column That Ate the 3D View
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.1 · 2026-08-16 · Status: **Receive working, transmit not, one display fault still open**
+Revision 1.2 · 2026-08-16 · Status: **Receive working, transmit not. The display
+fault this report left open was found — see UM-NATOS-030. §3.1 carries a
+withdrawn claim; the correction is in the body.**
 
 ---
 

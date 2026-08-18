@@ -136,6 +136,44 @@ typedef struct {
 
 void device_init(void);
 
+/* ---- permissions ---------------------------------------------------------
+ *
+ * A bitmap per caller: bit N grants device N. Checked in device_read,
+ * device_write, device_xfer_out and device_xfer_in, which is every route from a
+ * program to hardware.
+ *
+ * Cheap because the hard part was built by accident. `device_t` grew a `caller`
+ * argument so the `store` device could bank persistent slots per application,
+ * which means every device call already carries who is asking -- and the caller
+ * comes from `vm->app_id`, the kernel's own record, never from a register. A
+ * program naming its own identity would be the same mistake as trusting an
+ * offset it supplied.
+ *
+ * ---- what this is, and what it is not ------------------------------------
+ *
+ * This is CONTAINMENT, not security.
+ *
+ * A permission grant is only meaningful if the image it applies to cannot be
+ * swapped for another, and nat-os has no image identity: no signature, no
+ * content hash, nothing. Anyone able to flash the board can put any bytes
+ * behind any name in the program table.
+ *
+ * What it does do is stop a buggy or careless program reaching hardware it was
+ * never meant to, and make the intended capability surface explicit and
+ * reviewable next to each program's arena size. That is worth having on its
+ * own. It must not be described as security in any report until image identity
+ * exists.
+ *
+ * A refusal is NOT a fault, for the same reason a bad channel is not: asking
+ * for something you were not granted is legal, and a program that cannot
+ * discover its own limits without dying cannot discover them. */
+#define DEV_PERM_ALL  0xFFFFFFFFu
+#define DEV_PERM_NONE 0u
+
+void     device_grant(uint32_t caller, uint32_t mask);
+uint32_t device_perms(uint32_t caller);
+uint32_t device_denials(void);
+
 int         device_count(void);
 const char *device_name(uint32_t id);
 int         device_info(uint32_t id, uint32_t *channels, uint32_t *flags);

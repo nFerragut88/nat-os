@@ -820,22 +820,41 @@ static void m4_selftest(void)
  * Each block is one exit criterion from UM-NATOS-007 §7.
  */
 
+/* Device permission bits, by table position in device.c. Named here so the
+ * grants below read as capabilities rather than as magic numbers. */
+#define P_LIGHT (1u << 0)
+#define P_BEEP  (1u << 1)
+#define P_STORE (1u << 2)
+#define P_I2C   (1u << 3)
+#define P_KEYS  (1u << 4)
+#define P_ECHO  (1u << 5)
+#define P_SD    (1u << 6)
+
 static const shell_program_t PROGRAMS[] = {
-    { "counter", vm_app_a,     VM_APP_A_LEN,     512u, VM_APP_A_AT_COUNTER  },
-    { "squares", vm_app_b,     VM_APP_B_LEN,     512u, VM_APP_B_AT_SQUARE   },
-    { "rogue",   vm_app_rogue, VM_APP_ROGUE_LEN, 256u, VM_APP_ROGUE_AT_COUNTER },
-    { "draw",    vm_app_draw,  VM_APP_DRAW_LEN,  512u, VM_APP_DRAW_AT_NAME },
-    { "gfxrogue", vm_app_gfx_rogue, VM_APP_GFX_ROGUE_LEN, 256u, 0u },
-    { "paint",   vm_app_paint, VM_APP_PAINT_LEN, 512u, 0u },
-    { "blit",    vm_app_blit,  VM_APP_BLIT_LEN,  512u, 0u },
+    /* Most programs draw, compute and exchange messages. None of that goes
+     * through the device table, so most of these hold nothing -- which is the
+     * point: a program that was never considered gets no hardware rather than
+     * all of it. */
+    { "counter", vm_app_a,     VM_APP_A_LEN,     512u, VM_APP_A_AT_COUNTER, DEV_PERM_NONE },
+    { "squares", vm_app_b,     VM_APP_B_LEN,     512u, VM_APP_B_AT_SQUARE,  DEV_PERM_NONE },
+    { "rogue",   vm_app_rogue, VM_APP_ROGUE_LEN, 256u, VM_APP_ROGUE_AT_COUNTER, DEV_PERM_NONE },
+    { "draw",    vm_app_draw,  VM_APP_DRAW_LEN,  512u, VM_APP_DRAW_AT_NAME, DEV_PERM_NONE },
+    { "gfxrogue", vm_app_gfx_rogue, VM_APP_GFX_ROGUE_LEN, 256u, 0u, DEV_PERM_NONE },
+    { "paint",   vm_app_paint, VM_APP_PAINT_LEN, 512u, 0u, DEV_PERM_NONE },
+    { "blit",    vm_app_blit,  VM_APP_BLIT_LEN,  512u, 0u, DEV_PERM_NONE },
     /* The first program that reaches a peripheral. Its arena is larger because
-     * it holds a name buffer the kernel writes into. */
-    { "dev",     vm_app_dev,   VM_APP_DEV_LEN,   768u, VM_APP_DEV_AT_PUBLISH },
+     * it holds a name buffer the kernel writes into. It enumerates the whole
+     * table, reads the light sensor, claims a store slot and round-trips a
+     * transfer through echo -- and needs exactly those. It does NOT get the
+     * speaker, which it used to seize, or the SD card, or the bus. */
+    { "dev",     vm_app_dev,   VM_APP_DEV_LEN,   768u, VM_APP_DEV_AT_PUBLISH,
+      P_LIGHT | P_STORE | P_ECHO },
     /* The first program the kernel can call into. Its main flow is an empty
-     * spin; everything it prints comes from handlers the kernel entered. */
-    { "evt",     vm_app_evt,   VM_APP_EVT_LEN,   768u, VM_APP_EVT_AT_PUBLISH },
-    { "ping",    vm_app_ping,  VM_APP_PING_LEN,  512u, 0u },
-    { "pong",    vm_app_pong,  VM_APP_PONG_LEN,  512u, 0u },
+     * spin; everything it prints comes from handlers the kernel entered. It
+     * needs no device at all -- events arrive without asking. */
+    { "evt",     vm_app_evt,   VM_APP_EVT_LEN,   768u, VM_APP_EVT_AT_PUBLISH, DEV_PERM_NONE },
+    { "ping",    vm_app_ping,  VM_APP_PING_LEN,  512u, 0u, DEV_PERM_NONE },
+    { "pong",    vm_app_pong,  VM_APP_PONG_LEN,  512u, 0u, DEV_PERM_NONE },
 };
 #define PROGRAM_COUNT ((int)(sizeof PROGRAMS / sizeof PROGRAMS[0]))
 
@@ -860,8 +879,16 @@ static int start_program(const char *name)
 {
     for (int i = 0; i < PROGRAM_COUNT; i++) {
         if (str_same(PROGRAMS[i].name, name)) {
-            return app_start(PROGRAMS[i].name, PROGRAMS[i].img, PROGRAMS[i].len,
-                             PROGRAMS[i].arena_bytes, PROGRAMS[i].publish_off);
+            int id = app_start(PROGRAMS[i].name, PROGRAMS[i].img,
+                               PROGRAMS[i].len, PROGRAMS[i].arena_bytes,
+                               PROGRAMS[i].publish_off);
+            /* Same grant the shell performs. The boot path and the shell path
+             * must agree, or a program started at boot would behave differently
+             * from the same program started by typing its name. */
+            if (id >= 0) {
+                device_grant((uint32_t)id, PROGRAMS[i].perms);
+            }
+            return id;
         }
     }
     uart_puts("  [boot] no such program: ");

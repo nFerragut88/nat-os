@@ -20,6 +20,44 @@ uint32_t device_reads(void)     { return g_reads; }
 uint32_t device_writes(void)    { return g_writes; }
 uint32_t device_refusals(void)  { return g_refusals; }
 
+/* ---- permissions --------------------------------------------------------
+ *
+ * See device.h for what this is and is not. One bitmap per caller, plus one for
+ * the kernel and the shell, which hold everything.
+ */
+static uint32_t g_perms[DEVICE_CALLER_KERNEL + 1u];
+static uint32_t g_denials;
+
+uint32_t device_denials(void) { return g_denials; }
+
+void device_grant(uint32_t caller, uint32_t mask)
+{
+    if (caller <= DEVICE_CALLER_KERNEL) {
+        g_perms[caller] = mask;
+    }
+}
+
+uint32_t device_perms(uint32_t caller)
+{
+    return (caller <= DEVICE_CALLER_KERNEL) ? g_perms[caller] : 0u;
+}
+
+static int permitted(uint32_t caller, uint32_t id)
+{
+    /* A caller outside the table gets nothing. vm.c deliberately passes an
+     * out-of-range value for a vm with no application id rather than defaulting
+     * it to the kernel's, so this is the case that catches it. */
+    if (caller > DEVICE_CALLER_KERNEL || id >= 32u) {
+        g_denials++;
+        return 0;
+    }
+    if (!((g_perms[caller] >> id) & 1u)) {
+        g_denials++;
+        return 0;
+    }
+    return 1;
+}
+
 /* ---- light -------------------------------------------------------------- */
 
 /* Channel 0 is the board's LDR. Averaged rather than sampled once: a single
@@ -84,7 +122,23 @@ static int beep_write(uint32_t caller, uint32_t chan, uint32_t value)
  * Slots are banked by CALLER, so this driver is the reason device_t grew a
  * caller argument. Reading the commit channel reports whether anything is
  * waiting, which is the only way a program can tell.
- */
+ *
+ * ---- a known hole, left open deliberately ---------------------------------
+ *
+ * A caller id is a SLOT, and slots are reused. A program granted `store` that
+ * lands in a slot some other program used earlier reads what that program left
+ * there. Permissions do not close this: app.c revokes on retire, so the new
+ * tenant needs an explicit grant to read anything at all -- but once granted, it
+ * is reading someone else's bank.
+ *
+ * It is NOT fixed by clearing the bank when a slot retires, which would delete
+ * the persistence this device exists to provide -- a program could not save a
+ * value and find it after a restart, which is the entire feature.
+ *
+ * The bank wants to be keyed on WHICH PROGRAM, and nat-os cannot say which
+ * program: there is no signature and no content hash, which is the same missing
+ * piece that makes the permission system containment rather than security (see
+ * device.h). Both are fixed by the same thing, and neither before it. */
 #define STORE_COMMIT_CHAN STORE_SLOTS_PER_BANK
 
 static uint32_t store_bank(uint32_t caller)
@@ -383,7 +437,16 @@ _Static_assert(DEVICE_COUNT <= DEVICE_MAX, "device table larger than DEVICE_MAX"
 
 void device_init(void)
 {
-    g_reads = g_writes = g_refusals = 0;
+    g_reads = g_writes = g_refusals = g_denials = 0;
+
+    /* Applications start with NOTHING and are granted at launch from the
+     * program table. Defaulting them to everything would make the mechanism
+     * decorative: a program that was never considered would silently hold the
+     * full surface, which is the state this replaces. */
+    for (uint32_t c = 0; c < DEVICE_CALLER_KERNEL; c++) {
+        g_perms[c] = DEV_PERM_NONE;
+    }
+    g_perms[DEVICE_CALLER_KERNEL] = DEV_PERM_ALL;   /* kernel and shell */
 }
 
 int device_count(void) { return DEVICE_COUNT; }
@@ -419,6 +482,9 @@ int device_is_slow(uint32_t id)
 
 int device_read(uint32_t caller, uint32_t id, uint32_t chan, uint32_t *out)
 {
+    if (!permitted(caller, id)) {
+        return 0;
+    }
     const device_t *d = find(id);
     /* Channel is checked HERE as well as in the driver. The table knows how
      * many channels a device has, so a driver that forgot the check cannot
@@ -440,6 +506,9 @@ int device_read(uint32_t caller, uint32_t id, uint32_t chan, uint32_t *out)
 int device_xfer_out(uint32_t caller, uint32_t id, uint32_t chan,
                     const uint8_t *buf, uint32_t len)
 {
+    if (!permitted(caller, id)) {
+        return 0;
+    }
     const device_t *d = find(id);
     if (!d || !d->xfer_out || chan >= d->channels || len == 0u ||
         len > DEVICE_XFER_MAX) {
@@ -457,6 +526,9 @@ int device_xfer_out(uint32_t caller, uint32_t id, uint32_t chan,
 int device_xfer_in(uint32_t caller, uint32_t id, uint32_t chan,
                    uint8_t *buf, uint32_t len)
 {
+    if (!permitted(caller, id)) {
+        return 0;
+    }
     const device_t *d = find(id);
     if (!d || !d->xfer_in || chan >= d->channels || len == 0u ||
         len > DEVICE_XFER_MAX) {
@@ -473,6 +545,9 @@ int device_xfer_in(uint32_t caller, uint32_t id, uint32_t chan,
 
 int device_write(uint32_t caller, uint32_t id, uint32_t chan, uint32_t value)
 {
+    if (!permitted(caller, id)) {
+        return 0;
+    }
     const device_t *d = find(id);
     if (!d || !d->write || chan >= d->channels) {
         g_refusals++;
