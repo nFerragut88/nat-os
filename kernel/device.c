@@ -11,6 +11,7 @@
 #include "audio.h"
 #include "store.h"
 #include "i2c.h"
+#include "term.h"
 
 static uint32_t g_reads, g_writes, g_refusals;
 
@@ -144,6 +145,35 @@ static int i2c_dev_read(uint32_t caller, uint32_t chan, uint32_t *out)
     return 1;
 }
 
+/* ---- keys --------------------------------------------------------------- */
+
+/* Channel 0 pops the next settled keypress; channel 1 reports how many are
+ * waiting without consuming one.
+ *
+ * The queue is SHARED, and reading it is destructive -- two programs polling
+ * for keys would each get some of them. That is honest for a keyboard with one
+ * user and it is the same arrangement the touchscreen already has, but it is a
+ * real limitation and not an oversight: giving each application its own queue
+ * would mean deciding which one has focus, and this system has no such concept
+ * yet.
+ *
+ * An empty queue REFUSES rather than returning zero. Zero is a legitimate
+ * character value, and a device that answers "nothing" and "NUL" with the same
+ * word forces every caller to guess. Refusal is what the model has for exactly
+ * this. */
+static int keys_read(uint32_t caller, uint32_t chan, uint32_t *out)
+{
+    (void)caller;
+    if (chan == 1u) {
+        *out = term_keys_pending();
+        return 1;
+    }
+    if (chan != 0u) {
+        return 0;
+    }
+    return term_key_pop(out);
+}
+
 /* ---- the table ---------------------------------------------------------- */
 
 static const device_t DEVICES[] = {
@@ -160,6 +190,10 @@ static const device_t DEVICES[] = {
      * bit-banged bus, and a program sweeping every address must not do it on
      * the renderer's time. */
     { "i2c",   128u, DEV_F_READ | DEV_F_SLOW, i2c_dev_read, 0 },
+    /* NOT slow: popping a queued character is a couple of loads. A program
+     * polling for input should not surrender its slice every time it asks and
+     * finds nothing, which is the normal case for a keyboard. */
+    { "keys",  2u,   DEV_F_READ | DEV_F_CONSUME, keys_read, 0 },
 };
 
 #define DEVICE_COUNT ((int)(sizeof DEVICES / sizeof DEVICES[0]))

@@ -30,6 +30,7 @@
 #include "xtensa.h"
 #include "vmarg.h"
 #include "device.h"
+#include "term.h"
 
 uint32_t osi_add_probe(uint32_t a, uint32_t b);
 uint32_t osi_add_probe(uint32_t a, uint32_t b) { return a + b; }
@@ -974,11 +975,17 @@ static void execute(char *line)
                 while (w < 10u)     { uart_putc(' ');   w++; }
                 uart_put_dec(chans);
                 uart_puts("      ");
-                uart_putc((flags & DEV_F_READ)  ? 'r' : '-');
-                uart_putc((flags & DEV_F_WRITE) ? 'w' : '-');
-                uart_putc((flags & DEV_F_SLOW)  ? 's' : '-');
-                uart_puts("       ");
-                if (flags & DEV_F_READ) {
+                uart_putc((flags & DEV_F_READ)    ? 'r' : '-');
+                uart_putc((flags & DEV_F_WRITE)   ? 'w' : '-');
+                uart_putc((flags & DEV_F_SLOW)    ? 's' : '-');
+                uart_putc((flags & DEV_F_CONSUME) ? 'c' : '-');
+                uart_puts("      ");
+                /* Never sample a device whose read CONSUMES. Listing the table
+                 * used to pop a keypress off `keys`, which is a diagnostic
+                 * quietly altering the thing it reports. */
+                if (flags & DEV_F_CONSUME) {
+                    uart_puts("(consumes)");
+                } else if (flags & DEV_F_READ) {
                     uint32_t v = 0;
                     if (device_read(DEVICE_CALLER_KERNEL, i, 0, &v)) {
                         uart_put_dec(v);
@@ -1051,6 +1058,32 @@ static void execute(char *line)
             }
             uart_puts("\n   usage: light [threshold]\n");
         }
+    }
+    else if (str_eq(line, "keys")) {
+        /* Drain whatever the on-panel keypad has settled.
+         *
+         * Reading is destructive and the queue is shared, so this command
+         * COMPETES with any application polling for keys. That is worth knowing
+         * rather than hiding: it is the same arrangement the touchscreen has,
+         * and this kernel has no concept of focus to arbitrate it. */
+        uint32_t pending = 0;
+        device_read(DEVICE_CALLER_KERNEL, 4u, 1u, &pending);
+        uart_puts("   pending ");
+        uart_put_dec(pending);
+        uart_puts("  dropped ");
+        uart_put_dec(term_keys_dropped());
+        uart_puts("\n   ");
+        if (!pending) {
+            uart_puts("(nothing typed on the panel keypad)");
+        }
+        uint32_t ch = 0, n = 0;
+        while (device_read(DEVICE_CALLER_KERNEL, 4u, 0u, &ch) && n < 64u) {
+            uart_putc('[');
+            uart_putc((char)ch);
+            uart_putc(']');
+            n++;
+        }
+        uart_puts("\n");
     }
     else if (str_eq(line, "i2cscan")) {
         /* Sweep the bus THROUGH THE DEVICE TABLE.

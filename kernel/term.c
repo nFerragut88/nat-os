@@ -283,17 +283,77 @@ static void draw_input(void)
                       CHAR_W - 1u, 8u, TRM_DIM);
 }
 
-/* Ends any live multi-tap cycle. The character already sits in the buffer; this
- * only stops the next tap on that key from replacing it. */
+/* ---- the key queue ------------------------------------------------------
+ *
+ * The keypad decoded taps into a command line FOR ITSELF and published nothing,
+ * so an application could not read a keypress -- one of the eight things book
+ * chapter 31 listed as needing a kernel edit and a hand-written syscall. It is
+ * now a device, and this is where the characters come from.
+ *
+ * A character is queued when it SETTLES, not when it first appears. Multi-tap
+ * means the letter under your finger is provisional: tapping the same key again
+ * replaces it. Publishing on first appearance would send `a` then `b` then `c`
+ * to an application that only ever saw one `c` typed.
+ *
+ * Overflow drops the OLDEST. A program that stops reading should lose the
+ * beginning of what it missed rather than stop receiving anything new, and a
+ * silent stall is harder to notice than a gap. */
+#define KEYQ_MAX 16u
+
+static char     g_keyq[KEYQ_MAX];
+static uint32_t g_keyq_head, g_keyq_count, g_keyq_dropped;
+
+static void keyq_push(char ch)
+{
+    if (g_keyq_count == KEYQ_MAX) {
+        g_keyq_head = (g_keyq_head + 1u) % KEYQ_MAX;
+        g_keyq_count--;
+        g_keyq_dropped++;
+    }
+    g_keyq[(g_keyq_head + g_keyq_count) % KEYQ_MAX] = ch;
+    g_keyq_count++;
+}
+
+int term_key_pop(uint32_t *out)
+{
+    if (g_keyq_count == 0u) {
+        return 0;
+    }
+    *out = (uint32_t)(uint8_t)g_keyq[g_keyq_head];
+    g_keyq_head = (g_keyq_head + 1u) % KEYQ_MAX;
+    g_keyq_count--;
+    return 1;
+}
+
+uint32_t term_keys_pending(void) { return g_keyq_count; }
+uint32_t term_keys_dropped(void) { return g_keyq_dropped; }
+
+/* Ends any live multi-tap cycle WITHOUT settling a character. Used by
+ * backspace, where the live character is about to be deleted and must not be
+ * delivered to anybody. */
 static void commit(void)
 {
     g_live_row = -1;
     g_live_col = -1;
 }
 
+/* Ends the cycle and DELIVERS the live character: it can no longer change, so
+ * it is now what the user typed. Also clears the key's highlight, which every
+ * caller previously did for itself. */
+static void settle(void)
+{
+    if (g_live_row >= 0) {
+        if (g_inlen) {
+            keyq_push(g_input[g_inlen - 1u]);
+        }
+        draw_key((uint32_t)g_live_row, (uint32_t)g_live_col, 0);
+    }
+    commit();
+}
+
 static void submit(void)
 {
-    commit();
+    settle();                   /* the last character typed is now final */
     if (g_inlen == 0u) {
         return;
     }
@@ -343,9 +403,7 @@ void term_frame(void)
     /* A live key expires on its own, which is what lets two letters from one
      * key be typed without a different key in between. */
     if (g_live_row >= 0 && (timer_ticks() - g_live_tick) > CYCLE_TICKS) {
-        int r = g_live_row, c = g_live_col;
-        commit();
-        draw_key((uint32_t)r, (uint32_t)c, 0);
+        settle();               /* the cycle expired; the character stands */
     }
 
     if (g_out_dirty) {
@@ -436,9 +494,8 @@ void term_touch(uint32_t x, uint32_t y, int down)
             g_input[g_inlen - 1u] = seq[g_live_index];
         }
     } else {
-        if (g_live_row >= 0) {
-            draw_key((uint32_t)g_live_row, (uint32_t)g_live_col, 0);
-        }
+        /* A different key: whatever was live can no longer change. */
+        settle();
         if (g_inlen + 1u >= INPUT_MAX) {
             return;             /* full: refuse rather than silently drop */
         }

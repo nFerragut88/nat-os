@@ -62,6 +62,16 @@
 #define DEV_F_WRITE  (1u << 1)
 #define DEV_F_SLOW   (1u << 2)  /* costs milliseconds; ends the caller's slice */
 
+/* Reading CHANGES state -- the value is consumed and the next reader gets a
+ * different one.
+ *
+ * Added because the `dev` listing samples channel 0 of every readable device to
+ * show something useful, and for `keys` that pops a keypress: merely listing
+ * the table ate a character. A diagnostic that alters what it reports is worse
+ * than one that reports nothing, and this kernel has spent a day on instruments
+ * that lied. Anything enumerating devices must skip these. */
+#define DEV_F_CONSUME (1u << 3)
+
 /* Who is asking.
  *
  * An application passes its own id; the kernel and the shell pass this. Added

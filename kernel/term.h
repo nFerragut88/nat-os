@@ -34,4 +34,18 @@ void term_touch(uint32_t x, uint32_t y, int down);      /* routed by kmain   */
 
 uint32_t term_commands(void);   /* lines run from the panel, for telemetry */
 
+/* ---- keypresses, for the `keys` device ---------------------------------
+ *
+ * The keypad decoded taps into a command line for itself and published nothing,
+ * which is why an application could not read a key. A character is queued when
+ * it SETTLES -- multi-tap makes the letter under your finger provisional until
+ * the cycle ends, and publishing sooner would deliver every intermediate letter
+ * of a cycle nobody typed.
+ *
+ * term_key_pop() returns 1 and the character, or 0 when the queue is empty.
+ * An empty queue is not an error; it is the normal state. */
+int      term_key_pop(uint32_t *out);
+uint32_t term_keys_pending(void);
+uint32_t term_keys_dropped(void);
+
 #endif /* NATOS_TERM_H */
