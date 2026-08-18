@@ -81,6 +81,11 @@
 #define DPORT_WIFI_RST_EN_REG   0x3FF000D0u
 #define DPORT_WIFIMAC_RST       (1u << 2)
 
+/* Used twice and far apart: bit 0 commits the rx descriptor chain, and bit 31
+ * is open-mac's AP/beacon-mode flag which wifimac_init() clears. Defined here
+ * because the earlier of those two uses is near the top of the file. */
+#define WIFI_MAC_BITMASK_084    0x3FF73084u
+
 #define MAC_INIT_MASK           0xFFFFE800u
 
 /* 256 words at a time rather than one 4 KB snapshot: the window is 4 KB and a
@@ -103,6 +108,10 @@ static uint32_t g_before, g_after;
 static int      g_reset_next;
 static int      g_reset_done;
 static uint32_t g_rst_before, g_rst_after;
+static uint32_t g_bm084_before, g_bm084_after;
+
+uint32_t wifimac_bm084_before(void) { return g_bm084_before; }
+uint32_t wifimac_bm084_after(void)  { return g_bm084_after; }
 
 void wifimac_reset_next(int on) { g_reset_next = on; }
 int  wifimac_reset_done(void)   { return g_reset_done; }
@@ -173,6 +182,28 @@ int wifimac_init(void)
      * The lesson is about the link, not the radio: with a blob this tangled,
      * naming a symbol changes which objects are pulled in and can break code
      * that was already correct. Reference only what open-mac references. */
+
+    /* WIFI_MAC_BITMASK_084 is READ here and deliberately NOT written.
+     *
+     * open-mac clears bit 31 in wifi_hw_start_openmac() and sets it only in
+     * filters_set_ap_mode(), which reads as an AP/beacon-mode flag -- so
+     * clearing it looked free, and this kernel had never touched it in either
+     * direction.
+     *
+     * It is not free. Clearing it here KILLED RECEIVE: descriptors filled
+     * dropped to 0 and stayed there across eight seconds, and the rx chain
+     * acknowledge count collapsed from 157 to 1. Beacons that had been arriving
+     * continuously stopped arriving at all.
+     *
+     * Which means bit 31 is not what its use in filters_set_ap_mode() suggests,
+     * or the write has a side effect at this point in nat-os's sequence that it
+     * does not have in open-mac's. Either way the inference was wrong, and the
+     * measurement is the only reason that is known.
+     *
+     * The read stays because the VALUE is informative -- it says what the ROM
+     * bootloader left behind, which nothing else reports. */
+    g_bm084_before = *(volatile uint32_t *)WIFI_MAC_BITMASK_084;
+    g_bm084_after  = g_bm084_before;
 
     volatile uint32_t *ctrl = (volatile uint32_t *)WIFIMAC_CTRL_REG;
     g_before = *ctrl;
@@ -362,7 +393,8 @@ void wifimac_irq_enable(void)
 #define RX_BUFFERS      4u
 #define RX_BUFFER_BYTES 1600u
 
-#define WIFI_MAC_BITMASK_084            0x3FF73084u
+/* WIFI_MAC_BITMASK_084 moved to the top of the file: wifimac_init() clears its
+ * bit 31 and is defined well above here. */
 #define WIFI_BASE_RX_DSCR               0x3FF73088u
 #define WIFI_NEXT_RX_DSCR               0x3FF7308Cu
 #define WIFI_LAST_RX_DSCR               0x3FF73090u

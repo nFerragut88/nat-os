@@ -265,13 +265,23 @@ transmit. That asymmetry fits the symptom exactly.
 
 ### 3.1 Both of those leads are now dead (2026-08-18)
 
-**The MAC reset.** Tried, and it is not the answer. Note first that
-`periph_module_reset()` as written down would have been a **no-op that looked
-like a test**: ESP-IDF's `get_rst_en_mask()` returns 0 for `PERIPH_WIFI_MODULE`.
-The bit has to be pulsed directly — `DPORT_WIFI_RST_EN_REG` bit 2,
-`DPORT_WIFIMAC_RST`, and only bit 2, because resetting the baseband or front end
-would undo the ten-second `register_chipv7_phy` calibration that receive depends
-on.
+**The MAC reset.** Tried, and it is not the answer. `DPORT_WIFI_RST_EN_REG`
+bit 2, `DPORT_WIFIMAC_RST`, pulsed directly — and only bit 2, because resetting
+the baseband or front end would undo the ten-second `register_chipv7_phy`
+calibration that receive depends on.
+
+> **Correction (rev 1.2).** This section first claimed that
+> `periph_module_reset()` "does nothing for `PERIPH_WIFI_MODULE` because
+> `get_rst_en_mask()` returns 0 for it". That was asserted from memory, without
+> the ESP-IDF source to hand, and is exactly the kind of confident unverified
+> claim the rest of this report is about. It is withdrawn.
+>
+> What *is* established: pulsing `DPORT_WIFIMAC_RST` directly changes nothing.
+> Also unresolved — open-mac calls `periph_module_reset(0x19)`, and 0x19 is 25,
+> which in the IDF v5 `periph_module_t` enum is more plausibly
+> `PERIPH_BT_MODULE` than WiFi. Whether open-mac is resetting Bluetooth on
+> purpose, relying on a different enum ordering, or has its own transcription
+> error is not known and would need the v5.0.1 header to settle.
 
 Result: **receive survived** (beacons from `8e:49:62:f0:ae:bd` and
 `7e:26:f6:5f:57:c6`), and transmit is unchanged — 10 probes handed over, 10
@@ -291,14 +301,74 @@ all verified present in the image with `nm` *before* being referenced:
 naming these three did not pull new objects, exactly as the `nm` check
 predicted.
 
-**What is left.** `lmacInit` and `lmacInitAc` are the remaining candidates and
-are **not** in the image, so calling them changes the link — the precise trap
-that killed `register_chipv7_phy`. Doing it anyway is defensible only with the
-canary watched closely and a way back.
+### 3.2 `wifimac_tx()` checked against open-mac's source, line by line
 
-Beyond that the suspicion moves to nat-os's own `wifimac_tx()`: the descriptor
-layout and the TX register programming have never been checked against
-esp32-open-mac line by line, only against its documentation.
+Done, and **it is clean.** The suspicion was that a reverse-engineered register
+map had a transcription error in it — the same failure mode as UM-NATOS-030's
+one-bit `OUTLINK_START`. It does not.
+
+| register | open-mac | nat-os |
+|---|---|---|
+| `MAC_TX_PLCP0` | `0x3ff73d20` | `0x3FF73D20` |
+| `WIFI_TX_CONFIG` | `0x3ff73d1c` | `0x3FF73D1C` |
+| `MAC_TX_PLCP1` | `0x3ff74258` | `0x3FF74258` |
+| `MAC_TX_PLCP2` | `0x3ff7425c` | `0x3FF7425C` |
+| `MAC_TX_DURATION` | `0x3ff74268` | `0x3FF74268` |
+
+The strides differ in units only — open-mac's `-2` and `-0xf` are `uint32_t`
+indices, nat-os's `8` and `60` the same values in bytes — and are irrelevant
+regardless, because `TX_SLOT` is 0 and every access lands on the base. Bit
+patterns, write ordering, the descriptor fields, the sequence-number update and
+the final `0xc0000000` are identical. The one omission is
+`(crypto_key_slot & 0x1f) << 17`, which contributes zero because the slot is 0.
+
+**So the difference is in the INIT, not the transmit.** What open-mac's
+`wifi_hw_start_openmac()` does that nat-os does not:
+
+| open-mac | nat-os | linked? |
+|---|---|---|
+| `esp_wifi_power_domain_on()` | never | **no** |
+| `coex_bt_high_prio()` ×2 | never | **no** |
+| `WIFI_MAC_BITMASK_084 &= 0x7fffffff` | never — only bit 0 is used | n/a |
+| `wifi_module_enable()` | equivalent: `DPORT_WIFI_CLK_EN` | — |
+| `esp_phy_enable_openmac()` | equivalent: `phyinit` | — |
+| `ic_mac_init`, `hal_init`, `ic_enable_rx`, `hal_mac_tsf_reset(0)` | all four, via `hwinit` | yes |
+
+### 3.3 Clearing bit 31 of `WIFI_MAC_BITMASK_084` kills receive
+
+This looked like the free experiment. open-mac **clears** bit 31 of `0x3ff73084`
+at init and **sets** it only in `filters_set_ap_mode`, alongside
+`hal_mac_tsf_reset(1)` — which reads as an AP/beacon-mode flag. nat-os had never
+touched it in either direction, and a bit the ROM bootloader left set would put
+the MAC in a mode expecting a beacon schedule it has never been given. One
+store, no link change.
+
+**It killed receive outright.**
+
+| | before | after clearing bit 31 |
+|---|---|---|
+| descriptors filled | beacons arriving continuously | **0**, and still 0 eight seconds later |
+| rx chain acknowledges | 157 | **1** |
+| beacon decoded | yes | none |
+
+Reverted, and receive returned immediately — `chain acks` back to 154, a beacon
+from `7e:26:f6:8f:57:c6`. The causality is not in doubt.
+
+So bit 31 is **not** what its use in `filters_set_ap_mode()` implies, or the
+write has a side effect at this point in nat-os's sequence that it does not have
+in open-mac's. The inference was wrong and only the measurement caught it. The
+register is now **read** at init and reported — the value says what the
+bootloader left behind, which nothing else does — and deliberately not written.
+
+**What is left**, in order of cost:
+
+1. `coex_bt_high_prio()` and `esp_wifi_power_domain_on()` — open-mac calls both,
+   nat-os neither, and **neither is in the image**, so calling them changes the
+   link (§3's rule).
+2. `lmacInit` / `lmacInitAc` — also not linked, and the largest change of all.
+
+Every cheap experiment is now spent. What remains all requires accepting a link
+change, with `phyinit` returning 0 as the canary and a way back.
 
 ---
 

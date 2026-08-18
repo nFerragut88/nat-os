@@ -28,6 +28,12 @@ int      wifimac_reset_done(void);
 uint32_t wifimac_rst_before(void);
 uint32_t wifimac_rst_after(void);
 
+/* WIFI_MAC_BITMASK_084 around the bit-31 clear open-mac performs at init and
+ * this kernel never has. Before and after, because a successful store is not
+ * evidence. */
+uint32_t wifimac_bm084_before(void);
+uint32_t wifimac_bm084_after(void);
+
 /* Reads the MAC register window twice and reports how many words differ.
  *
  * This is the evidence that the peripheral is RUNNING rather than merely

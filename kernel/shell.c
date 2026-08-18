@@ -651,6 +651,14 @@ static void execute(char *line)
             uart_puts(live1 > live0
                       ? "MAC IS RUNNING - counters advance that did not before\n"
                       : "no new movement; the MAC is readable but may be idle\n");
+            /* Read only. Clearing bit 31 here killed receive outright; see the
+             * note in wifimac_init(). The value is reported because nothing
+             * else says what the ROM bootloader left in this register. */
+            uart_puts("   bitmask_084 ");
+            uart_put_hex(wifimac_bm084_before());
+            uart_puts((wifimac_bm084_before() & 0x80000000u)
+                      ? "  (bit 31 SET at boot -- left alone)\n"
+                      : "  (bit 31 clear at boot)\n");
             if (wifimac_reset_done()) {
                 uart_puts("   MAC was RESET first: DPORT_WIFI_RST_EN ");
                 uart_put_hex(wifimac_rst_before());
