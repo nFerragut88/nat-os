@@ -338,6 +338,21 @@ static int do_syscall(vm_t *vm, uint32_t num)
     case VM_SYS_DEVICE: {
         uint32_t op = vm->reg[0];
 
+        /* Who is asking, taken from the vm rather than from the program.
+         *
+         * The `store` device banks its slots by caller, so this value decides
+         * which persistent words a program can reach. It must therefore come
+         * from the kernel's own record of which application this is -- a
+         * caller id supplied in a register would be a program naming its own
+         * bank, which is the same shape of mistake as trusting an offset.
+         *
+         * A vm with no application id (there is none today, but vm_init leaves
+         * it -1 until vm_set_app_id) is refused a bank rather than given the
+         * kernel's. */
+        uint32_t caller = (vm->app_id >= 0 && vm->app_id < APP_MAX)
+                        ? (uint32_t)vm->app_id
+                        : DEVICE_CALLER_KERNEL + 1u;   /* deliberately invalid */
+
         /* Every program-supplied quantity reaching a driver goes through this
          * one switch, and the only one that is a buffer goes through vmarg.
          * Drivers below never see the vm, never see the arena, and receive
@@ -398,7 +413,7 @@ static int do_syscall(vm_t *vm, uint32_t num)
              * device, which is nonsense that happens to compile. */
             uint32_t id = vm->reg[1];
             uint32_t v  = 0;
-            int ok = device_read(id, vm->reg[2], &v);
+            int ok = device_read(caller, id, vm->reg[2], &v);
             vm->reg[0] = (uint32_t)ok;
             vm->reg[1] = v;
             if (device_is_slow(id)) {
@@ -409,7 +424,8 @@ static int do_syscall(vm_t *vm, uint32_t num)
 
         case DEV_OP_WRITE: {
             uint32_t id = vm->reg[1];
-            vm->reg[0] = (uint32_t)device_write(id, vm->reg[2], vm->reg[3]);
+            vm->reg[0] = (uint32_t)device_write(caller, id, vm->reg[2],
+                                                vm->reg[3]);
             if (device_is_slow(id)) {
                 vm->yield_now = 1;
             }

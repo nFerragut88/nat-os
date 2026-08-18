@@ -41,6 +41,7 @@
 #define NATOS_DEVICE_H
 
 #include <stdint.h>
+#include "app.h"                /* APP_MAX, for DEVICE_CALLER_KERNEL */
 
 #define DEVICE_MAX 8
 
@@ -61,14 +62,28 @@
 #define DEV_F_WRITE  (1u << 1)
 #define DEV_F_SLOW   (1u << 2)  /* costs milliseconds; ends the caller's slice */
 
+/* Who is asking.
+ *
+ * An application passes its own id; the kernel and the shell pass this. Added
+ * when `store` became the third device and needed to bank its slots per caller
+ * -- everything else an application owns here is confined to it, and
+ * persistence with one shared pool would be the single place a program could
+ * read what another program wrote.
+ *
+ * Most drivers ignore it, and that is fine. The point is that a driver which
+ * needs it can have it without inventing its own way to find out, which is
+ * exactly the kind of per-service improvisation the device model exists to
+ * stop. */
+#define DEVICE_CALLER_KERNEL ((uint32_t)APP_MAX)
+
 typedef struct {
     const char *name;
     uint32_t    channels;
     uint32_t    flags;
     /* Both return 1 on success, 0 on refusal. Neither may fault, block
      * indefinitely, or retain the pointer it is given. */
-    int (*read)(uint32_t chan, uint32_t *out);
-    int (*write)(uint32_t chan, uint32_t value);
+    int (*read)(uint32_t caller, uint32_t chan, uint32_t *out);
+    int (*write)(uint32_t caller, uint32_t chan, uint32_t value);
 } device_t;
 
 void device_init(void);
@@ -76,8 +91,10 @@ void device_init(void);
 int         device_count(void);
 const char *device_name(uint32_t id);
 int         device_info(uint32_t id, uint32_t *channels, uint32_t *flags);
-int         device_read(uint32_t id, uint32_t chan, uint32_t *out);
-int         device_write(uint32_t id, uint32_t chan, uint32_t value);
+int         device_read(uint32_t caller, uint32_t id, uint32_t chan,
+                        uint32_t *out);
+int         device_write(uint32_t caller, uint32_t id, uint32_t chan,
+                         uint32_t value);
 
 /* Does this device's work cost milliseconds? The syscall uses this to decide
  * whether to end the caller's slice, which is the fourth property chapter 31

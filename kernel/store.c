@@ -4,9 +4,10 @@
 #include "flash.h"
 
 #define STORE_MAGIC   0x59444F53u      /* "SODY" little-endian */
-#define STORE_VERSION 3u   /* 3 adds the touch calibration */
+#define STORE_VERSION 4u   /* 3 added touch calibration; 4 adds slots */
 
 static store_t g_rec;
+static int     g_dirty;    /* a slot changed and has not reached flash yet */
 static int     g_valid;
 
 /* Sum over every field but the checksum itself. Deliberately trivial: this
@@ -51,6 +52,11 @@ defaults:
     g_rec.fault_boot   = 0;
     g_rec.cal_x_min = g_rec.cal_x_max = 0;
     g_rec.cal_y_min = g_rec.cal_y_max = 0;
+    for (uint32_t b = 0; b < STORE_SLOT_BANKS; b++) {
+        for (uint32_t s = 0; s < STORE_SLOTS_PER_BANK; s++) {
+            g_rec.slots[b][s] = 0;
+        }
+    }
     return -1;
 }
 
@@ -61,8 +67,44 @@ int store_save(void)
     if (flash_erase_sector(FLASH_DATA_ADDR) != 0) {
         return -1;
     }
-    return flash_write(FLASH_DATA_ADDR, &g_rec, sizeof g_rec);
+    int rc = flash_write(FLASH_DATA_ADDR, &g_rec, sizeof g_rec);
+    if (rc == 0) {
+        g_dirty = 0;
+    }
+    return rc;
 }
+
+/* ---- persistent slots ---------------------------------------------------
+ *
+ * Banked by caller. See store.h for why they are not shared, and why a write
+ * does not go straight to flash. */
+
+int store_slot_get(uint32_t bank, uint32_t slot, uint32_t *out)
+{
+    if (bank >= STORE_SLOT_BANKS || slot >= STORE_SLOTS_PER_BANK) {
+        return 0;
+    }
+    *out = g_rec.slots[bank][slot];
+    return 1;
+}
+
+int store_slot_set(uint32_t bank, uint32_t slot, uint32_t value)
+{
+    if (bank >= STORE_SLOT_BANKS || slot >= STORE_SLOTS_PER_BANK) {
+        return 0;
+    }
+    /* Only mark dirty on an actual change. A program looping on a write of the
+     * same value would otherwise force an erase a minute forever, which is how
+     * a flash sector rated for a hundred thousand cycles gets spent by a
+     * program that thought it was doing nothing. */
+    if (g_rec.slots[bank][slot] != value) {
+        g_rec.slots[bank][slot] = value;
+        g_dirty = 1;
+    }
+    return 1;
+}
+
+int store_dirty(void) { return g_dirty; }
 
 uint32_t store_boots(void)  { return g_rec.boots; }
 uint32_t store_frames(void) { return g_rec.frames; }

@@ -57,6 +57,24 @@ names:
 ; ends this program's slice -- which is the point: a syscall costing
 ; milliseconds must not be charged to the instruction quantum.
 
+; ---- claim a persistent slot ------------------------------------------------
+;
+; Written ONCE, not per reading. Slots are banked by caller, so this lands in
+; this application's bank and cannot touch the one the shell writes -- reading
+; `dev 2 0` at the prompt afterwards proves it, because it still shows whatever
+; the shell put there.
+;
+; Once, because a slot write marks the record dirty and the kernel saves it
+; periodically. A program storing a value that changes every loop would erase a
+; flash sector a minute forever, which is how a part rated for a hundred
+; thousand cycles gets spent by a program that thought it was being helpful.
+
+        ldi     r0, 3               ; DEV_OP_WRITE
+        ldi     r1, 2               ; device 2, store
+        ldi     r2, 0               ; slot 0, in OUR bank
+        ldi     r3, 777
+        sys     device
+
 sensing:
         ldi     r0, 2               ; DEV_OP_READ
         ldi     r1, 0               ; device 0, light

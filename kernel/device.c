@@ -9,6 +9,7 @@
 #include "device.h"
 #include "adc.h"
 #include "audio.h"
+#include "store.h"
 
 static uint32_t g_reads, g_writes, g_refusals;
 
@@ -22,8 +23,9 @@ uint32_t device_refusals(void)  { return g_refusals; }
  * conversion on this part is noisy enough that an application would see the
  * noise before it saw the light, and 8 samples is well inside the millisecond
  * budget that DEV_F_SLOW already declares. */
-static int light_read(uint32_t chan, uint32_t *out)
+static int light_read(uint32_t caller, uint32_t chan, uint32_t *out)
 {
+    (void)caller;                       /* the light is the same for everyone */
     if (chan != 0u) {
         return 0;
     }
@@ -46,8 +48,9 @@ static int light_read(uint32_t chan, uint32_t *out)
  * and what it gets is clamped to something the speaker and the ear can survive.
  * Refusing would be defensible; clamping means a program cannot make the device
  * unusable by asking badly. */
-static int beep_write(uint32_t chan, uint32_t value)
+static int beep_write(uint32_t caller, uint32_t chan, uint32_t value)
 {
+    (void)caller;                       /* one speaker, first come first served */
     if (chan != 0u) {
         return 0;
     }
@@ -63,11 +66,63 @@ static int beep_write(uint32_t chan, uint32_t value)
     return 1;
 }
 
+/* ---- store -------------------------------------------------------------- */
+
+/* Channels 0..STORE_SLOTS_PER_BANK-1 are persistent words; the channel after
+ * them commits.
+ *
+ * A slot write lands in the in-RAM record and reaches flash on the next save,
+ * because an erase per write costs tens of milliseconds with interrupts masked
+ * and would spend a sector rated for a hundred thousand cycles in an afternoon.
+ * A program that wants its value on the glass NOW writes the commit channel and
+ * pays for it; one that does not gets durability within the minute for free,
+ * from the periodic save the kernel already performs.
+ *
+ * Slots are banked by CALLER, so this driver is the reason device_t grew a
+ * caller argument. Reading the commit channel reports whether anything is
+ * waiting, which is the only way a program can tell.
+ */
+#define STORE_COMMIT_CHAN STORE_SLOTS_PER_BANK
+
+static uint32_t store_bank(uint32_t caller)
+{
+    /* DEVICE_CALLER_KERNEL is APP_MAX, which is exactly STORE_KERNEL_BANK.
+     * Asserted rather than assumed: they are defined in different headers for
+     * different reasons and could drift apart without either looking wrong. */
+    _Static_assert(DEVICE_CALLER_KERNEL == STORE_KERNEL_BANK,
+                   "the kernel's device-caller id must match its slot bank");
+    return caller;
+}
+
+static int store_dev_read(uint32_t caller, uint32_t chan, uint32_t *out)
+{
+    if (chan == STORE_COMMIT_CHAN) {
+        *out = (uint32_t)store_dirty();
+        return 1;
+    }
+    return store_slot_get(store_bank(caller), chan, out);
+}
+
+static int store_dev_write(uint32_t caller, uint32_t chan, uint32_t value)
+{
+    if (chan == STORE_COMMIT_CHAN) {
+        (void)value;                    /* any value means "commit now" */
+        return store_save() == 0;
+    }
+    return store_slot_set(store_bank(caller), chan, value);
+}
+
 /* ---- the table ---------------------------------------------------------- */
 
 static const device_t DEVICES[] = {
     { "light", 1u, DEV_F_READ  | DEV_F_SLOW, light_read, 0 },
     { "beep",  1u, DEV_F_WRITE | DEV_F_SLOW, 0,          beep_write },
+    /* Slow because the commit channel erases a flash sector. Marking the whole
+     * device slow costs a slot-read its quantum, which is the safe direction to
+     * be wrong in: a device that under-declares its cost lets a program starve
+     * the renderer without either of them doing anything visibly wrong. */
+    { "store", STORE_SLOTS_PER_BANK + 1u, DEV_F_READ | DEV_F_WRITE | DEV_F_SLOW,
+      store_dev_read, store_dev_write },
 };
 
 #define DEVICE_COUNT ((int)(sizeof DEVICES / sizeof DEVICES[0]))
@@ -110,7 +165,7 @@ int device_is_slow(uint32_t id)
     return d && (d->flags & DEV_F_SLOW);
 }
 
-int device_read(uint32_t id, uint32_t chan, uint32_t *out)
+int device_read(uint32_t caller, uint32_t id, uint32_t chan, uint32_t *out)
 {
     const device_t *d = find(id);
     /* Channel is checked HERE as well as in the driver. The table knows how
@@ -122,7 +177,7 @@ int device_read(uint32_t id, uint32_t chan, uint32_t *out)
         g_refusals++;
         return 0;
     }
-    if (!d->read(chan, out)) {
+    if (!d->read(caller, chan, out)) {
         g_refusals++;
         return 0;
     }
@@ -130,14 +185,14 @@ int device_read(uint32_t id, uint32_t chan, uint32_t *out)
     return 1;
 }
 
-int device_write(uint32_t id, uint32_t chan, uint32_t value)
+int device_write(uint32_t caller, uint32_t id, uint32_t chan, uint32_t value)
 {
     const device_t *d = find(id);
     if (!d || !d->write || chan >= d->channels) {
         g_refusals++;
         return 0;
     }
-    if (!d->write(chan, value)) {
+    if (!d->write(caller, chan, value)) {
         g_refusals++;
         return 0;
     }

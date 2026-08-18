@@ -437,8 +437,8 @@ static void execute(char *line)
             uart_puts("   usage: beep [hz] [ticks]\n");
         } else {
             uint32_t packed = ((uint32_t)hz << 16) | ((uint32_t)tk & 0xFFFFu);
-            uart_puts(device_write(1u, 0u, packed) ? "   beep\n"
-                                                   : "   refused\n");
+            uart_puts(device_write(DEVICE_CALLER_KERNEL, 1u, 0u, packed)
+                      ? "   beep\n" : "   refused\n");
         }
     }
     else if (str_eq(line, "hang")) {
@@ -976,7 +976,7 @@ static void execute(char *line)
                 uart_puts("       ");
                 if (flags & DEV_F_READ) {
                     uint32_t v = 0;
-                    if (device_read(i, 0, &v)) {
+                    if (device_read(DEVICE_CALLER_KERNEL, i, 0, &v)) {
                         uart_put_dec(v);
                     } else {
                         uart_puts("refused");
@@ -1003,13 +1003,14 @@ static void execute(char *line)
                 if (v < 0) {
                     uart_puts("   value must be a non-negative decimal\n");
                 } else {
-                    uart_puts(device_write((uint32_t)id, (uint32_t)chan,
-                                           (uint32_t)v)
+                    uart_puts(device_write(DEVICE_CALLER_KERNEL, (uint32_t)id,
+                                           (uint32_t)chan, (uint32_t)v)
                               ? "   written\n" : "   refused\n");
                 }
             } else {
                 uint32_t v = 0;
-                if (device_read((uint32_t)id, (uint32_t)chan, &v)) {
+                if (device_read(DEVICE_CALLER_KERNEL, (uint32_t)id,
+                                (uint32_t)chan, &v)) {
                     uart_puts("   ");
                     uart_put_dec(v);
                     uart_puts("\n");

@@ -14,6 +14,12 @@
 #define NATOS_STORE_H
 
 #include <stdint.h>
+#include "app.h"                /* APP_MAX: one slot bank per application */
+
+/* One bank per application, plus one for the kernel and the shell. */
+#define STORE_SLOT_BANKS      (APP_MAX + 1)
+#define STORE_SLOTS_PER_BANK  4u
+#define STORE_KERNEL_BANK     ((uint32_t)APP_MAX)
 
 typedef struct {
     uint32_t magic;
@@ -37,6 +43,19 @@ typedef struct {
     /* Touch calibration, so a calibration survives a reboot. Zero means never
      * calibrated, and the driver's compiled-in defaults stand. */
     uint32_t cal_x_min, cal_x_max, cal_y_min, cal_y_max;
+
+    /* Persistent slots, reached by applications through the `store` device.
+     *
+     * Banked BY CALLER, not shared. Everything else an application owns in this
+     * kernel is confined to it -- its arena, its viewport, its mailbox -- and
+     * persistence with a single global pool would be the one place a program
+     * could read what another program wrote. Bank APP_MAX belongs to the kernel
+     * and the shell, so a diagnostic at the prompt cannot land on top of an
+     * application's saved state either.
+     *
+     * Deliberately tiny. This is somewhere to keep a high score, a resume point
+     * or a setting; a program that needs a filesystem needs the SD card. */
+    uint32_t slots[STORE_SLOT_BANKS][STORE_SLOTS_PER_BANK];
 
     uint32_t checksum;
 } store_t;
@@ -68,6 +87,20 @@ int  store_load(void);
 
 /* Erases the sector and writes the record back. Returns 0 on success. */
 int  store_save(void);
+
+/* Persistent slots. `bank` is the calling application's id, or
+ * STORE_KERNEL_BANK for the kernel and the shell. Both return 0 on a bad bank
+ * or slot rather than clamping, because a silently redirected write is worse
+ * than a refused one.
+ *
+ * A write lands in the in-RAM record and marks it dirty; it reaches flash on
+ * the next store_save(). That is deliberate -- a flash erase per write would
+ * cost tens of milliseconds with interrupts masked and would burn a sector
+ * rated for a hundred thousand cycles in an afternoon. store_dirty() reports
+ * whether anything is waiting. */
+int  store_slot_get(uint32_t bank, uint32_t slot, uint32_t *out);
+int  store_slot_set(uint32_t bank, uint32_t slot, uint32_t value);
+int  store_dirty(void);
 
 uint32_t store_boots(void);
 uint32_t store_frames(void);
