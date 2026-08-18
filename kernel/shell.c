@@ -80,6 +80,7 @@ static int parse_int(const char *s)
  * and the two states are comparable. */
 static volatile int g_hog_on;
 static volatile int g_hog_draw;         /* also issue gfxrogue's fill */
+static volatile uint32_t g_hog_w = APP_VIEW_W;   /* 180 -> DMA; <=32 -> FIFO */
 static int g_hog_task = -1;
 static volatile uint32_t g_hog_spins;
 static volatile uint32_t g_hog_fills;
@@ -110,8 +111,20 @@ static void hog_task(void)
              * over, forever. That is the shape being tested here. try_lock
              * rather than a blocking take, so this behaves like an application
              * and cannot stall the renderer by holding the panel. */
+            /* Width is the variable, and it selects the TRANSPORT.
+             *
+             * spi_tx() sends anything over 64 bytes by DMA and anything smaller
+             * through the FIFO, so a fill's width decides which path carries
+             * it. Every program that repairs the 3D view issues wide fills:
+             * gfxrogue and `hog draw` are both 180 px, 360 bytes a row, DMA.
+             * The `draw` application does NOT repair it, and its block is 20 px
+             * -- 40 bytes a row, FIFO.
+             *
+             * That is a single-variable difference between a program that fixes
+             * the view and one that does not, so it is worth being able to set
+             * it: `hog draw 20` is gfxrogue's shape at draw's width. */
             if (g_hog_draw && display_try_lock()) {
-                display_fill_rect(0, APP_VIEW_Y0, APP_VIEW_W, APP_VIEW_H,
+                display_fill_rect(0, APP_VIEW_Y0, g_hog_w, APP_VIEW_H,
                                   (g_hog_fills & 1u) ? COLOR_WHITE : COLOR_RED);
                 display_unlock();
                 g_hog_fills++;
@@ -659,6 +672,62 @@ static void execute(char *line)
         display_resync();
         uart_puts("   panel window re-issued; no pixels drawn\n");
     }
+    else if (str_eq(line, "touchoff")) {
+        /* Stop touch DELIVERING events, without stopping it sampling.
+         *
+         * The unattended sweep logged four taps and two opens at 390 s with
+         * nobody present, and maxy moving 254 -> 270 -- slot 2's bottom edge,
+         * so a third program was launched. ping and pong hold slots 0 and 1.
+         * A program drawing continuously is the one thing known to repair the
+         * 3D view, so "leave it five minutes and it fixes itself" may just be
+         * "leave it long enough for a phantom tap to open something".
+         *
+         * With this set, presses are still read and still latched into the
+         * touch counters -- so a phantom press stays visible -- but nothing
+         * routes them, so none can select an icon, launch a program, or steer
+         * the camera. If the view still heals with this on, the touch theory
+         * is dead and uptime is real. */
+        extern volatile int g_touch_events_off;
+        g_touch_events_off = !str_eq(arg, "on");
+        uart_puts(g_touch_events_off
+                  ? "   touch events suppressed; sampling and telemetry still live\n"
+                  : "   touch events delivered again\n");
+    }
+    else if (str_eq(line, "panelid")) {
+        /* Does MISO work at all?
+         *
+         * Everything about reading the panel back depends on this one answer,
+         * and it must be established against a KNOWN value before anything is
+         * concluded from an unknown one. 0xD3 (Read ID4) returns a dummy byte
+         * then 0x00 0x93 0x41 on every ILI9341 ever made. If those three bytes
+         * come back, the read path works and the framebuffer can be compared
+         * against the glass. If everything reads 0x00, MISO is dead -- which is
+         * precisely how the touch controller presented on an output-only pin,
+         * and a constant zero is the most convincing wrong answer available.
+         *
+         * 0x04 (Read Display ID) is printed alongside as a second opinion; some
+         * modules answer one and not the other. */
+        uint8_t id4[5], id[5];
+        display_panel_read(0xD3u, id4, 5u);
+        display_panel_read(0x04u, id,  5u);
+
+        uart_puts("   0xD3 ->");
+        for (int i = 0; i < 5; i++) { uart_puts(" "); uart_put_hex(id4[i]); }
+        uart_puts("\n   0x04 ->");
+        for (int i = 0; i < 5; i++) { uart_puts(" "); uart_put_hex(id[i]); }
+
+        int found = 0;
+        for (int i = 0; i < 4; i++) {
+            if (id4[i] == 0x93u && id4[i + 1] == 0x41u) { found = 1; }
+        }
+        int all_zero = 1;
+        for (int i = 0; i < 5; i++) {
+            if (id4[i] || id[i]) { all_zero = 0; }
+        }
+        uart_puts(found     ? "\n   0x93 0x41 present -- MISO WORKS, readback is viable\n"
+                : all_zero  ? "\n   everything zero -- MISO is dead or the pad is misconfigured\n"
+                            : "\n   answered, but not the ILI9341 signature; check clock and dummy count\n");
+    }
     else if (str_eq(line, "view3d")) {
         /* Open or close the 3D view from the terminal.
          *
@@ -760,6 +829,9 @@ static void execute(char *line)
          * no display, no SPI, no memory outside its own counter. If a garbled
          * view comes good with this running, the repair is scheduling and the
          * drawing was never relevant. */
+        char *width = split(arg);
+        int w = parse_int(width);
+        g_hog_w    = (w > 0 && w <= (int)APP_VIEW_W) ? (uint32_t)w : APP_VIEW_W;
         g_hog_on   = !str_eq(arg, "off");
         g_hog_draw = str_eq(arg, "draw");
         if (g_hog_on && g_hog_task < 0) {
@@ -775,8 +847,10 @@ static void execute(char *line)
             uart_put_dec(g_hog_fills);
             uart_puts(" fills issued in total\n");
         } else if (g_hog_draw) {
-            uart_puts("   spinning AND filling continuously -- gfxrogue's shape,"
-                      " without gfxrogue\n");
+            uart_puts("   spinning AND filling continuously, width ");
+            uart_put_dec(g_hog_w);
+            uart_puts(g_hog_w * 2u > 64u ? " px -> DMA path\n"
+                                         : " px -> FIFO path\n");
         } else {
             uart_puts("   spinning at NORMAL priority, drawing nothing"
                       " ('hog draw' to also fill)\n");
@@ -839,6 +913,106 @@ static void execute(char *line)
         g_display_frozen = !str_eq(arg, "off");
         uart_puts(g_display_frozen ? "   display task frozen; nothing repaints\n"
                                    : "   display task running\n");
+    }
+    else if (str_eq(line, "dmaoff")) {
+        /* One variable: the transport. `dmaoff` puts every transfer on the
+         * FIFO, `dmaoff on` gives DMA back. Nothing else changes -- same
+         * framebuffer, same window, same renderer, same everything. */
+        display_force_fifo(!str_eq(arg, "on"));
+        uart_puts(display_dma_enabled() ? "   DMA path enabled\n"
+                                        : "   FIFO path forced; DMA disabled\n");
+    }
+    else if (str_eq(line, "fbpattern")) {
+        /* A KNOWN image, through the identical blit path.
+         *
+         * "Garbled" is a description; a displacement is a number. Eight colour
+         * bands in a fixed order, twenty-eight rows each, with a white square
+         * in the top-left corner: if the bands come back in the wrong order the
+         * stream is being reordered, if they are shifted the window or the byte
+         * count is off, and if the square is not in the corner the origin is
+         * wrong. Any of those is measurable by describing the panel, which is
+         * the only instrument available now that MISO has been shown dead.
+         *
+         * Run `dfreeze` first so the renderer does not immediately paint over
+         * it. This writes into the raycaster's own framebuffer and calls the
+         * same display_blit() the renderer calls, so nothing about the path
+         * under test is being substituted -- a pattern drawn some other way
+         * would be testing some other code. */
+        uint16_t *fb = raycast_fb_ptr();
+        if (!fb) {
+            uart_puts("   no framebuffer (fb must be on)\n");
+        } else {
+            static const uint16_t BANDS[8] = {
+                COLOR_RED, COLOR_GREEN, COLOR_BLUE, COLOR_YELLOW,
+                COLOR_CYAN, COLOR_MAGENTA, COLOR_WHITE, COLOR_GREY
+            };
+            for (uint32_t y = 0; y < RAY_VIEW_H; y++) {
+                uint16_t c = BANDS[(y / 28u) & 7u];
+                for (uint32_t x = 0; x < RAY_VIEW_W; x++) {
+                    fb[y * RAY_VIEW_W + x] = c;
+                }
+            }
+            /* Corner marker: black square, top-left, 16x16. */
+            for (uint32_t y = 0; y < 16u; y++) {
+                for (uint32_t x = 0; x < 16u; x++) {
+                    fb[y * RAY_VIEW_W + x] = COLOR_BLACK;
+                }
+            }
+            display_blit(0, 0, RAY_VIEW_W, RAY_VIEW_H, fb, RAY_VIEW_W);
+            uart_puts("   pattern blitted: 8 bands of 28 rows, top to bottom --\n"
+                      "   RED GREEN BLUE YELLOW CYAN MAGENTA WHITE GREY,\n"
+                      "   black 16x16 square in the TOP-LEFT corner\n");
+        }
+    }
+    else if (str_eq(line, "fbdump")) {
+        /* The framebuffer itself, over the wire, as an image.
+         *
+         * Every render-vs-transport test so far has failed the same way: the
+         * only instrument that can see the PICTURE is a person, and the only
+         * instrument that can see the BUFFER reports summaries. fbhash proves
+         * two frames are identical; it cannot say whether either is a maze or
+         * noise, and a frozen camera stably rendering a wrong scene produces a
+         * perfectly constant hash. MISO is dead so the panel cannot be read
+         * back. That leaves sending the buffer out and looking at it.
+         *
+         * Every second pixel and every second row: 120x112, small enough to
+         * cross a 115200 line in a few seconds and far more than enough to tell
+         * a rendered corridor from garbage. */
+        uint16_t *fb = raycast_fb_ptr();
+        if (!fb) {
+            uart_puts("   no framebuffer\n");
+        } else {
+            /* Held across the WHOLE dump.
+             *
+             * The reporter prints a status line every couple of hundred ticks.
+             * Without the lock it lands in the middle of the hex, shifts a row,
+             * and the image reconstructed on the host acquires colour garbage
+             * that came from the console rather than from the framebuffer --
+             * an instrument manufacturing the very fault it was built to
+             * photograph. The first dump taken without this looked convincingly
+             * corrupt and could not be trusted for exactly that reason.
+             *
+             * Each row is also prefixed with its own index, so the host can
+             * verify it received the row it thinks it did rather than inferring
+             * position from arrival order. */
+            static const char HEX[] = "0123456789abcdef";
+            console_lock();
+            uart_puts("FBDUMP 120 112\n");
+            for (uint32_t y = 0; y < RAY_VIEW_H; y += 2u) {
+                uart_put_dec(y / 2u);
+                uart_putc(':');
+                for (uint32_t x = 0; x < RAY_VIEW_W; x += 2u) {
+                    uint16_t p = fb[y * RAY_VIEW_W + x];
+                    uart_putc(HEX[(p >> 12) & 0xFu]);
+                    uart_putc(HEX[(p >> 8)  & 0xFu]);
+                    uart_putc(HEX[(p >> 4)  & 0xFu]);
+                    uart_putc(HEX[p & 0xFu]);
+                }
+                uart_putc('\n');
+            }
+            uart_puts("FBEND\n");
+            console_unlock();
+        }
     }
     else if (str_eq(line, "fbsum")) {
         /* What is actually IN the framebuffer, sampled without touching the

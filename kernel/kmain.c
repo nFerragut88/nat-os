@@ -1311,6 +1311,21 @@ static void task_display(void)
  * and rare enough that an idle panel is not being clocked for nothing. */
 #define TOUCH_IDLE_TICKS 3u
 
+/* Stops the touch task delivering events, without stopping the task.
+ *
+ * The unattended sweep recorded four taps and TWO OPENS at 390 s with nobody in
+ * the room, and maxy moving 254 -> 270 -- which is slot 2's bottom edge, so a
+ * third program was launched. ping and pong hold slots 0 and 1. Since a program
+ * drawing continuously is the one thing known to repair the 3D view, "leave it
+ * five minutes and it fixes itself" may simply be "leave it long enough for a
+ * phantom tap to open something".
+ *
+ * That is testable by removing touch and sweeping again. Disabling delivery
+ * rather than the task keeps the sampling, and therefore the touch counters,
+ * running: if spurious presses are still being READ while nothing acts on them,
+ * that is worth seeing rather than hiding. */
+volatile int g_touch_events_off = 0;
+
 static void task_touch(void)
 {
     touch_state_t t;
@@ -1347,6 +1362,16 @@ static void task_touch(void)
             continue;
         }
 
+        /* Suppress ROUTING only. The sample above still happened, the pressure
+         * and raw channels below are still latched, and the touch counters
+         * still move -- so a phantom press remains visible in `touch s/e`, rx
+         * and ry while being incapable of selecting an icon or opening a
+         * program. Skipping the read entirely would hide the very thing under
+         * test. */
+        if (g_touch_events_off) {
+            goto latch;
+        }
+
         /* Close buttons see the touch first. They occupy a column outside every
          * application viewport, so a press there is unambiguous — no consumer
          * below has a claim on those pixels. */
@@ -1371,6 +1396,7 @@ static void task_touch(void)
          * state — the reporter showed last=0,0 forever. Diagnosing a touch
          * problem with the touch telemetry switched off is not a position to
          * be in twice. */
+latch:
         if (down) {
             g_last_rawx = t.raw_x;
             g_last_rawy = t.raw_y;
@@ -1382,7 +1408,7 @@ static void task_touch(void)
         if (down && !desktop_active()) {
             /* Steer only from touches in the view itself, so the application
              * strips below keep their own input. */
-            if (t.y < RAY_VIEW_H) {
+            if (t.y < RAY_VIEW_H && !g_touch_events_off) {
                 if (t.x < RAY_VIEW_W / 3u) {
                     raycast_turn(-2);
                 } else if (t.x > (RAY_VIEW_W * 2u) / 3u) {

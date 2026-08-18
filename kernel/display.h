@@ -137,6 +137,11 @@ uint32_t display_dport_reg(void);
 uint32_t display_dma_transfers(void);
 uint32_t display_dma_timeouts(void);
 
+/* Force every transfer onto the FIFO path, leaving everything else alone.
+ * The 3D view's corruption tracks the DMA path exactly; see display.c. */
+void     display_force_fifo(int on);
+int      display_dma_enabled(void);
+
 /* Task id currently holding the draw lock, for deadlock diagnosis. */
 int display_owner(void);
 
@@ -148,5 +153,10 @@ uint32_t display_spi_clock_preset(uint32_t which);
 /* Re-issues the panel window and ends the transaction without drawing
  * anything. Diagnostic: see the note in display.c. */
 void display_resync(void);
+
+/* Reads `n` bytes back from the panel after issuing `cmd`. MISO (GPIO12) has
+ * been wired and unused since UM-NATOS-015; this is the first code to touch it.
+ * The first byte of an ILI9341 read is always a dummy. See display.c. */
+void display_panel_read(uint8_t cmd, uint8_t *out, uint32_t n);
 
 #endif /* NATOS_DISPLAY_H */

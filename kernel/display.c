@@ -75,8 +75,11 @@ static void delay_ms(uint32_t ms)
 #define SPI2_SLAVE         (SPI2_BASE + 0x38u)
 #define SPI2_W(n)          (SPI2_BASE + 0x80u + 4u * (n))
 
+#define SPI2_MISO_DLEN     (SPI2_BASE + 0x2Cu)
+
 #define SPI_USR_BIT        (1u << 18)   /* CMD: start; self-clears when done */
 #define SPI_USR_MOSI_BIT   (1u << 27)   /* USER: perform a write phase       */
+#define SPI_USR_MISO_BIT   (1u << 28)   /* USER: perform a read phase        */
 
 /* DPORT peripheral clock gating. SPI2 is bit 6. Bit 1 in the same register
  * clocks the flash controller this code executes from, so the write is
@@ -102,6 +105,21 @@ static void delay_ms(uint32_t ms)
 /* IOMUX function 1 is the HSPI peripheral on these pads; function 2 is plain
  * GPIO, which is what every other pin in this kernel uses. */
 #define IO_MUX_HSPI_FUNC   ((1u << 12) | (2u << 10))
+
+/* Same, plus FUN_IE. An output pad does not need its input buffer; MISO does,
+ * and without this bit the pad reads as a constant zero -- which is exactly how
+ * the touch controller's MISO presented when it was put on an output-only pin
+ * (UM-NATOS-017 section 3). A constant zero is the most convincing wrong answer
+ * a read path can give, because it looks like data. */
+#define IO_MUX_HSPI_IN_FUNC ((1u << 12) | (2u << 10) | (1u << 9))
+
+/* Read transactions are far slower than writes on this part. The ILI9341's
+ * write cycle is 100 ns; its READ cycle is 150 ns minimum and the data-out
+ * setup is worse, so the 40 MHz used for writing will return rubbish.
+ *
+ * pre=0 n=39 h=19 l=39 -> 80 MHz / 40 = 2 MHz. Well inside spec, and its cost
+ * is irrelevant because nothing reads the panel in normal operation. */
+#define SPI2_CLKDIV_READ   0x000274E7u
 
 static uint32_t g_spi2_clk_reg;
 static uint32_t g_spi2_dport;
@@ -163,7 +181,24 @@ uint32_t display_spi_clock_preset(uint32_t which)
 #define DMA_AHBM_RST       (1u << 5)
 #define DMA_OUTDSCR_BURST  (1u << 11)
 #define DMA_OUT_DATA_BURST (1u << 12)
-#define DMA_OUTLINK_START  (1u << 30)
+
+/* SPI_DMA_OUT_LINK_REG: addr in 19:0, STOP at 28, START at 29, RESTART at 30.
+ *
+ * This was (1u << 30) -- RESTART -- and had been since DMA was introduced. The
+ * two are one bit apart and both produce a working-looking transfer: RESTART
+ * resumes the existing descriptor chain from wherever the engine left off
+ * instead of beginning the one just written. The transfer completes, SPI_USR
+ * clears, no timeout fires, every counter reports success, and the pixels land
+ * progressively displaced.
+ *
+ * That is the whole 3D-view fault. fbdump showed a pristine corridor in DRAM at
+ * the same moment the panel was garbled, so the corruption was strictly between
+ * the buffer and the glass; the FIFO path never touches this register, which is
+ * why forcing it produced a clean picture and why the view "healed" whenever a
+ * spurious timeout disabled DMA. */
+#define DMA_OUTLINK_STOP    (1u << 28)
+#define DMA_OUTLINK_START   (1u << 29)
+#define DMA_OUTLINK_RESTART (1u << 30)
 
 /* Which DMA channel serves which SPI peripheral. Bits 2:3 are SPI2's. */
 #define DPORT_SPI_DMA_CHAN_SEL 0x3FF005A8u
@@ -214,6 +249,32 @@ static void spi2_dma_init(void)
  * has no reason to be trusted with the next, and the FIFO path still works. */
 static int spi2_dma_tx(const uint8_t *data, uint32_t n)
 {
+    /* Reset the outbound DMA channel BEFORE every transfer, not once at init.
+     *
+     * SPI_USR clearing says the SPI transaction finished shifting bits out. It
+     * does not say the DMA channel has retired its descriptor and returned to a
+     * clean state, and the two are separate state machines. Espressif's own
+     * driver resets the channel per transaction for this reason.
+     *
+     * It matters here more than almost anywhere, because the raycaster issues
+     * 224 of these back to back inside a single window with CS held low, with
+     * no gap in which the engine could settle on its own. A stale descriptor at
+     * the head of that chain corrupts the stream from that point on, and every
+     * pixel after it lands at the wrong offset -- which is a torn picture built
+     * out of a framebuffer that has been proven correct.
+     *
+     * Established by comparison, not by argument: fbdump showed a pristine
+     * corridor in DRAM at the same moment the panel was garbled, which puts the
+     * fault strictly between the buffer and the glass. */
+    /* All three resets, not just the outbound channel. The driver ALTERNATES
+     * transports: set_window() sends its command and parameter bytes through
+     * the W registers on the FIFO path, then the pixels go by DMA. The two
+     * share the peripheral's AHB master FIFO, and switching between them
+     * without resetting it leaves the engine reading from a buffer the CPU
+     * path was using. Same sequence spi2_dma_init() performs once. */
+    GPIO_REG(SPI2_DMA_CONF) |= DMA_OUT_RST | DMA_AHBM_FIFO_RST | DMA_AHBM_RST;
+    GPIO_REG(SPI2_DMA_CONF) &= ~(DMA_OUT_RST | DMA_AHBM_FIFO_RST | DMA_AHBM_RST);
+
     GPIO_REG(SPI2_DMA_INT_CLR) = 0xFFFFFFFFu;
 
     g_desc.flags = (n & 0xFFFu)              /* size   */
@@ -277,6 +338,28 @@ static int spi2_dma_tx(const uint8_t *data, uint32_t n)
 
 uint32_t display_dma_transfers(void) { return g_dma_transfers; }
 uint32_t display_dma_timeouts(void)  { return g_dma_timeouts; }
+
+/* Force the transport, for the test that closes UM-NATOS-029.
+ *
+ * The 3D view garbles from boot and heals ten to sixty seconds later. The DMA
+ * engine spuriously times out and disables itself at about twelve seconds. Those
+ * are the same event: the view heals when the driver falls back to the FIFO.
+ *
+ * Everything that ever "repaired" the view fits: gfxrogue and `hog draw` issue
+ * wide, DMA-sized fills, so they add DMA transfers, add chances for the display
+ * task to be descheduled mid-wait, and bring the timeout forward. The `draw`
+ * application never repaired it because its block is 20 px -- 40 bytes a row,
+ * below the 64-byte threshold, entirely on the FIFO, incapable of provoking a
+ * DMA timeout.
+ *
+ * And raising the timeout bound to 500 ms removed the accidental workaround,
+ * which is why the view now stays broken indefinitely and why a single static
+ * test pattern comes out corrupt.
+ *
+ * If that reading is right, forcing the FIFO gives a clean picture with nothing
+ * else changed. */
+void display_force_fifo(int on) { g_dma_ok = !on; }
+int  display_dma_enabled(void)  { return g_dma_ok; }
 
 static void spi2_init(void)
 {
@@ -344,6 +427,81 @@ static void spi2_tx(const uint8_t *data, uint32_t n)
 
 uint32_t display_spi_clock_reg(void) { return g_spi2_clk_reg; }
 uint32_t display_dport_reg(void)     { return g_spi2_dport; }
+
+/* ---- reading the panel --------------------------------------------------
+ *
+ * UM-NATOS-015 recorded MISO as "wired but unused -- the driver never reads the
+ * panel", and that has been true for the whole life of this kernel. It is also
+ * the reason a display fault can only be diagnosed by a person looking at the
+ * glass: every counter can report success while the pixels are wrong, and
+ * nothing on the board can tell the difference.
+ *
+ * The ILI9341 can read its own memory back. If this works, "is what is on the
+ * panel what we sent it" becomes a comparison rather than an opinion, and the
+ * 3D-view fault can be investigated without anybody in the room.
+ *
+ * Two transactions with CS held low across both, because D/CX must be LOW for
+ * the command byte and HIGH for the data that follows, and a single hardware
+ * transaction cannot change it in the middle.
+ *
+ * GPIO12 is MTDI, a strapping pin: held high at reset it selects a 1.8 V flash
+ * supply and the board does not boot. Nothing here ever drives it -- the pad is
+ * configured as a peripheral INPUT and the panel is the only thing driving that
+ * net -- so the strapping behaviour is unchanged. Worth stating explicitly
+ * rather than leaving for someone to rediscover.
+ *
+ * Returns bytes read into `out`, MSB-first as they arrive. The first byte of
+ * every ILI9341 read is a dummy; callers deal with that themselves because the
+ * count differs per command. */
+void display_panel_read(uint8_t cmd, uint8_t *out, uint32_t n)
+{
+    if (n == 0u || n > 16u) {
+        return;
+    }
+
+    draw_lock();
+
+    uint32_t saved_clk  = GPIO_REG(SPI2_CLOCK);
+    uint32_t saved_user = GPIO_REG(SPI2_USER);
+
+    GPIO_REG(SPI2_CLOCK)    = SPI2_CLKDIV_READ;
+    GPIO_REG(IO_MUX_GPIO12) = IO_MUX_HSPI_IN_FUNC;
+
+    /* Command phase: D/CX low, write only. */
+    gpio_clear(PIN_DC);
+    gpio_clear(PIN_CS);
+
+    GPIO_REG(SPI2_USER)      = SPI_USR_MOSI_BIT;
+    GPIO_REG(SPI2_W(0))      = cmd;
+    GPIO_REG(SPI2_MOSI_DLEN) = 8u - 1u;
+    GPIO_REG(SPI2_CMD)       = SPI_USR_BIT;
+    while (GPIO_REG(SPI2_CMD) & SPI_USR_BIT) {
+    }
+
+    /* Data phase: D/CX high, read only, CS still asserted. */
+    gpio_set(PIN_DC);
+
+    for (uint32_t i = 0; i < (n + 3u) / 4u; i++) {
+        GPIO_REG(SPI2_W(i)) = 0;        /* so a dead MISO reads as zeros, not
+                                         * as whatever the last write left */
+    }
+    GPIO_REG(SPI2_USER)      = SPI_USR_MISO_BIT;
+    GPIO_REG(SPI2_MISO_DLEN) = n * 8u - 1u;
+    GPIO_REG(SPI2_CMD)       = SPI_USR_BIT;
+    while (GPIO_REG(SPI2_CMD) & SPI_USR_BIT) {
+    }
+
+    for (uint32_t i = 0; i < n; i++) {
+        out[i] = (uint8_t)(GPIO_REG(SPI2_W(i / 4u)) >> (8u * (i % 4u)));
+    }
+
+    gpio_set(PIN_CS);
+
+    GPIO_REG(SPI2_USER)  = saved_user;
+    GPIO_REG(SPI2_CLOCK) = saved_clk;
+
+    draw_unlock();
+}
 
 /* ---- bit-banged SPI, mode 0 --------------------------------------------
  * Data is presented on MOSI while the clock is low and sampled by the panel on
