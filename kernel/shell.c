@@ -71,6 +71,57 @@ static int parse_int(const char *s)
     return v;
 }
 
+/* The `hog` command's task. Created on first use rather than at boot, because a
+ * task that exists only to compete for the CPU should not be in the table of a
+ * system nobody is debugging. See the command for what it is testing.
+ *
+ * The shape is copied from task_apps deliberately, down to the yield: spin while
+ * armed, yield when not, so a disarmed hog costs what an idle apps task costs
+ * and the two states are comparable. */
+static volatile int g_hog_on;
+static volatile int g_hog_draw;         /* also issue gfxrogue's fill */
+static int g_hog_task = -1;
+static volatile uint32_t g_hog_spins;
+static volatile uint32_t g_hog_fills;
+
+static void hog_task(void)
+{
+    for (;;) {
+        if (g_hog_on) {
+            /* Roughly the work app_tick(2000) does, without doing any of it.
+             * The count is volatile so the loop cannot be optimised away. */
+            for (int i = 0; i < 2000; i++) {
+                g_hog_spins++;
+            }
+
+            /* `hog draw` adds the one thing the earlier tests between them
+             * never reproduced: drawing CONTINUOUSLY.
+             *
+             * stripn issued 200 fills as a burst and stopped; hog spun forever
+             * and drew nothing. gfxrogue does both at once, and the difference
+             * is not cosmetic. The raycaster holds the draw lock essentially
+             * without interruption -- 7,965 ms held out of 7,860 ms of uptime,
+             * with cont=0 because applications use display_try_lock() and give
+             * up rather than wait. So the only moment anything else can draw is
+             * the sliver between one blit and the next, and a burst simply
+             * loses that race a few hundred times and quits.
+             *
+             * A program that never stops asking gets into that gap over and
+             * over, forever. That is the shape being tested here. try_lock
+             * rather than a blocking take, so this behaves like an application
+             * and cannot stall the renderer by holding the panel. */
+            if (g_hog_draw && display_try_lock()) {
+                display_fill_rect(0, APP_VIEW_Y0, APP_VIEW_W, APP_VIEW_H,
+                                  (g_hog_fills & 1u) ? COLOR_WHITE : COLOR_RED);
+                display_unlock();
+                g_hog_fills++;
+            }
+        } else {
+            task_yield();
+        }
+    }
+}
+
 /* Splits the line in place at the first space; returns the argument, or "". */
 static char *split(char *line)
 {
@@ -588,6 +639,201 @@ static void execute(char *line)
         wifimac_beacon_stop();
         uart_puts("   stopped\n");
     }
+    else if (str_eq(line, "fifopoke")) {
+        /* One tiny draw, deliberately small enough to take the FIFO path.
+         *
+         * spi_tx() sends anything over 64 bytes by DMA and anything smaller
+         * through the FIFO. The raycaster blits in 480-byte chunks, so it is
+         * the only heavy DMA user; application draws are small text and rects
+         * and frequently go through the FIFO instead.
+         *
+         * If a garbled view comes good after this, the DMA engine was in a
+         * state an intervening FIFO transfer clears -- which is what starting a
+         * program does dozens of times a second, and would finally explain the
+         * repair. 8 pixels is 16 bytes, drawn on the bottom edge inside the
+         * spectrum band, which repaints every frame anyway. */
+        display_fill_rect(0, DISP_H - 2u, 8u, 1u, COLOR_BLACK);
+        uart_puts("   16-byte FIFO transfer issued (8 px, bottom edge)\n");
+    }
+    else if (str_eq(line, "resync")) {
+        display_resync();
+        uart_puts("   panel window re-issued; no pixels drawn\n");
+    }
+    else if (str_eq(line, "view3d")) {
+        /* Open or close the 3D view from the terminal.
+         *
+         * Every attempt to catch the garbling in the act has failed the same
+         * way: the view is opened by hand, some seconds pass before anything
+         * can be armed, and by the time a measurement starts the picture has
+         * already healed. The failure is a STARTUP failure, so the instrument
+         * has to exist before the first frame does, and that needs the moment
+         * of opening to be ours rather than the user's.
+         *
+         * Mirrors the launcher's own DESK_ACTION_3D branch exactly, including
+         * raycast_open() -- an open path that skipped that reset is what made a
+         * reopened view spend its first seconds inside a wall, and a diagnostic
+         * that opens the view differently from the real thing would be
+         * measuring a different bug. */
+        if (str_eq(arg, "off")) {
+            desktop_set_active(1);
+            uart_puts("   back to the launcher\n");
+        } else {
+            raycast_open();
+            desktop_set_active(0);
+            uart_puts("   3D view open\n");
+        }
+    }
+    else if (str_eq(line, "camfreeze")) {
+        raycast_cam_freeze(!str_eq(arg, "off"));
+        uart_puts(raycast_cam_frozen()
+                  ? "   camera held still; the renderer keeps drawing\n"
+                  : "   camera walking again\n");
+    }
+    else if (str_eq(line, "campos")) {
+        /* Where the camera actually is, and whether it is inside a wall.
+         *
+         * fbsum established that the framebuffer differs between the garbled
+         * and the good state, which puts the fault in the renderer rather than
+         * the panel. This is the next question down: the flat-colour signature
+         * is what a camera inside geometry produces, but "flat" was read off
+         * the pixels. Read it off the map instead. */
+        uart_puts("   cell ");
+        uart_put_dec(raycast_cam_x());
+        uart_puts(",");
+        uart_put_dec(raycast_cam_y());
+        uart_puts("  frac ");
+        uart_put_dec(raycast_cam_frac_x());
+        uart_puts(",");
+        uart_put_dec(raycast_cam_frac_y());
+        uart_puts("/1000  heading ");
+        uart_put_dec(raycast_heading());
+        uart_puts("  angle ");
+        uart_put_dec(raycast_angle());
+        uart_puts(raycast_cam_in_wall() ? "\n   INSIDE A WALL\n"
+                                        : "\n   in open space\n");
+        uart_puts("   frames ");
+        uart_put_dec(raycast_frames());
+        uart_puts("  columns ");
+        uart_put_dec(raycast_columns());
+        uart_puts("\n");
+    }
+    else if (str_eq(line, "dmastat")) {
+        /* The DMA counters, read while the system is RUNNING.
+         *
+         * They were only ever printed by display_init()'s boot report, which
+         * runs before the scheduler starts -- so the reassuring dma=N/0 was
+         * measured in the single condition where no task can be preempted, and
+         * was taken as evidence that timeouts do not happen. It is evidence
+         * that they do not happen at boot.
+         *
+         * A timeout is not a dropped frame. It disables DMA for the rest of the
+         * run and every transfer after it falls back to the FIFO, so one trip
+         * changes the behaviour of everything that draws, permanently. */
+        uart_puts("   transfers ");
+        uart_put_dec(display_dma_transfers());
+        uart_puts("  timeouts ");
+        uart_put_dec(display_dma_timeouts());
+        uart_puts(display_dma_timeouts() ? "  <- DMA is OFF, everything is on the FIFO path\n"
+                                         : "  (DMA still active)\n");
+    }
+    else if (str_eq(line, "hog")) {
+        /* An application's SCHEDULING, with none of its drawing.
+         *
+         * resyncn and stripn put byte-identical traffic on the wire and changed
+         * nothing, which clears the panel, the bus, the DMA engine and the
+         * controller's window state. So whatever gfxrogue does to repair the
+         * view, it does not do it by drawing -- and the difference between
+         * gfxrogue and stripn is not the pixels, it is who emits them.
+         *
+         * task_apps does not sleep while an application is live:
+         *
+         *     for (;;) { app_tick(2000);
+         *                if (app_live_count() == 0) task_yield(); }
+         *
+         * so a running program turns that task into a permanent CPU hog at
+         * NORMAL priority, and ageing promotes it over the HIGH-priority
+         * display task every TASK_AGE_TICKS. stripn ran in the shell task,
+         * which yields on every poll -- it reproduced the drawing exactly and
+         * the scheduling not at all.
+         *
+         * This is the other half. It spins the same way and touches nothing:
+         * no display, no SPI, no memory outside its own counter. If a garbled
+         * view comes good with this running, the repair is scheduling and the
+         * drawing was never relevant. */
+        g_hog_on   = !str_eq(arg, "off");
+        g_hog_draw = str_eq(arg, "draw");
+        if (g_hog_on && g_hog_task < 0) {
+            g_hog_task = task_create("hog", hog_task);
+            if (g_hog_task >= 0) {
+                task_set_priority(g_hog_task, TASK_PRIO_NORMAL);
+            }
+        }
+        if (g_hog_task < 0) {
+            uart_puts("   could not create the task\n");
+        } else if (!g_hog_on) {
+            uart_puts("   yielding again, ");
+            uart_put_dec(g_hog_fills);
+            uart_puts(" fills issued in total\n");
+        } else if (g_hog_draw) {
+            uart_puts("   spinning AND filling continuously -- gfxrogue's shape,"
+                      " without gfxrogue\n");
+        } else {
+            uart_puts("   spinning at NORMAL priority, drawing nothing"
+                      " ('hog draw' to also fill)\n");
+        }
+    }
+    else if (str_eq(line, "resyncn")) {
+        /* A BURST of window setups. `resync` issues one and changed nothing,
+         * but gfxrogue -- the one program that reliably repairs the view --
+         * does not issue one either. It issues a few hundred a second, forever,
+         * because every display_fill_rect() begins with a fresh CASET/PASET/
+         * RAMWR. Nothing else in the system re-establishes the window at that
+         * rate: the raycaster sets it ONCE per 224 DMA bursts.
+         *
+         * So the quantity under test is frequency, not occurrence. This is the
+         * pure form of it -- window setups and CS cycles with not one pixel
+         * written -- which separates "the controller's idea of where pixels go
+         * needs refreshing often" from "something about the pixel writes". */
+        int n = parse_int(arg);
+        if (n < 1) { n = 500; }
+        for (int i = 0; i < n; i++) {
+            display_resync();
+        }
+        uart_puts("   ");
+        uart_put_dec((unsigned int)n);
+        uart_puts(" window setups issued; no pixels drawn\n");
+    }
+    else if (str_eq(line, "stripn")) {
+        /* gfxrogue's draw, without gfxrogue.
+         *
+         * Same rectangle its fill clips down to (180x14 at y=224, the slot-0
+         * strip), same alternating red and white, issued directly from the
+         * shell. No VM, no scheduler slot, no application lifecycle -- just the
+         * pixels and the window setups that accompany them.
+         *
+         * Paired with resyncn this pins the mechanism down. If stripn repairs a
+         * garbled view and resyncn does not, the repair needs the pixel writes
+         * and the DMA bursts that carry them. If resyncn repairs it too, the
+         * window setup alone is enough. If NEITHER repairs it and gfxrogue
+         * still does, then it is not the drawing at all and the answer is
+         * somewhere in the app path -- scheduling, timing, or the display task
+         * being interrupted. */
+        int n = parse_int(arg);
+        if (n < 1) { n = 200; }
+        for (int i = 0; i < n; i++) {
+            display_fill_rect(0, APP_VIEW_Y0, APP_VIEW_W, APP_VIEW_H,
+                              (i & 1) ? COLOR_WHITE : COLOR_RED);
+        }
+        uart_puts("   ");
+        uart_put_dec((unsigned int)n);
+        uart_puts(" gfxrogue-shaped fills issued (");
+        uart_put_dec(APP_VIEW_W);
+        uart_puts("x");
+        uart_put_dec(APP_VIEW_H);
+        uart_puts(" at y=");
+        uart_put_dec(APP_VIEW_Y0);
+        uart_puts(")\n");
+    }
     else if (str_eq(line, "dfreeze")) {
         extern volatile int g_display_frozen;
         g_display_frozen = !str_eq(arg, "off");
@@ -606,11 +852,21 @@ static void execute(char *line)
             uint32_t n = RAY_VIEW_W * RAY_VIEW_H;
             uint32_t zero = 0, same = 0;
             uint16_t first = fb[0];
+            /* FNV-1a over every pixel, because the counts above are a SAMPLE
+             * and two different pictures can share them. Comparing summaries
+             * across a state change and calling them identical is exactly the
+             * mistake this whole investigation has been making; a hash over all
+             * 53,760 pixels either matches or it does not. */
+            uint32_t hash = 2166136261u;
             for (uint32_t i = 0; i < n; i++) {
                 if (fb[i] == 0u)     { zero++; }
                 if (fb[i] == first)  { same++; }
+                hash = (hash ^ (uint32_t)(fb[i] & 0xFFu)) * 16777619u;
+                hash = (hash ^ (uint32_t)(fb[i] >> 8))    * 16777619u;
             }
-            uart_puts("   fb pixels=");
+            uart_puts("   fbhash=");
+            uart_put_hex(hash);
+            uart_puts("  pixels=");
             uart_put_dec(n);
             uart_puts("  zero=");
             uart_put_dec(zero);

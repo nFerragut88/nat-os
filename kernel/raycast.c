@@ -50,6 +50,7 @@ static uint32_t g_frames, g_columns;
  * project that it is cheaper to measure. */
 static uint32_t g_us_march, g_us_compose, g_us_blit;
 static uint32_t g_last_move_tick;
+static volatile int g_cam_frozen;       /* see the note in raycast_frame */
 
 /* ---- walk and steer ------------------------------------------------------
  *
@@ -515,8 +516,23 @@ void raycast_frame(void)
     }
     g_last_move_tick = now;
 
-    for (uint32_t step = 0; step < elapsed; step++) {
-        navigate_step();
+    /* Hold the camera still, WITHOUT stopping the renderer.
+     *
+     * dfreeze stops the display task, which freezes the picture and the
+     * framebuffer together and so cannot compare two rendering states at all.
+     * This is the other half: every frame is still marched, composed and
+     * blitted, but from a fixed viewpoint -- so two samples of the framebuffer
+     * are comparable, and any difference between them is the renderer
+     * disagreeing with itself rather than the camera having walked.
+     *
+     * That distinction cost a wrong conclusion: two fbsum readings fifteen
+     * seconds apart were read as evidence of corruption when the only thing
+     * they showed was that the camera had moved between them. A moving scene
+     * cannot answer "are these two frames the same". */
+    if (!g_cam_frozen) {
+        for (uint32_t step = 0; step < elapsed; step++) {
+            navigate_step();
+        }
     }
 
     g_us_march   = t_march   / 80u;     /* 80 MHz -> microseconds */
@@ -530,6 +546,39 @@ void raycast_frame(void)
  * only the camera position tells them apart. */
 uint32_t raycast_cam_x(void) { return (uint32_t)(g_px >> FP); }
 uint32_t raycast_cam_y(void) { return (uint32_t)(g_py >> FP); }
+
+/* Is the camera standing INSIDE a wall?
+ *
+ * The comment above the movement clamp cites "cam=6,1 hit0=0" as the measured
+ * form of this failure, but no such metric exists any more -- so the state it
+ * describes has been diagnosed ever since by looking at the panel and deciding
+ * the picture looks flat, which is how a rendering fault and a transport fault
+ * came to be confused for as long as they were.
+ *
+ * This answers it directly, from the same wall_at() the movement probe uses, so
+ * the diagnosis and the mechanism cannot disagree. */
+int raycast_cam_in_wall(void) { return wall_at(g_px, g_py); }
+
+/* Stop the camera walking while the renderer keeps drawing. The movement clock
+ * is re-armed on release so the pause does not become a catch-up burst. */
+void raycast_cam_freeze(int on)
+{
+    if (!on && g_cam_frozen) {
+        g_last_move_tick = timer_ticks();
+    }
+    g_cam_frozen = on;
+}
+int raycast_cam_frozen(void) { return g_cam_frozen; }
+
+/* The camera's sub-cell position, in 1/1000ths of a cell. Whole-cell
+ * coordinates are too coarse to see the burial happen: the interesting moment
+ * is the step that crosses a boundary, and cam_x/cam_y are identical on both
+ * sides of it. */
+uint32_t raycast_cam_frac_x(void) { return (uint32_t)(((g_px & ((1 << FP) - 1)) * 1000) >> FP); }
+uint32_t raycast_cam_frac_y(void) { return (uint32_t)(((g_py & ((1 << FP) - 1)) * 1000) >> FP); }
+
+uint32_t raycast_heading(void) { return g_heading; }
+uint32_t raycast_angle(void)   { return g_angle; }
 
 uint32_t raycast_frames(void)  { return g_frames; }
 uint32_t raycast_columns(void) { return g_columns; }

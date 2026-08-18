@@ -244,14 +244,26 @@ static int spi2_dma_tx(const uint8_t *data, uint32_t n)
      * A performance number improving was the symptom.
      *
      * This is the same class of error as the frame timings earlier in this
-     * project: wall clock measured where work was meant. Raising the bound
-     * rather than switching clocks keeps the guard intact -- a genuinely stuck
-     * engine is still caught, it just costs half a second once instead of
-     * 25 ms. task_cpu_cycles() would be the principled fix, but it only
-     * advances at context switches and so cannot bound a spin inside one. */
+     * project: wall clock measured where work was meant. task_cpu_cycles()
+     * would be the principled fix, but it only advances at context switches and
+     * so cannot bound a spin inside one.
+     *
+     * MEASURED, and it does fire. With the bound at 2,000,000, `dmastat` on a
+     * running system reports timeouts=1 within the first few seconds of every
+     * boot: the engine is disabled permanently and every transfer afterwards
+     * falls back to the 64-byte FIFO, which is why a full-view blit costs
+     * ~56 ms. With the bound at 40,000,000 it reports 0.
+     *
+     * This was very nearly missed twice over. First the boot self-test's
+     * dma=N/0 was read as proof the timeout never fires -- but display_init()
+     * runs before the scheduler starts, so it measures the one condition in
+     * which nothing can preempt anything. Then `dmastat` was read as 0 while
+     * the raised bound was ALREADY IN PLACE and taken as evidence the raise was
+     * unnecessary, which is circular: the raise is why it read zero. A guard
+     * can only be shown to be unnecessary by measuring it in its absence. */
     uint32_t start = xt_ccount();
     while (GPIO_REG(SPI2_CMD) & SPI_USR_BIT) {
-        if ((xt_ccount() - start) > 2000000u) {      /* ~25 ms at 80 MHz */
+        if ((xt_ccount() - start) > 40000000u) {     /* ~500 ms at 80 MHz */
             g_dma_timeouts++;
             g_dma_ok = 0;
             return 0;
@@ -441,6 +453,29 @@ static void push_pixels(const uint16_t *px, uint32_t n)
 static void push_end(void)
 {
     gpio_set(PIN_CS);
+}
+
+/* Re-establish the controller's window and end the transaction, WITHOUT
+ * writing a single pixel.
+ *
+ * The ILI9341 holds a window set by CASET/PASET, and RAMWR starts a stream
+ * that continues for as long as CS stays asserted. A stream that ends short,
+ * or a CS left low, leaves the controller mid-window -- and the next pixels
+ * sent land at whatever offset it had reached rather than at the top left.
+ * That is what a garbled image is, and no amount of correct pixel data fixes
+ * it, because the data is not what is wrong.
+ *
+ * This is the test for that: it issues CASET, PASET and RAMWR for the full
+ * panel, then raises CS. Nothing is drawn. If a garbled view comes good after
+ * calling it, the fault was the controller's idea of where pixels go, not the
+ * pixels -- which would also explain why starting an application repairs the
+ * view, since every draw it makes issues a fresh window of its own. */
+void display_resync(void)
+{
+    draw_lock();
+    set_window(0, 0, DISP_W - 1u, DISP_H - 1u);
+    push_end();                 /* CS high: ends the write cleanly */
+    draw_unlock();
 }
 
 int display_init(void)

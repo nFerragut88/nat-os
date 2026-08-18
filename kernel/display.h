@@ -145,4 +145,8 @@ int display_owner(void);
  * fast corrupts pixels while every counter reports success -- see display.c. */
 uint32_t display_spi_clock_preset(uint32_t which);
 
+/* Re-issues the panel window and ends the transaction without drawing
+ * anything. Diagnostic: see the note in display.c. */
+void display_resync(void);
+
 #endif /* NATOS_DISPLAY_H */

@@ -72,4 +72,17 @@ uint32_t raycast_cam_x(void);
 uint32_t raycast_cam_y(void);
 uint32_t raycast_columns(void);
 
+/* Whether the camera is inside geometry, asked of the map rather than inferred
+ * from how the picture looks. See the note in raycast.c. */
+int      raycast_cam_in_wall(void);
+
+/* Hold the viewpoint still while still rendering every frame. Distinct from
+ * dfreeze, which stops the display task and so freezes the framebuffer too. */
+void     raycast_cam_freeze(int on);
+int      raycast_cam_frozen(void);
+uint32_t raycast_cam_frac_x(void);
+uint32_t raycast_cam_frac_y(void);
+uint32_t raycast_heading(void);
+uint32_t raycast_angle(void);
+
 #endif /* NATOS_RAYCAST_H */
