@@ -43,8 +43,26 @@ INTERIOR = OUT / "nat-os-book-6x9-kdp.pdf"
 TRIM_W, TRIM_H = 6.0, 9.0
 BLEED = 0.125
 SAFE = 0.25
-PER_PAGE = 0.002252          # KDP, black ink on white paper
 BARCODE_W, BARCODE_H = 2.0, 1.2
+
+# KDP's per-page caliper. This is NOT one number: it depends on the interior
+# plan chosen at upload, and picking the wrong one is rejected at submission
+# with "expected cover size is X but the submitted file size is Y". This
+# interior has colour in it -- panel tints, table headers, chip colours -- so a
+# colour plan applies and the stock is thicker than black-ink-on-white.
+PAPER = {
+    "bw-white":       0.002252,
+    "bw-cream":       0.0025,
+    "standard-color": 0.002252,
+    "premium-color":  0.002347,
+}
+DEFAULT_PAPER = "premium-color"
+
+# Chromium emits the page box in whole points, so a wrap of 944.93 pt comes out
+# as 944. Rendering a little wide and then setting the box exactly is what makes
+# the delivered size exact rather than nearly right; the surplus is background
+# inside the right-hand bleed and is cropped away.
+SLACK_IN = 0.10
 
 # nat-os RGB565 constants, in the browser's notation.
 RED, GREEN, BLUE = "#ff0000", "#00fc00", "#0000ff"
@@ -67,16 +85,16 @@ def data_uri(p: Path) -> str:
     return "data:image/png;base64," + base64.b64encode(p.read_bytes()).decode()
 
 
-def build_html(pages: int, img: dict[str, str]) -> tuple[str, dict]:
-    spine = pages * PER_PAGE
-    W = BLEED + TRIM_W + spine + TRIM_W + BLEED
+def build_html(pages: int, img: dict[str, str], spine: float,
+               extra_w: float = 0.0) -> tuple[str, dict]:
+    W = BLEED + TRIM_W + spine + TRIM_W + BLEED + extra_w
     H = BLEED + TRIM_H + BLEED
     back_x = BLEED
     spine_x = BLEED + TRIM_W
     front_x = spine_x + spine
 
-    geo = dict(spine=spine, W=W, H=H, back_x=back_x, spine_x=spine_x,
-               front_x=front_x, pages=pages)
+    geo = dict(spine=spine, W=W, target_W=W - extra_w, H=H, back_x=back_x,
+               spine_x=spine_x, front_x=front_x, pages=pages)
 
     # A baseplate: the stud grid that every 2009-era screenshot had somewhere
     # in it. Two radial gradients per stud, one for the top face and one for
@@ -323,12 +341,46 @@ def build_html(pages: int, img: dict[str, str]) -> tuple[str, dict]:
     return html, geo
 
 
+def parse_args(argv):
+    """pages, paper, and an optional exact size.
+
+    --size is the escape hatch that matters in practice: KDP states the width
+    it expects in its rejection message, and passing that back verbatim is
+    faster and more reliable than arguing about which caliper it applied."""
+    pages, paper, size = None, DEFAULT_PAPER, None
+    it = iter(argv)
+    for a in it:
+        if a == "--paper":
+            paper = next(it)
+            if paper not in PAPER:
+                raise SystemExit(f"--paper must be one of {', '.join(PAPER)}")
+        elif a == "--size":
+            w, _, h = next(it).lower().partition("x")
+            size = (float(w), float(h))
+        else:
+            pages = int(a)
+    return pages, paper, size
+
+
 def main(argv) -> int:
     OUT.mkdir(parents=True, exist_ok=True)
     ART.mkdir(parents=True, exist_ok=True)
 
-    pages = int(argv[0]) if argv else page_count()
+    pages, paper, size = parse_args(argv)
+    if pages is None:
+        pages = page_count()
 
+    if size:
+        target_w, target_h = size
+        spine = target_w - (2 * BLEED + 2 * TRIM_W)
+        how = f"--size {target_w}x{target_h} (spine {spine:.4f} back-solved)"
+    else:
+        spine = pages * PAPER[paper]
+        target_w = 2 * BLEED + 2 * TRIM_W + spine
+        target_h = 2 * BLEED + TRIM_H
+        how = f"{paper} at {PAPER[paper]} in/page"
+
+    print(f"  spine       {how}")
     print("  rendering screens from the kernel's own data")
     img = {}
     for name, fn in os_screens.SCREENS.items():
@@ -336,11 +388,13 @@ def main(argv) -> int:
         fn().image().save(p)
         img[name] = data_uri(p)
 
-    html, geo = build_html(pages, img)
+    # Rendered wide, then cropped to the exact box. See SLACK_IN.
+    html, geo = build_html(pages, img, spine, extra_w=SLACK_IN)
     tmp = Path(tempfile.mkdtemp(prefix="natos-cover-"))
     try:
         from playwright.sync_api import sync_playwright
         out = OUT / "nat-os-cover-6x9-kdp.pdf"
+        raw = tmp / "raw.pdf"
         src = tmp / "cover.html"
         src.write_text(html, encoding="utf-8")
         with sync_playwright() as pw:
@@ -350,27 +404,41 @@ def main(argv) -> int:
                 b = pw.chromium.launch(headless=True, channel="chrome")
             pg = b.new_page()
             pg.goto(src.resolve().as_uri(), wait_until="load")
-            pg.pdf(path=str(out), width=f"{geo['W']}in", height=f"{geo['H']}in",
+            pg.pdf(path=str(raw), width=f"{geo['W']}in", height=f"{geo['H']}in",
                    prefer_css_page_size=True, print_background=True,
                    margin={"top": "0", "bottom": "0", "left": "0", "right": "0"})
-            # A PNG proof at 300 DPI, for looking at before uploading anything.
-            pg.set_viewport_size({"width": int(geo["W"] * 96),
-                                  "height": int(geo["H"] * 96)})
+            pg.set_viewport_size({"width": int(target_w * 96) + 1,
+                                  "height": int(target_h * 96) + 1})
             pg.screenshot(path=str(ART / "cover-proof.png"),
-                          clip={"x": 0, "y": 0, "width": geo["W"] * 96,
-                                "height": geo["H"] * 96})
+                          clip={"x": 0, "y": 0, "width": target_w * 96,
+                                "height": target_h * 96})
             b.close()
 
-        data = out.read_bytes()
-        mb = re.search(rb"/MediaBox\s*\[([^\]]*)\]", data).group(1).decode().split()
-        got_w, got_h = float(mb[2]) / 72, float(mb[3]) / 72
-        want_w, want_h = geo["W"], geo["H"]
+        # Set the page box to the exact wrap. Only the WIDTH is trimmed: the
+        # content transform Chromium bakes in translates by the page HEIGHT, so
+        # changing that would slide every element, while x is anchored at 0.
+        from pypdf import PdfReader, PdfWriter
+        from pypdf.generic import RectangleObject
+        wpt, hpt = round(target_w * 72, 4), round(target_h * 72, 4)
+        rd = PdfReader(raw)
+        wr = PdfWriter()
+        page = rd.pages[0]
+        page.mediabox = RectangleObject((0, 0, wpt, hpt))
+        page.cropbox = RectangleObject((0, 0, wpt, hpt))
+        wr.add_page(page)
+        wr.add_metadata({"/Title": "nat-os - cover", "/Creator": "build_cover.py"})
+        with open(out, "wb") as fh:
+            wr.write(fh)
+
+        rd2 = PdfReader(out)
+        box = [float(v) for v in rd2.pages[0].mediabox]
+        got_w, got_h = box[2] / 72, box[3] / 72
 
         print(f"\n  file        {out}")
-        print(f"  size        {len(data)/1024/1024:.2f} MB")
-        print(f"  pages in    {geo['pages']} -> spine {geo['spine']:.4f} in")
+        print(f"  size        {out.stat().st_size/1024/1024:.2f} MB")
+        print(f"  pages in    {geo['pages']} -> spine {spine:.4f} in")
         print(f"  cover       {got_w:.4f} x {got_h:.4f} in"
-              f"   (want {want_w:.4f} x {want_h:.4f})")
+              f"   ({box[2]:.3f} x {box[3]:.3f} pt)")
         print(f"  back        {BLEED:.3f} .. {BLEED + TRIM_W:.3f} in")
         print(f"  spine       {geo['spine_x']:.4f} .. {geo['front_x']:.4f} in")
         print(f"  front       {geo['front_x']:.4f} .. {geo['front_x'] + TRIM_W:.4f} in")
@@ -383,20 +451,18 @@ def main(argv) -> int:
             print(f"  {'ok  ' if c else 'FAIL'}        {good if c else bad}")
             ok = ok and c
 
-        # Chromium emits the page box in whole points, so the width lands up
-        # to half a point off the ideal wrap. Reported as a delta rather than
-        # waved through, because "matches" would be untrue.
-        dw_pt, dh_pt = (got_w - want_w) * 72, (got_h - want_h) * 72
-        check(abs(dw_pt) <= 0.5 and abs(dh_pt) <= 0.5,
-              f"cover size within half a point of the wrap"
-              f" ({dw_pt:+.2f} pt wide, {dh_pt:+.2f} pt tall)",
-              f"cover is {got_w:.4f}x{got_h:.4f}, wanted {want_w:.4f}x{want_h:.4f}")
+        check(abs(got_w - target_w) < 0.0005 and abs(got_h - target_h) < 0.0005,
+              f"page box is exactly {target_w:.4f} x {target_h:.4f} in",
+              f"page box is {got_w:.4f}x{got_h:.4f}, wanted"
+              f" {target_w:.4f}x{target_h:.4f}")
+        check(len(rd2.pages) == 1, "one page, as KDP requires for a wrap",
+              f"{len(rd2.pages)} pages; a cover must be a single page")
         check(geo["pages"] >= 100,
               f"{geo['pages']} pages, so spine text is allowed",
               "under 100 pages: KDP does not permit spine text")
-        check(INTERIOR.exists() and geo["pages"] == page_count(),
-              "spine width derives from the interior PDF's real page count",
-              "page count was not read from the interior")
+        check(geo["front_x"] + TRIM_W + BLEED <= target_w + 0.0005,
+              "front cover and its bleed fit inside the trimmed box",
+              "cropping cut into the front cover")
         print(f"  note        barcode area left clear:"
               f" {BARCODE_W}x{BARCODE_H}in at the back cover's bottom right")
         print("\n  KDP cover: " + ("PASS" if ok else "FAILED"))

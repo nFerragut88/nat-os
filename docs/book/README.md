@@ -134,13 +134,27 @@ the measured page count rather than trusting the number above.
 ### Cover
 
 `../pdf/nat-os-cover-6x9-kdp.pdf` is the matching wrap — back, spine and front
-in one flat file, 13.088 × 9.25 in with 0.125 in bleed. The spine width is read
-from the interior PDF's real page count, so the two cannot drift apart, and the
-2 × 1.2 in barcode area at the back cover's bottom right is left clear.
+in one flat file, **13.124 × 9.250 in** with 0.125 in bleed. The 2 × 1.2 in
+barcode area at the back cover's bottom right is left clear.
 
 ```
-python docs/style/build_cover.py
+python docs/style/build_cover.py                    # premium-color, the default
+python docs/style/build_cover.py --paper bw-white   # if the interior is greyscale
+python docs/style/build_cover.py --size 13.124x9.250
 ```
+
+**The spine width depends on the interior plan, not just the page count.** KDP's
+per-page caliper is 0.002252 in for black ink on white and 0.002347 in for
+premium colour, which on 372 pages is the difference between a 13.088 in wrap
+and a 13.124 in one — and submitting the wrong one is rejected with *"your
+expected cover size is X but the submitted file size is Y"*. This interior uses
+colour (panel tints, table headers), so premium colour is the default here.
+
+`--size` takes KDP's stated expected size verbatim and back-solves the spine,
+which is the quickest way out of that rejection.
+
+The page box is set to the exact wrap after rendering, because Chromium emits
+page boxes in whole points and would otherwise land a third of a point short.
 
 The four screens on it are **reconstructions, not photographs** — no screenshot
 of the running board exists in this repository. `docs/style/os_screens.py`
