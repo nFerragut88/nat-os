@@ -99,7 +99,9 @@ enum {
     VM_OP_SYS  = 0x50    /* imm16 selects the service; see below       */
 };
 
-/* Syscalls. Arguments in r0..r3, result in r0. */
+/* Syscalls. Arguments in r0..r5, results in r0..r2 -- `text` reads as far as r5
+ * and the device transfers read r4, so the r0..r3 this comment used to claim was
+ * two registers short of what the interpreter actually reads. */
 enum {
     VM_SYS_EXIT  = 0,    /* r0 = status                                */
     VM_SYS_PUTC  = 1,    /* r0 = character                             */
@@ -144,16 +146,22 @@ enum {
      * entry rather than an addition to this enum and to vasm.py's SYSCALLS.
      *
      *   r0 = operation (DEV_OP_* in device.h)
-     *   0 COUNT             -> r0 = number of devices
-     *   1 NAME  r1=id r2=off r3=max   -> r0 = ok, name written into the arena
-     *   2 READ  r1=id r2=chan         -> r0 = ok, r1 = value
-     *   3 WRITE r1=id r2=chan r3=value-> r0 = ok
-     *   4 INFO  r1=id                 -> r0 = ok, r1 = channels, r2 = flags
+     *   0 COUNT                        -> r0 = how many devices
+     *   1 NAME  r1=id r2=off r3=max    -> r0 = ok, name written into the arena
+     *   2 READ  r1=id r2=chan          -> r0 = ok, r1 = value
+     *   3 WRITE r1=id r2=chan r3=value -> r0 = ok
+     *   4 INFO  r1=id                  -> r0 = ok, r1 = channels, r2 = flags
+     *   5 XFER_OUT r1=id r2=chan r3=off r4=len -> r0 = ok  (arena -> device)
+     *   6 XFER_IN  r1=id r2=chan r3=off r4=len -> r0 = ok  (device -> arena)
      *
      * Refusal returns r0 = 0 and is NOT a fault: asking a device something it
      * cannot answer is legal, and a program that cannot enumerate without dying
      * cannot enumerate. Faults stay what they have always been -- reaching
-     * outside the arena. */
+     * outside the arena.
+     *
+     * A device this application was not GRANTED refuses the same way, and is
+     * indistinguishable from one that cannot answer. That is deliberate: the
+     * permission bitmap is not something a program can map by probing. */
     VM_SYS_DEVICE = 12,
 
     /* Register a handler the KERNEL may call.

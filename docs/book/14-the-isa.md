@@ -117,6 +117,17 @@ The roadmap's principal risk for M4 was "instruction set design is difficult to
 revise once a producer and programs exist". This is the design decision that
 retired that risk.
 
+> **Since written.** Fourteen services now, not twelve: `device` (12) and `event`
+> (13). The claim above held through both, and the opcode count is still 35.
+>
+> `device` is the last service that will be added for *hardware* — a new
+> peripheral is a `device.h` table entry rather than a service number, which is
+> the same argument one level up (UM-NATOS-031). `event` came afterwards anyway,
+> and deliberately: it is about the execution model rather than about a
+> peripheral, and no device table can express "the kernel may call into this
+> program". The distinction is recorded in `vm.h` beside the enum so the earlier
+> claim is not quietly broken.
+
 ## 14.3 State
 
 Everything the VM needs is in one struct, which is what makes `vm_run()`
@@ -153,6 +164,17 @@ typedef struct {
     uint32_t exit_status;
 } vm_t;
 ```
+
+> **Since written.** The struct has grown an event block — `evt_handler[]`,
+> `evt_param[]`, `evt_due[]`, `evt_arg[]`, `evt_pending`, `in_handler`,
+> `handler_sp` and `saved_reg[]`. The excerpt above is M4's and is no longer the
+> whole of `vm_t`; `kernel/vm.h` is.
+>
+> The property this section is about survived the addition intact, and that is
+> the point worth recording: event delivery adds **state**, not a second program
+> counter. A handler is entered by pushing the current PC onto the same `call`
+> stack and jumping, so `vm_run()` is still resumable at any instruction boundary
+> and the interpreter still never has to be reentrant. See Appendix B §B.5.
 
 `base` and `size` are cached from the arena so the inner loop does not make a
 function call per access. That duplication is the subject of §14.5.
@@ -674,6 +696,29 @@ is on the build's command line with that explanation attached (Chapter 5 §5.4).
 
   That last one is the most serious open item in this chapter and is in
   Chapter 30.
+
+  > **Since written.** The harness exists: `kernel/vmarg.c`, one place where an
+  > `(offset, length)` pair from a program is checked, built *before* the device
+  > model rather than after it (UM-NATOS-031 §2). `sys device` uses it for every
+  > buffer it touches.
+  >
+  > **No arena-relative loading and no code/data separation are still true**, and
+  > a program can still overwrite its own instructions — which is why the
+  > interpreter bounds-checks the instruction fetch itself (§14.6).
+
+### One more thing this chapter does not establish
+
+**There is no stack frame convention, and there are no stack frames.** `call`
+pushes a return address onto the kernel-side stack and `ret` pops it; that is the
+whole mechanism. No frame pointer, no argument convention, no callee-saved set,
+and no working recursion — a recursive routine's return addresses stack up
+correctly while its locals overwrite each other.
+
+This is not an omission in the chapter. It is a property of the machine, and it
+is the direct cost of the decision in §14.3 that makes return addresses
+uncorruptable: a program with no stack of its own has nowhere to put a frame. A
+compiler targeting this ISA would have to build a data stack in the arena by
+hand. Appendix B §B.6 states it in full.
 
 ---
 

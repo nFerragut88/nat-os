@@ -2,6 +2,16 @@
 
 Derived from `kernel/vm.h` (authoritative) and `tools/vasm.py` (the producer).
 
+> **Re-verified 2026-08-18** against `kernel/vm.c` and `tools/vasm.py`, because
+> this appendix was written before `sys device`, before `sys event` and before
+> `vmarg`, and had gone two syscalls out of date.
+>
+> Checked line by line: the opcode table against the `switch` in `vm_run()` (all
+> 35 agree, none missing, none extra), `VM_REGS` against the assembler's
+> `reg()` (both 16), and the `ldw`/`stw` offset range against the assembler's cap
+> (both 0–255). What was wrong was §B.4, which stopped at syscall 11. §B.5 and
+> §B.6 are new.
+
 ---
 
 ## B.1 Machine model
@@ -15,6 +25,13 @@ Derived from `kernel/vm.h` (authoritative) and `tools/vasm.py` (the producer).
 | Address space | The arena only. Offset 0 is the start of the loaded image |
 | Condition codes | None. Comparisons write 0 or 1 to a register |
 | Endianness of immediates | Little — byte 2 is the low half |
+| Stack frames | **None.** There is no frame pointer, no argument convention, no spill area — see §B.6 |
+| Kernel-initiated entry | Event handlers; the kernel can call into a program — see §B.5 |
+
+"No special roles" is an architectural statement and remains true: no register is
+privileged by the interpreter. Two *conventions* have since attached to `r0` — it
+carries syscall argument zero and result zero, and an event handler receives its
+argument there — but nothing in the machine enforces either.
 
 ## B.2 Encoding
 
@@ -159,10 +176,54 @@ Arguments in `r0`–`r5`; results in `r0`–`r2`.
 | 9 | `blit` | `r0`=offset `r1`=x `r2`=y `r3`=w `r4`=h | `r0` ← 1 drawn, 0 not | **yes** |
 | 10 | `send` | `r0`=dest id `r1`=offset `r2`=len | `r0` ← 1 delivered, 0 refused | no |
 | 11 | `recv` | `r0`=offset `r1`=max | `r0` ← bytes, `r1` ← sender | no |
+| 12 | `device` | `r0` = operation; see below | varies | **if the device is slow** |
+| 13 | `event` | `r0`=event id `r1`=handler offset (0 unregisters) `r2`=param | `r0` ← 1 accepted, 0 refused | no |
 
 **The slice rule:** a syscall whose cost is measured in milliseconds ends the
 caller's slice regardless of remaining quantum; one that reads a published
 snapshot does not.
+
+`device` is the only entry whose slice behaviour is not fixed by the syscall
+number: it ends the slice when the *device* carries `DEV_F_SLOW`, decided per
+call from `device_is_slow(id)`. Note that this is keyed on the device's flag and
+**not** on whether the call succeeded — a program being refused a slow device
+still yields, so a denied program cannot spin hot.
+
+### `sys device` operations — `r0`
+
+The last hand-written syscall. Everything after it is a `device.h` table entry
+rather than a new service number.
+
+| `r0` | Operation | Arguments | Result |
+|---|---|---|---|
+| 0 | `COUNT` | — | `r0` ← number of devices |
+| 1 | `NAME` | `r1`=id `r2`=arena offset `r3`=max bytes | `r0` ← ok; name written into the arena |
+| 2 | `READ` | `r1`=id `r2`=channel | `r0` ← ok, `r1` ← value |
+| 3 | `WRITE` | `r1`=id `r2`=channel `r3`=value | `r0` ← ok |
+| 4 | `INFO` | `r1`=id | `r0` ← ok, `r1` ← channels, `r2` ← flags |
+| 5 | `XFER_OUT` | `r1`=id `r2`=chan `r3`=arena offset `r4`=len | `r0` ← ok (arena → device) |
+| 6 | `XFER_IN` | `r1`=id `r2`=chan `r3`=arena offset `r4`=len | `r0` ← ok (device → arena) |
+
+Device flags returned by `INFO`: `READ` 1, `WRITE` 2, `SLOW` 4, `CONSUME` 8,
+`XFER` 16. `CONSUME` means *reading changes state* — anything enumerating the
+table must skip those channels, or the act of listing devices eats a keypress.
+
+**Refusal is not a fault.** An unknown operation, a bad channel, a device that is
+not present, or a device this application was not granted all return `r0 = 0`
+and the program continues. Asking a device something it cannot answer is legal,
+and a program that cannot enumerate without dying cannot enumerate.
+
+Transfers are bounded at `DEVICE_XFER_MAX` = 64 bytes and a longer request is
+**refused, not clamped** — a silently shortened transfer is a program being lied
+to about how much it moved. Every byte crosses a kernel bounce buffer in both
+directions, so no driver ever receives an arena pointer.
+
+**Permissions.** Each application holds a bitmap of the devices it may touch,
+checked on `READ`, `WRITE`, `XFER_OUT` and `XFER_IN`. The caller identity comes
+from `vm->app_id` — the kernel's own record — and never from a register. There is
+**no operation that reaches `device_grant()`**: a program cannot grant itself
+anything. See UM-NATOS-032, and note its heading: this is containment, not
+security, until image identity exists.
 
 **Confinement:**
 - Display coordinates are viewport-relative; a program is never told where its
@@ -177,29 +238,113 @@ snapshot does not.
 **Limits:** message body ≤ 64 B (`IPC_MSG_MAX`); string buffer 48 B
 (`VM_STR_MAX`), truncated not faulted; text scale clamped to 1–4.
 
-## B.5 Faults
+## B.5 Events — the kernel calling into a program
+
+Every other service runs one way: the program asks, the kernel answers. `sys
+event` registers a handler the **kernel** may enter.
+
+| Id | Name | Fires | Handler receives in `r0` |
+|---|---|---|---|
+| 0 | `VM_EVT_TICK` | Every `r2` ticks | The current tick count |
+| 1 | `VM_EVT_KEY` | The panel keypad settles a character | The character |
+
+A tick interval of 0 is **clamped to 1**, not refused: a program asking for "as
+often as possible" gets exactly that.
+
+**Delivery is an injected `call`.** The kernel pushes the current PC onto the
+same return stack `call` uses and sets the PC to the handler. The handler's own
+`ret` therefore resumes the interrupted code. There is no second program counter
+and no new return mechanism.
+
+**Registers are saved and restored around a handler**, detected by the return
+stack coming back to the depth it had before injection. A handler may use every
+register freely and the interrupted code cannot tell it ran. The alternative was
+a calling convention, and a convention nobody can enforce is a convention every
+program gets wrong differently.
+
+**An event arriving while a handler runs is dropped**, not queued, and counted in
+`evt_dropped`. Handlers do not nest.
+
+A handler offset is a program-supplied quantity pointing at *code*, so it gets
+the same treatment as any other: bounds-checked in the offset domain and
+instruction-aligned. A bad one is a **fault, not a refusal** — unlike everything
+in §B.4's device table. The distinction is deliberate: a device refusal means
+"that cannot be answered", whereas a bad handler offset means the program handed
+the kernel an address to jump to that is not inside it, which is the same class
+of error as a bad store.
+
+**The key queue is shared and reading it is destructive.** An application
+registered for `VM_EVT_KEY` competes with the shell's `keys` command and with any
+other application doing the same. That is a real limitation rather than an
+oversight — per-application queues need a concept of focus, which this system
+does not have.
+
+## B.6 Calls, and the absence of a frame convention
+
+**There is no stack frame convention, because there are no stack frames.**
+
+This is stated explicitly because it is the first thing anyone targeting this ISA
+from a compiler will look for, and its absence is easy to mistake for an
+omission in this document rather than in the machine.
+
+What exists:
+
+- `call` pushes the return address onto a **32-entry kernel-side stack**. `ret`
+  pops it. A program cannot read, write or even name that stack.
+- That is the entire mechanism.
+
+What does not exist:
+
+- No frame pointer, and no stack pointer of any kind.
+- No argument-passing convention. Callers and callees agree by hand, usually
+  through fixed registers or fixed arena offsets.
+- No spill area, no callee-saved set, no caller-saved set. A called routine that
+  clobbers `r7` clobbers it for its caller.
+- No recursion in practice. There is nowhere to put a second copy of a routine's
+  locals, so a recursive routine overwrites its own state while its return
+  addresses stack up correctly — the returns work and the data does not.
+
+The kernel-side return stack is the reason for both halves: it is what makes a
+return address uncorruptable by the program (see §14.3), and it is also why the
+program has no stack of its own to put anything else on. That trade was made
+deliberately and is worth keeping, but it means **an arena-resident data stack
+must be built by hand** before this ISA is a serious compiler target — the
+program would maintain a stack pointer in a register and push through `stw`, with
+every access bounds-checked like any other.
+
+Nothing prevents that today. It simply has not been done, and no program in the
+tree does it.
+
+## B.7 Faults
 
 | Code | Name | Raised by |
 |---|---|---|
 | 0 | `NONE` | — |
 | 1 | `OPCODE` | Unknown opcode byte |
 | 2 | `REG` | Register index ≥ 16 |
-| 3 | `BOUNDS` | Access outside the arena |
-| 4 | `ALIGN` | Misaligned word access, or odd `blit` offset |
+| 3 | `BOUNDS` | Access outside the arena; **also a `sys event` handler offset outside it** |
+| 4 | `ALIGN` | Misaligned word access, odd `blit` offset; **also a misaligned `sys event` handler offset** |
 | 5 | `DIV0` | `div`/`mod` by zero |
 | 6 | `PC` | PC outside the arena, or misaligned |
-| 7 | `CALL_DEPTH` | 33rd nested `call` |
+| 7 | `CALL_DEPTH` | 33rd nested `call` — **including a `call` made by an event handler**, which is entered on the same stack |
 | 8 | `RET` | `ret` with an empty call stack |
-| 9 | `SYSCALL` | Unknown service number |
+| 9 | `SYSCALL` | Unknown service number (14 or above) |
 | 10 | `STRING` | `puts` string unterminated inside the arena |
 
 Six of the ten have been exercised on hardware. `PC`, `CALL_DEPTH`, `SYSCALL` and
-`STRING` are implemented and untested.
+`STRING` are implemented and untested — unchanged since M4, and re-checked rather
+than assumed at the 2026-08-18 verification.
+
+Note what is **not** here: a device refusal, an unknown `sys device` operation, an
+unknown event id, and a permission denial are all `r0 = 0` and the program
+continues. The rule that separates them is whether the program asked for
+something that cannot be answered (refusal) or handed the kernel a value that is
+not inside it (fault).
 
 Every fault records the code, the PC of the faulting instruction, and a detail
 value (the offending offset, opcode, register index or syscall number).
 
-## B.6 `vm_run()` return values
+## B.8 `vm_run()` return values
 
 | Value | Meaning |
 |---|---|
@@ -210,7 +355,7 @@ value (the offending offset, opcode, register index or syscall number).
 State lives entirely in `vm_t`, so a resumption continues at the exact
 instruction boundary where it stopped.
 
-## B.7 Assembler directives
+## B.9 Assembler directives
 
 | Directive | Effect |
 |---|---|
@@ -228,7 +373,7 @@ and `@label` for a label's byte offset.
 Instructions are padded to 4-byte alignment automatically, because "the VM faults
 otherwise, so pad rather than emit something that cannot execute".
 
-## B.8 A worked decode
+## B.10 A worked decode
 
 `tools/spin.vasm`, assembled to 28 bytes:
 
@@ -245,7 +390,7 @@ otherwise, so pad rather than emit something that cannot execute".
 Displacement check: the `jmp` is at 20, so `next` is 24; 24 + (−3 × 4) = 12,
 which is `loop:`.
 
-## B.9 Producing a program
+## B.11 Producing a program
 
 ```bash
 python tools/vasm.py tools/myprog.vasm -o kernel/generated/myprog.h --name vm_myprog
@@ -257,8 +402,21 @@ Emits `vm_myprog[]`, `VM_MYPROG_LEN`, and `VM_MYPROG_AT_<LABEL>` for every label
 To make it launchable, add a row to `PROGRAMS[]` in `kmain.c`:
 
 ```c
-{ "myprog", vm_myprog, VM_MYPROG_LEN, 512u, VM_MYPROG_AT_COUNTER },
+{ "myprog", vm_myprog, VM_MYPROG_LEN, 512u, VM_MYPROG_AT_COUNTER,
+  DEV_PERM_NONE },
 ```
 
-— name, image, length, arena bytes, and the offset of the progress word the
-kernel reads.
+— name, image, length, arena bytes, the offset of the progress word the kernel
+reads, and the devices it may touch.
+
+The last field is a bitmap, bit *N* granting device *N*, and `DEV_PERM_NONE` is
+the right default: a program that does not reach hardware should not be able to.
+Grant only what it uses, by name —
+
+```c
+{ "sensor", vm_sensor, VM_SENSOR_LEN, 768u, 0u, P_LIGHT | P_STORE },
+```
+
+— and note that the grant lives here rather than in the image deliberately, so
+both limits on a program (its memory and its hardware) are visible in one place
+and reviewable without disassembling anything.
