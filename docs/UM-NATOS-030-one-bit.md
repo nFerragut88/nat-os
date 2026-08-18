@@ -26,6 +26,47 @@ the bug genuinely was not present.
 
 The fix is one character. The report is about why it took a day.
 
+### 1.1 The change
+
+In `kernel/display.c`:
+
+```c
+/* before */
+#define DMA_OUTLINK_START  (1u << 30)
+
+/* after */
+#define DMA_OUTLINK_STOP    (1u << 28)
+#define DMA_OUTLINK_START   (1u << 29)
+#define DMA_OUTLINK_RESTART (1u << 30)
+```
+
+Nothing else about the transfer changed. `spi2_dma_tx()` still writes the same
+descriptor and still starts the link the same way:
+
+```c
+GPIO_REG(SPI2_DMA_OUT_LINK) = ((uint32_t)&g_desc & 0xFFFFFu) | DMA_OUTLINK_START;
+```
+
+All three constants are defined rather than only the one in use, so the next
+reader sees the adjacency that caused this and does not have to go back to the
+technical reference manual to check which neighbour they are looking at.
+
+### 1.2 Scope: this was never only the 3D view
+
+Confirmed on hardware after the fix: **other graphical glitches across the UI
+disappeared at the same time**, and had been attributed to unrelated causes.
+
+That follows directly. `spi_tx()` sends anything over 64 bytes by DMA, so the
+defect touched *every* transfer wider than 32 pixels — full-screen clears, the
+colour strip, launcher repaints, `display_text()` on longer strings, the panic
+screen. Only small fills and command bytes escaped, because they go out through
+the W registers on the FIFO path.
+
+The 3D view was simply the worst-affected consumer: 224 DMA transfers per frame
+inside a single window, more than everything else in the system combined. It was
+not a renderer bug that happened to look like a display bug. It was a display
+bug that the renderer exercised hardest.
+
 ---
 
 ## 2. Why it was invisible
