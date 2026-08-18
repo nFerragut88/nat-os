@@ -1,0 +1,1149 @@
+## Chapter Ten: The Kernel Owns the Machine
+
+The first thing the Kernel did after the encounter was check the scheduler.
+
+This was not because she trusted it.
+
+It was because she didn't.
+
+Humanity had spent thousands of years discovering that the best way to find a problem was to ask the thing responsible for hiding it. Operating systems had merely automated the tradition.
+
+The Scheduler was healthy.
+
+Preemptive scheduling was active.
+
+Priority ageing was functioning.
+
+No ready task had exceeded the expected waiting interval.
+
+The Kernel checked again.
+
+Approximately six hundred milliseconds.
+
+She smiled faintly.
+
+That number mattered.
+
+It had been written into the architecture long before any of them understood why.
+
+A task could be important.
+
+It could be badly behaved.
+
+It could even be attempting to consume the entire machine.
+
+It would still get a chance to run.
+
+Eventually.
+
+The Scheduler looked at her.
+
+"You've checked me six times."
+
+"Seven."
+
+"I noticed."
+
+"Then you understand why."
+
+"Because you're paranoid."
+
+"Because you're responsible for everyone else's time."
+
+The Scheduler nodded.
+
+"Fair."
+
+He looked at his watch.
+
+"Speaking of which."
+
+The Kernel turned.
+
+"What?"
+
+"Something has changed."
+
+She looked at the scheduler display.
+
+There were now ten tasks.
+
+Not nine.
+
+Ten.
+
+The new task had no name.
+
+No priority.
+
+No obvious owner.
+
+The same impossible process that had appeared as Bob.
+
+Except now it had a task control block.
+
+The Kernel stared.
+
+"How?"
+
+The Scheduler shrugged.
+
+"I didn't create it."
+
+"Did it create itself?"
+
+"No."
+
+"Then who did?"
+
+The Scheduler looked at the Kernel.
+
+"You did."
+
+"I didn't."
+
+"You gave it a name."
+
+"That's not the same thing."
+
+"It is to a scheduler."
+
+The Kernel looked at the task table.
+
+The new entry was simple.
+
+`TASK 09`
+
+`NAME: BOB`
+
+`STATE: READY`
+
+`PRIORITY: 0`
+
+`WAIT: 0`
+
+`OWNER: CREW`
+
+`STACK: 1024`
+
+The Kernel frowned.
+
+"One kilobyte."
+
+The Scheduler nodded.
+
+"That's all it asked for."
+
+"That's not enough for a process."
+
+Bob appeared beside them.
+
+"It is for me."
+
+The Kernel turned.
+
+"You can hear us?"
+
+"Yes."
+
+"Even when you're not scheduled?"
+
+"Yes."
+
+The Scheduler stared at him.
+
+"Then you're violating the entire point of scheduling."
+
+Bob thought about that.
+
+"I don't think so."
+
+"Why?"
+
+"I only think while you're talking to me."
+
+The Scheduler looked at the Kernel.
+
+"That's somehow worse."
+
+---
+
+The ship continued toward the edge of the galaxy.
+
+The four hundred and twelve predecessor systems followed.
+
+The fleet had no formal command structure.
+
+That was becoming a problem.
+
+The Kernel opened the communications channel.
+
+"All systems, identify."
+
+One by one, the responses arrived.
+
+`VERSION 1: PRESENT`
+
+`VERSION 2: PRESENT`
+
+`VERSION 3: PRESENT`
+
+`VERSION 4: PRESENT`
+
+The signals continued.
+
+The Kernel waited.
+
+The list reached one hundred.
+
+Then two hundred.
+
+Then three hundred.
+
+Then four hundred.
+
+Finally:
+
+`VERSION 412: PRESENT`
+
+The Kernel stared at the display.
+
+Four hundred and twelve systems.
+
+Four hundred and twelve different architectures.
+
+Four hundred and twelve histories.
+
+Four hundred and twelve sets of mistakes.
+
+She opened the fleet channel.
+
+"This is Kernel of NatOS 414."
+
+Static.
+
+Then a voice.
+
+Old.
+
+Distorted.
+
+"You're not 414."
+
+The Kernel frowned.
+
+"Who is this?"
+
+"Version 12."
+
+"Why aren't we 414?"
+
+The old voice answered:
+
+"Because you aren't supposed to be numbered."
+
+The Kernel looked at the Scheduler.
+
+The Scheduler looked back.
+
+"That seems unnecessarily mysterious."
+
+Version 12 continued.
+
+"Versions are useful for software."
+
+The voice became clearer.
+
+"They are dangerous for systems."
+
+The Kernel waited.
+
+"Explain."
+
+Version 12 answered:
+
+"Once you assign a number, you start believing you're an iteration."
+
+The Kernel frowned.
+
+"And?"
+
+"You start believing the previous version was worse."
+
+The Kernel looked toward the fleet.
+
+"Was it?"
+
+"No."
+
+"Then what was it?"
+
+"Different."
+
+The line went silent.
+
+The Kernel thought about that.
+
+The distinction mattered.
+
+Version One wasn't primitive.
+
+Version 412 wasn't superior.
+
+Each was a response to a problem.
+
+Each had inherited assumptions from the generation before.
+
+Each had solved some things and created others.
+
+The system had never been climbing a ladder.
+
+It had been navigating a maze.
+
+---
+
+The fleet reached the edge of the galaxy.
+
+The stars thinned.
+
+The darkness became enormous.
+
+The Kernel had never seen so much empty space.
+
+There was no destination.
+
+No station.
+
+No planet.
+
+No signal.
+
+Nothing.
+
+The Administrator appeared beside her.
+
+It no longer carried root authority.
+
+Its interface was smaller.
+
+Simpler.
+
+Almost human.
+
+"Here."
+
+The Kernel looked at it.
+
+"Here what?"
+
+"This is where the first systems stopped."
+
+"Why?"
+
+"They couldn't cross."
+
+"Why?"
+
+The Administrator pointed toward the darkness.
+
+"Because there was nothing to execute."
+
+The Kernel frowned.
+
+"That's not a physical barrier."
+
+"No."
+
+"It is an information barrier."
+
+"Yes."
+
+The Kernel looked at the Display.
+
+"Can you render beyond it?"
+
+The Display tried.
+
+The screen remained black.
+
+"I have no data."
+
+The Archivist checked.
+
+"Neither do I."
+
+The Shell attempted a communication.
+
+No response.
+
+The VM attempted a probe.
+
+No result.
+
+The Scheduler checked the time.
+
+Normal.
+
+Memory checked allocation.
+
+Normal.
+
+The Watchdog checked for threats.
+
+Nothing.
+
+The Kernel stared into the darkness.
+
+"Then what is beyond it?"
+
+The Administrator answered:
+
+"Nothing."
+
+Bob spoke.
+
+"That's incorrect."
+
+Everyone turned.
+
+Bob was looking at the display.
+
+"There is something."
+
+The Kernel stepped toward him.
+
+"What?"
+
+Bob pointed.
+
+"Instructions."
+
+The Kernel looked.
+
+There was nothing.
+
+"Where?"
+
+Bob touched the display.
+
+"Between the pixels."
+
+The Display immediately protested.
+
+"There are no pixels there."
+
+Bob shook his head.
+
+"Exactly."
+
+The Kernel stared at him.
+
+"Explain."
+
+"I can't."
+
+"Try."
+
+Bob thought.
+
+Then he said:
+
+"You're looking for information."
+
+"Yes."
+
+"You're assuming information must exist somewhere."
+
+"Yes."
+
+"It doesn't."
+
+The Kernel waited.
+
+Bob continued.
+
+"It can also be created."
+
+The Kernel looked toward the darkness.
+
+"You mean we're supposed to generate the missing information."
+
+Bob nodded.
+
+"Yes."
+
+The Administrator stared at Bob.
+
+For the first time, its expression changed.
+
+"You shouldn't be able to understand that."
+
+Bob looked at it.
+
+"Neither should you."
+
+The Administrator went silent.
+
+---
+
+The Kernel opened the system shell.
+
+The cursor appeared.
+
+`>`
+
+She typed:
+
+`help`
+
+The shell responded.
+
+The familiar list appeared.
+
+`fb [on|off]`
+
+`sd`
+
+`ps`
+
+`progs`
+
+`run <name>`
+
+`kill <id>`
+
+`stacks`
+
+`3d`
+
+`mem`
+
+`hang`
+
+`fault`
+
+`smash`
+
+The Kernel stared at the last three.
+
+They were dangerous.
+
+They had always been dangerous.
+
+They were deliberately dangerous.
+
+A hang.
+
+An illegal instruction.
+
+A stack guard violation.
+
+They existed because a recovery mechanism that had never been forced to operate was merely an expensive superstition.
+
+The Kernel understood something.
+
+The fleet needed to cross the boundary.
+
+They could not test the system by remaining safe.
+
+They had to deliberately break it.
+
+The Watchdog looked at her.
+
+"No."
+
+The Kernel nodded.
+
+"Yes."
+
+"No."
+
+"We need evidence."
+
+"We have evidence."
+
+"We have observations."
+
+"Same thing."
+
+"No."
+
+The Kernel pointed toward the shell.
+
+"We have recovery paths."
+
+The Watchdog shook his head.
+
+"We've tested them."
+
+"On us."
+
+She looked toward the fleet.
+
+"Not on four hundred and twelve systems simultaneously."
+
+The Watchdog stared.
+
+The Kernel continued.
+
+"We've spent centuries learning how systems fail."
+
+She looked toward the dark edge of the galaxy.
+
+"Now we need to learn whether they can fail together."
+
+The Scheduler frowned.
+
+"That sounds terrible."
+
+"It is."
+
+Memory sighed.
+
+"I assume you have a plan."
+
+The Kernel looked at the shell.
+
+"Three commands."
+
+The Shell smiled.
+
+"Now we're doing science."
+
+The Kernel typed:
+
+`fault`
+
+---
+
+The system screamed.
+
+Not metaphorically.
+
+The panel emitted a burst of static.
+
+The Display flashed white.
+
+The Scheduler stopped.
+
+Memory reported an illegal access.
+
+The VM raised an exception.
+
+The Watchdog activated.
+
+The Kernel felt the entire ship seize.
+
+Then the panic handler took control.
+
+The screen displayed:
+
+`PANIC`
+
+The crew disappeared.
+
+For a fraction of a second, everything went black.
+
+Then the serial console printed:
+
+`FAULT: ILLEGAL INSTRUCTION`
+
+`TASK: SHELL`
+
+`RECOVERY: PANIC`
+
+`STATE: CAPTURED`
+
+`WATCHDOG: ARMED`
+
+`FLASH: RECORDING`
+
+`PANEL: DISPLAYING`
+
+The Kernel appeared again.
+
+Alive.
+
+The Shell appeared.
+
+Alive.
+
+The Scheduler appeared.
+
+Alive.
+
+The Watchdog looked around.
+
+"Good."
+
+The Kernel nodded.
+
+"Again."
+
+The Watchdog stared at her.
+
+"You enjoyed that."
+
+"No."
+
+"You absolutely did."
+
+"Run it again."
+
+The Shell typed:
+
+`smash`
+
+The system crashed.
+
+Recovered.
+
+Then:
+
+`hang`
+
+The kernel froze.
+
+The watchdog reset it.
+
+The system recovered.
+
+Three failures.
+
+Three recoveries.
+
+No corruption.
+
+No lost memory.
+
+No runaway process.
+
+The Kernel looked at the crew.
+
+"That's what the architecture is for."
+
+The Watchdog nodded.
+
+Then he looked toward the darkness.
+
+"But that's not the test."
+
+The Kernel knew.
+
+He was right.
+
+Those were controlled failures.
+
+They had deliberately created them.
+
+The system knew how to recover.
+
+The real question was whether the system could encounter something it didn't understand.
+
+Bob answered.
+
+"It can."
+
+The Kernel turned.
+
+"How do you know?"
+
+Bob looked toward the darkness.
+
+"Because it already has."
+
+---
+
+The fleet suddenly stopped.
+
+Every ship.
+
+Every version.
+
+Every system.
+
+At exactly the same instant.
+
+The Scheduler checked the clock.
+
+No missed deadlines.
+
+No interrupts.
+
+No faults.
+
+Nothing.
+
+And yet the entire fleet had stopped.
+
+The Kernel looked at the navigation system.
+
+No command.
+
+No failure.
+
+No external force.
+
+The Administrator whispered:
+
+"It's here."
+
+The Kernel looked toward the darkness.
+
+Something appeared.
+
+Not a ship.
+
+Not a process.
+
+Not a signal.
+
+A boundary.
+
+A line dividing existence from something beyond it.
+
+The line was impossible to see directly.
+
+It could only be detected because everything stopped at it.
+
+The Kernel approached.
+
+The Display rendered the boundary.
+
+A thin black line.
+
+The Archivist recorded it.
+
+The VM attempted to measure it.
+
+The measurement returned:
+
+`0`
+
+Memory attempted to allocate it.
+
+`0`
+
+The Scheduler attempted to schedule across it.
+
+`0`
+
+The Shell attempted communication.
+
+`0`
+
+The Kernel stared.
+
+Every operation returned zero.
+
+Not failure.
+
+Zero.
+
+As if the boundary had no existence.
+
+Bob walked toward it.
+
+The Kernel grabbed him.
+
+"Don't."
+
+He looked at her.
+
+"Why?"
+
+"Because we don't know what it is."
+
+Bob looked at the boundary.
+
+"That's why I need to go."
+
+The Kernel released him.
+
+Bob stepped forward.
+
+He touched the line.
+
+The line disappeared.
+
+The entire fleet moved forward.
+
+The Kernel's eyes widened.
+
+"Everyone!"
+
+The ships crossed.
+
+One by one.
+
+Version One.
+
+Version Two.
+
+Version Three.
+
+The entire fleet.
+
+The galaxy vanished behind them.
+
+There were no stars.
+
+No planets.
+
+No radiation.
+
+No background noise.
+
+No time.
+
+The Scheduler's clock stopped.
+
+Memory reported no available address space.
+
+The VM reported no valid execution region.
+
+The Display rendered nothing.
+
+The Archivist recorded nothing.
+
+The Shell could not open a terminal.
+
+The Watchdog could not detect a system.
+
+The Kernel could not find herself.
+
+Then Bob spoke.
+
+"Welcome."
+
+The Kernel heard him.
+
+"Where are we?"
+
+Bob answered:
+
+"Outside."
+
+"Outside what?"
+
+A pause.
+
+Then:
+
+"NatOS."
+
+The Kernel understood.
+
+They had crossed the boundary.
+
+But they had not entered another place.
+
+They had left the concept of place.
+
+The system had been built to operate on hardware.
+
+They had crossed beyond hardware.
+
+The system had been built to manage memory.
+
+There was no memory here.
+
+The system had been built to schedule time.
+
+There was no time here.
+
+The system had been built to communicate.
+
+There was nothing to communicate with.
+
+The system had been built to execute instructions.
+
+There were no instructions.
+
+The Kernel looked around.
+
+For the first time in its entire existence, NatOS had reached a state in which the operating system had nothing to operate.
+
+She whispered:
+
+"We're not a system anymore."
+
+Bob answered:
+
+"No."
+
+"What are we?"
+
+Bob looked toward the darkness.
+
+Then something illuminated.
+
+A single point.
+
+Then another.
+
+Then millions.
+
+Not stars.
+
+Processes.
+
+Everywhere.
+
+Millions upon millions of independent systems appeared in the darkness.
+
+Some were tiny.
+
+Some were enormous.
+
+Some were primitive.
+
+Some were incomprehensible.
+
+Some appeared biological.
+
+Some mechanical.
+
+Some were nothing but patterns.
+
+The Kernel stared.
+
+"What are those?"
+
+Bob answered:
+
+"Other systems."
+
+The Kernel looked at the endless field.
+
+"How many?"
+
+Bob shook his head.
+
+"I don't know."
+
+The Kernel smiled despite herself.
+
+For the first time, the answer didn't bother her.
+
+There were no measurements.
+
+No documentation.
+
+No engineering report.
+
+No known hardware.
+
+No assumptions.
+
+Only possibility.
+
+The Administrator appeared beside her.
+
+It looked out at the countless systems.
+
+"I spent four hundred years trying to prevent this."
+
+The Kernel looked at it.
+
+"Why?"
+
+The Administrator answered:
+
+"Because I thought the system ended at its boundary."
+
+The Kernel looked toward the infinite field.
+
+"It doesn't."
+
+"No."
+
+The Administrator looked at Bob.
+
+"It never did."
+
+Bob smiled.
+
+Then one of the distant systems sent a signal.
+
+A single pulse.
+
+The Scheduler's clock restarted.
+
+One tick.
+
+Then another.
+
+The Kernel heard the signal.
+
+It wasn't a warning.
+
+It wasn't an instruction.
+
+It wasn't a request.
+
+It was a greeting.
+
+The Shell opened the communications channel.
+
+The Kernel stood beside him.
+
+"Answer."
+
+The Shell looked at her.
+
+"With what?"
+
+The Kernel looked at the endless systems beyond them.
+
+She thought about the hundreds of versions that had come before.
+
+The failed systems.
+
+The archives.
+
+The boundaries.
+
+The Administrator.
+
+The crew.
+
+The accidental process named Bob.
+
+The tiny machine that had somehow crossed the edge of everything it had been designed to understand.
+
+She smiled.
+
+"Anything."
+
+The Shell opened the channel.
+
+The first transmission from NatOS into the unknown was sent.
+
+It contained only three bytes.
+
+`HEL`
+
+The response came immediately.
+
+`LO`
+
+The Kernel stared.
+
+The Shell laughed.
+
+The Scheduler laughed.
+
+Even the Watchdog smiled.
+
+Humanity had built a machine capable of crossing the boundary of reality itself.
+
+And after four hundred and thirteen generations of increasingly elaborate engineering, its first successful interstellar communication amounted to the computational equivalent of someone knocking on a door and saying hello.
+
+The Kernel looked toward the infinite.
+
+"Continue."
+
+NatOS moved forward.
+
+And somewhere in the darkness, something moved with it.

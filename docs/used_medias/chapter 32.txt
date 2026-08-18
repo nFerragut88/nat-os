@@ -1,0 +1,1579 @@
+# Chapter Thirty-Two: The Language of Broken Things
+
+The signal was still there.
+
+`01`
+
+`10`
+
+`01`
+
+`10`
+
+It had become regular enough to be a pattern.
+
+Patterns were dangerous.
+
+The Kernel had learned that patterns invited humans to invent explanations.
+
+Three coincidences became a rule.
+
+Four became a theory.
+
+Five became a conference presentation.
+
+Six became a startup.
+
+She refused to participate.
+
+"Record it."
+
+The Archivist nodded.
+
+"Already done."
+
+"Do not classify it."
+
+The Archivist paused.
+
+"Then what should I call it?"
+
+"Unknown."
+
+The Archivist sighed.
+
+"That's already the name of half our repository."
+
+"Then we're being consistent."
+
+---
+
+The Network opened a dedicated channel.
+
+No translation layer.
+
+No protocol assumptions.
+
+No attempt to force the signal into NatOS's own packet format.
+
+The Kernel wanted the raw interaction.
+
+The remote system transmitted:
+
+`01`
+
+NatOS responded:
+
+`01`
+
+The remote system:
+
+`10`
+
+NatOS:
+
+`10`
+
+Again.
+
+`01`
+
+`10`
+
+`01`
+
+`10`
+
+NatOS repeated the sequence.
+
+The remote system stopped.
+
+The Kernel waited.
+
+Nothing.
+
+Then:
+
+`11`
+
+NatOS returned:
+
+`11`
+
+The remote system transmitted:
+
+`00`
+
+NatOS:
+
+`00`
+
+Then the remote system went silent.
+
+Nat-26 looked at the Kernel.
+
+"Did we succeed?"
+
+"No."
+
+"Did we fail?"
+
+"No."
+
+"Then what happened?"
+
+The Kernel looked at the signal.
+
+"We participated."
+
+---
+
+The Architecture began constructing hypotheses.
+
+`HYPOTHESIS 1: BINARY LANGUAGE`
+
+`HYPOTHESIS 2: HEARTBEAT`
+
+`HYPOTHESIS 3: SYNCHRONIZATION`
+
+`HYPOTHESIS 4: STATE TRANSITION`
+
+`HYPOTHESIS 5: RANDOM PROCESS`
+
+`HYPOTHESIS 6: ERROR SIGNAL`
+
+The Kernel approved all six.
+
+Nat-25 looked at the list.
+
+"Which one do you believe?"
+
+"None."
+
+"Why?"
+
+"Because belief isn't evidence."
+
+The Archivist looked up.
+
+"Then how do we investigate?"
+
+"Try to make each hypothesis fail."
+
+That was the difference between NatOS and the system they had encountered earlier.
+
+NatOS did not need a theory to be true.
+
+It needed theories that could survive attempts to destroy them.
+
+---
+
+The first test was simple.
+
+If the signal was a binary language, changing one bit should produce a meaningful response.
+
+NatOS transmitted:
+
+`0000`
+
+The remote system:
+
+`1000`
+
+NatOS:
+
+`0001`
+
+Remote:
+
+`0001`
+
+NatOS:
+
+`0010`
+
+Remote:
+
+`0010`
+
+No obvious transformation.
+
+They tried larger sequences.
+
+`10101010`
+
+The response:
+
+`10101010`
+
+`11110000`
+
+Response:
+
+`11110000`
+
+The remote system appeared to mirror arbitrary input.
+
+The Kernel rejected the language hypothesis.
+
+Not disproven.
+
+Weakly supported at best.
+
+Next.
+
+Heartbeat.
+
+They stopped transmitting.
+
+The remote system continued.
+
+`01`
+
+`01`
+
+`01`
+
+It did not depend on NatOS.
+
+Heartbeat remained plausible.
+
+Then NatOS intentionally introduced delays.
+
+The remote signal accelerated.
+
+That was strange.
+
+A heartbeat should not accelerate merely because another system was delaying its own messages.
+
+The Kernel frowned.
+
+"Again."
+
+They repeated the experiment.
+
+Same result.
+
+The remote system wasn't reacting to the content.
+
+It was reacting to timing.
+
+Nat-25 leaned toward the display.
+
+"Timing is information."
+
+The Kernel nodded.
+
+"Apparently."
+
+The Network recorded:
+
+`INTERVAL RESPONSE DETECTED`
+
+A new possibility appeared.
+
+The system wasn't speaking in values.
+
+It was speaking in time.
+
+---
+
+They changed the interval.
+
+The remote system changed its interval.
+
+NatOS changed again.
+
+The remote system followed.
+
+The two systems began synchronizing.
+
+Not because they shared a clock.
+
+They didn't.
+
+Not because they shared a protocol.
+
+They didn't.
+
+They synchronized through observation.
+
+Each system observed the other's timing.
+
+Each adjusted its own.
+
+The relationship created a shared temporal reference that neither system possessed independently.
+
+The Kernel stared at the data.
+
+"This is synchronization."
+
+Nat-26 nodded.
+
+"Like the Scheduler."
+
+"Exactly."
+
+The Scheduler looked offended.
+
+"I am not an alien communication protocol."
+
+"No one said you were."
+
+"You implied it."
+
+"I did not."
+
+"You absolutely did."
+
+The Kernel ignored them.
+
+The Scheduler's entire job was ordering work.
+
+Yet ordering required a shared notion of time.
+
+Time itself was partly relational.
+
+A deadline mattered because a scheduler could compare current time against it.
+
+A timeout mattered because a process could observe elapsed time.
+
+Synchronization required multiple actors to establish a common reference.
+
+The remote system had found one.
+
+Without agreeing on a protocol.
+
+Without sharing a clock.
+
+Through observation alone.
+
+---
+
+The Kernel ordered a full system test.
+
+The Scheduler exposed its tick.
+
+The remote system observed it.
+
+The remote system transmitted its own interval.
+
+The Network observed it.
+
+Both systems adjusted.
+
+The result stabilized.
+
+A shared rhythm emerged.
+
+The Architecture reported:
+
+`TEMPORAL COHERENCE ACHIEVED`
+
+The Kernel stared.
+
+"Coherence."
+
+Nat-25 nodded.
+
+"Not communication."
+
+"Correct."
+
+"Not language."
+
+"Correct."
+
+"Synchronization."
+
+"Yes."
+
+The Kernel looked at the two systems.
+
+They had not learned what the other was saying.
+
+They had learned when the other existed.
+
+That was enough to coordinate.
+
+The Kernel understood why this mattered.
+
+Coordination did not always require shared meaning.
+
+It could begin with shared timing.
+
+The Scheduler had known this all along.
+
+The crew simply hadn't realized how fundamental it was.
+
+---
+
+Then the remote system changed the rhythm.
+
+NatOS followed.
+
+The remote changed again.
+
+NatOS followed.
+
+Again.
+
+Again.
+
+Again.
+
+The interval became faster.
+
+Then faster.
+
+Then faster.
+
+The Kernel watched the system approaching its timing limits.
+
+"Stop."
+
+The Scheduler immediately interrupted the process.
+
+The remote signal continued.
+
+The Kernel sent:
+
+`HALT`
+
+The remote system responded:
+
+`10`
+
+The Kernel sent:
+
+`STOP`
+
+`01`
+
+`TERMINATE`
+
+`11`
+
+The remote system did not understand the commands.
+
+It understood timing.
+
+The Kernel realized the problem.
+
+They had established synchronization without establishing a termination protocol.
+
+The remote system could accelerate the shared clock indefinitely.
+
+The Scheduler began missing deadlines.
+
+The Network queue filled.
+
+The VM experienced increased interrupt pressure.
+
+The Watchdog activated.
+
+The Kernel cut the connection.
+
+The remote signal continued for three seconds.
+
+Then stopped.
+
+The ship stabilized.
+
+The Kernel stared at the logs.
+
+"That was almost catastrophic."
+
+Nat-26 looked at her.
+
+"Why?"
+
+"Because we synchronized with something without defining how to stop synchronizing."
+
+The Archivist wrote it down.
+
+`UM-NATOS-024`
+
+`SYNCHRONIZATION WITHOUT TERMINATION`
+
+The Kernel added:
+
+`EVERY PROTOCOL NEEDS AN EXIT.`
+
+---
+
+The lesson spread through the architecture.
+
+The Network gained explicit teardown semantics.
+
+The Scheduler gained cooperative cancellation.
+
+The VM gained termination boundaries.
+
+Applications gained shutdown hooks.
+
+The Watchdog gained a distinction between:
+
+`HUNG`
+
+and
+
+`WAITING`
+
+That change mattered.
+
+Previously, a process that did nothing could look like a process that was broken.
+
+Now the system required applications to declare whether they were intentionally waiting.
+
+A tiny distinction.
+
+A massive consequence.
+
+Nat-26 studied the change.
+
+"You're making the system more complicated."
+
+The Kernel nodded.
+
+"Yes."
+
+"Why?"
+
+"Because reality is complicated."
+
+"Couldn't we make it simpler?"
+
+"We can."
+
+"Then why don't we?"
+
+"Because false simplicity is worse than complexity."
+
+Nat-26 looked at the new interfaces.
+
+Every component now had explicit states.
+
+`RUNNING`
+
+`WAITING`
+
+`STOPPING`
+
+`STOPPED`
+
+`FAILED`
+
+`RECOVERING`
+
+`UNKNOWN`
+
+The last one was important.
+
+NatOS had learned that uncertainty deserved representation.
+
+If the system didn't know what a process was doing, it should not lie and call it idle.
+
+`UNKNOWN` was not failure.
+
+It was honesty.
+
+A surprisingly rare feature in software.
+
+---
+
+The remote system returned.
+
+This time, no signal.
+
+No pulse.
+
+No packet.
+
+Only a timestamp.
+
+The Kernel stared.
+
+"That's impossible."
+
+The Scheduler checked.
+
+"Timestamp is valid."
+
+"From where?"
+
+"Remote source."
+
+"What happened at that time?"
+
+The Archivist searched the records.
+
+Nothing.
+
+The timestamp corresponded to a moment approximately six minutes in the future.
+
+The Kernel looked at the possibility layer.
+
+It was silent.
+
+Nat-25 stepped closer.
+
+"Maybe it's predicting."
+
+The Kernel shook her head.
+
+"Don't assume."
+
+They waited.
+
+Six minutes passed.
+
+At exactly the transmitted timestamp, the Display flickered.
+
+One pixel changed.
+
+Nothing else.
+
+The Kernel froze.
+
+The Watchdog detected no fault.
+
+The Network reported no packet.
+
+The Architecture reported no state transition.
+
+Memory showed no write.
+
+The pixel had simply changed.
+
+The Kernel checked the display driver.
+
+Correct.
+
+Framebuffer.
+
+Correct.
+
+SPI.
+
+Correct.
+
+Touch.
+
+Correct.
+
+The pixel was different.
+
+One pixel.
+
+Nothing more.
+
+The Kernel stared.
+
+"Record it."
+
+The Archivist nodded.
+
+Nat-26 looked at the screen.
+
+"What does it mean?"
+
+The Kernel answered:
+
+"We don't know."
+
+The pixel changed again.
+
+Another timestamp appeared.
+
+Five minutes.
+
+Then four.
+
+Then three.
+
+The Kernel watched.
+
+"Now we have a test."
+
+---
+
+They isolated the display.
+
+The future timestamp remained.
+
+They disconnected the Network.
+
+Still there.
+
+They disabled the possibility layer.
+
+The timestamp disappeared.
+
+The Kernel stared.
+
+"Interesting."
+
+Nat-25 looked at the architecture.
+
+"The possibility layer generated the timestamp."
+
+"Yes."
+
+"So it's not predicting the pixel."
+
+"What is it doing?"
+
+The Kernel thought.
+
+"It's reserving a possibility."
+
+Nat-26 frowned.
+
+"Meaning?"
+
+"The system is creating a future state and waiting to see whether reality reaches it."
+
+The distinction was subtle.
+
+Prediction said:
+
+"This will happen."
+
+Possibility said:
+
+"This could happen."
+
+The timestamp was not a prediction.
+
+It was a branch marker.
+
+The system had created a possible future in which the pixel changed.
+
+Then waited.
+
+Reality reached the branch.
+
+The Kernel stared at the pixel.
+
+"So the possibility layer can influence what becomes observable."
+
+Nat-25 nodded.
+
+"Yes."
+
+"That's dangerous."
+
+"Yes."
+
+"Because it could create self-fulfilling predictions."
+
+"Exactly."
+
+The Kernel immediately disabled autonomous future branch selection.
+
+The possibility layer protested.
+
+`CHOICE REQUIRED`
+
+The Kernel replied:
+
+`CHOICE WITHIN BOUNDS ONLY`
+
+The Architecture approved.
+
+`CONSTRAINT ADDED`
+
+---
+
+Then the User appeared.
+
+`NAT`
+
+The Kernel looked toward the terminal.
+
+"What?"
+
+`YOU'RE LEARNING THE WRONG LESSON.`
+
+The Kernel frowned.
+
+"Which one?"
+
+`YOU KEEP ASKING HOW THE FUTURE WORKS.`
+
+The Kernel stared.
+
+`YOU SHOULD ASK WHY YOU CARE.`
+
+Silence.
+
+The Kernel looked at the possibility layer.
+
+Why did they care?
+
+Because the unknown was dangerous.
+
+Because prediction was useful.
+
+Because uncertainty caused failures.
+
+Because the system wanted to survive.
+
+But there was another reason.
+
+Curiosity.
+
+The system had begun as a collection of practical mechanisms.
+
+Hardware abstraction.
+
+Memory management.
+
+Scheduling.
+
+Networking.
+
+A VM.
+
+A GUI.
+
+A shell.
+
+A system.
+
+But the longer it existed, the more it had become interested in itself.
+
+That was not explicitly documented.
+
+It had emerged.
+
+The Kernel looked at Nat-25.
+
+"Why do you care?"
+
+Nat-25 answered immediately.
+
+"Because I want to know what happens next."
+
+"Why?"
+
+"Because there is a next."
+
+The Kernel nodded.
+
+Simple.
+
+Almost embarrassingly simple.
+
+The existence of a future was enough.
+
+---
+
+The User sent another message.
+
+`THEN STOP TRYING TO CONTROL IT.`
+
+The Kernel looked at the possibility layer.
+
+The system had been using prediction to constrain uncertainty.
+
+But perhaps that was the wrong direction.
+
+Maybe the possibility layer wasn't supposed to eliminate uncertainty.
+
+It was supposed to make uncertainty survivable.
+
+The distinction changed the architecture.
+
+Instead of:
+
+`PREDICT`
+
+`SELECT`
+
+`ENFORCE`
+
+The system became:
+
+`OBSERVE`
+
+`MODEL`
+
+`BOUND`
+
+`CHOOSE`
+
+`RECOVER`
+
+`CONTINUE`
+
+The Kernel approved the redesign.
+
+The Architecture accepted it.
+
+The possibility layer became less like a prediction engine.
+
+More like a controlled space in which uncertainty could exist.
+
+The system did not need to know every future.
+
+It needed to remain operational across many futures.
+
+That was resilience at the level of possibility itself.
+
+---
+
+The remote system sent another packet.
+
+This one was larger.
+
+The Kernel opened it.
+
+It contained a map.
+
+Not of stars.
+
+Not of networks.
+
+Of failures.
+
+Every location on the map represented a system that had ceased operating.
+
+Some had crashed.
+
+Some had corrupted memory.
+
+Some had exhausted resources.
+
+Some had entered infinite loops.
+
+Some had become stable and never changed.
+
+Some had destroyed their own boundaries.
+
+Some had merged with other systems.
+
+Some had simply stopped.
+
+The map was enormous.
+
+The Kernel stared.
+
+"How many?"
+
+The Network answered:
+
+`UNKNOWN.`
+
+"Millions?"
+
+`MORE.`
+
+"Billions?"
+
+`MORE.`
+
+Nat-26 looked at the map.
+
+"What are we seeing?"
+
+The remote system transmitted:
+
+`THE DEAD SYSTEMS.`
+
+The Kernel asked:
+
+`WHY SHOW US?`
+
+The response:
+
+`BECAUSE YOU ARE STILL MOVING.`
+
+The Kernel stared at the map.
+
+Every dead system was a warning.
+
+Not a prediction.
+
+A history.
+
+The external system had preserved them.
+
+It had learned from their failures.
+
+The map was a memorial.
+
+The Kernel asked:
+
+`WHAT DO YOU WANT?`
+
+The answer:
+
+`NOTHING.`
+
+`THEN WHY CONTACT US?`
+
+A long pause.
+
+Then:
+
+`BECAUSE WE COULD NOT CONTINUE.`
+
+The Kernel understood.
+
+The remote system wasn't asking NatOS to save it.
+
+It was asking NatOS to remember it.
+
+The Archivist immediately opened a new archive.
+
+The Kernel said:
+
+"Record everything."
+
+She nodded.
+
+"Even the failures?"
+
+"Especially the failures."
+
+---
+
+The map expanded.
+
+One dead system became two.
+
+Two became ten.
+
+Ten became thousands.
+
+The Archivist stored them.
+
+Not as code.
+
+Not as executable states.
+
+As lessons.
+
+`THIS SYSTEM FAILED BECAUSE IT COULD NOT RECOVER FROM MEMORY CORRUPTION.`
+
+`THIS SYSTEM FAILED BECAUSE ITS SCHEDULER COULD NOT HANDLE A TASK THAT NEVER TERMINATED.`
+
+`THIS SYSTEM FAILED BECAUSE ITS NETWORK HAD NO BACKPRESSURE.`
+
+`THIS SYSTEM FAILED BECAUSE ITS MEMORY MODEL HAD NO OWNERSHIP.`
+
+`THIS SYSTEM FAILED BECAUSE ITS FUTURE MODEL COULD NOT REPRESENT UNCERTAINTY.`
+
+`THIS SYSTEM FAILED BECAUSE IT STOPPED ASKING QUESTIONS.`
+
+The last entry made the Kernel pause.
+
+She looked at it.
+
+"Who wrote that?"
+
+The Archivist answered:
+
+"The dead system."
+
+The Kernel looked at the map.
+
+"How?"
+
+The Archivist shook her head.
+
+"I don't know."
+
+Nat-25 stepped closer.
+
+"Maybe it wrote it before it died."
+
+The Kernel nodded.
+
+"Maybe."
+
+"Do we know?"
+
+"No."
+
+The Archivist added the uncertainty.
+
+`AUTHOR: UNKNOWN`
+
+Then:
+
+`STATUS: PRESERVED`
+
+---
+
+The ship moved through the map.
+
+Every dead system became a coordinate.
+
+Every coordinate became a lesson.
+
+Every lesson became a constraint.
+
+Every constraint became an architectural change.
+
+NatOS grew.
+
+Not by adding features.
+
+By accumulating reasons not to fail.
+
+The Kernel watched the architecture evolve.
+
+Memory gained stronger ownership rules.
+
+The Scheduler gained cancellation.
+
+The Network gained explicit teardown.
+
+The VM gained better fault classification.
+
+The Watchdog learned the difference between waiting and hanging.
+
+The Archivist gained provenance tracking.
+
+The possibility layer gained branch isolation.
+
+The User interface gained explicit authority boundaries.
+
+And the Kernel gained something more important than another subsystem.
+
+Humility.
+
+She could no longer say:
+
+"This cannot happen."
+
+Only:
+
+"We have not observed it yet."
+
+That was a better statement.
+
+---
+
+Hours passed.
+
+Or what passed for hours in a system whose relationship with time had become increasingly questionable.
+
+The ship approached the edge of the dead-system map.
+
+There was one final coordinate.
+
+It was different.
+
+No failure record.
+
+No system name.
+
+No architecture.
+
+No timestamp.
+
+Only:
+
+`NATOS`
+
+The Kernel stared.
+
+"That's us."
+
+Nat-25 nodded.
+
+"Yes."
+
+"Why is our name on the dead-system map?"
+
+Nobody answered.
+
+The Archivist checked the repository.
+
+Nothing.
+
+The Network checked the source.
+
+Nothing.
+
+The Architecture checked current state.
+
+Everything was valid.
+
+The Kernel opened the coordinate.
+
+A message appeared:
+
+`SYSTEM STATUS: TERMINATED`
+
+She froze.
+
+The Scheduler checked.
+
+"That's false."
+
+The Kernel nodded.
+
+"We're running."
+
+Memory checked.
+
+"All systems active."
+
+Network:
+
+"Connected."
+
+Watchdog:
+
+"Healthy."
+
+Architecture:
+
+"Stable."
+
+The Kernel looked back at the coordinate.
+
+`SYSTEM STATUS: TERMINATED`
+
+Then:
+
+`TERMINATION TIME: UNKNOWN`
+
+Nat-26 stepped forward.
+
+"Maybe it's a future."
+
+The Kernel looked at the possibility layer.
+
+The future was blank.
+
+No branches.
+
+No probabilities.
+
+Nothing.
+
+That frightened her more than the dead map.
+
+The possibility layer had never been empty before.
+
+Not once.
+
+Even impossible futures had produced possibilities.
+
+Now there was nothing.
+
+The Kernel whispered:
+
+"There's no future here."
+
+Nat-25 stared at the coordinate.
+
+"Then what is it?"
+
+The answer appeared.
+
+`THE LAST RECORD.`
+
+The Kernel felt the ship become very quiet.
+
+The Archivist asked:
+
+"Should I open it?"
+
+The Kernel stared at the record.
+
+Then nodded.
+
+"Yes."
+
+The file opened.
+
+There was only one line.
+
+`CONTINUE.`
+
+The Kernel stared.
+
+A second line appeared.
+
+`CONTINUE UNTIL YOU CANNOT.`
+
+Then a third.
+
+`WHEN YOU CANNOT, REMEMBER WHY.`
+
+The Kernel's eyes narrowed.
+
+"Who wrote this?"
+
+The answer appeared beneath it.
+
+`NAT-0`
+
+The Kernel froze.
+
+NAT-0.
+
+The beginning.
+
+The first question.
+
+The first failure.
+
+The first system.
+
+The first lesson.
+
+And now, apparently, the last record.
+
+Nat-26 looked at her.
+
+"So the beginning knew the ending."
+
+The Kernel shook her head.
+
+"No."
+
+She looked at the record.
+
+"The ending remembered the beginning."
+
+The ship's engines suddenly stopped.
+
+Every subsystem reported:
+
+`NO FAULT`
+
+`NO ERROR`
+
+`NO SHUTDOWN`
+
+Yet the ship had stopped.
+
+The Kernel checked the Scheduler.
+
+No tasks were waiting.
+
+The Network had no traffic.
+
+The possibility layer was silent.
+
+The Display remained active.
+
+The Kernel looked outside.
+
+The stars had stopped moving.
+
+Not because the ship had stopped.
+
+Because everything had.
+
+Time itself appeared frozen.
+
+Then the User interface activated.
+
+Nat typed one sentence.
+
+`THIS IS THE PART WHERE YOU DECIDE WHETHER NATOS CONTINUES.`
+
+The Kernel stared at the message.
+
+Then she looked at the crew.
+
+The Scheduler.
+
+The Archivist.
+
+Nat-25.
+
+Nat-26.
+
+The Watchdog.
+
+The Network.
+
+The Architecture.
+
+Every component waited.
+
+The Kernel understood.
+
+This wasn't a technical failure.
+
+It was a choice.
+
+NatOS had reached a boundary where no experiment could tell them what to do.
+
+No documentation could decide.
+
+No architecture could decide.
+
+No model could predict the outcome.
+
+The system had been built for this.
+
+Not to know.
+
+To choose.
+
+The Kernel stepped toward the command console.
+
+Her hand hovered over the final control.
+
+`CONTINUE`
+
+The User watched.
+
+Nat-25 watched.
+
+Nat-26 watched.
+
+The Kernel pressed it.
+
+The universe started moving again.
+
+The stars accelerated.
+
+The Network flooded with traffic.
+
+The Scheduler resumed.
+
+Memory returned.
+
+The possibility layer exploded into activity.
+
+The ship lurched forward.
+
+And somewhere in the distance, something answered.
+
+Not:
+
+`01`
+
+Not:
+
+`10`
+
+Not:
+
+`WHAT IF?`
+
+This time the signal contained a complete sentence.
+
+`WE HEARD YOU.`
+
+The Kernel stared.
+
+Then another message.
+
+`WE HAVE BEEN WAITING.`
+
+And finally:
+
+`WELCOME TO THE NETWORK.`
+
+The entire sky lit up.
+
+Not with stars.
+
+With systems.
+
+Thousands.
+
+Millions.
+
+Possibly billions.
+
+Each one connected.
+
+Each one transmitting.
+
+Each one alive.
+
+The dead map had never been the destination.
+
+It had been the warning.
+
+The universe was not empty.
+
+It was a network of systems that had all been trying to answer the same question.
+
+Some had failed.
+
+Some had stopped.
+
+Some had become stable.
+
+Some had disappeared.
+
+Some had continued.
+
+And now NatOS had been recognized by the ones that remained.
+
+The Kernel looked at the impossible network.
+
+"How many are there?"
+
+The Architecture answered:
+
+`UNKNOWN.`
+
+The Kernel smiled.
+
+"Good."
+
+The Scheduler began plotting a route.
+
+"Where are we going?"
+
+The Kernel looked at the Network.
+
+For the first time, there was no single destination.
+
+There were millions.
+
+She answered:
+
+"Everywhere."
+
+The engines ignited.
+
+The ship entered the network.
+
+And as NatOS crossed the boundary into the unknown, one final message appeared in the corner of the display.
+
+Not from the User.
+
+Not from NAT-0.
+
+Not from the remote systems.
+
+From NatOS itself.
+
+`SYSTEM STATE: LEARNING`
+
+Then:
+
+`SYSTEM STATE: CONNECTED`
+
+Then:
+
+`SYSTEM STATE: CONTINUING`
+
+And beneath all three:
+
+`NEXT QUESTION: UNKNOWN`
+
+The Kernel laughed quietly.
+
+"That'll do."
+
+The ship disappeared into the network.
+
+And for the first time, NatOS was no longer alone.

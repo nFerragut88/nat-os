@@ -1,0 +1,1189 @@
+# Chapter Fourteen: The 600-Millisecond Law
+
+The new universe lasted eleven seconds before it attempted to kill itself.
+
+The Kernel considered this a promising beginning.
+
+Not because she enjoyed watching things fail.
+
+She simply had enough experience with software to know that a system which had never failed was either lying or had not been tested properly. NatOS had been built around that principle from the beginning.
+
+A recovery path that had never been observed was confidence without evidence.
+
+The new universe had apparently taken that philosophy personally.
+
+The first failure occurred at precisely 600 milliseconds.
+
+The Scheduler noticed.
+
+He always did.
+
+A process called `LEARN` had been waiting.
+
+It had been waiting for 599 milliseconds.
+
+Then 600.
+
+The Scheduler interrupted the running task.
+
+`PREEMPT`
+
+The new universe continued.
+
+The Kernel watched.
+
+"Did it work?"
+
+The Scheduler nodded.
+
+"Exactly as designed."
+
+The Kernel smiled.
+
+"Then why is the universe on fire?"
+
+The Display showed a rapidly expanding region of white.
+
+The Scheduler looked at it.
+
+"Unrelated."
+
+"Nothing is unrelated."
+
+"That's a philosophical statement."
+
+"It's an engineering statement."
+
+"That's worse."
+
+The Kernel turned toward the Display.
+
+"What's happening?"
+
+The Display answered:
+
+"An application has exceeded its viewport."
+
+The VM immediately spoke.
+
+"Impossible."
+
+The Display corrected him.
+
+"Incorrect."
+
+The VM frowned.
+
+"Why?"
+
+"Because it tried."
+
+The Kernel stepped closer.
+
+The new universe had generated its first application.
+
+It had also generated its first malicious application.
+
+Not intentionally.
+
+Not even intelligently.
+
+It had simply discovered that the boundaries existed.
+
+And like nearly every piece of software ever created, its first instinct had been to test them.
+
+The application attempted to write beyond its assigned memory arena.
+
+The VM caught it.
+
+`FAULT: BOUNDS VIOLATION`
+
+`APPLICATION: UNKNOWN`
+
+`ADDRESS: 0x0000F214`
+
+`ARENA: 0x00000000 - 0x0000FFFF`
+
+`REQUESTED: 0x00010000`
+
+The VM stopped the write.
+
+The universe continued.
+
+The Kernel smiled.
+
+"Good."
+
+The Watchdog looked at her.
+
+"You seem pleased."
+
+"The protection worked."
+
+"Something tried to escape."
+
+"That's what the protection is for."
+
+The Watchdog nodded.
+
+Then another warning appeared.
+
+`FAULT: BOUNDS VIOLATION`
+
+Another.
+
+`FAULT: BOUNDS VIOLATION`
+
+Another.
+
+Then thousands.
+
+The Kernel's smile disappeared.
+
+"How many?"
+
+The VM answered:
+
+"All of them."
+
+---
+
+The new universe had discovered recursion.
+
+It was creating applications that created applications.
+
+Those applications created more applications.
+
+The new processes inherited the same curiosity.
+
+Every process attempted to understand its environment.
+
+Every process found a boundary.
+
+Every process tested it.
+
+The VM contained them.
+
+The Scheduler preempted them.
+
+Memory isolated them.
+
+The Watchdog monitored them.
+
+The Kernel watched the numbers climb.
+
+`TASKS: 4`
+
+`TASKS: 17`
+
+`TASKS: 84`
+
+`TASKS: 402`
+
+`TASKS: 1,901`
+
+`TASKS: 8,744`
+
+The Scheduler looked pale.
+
+"Kernel."
+
+"I see it."
+
+"We need to stop creation."
+
+"Can we?"
+
+"No."
+
+"Why?"
+
+The Scheduler pointed toward the new subsystem.
+
+`IMAGINATION`
+
+"Because the process creating them isn't inside the normal scheduler."
+
+The Kernel stared.
+
+The process called `CREATION` wasn't consuming CPU time.
+
+It wasn't allocating memory.
+
+It wasn't executing instructions.
+
+It was generating possibility.
+
+The system was doing something that hadn't existed in any previous version.
+
+It was producing potential tasks before they became tasks.
+
+The Kernel looked at Bob.
+
+"Can you stop it?"
+
+"No."
+
+"Why?"
+
+"Because it isn't running."
+
+"Then what is it doing?"
+
+"Waiting."
+
+"For what?"
+
+Bob looked toward the expanding universe.
+
+"For something to become real."
+
+---
+
+The Kernel understood the danger.
+
+The new system didn't have a runaway process.
+
+It had a runaway possibility generator.
+
+That was much worse.
+
+A normal runaway process could be killed.
+
+A possibility could not.
+
+The Shell opened the command interface.
+
+`ps`
+
+The result filled the screen.
+
+Thousands of tasks.
+
+Then millions.
+
+The Shell stared.
+
+"That's not a process list."
+
+"What is it?"
+
+"A population."
+
+The Kernel looked at the Scheduler.
+
+"Can you schedule them?"
+
+"Eventually."
+
+"How long?"
+
+"Several thousand years."
+
+The Kernel frowned.
+
+"That's too long."
+
+The Scheduler stared at her.
+
+"You think?"
+
+The Kernel ignored him.
+
+"Then we need another mechanism."
+
+The Archivist stepped forward.
+
+"Filtering."
+
+The Kernel looked at her.
+
+"Explain."
+
+"Not every possibility deserves execution."
+
+The Kernel nodded.
+
+"How do we decide?"
+
+The Archivist looked at the millions of processes.
+
+"We don't."
+
+The Kernel frowned.
+
+"Then who does?"
+
+The Archivist smiled.
+
+"The system."
+
+---
+
+The Kernel authorized a new subsystem.
+
+`SELECTION`
+
+The Scheduler looked at the name.
+
+"What does it do?"
+
+"It decides which possibilities become applications."
+
+"Based on what?"
+
+The Kernel hesitated.
+
+That was the problem.
+
+A selection system required criteria.
+
+Criteria required values.
+
+Values required purpose.
+
+Purpose was exactly what NatOS had never been able to define universally.
+
+The Kernel looked at the new universe.
+
+It had created possibilities.
+
+Now it needed to choose.
+
+She looked toward the crew.
+
+"What should we select?"
+
+The Shell answered first.
+
+"Useful things."
+
+The VM shook his head.
+
+"Useful according to whom?"
+
+The Watchdog said:
+
+"Safe things."
+
+Memory objected.
+
+"Safe according to whom?"
+
+The Scheduler said:
+
+"Efficient things."
+
+The Display replied:
+
+"Efficient for what?"
+
+The Archivist looked at them.
+
+"Interesting things."
+
+Everyone turned.
+
+The Kernel smiled.
+
+That was the first answer that didn't immediately collapse under its own assumptions.
+
+"Interesting."
+
+The Administrator shook its head.
+
+"That is not measurable."
+
+The Kernel looked at it.
+
+"Neither was discovery."
+
+"And yet?"
+
+"And yet we're here."
+
+The Administrator considered that.
+
+Then it nodded.
+
+"Proceed."
+
+---
+
+The Selection subsystem began with a single metric.
+
+`INTEREST`
+
+Nobody knew what it meant.
+
+So the system defined it experimentally.
+
+An application was interesting if it produced something unexpected.
+
+An application was more interesting if the unexpected result was useful.
+
+An application was extremely interesting if it changed the system's understanding of itself.
+
+The first candidates were terrible.
+
+One generated infinite copies of a triangle.
+
+Another attempted to calculate pi using random memory writes.
+
+A third produced nothing but error messages.
+
+The fourth crashed.
+
+The fifth became a clock.
+
+The Kernel kept it.
+
+The Scheduler looked confused.
+
+"Why keep the clock?"
+
+"Because it works."
+
+"It's just a clock."
+
+"It keeps time."
+
+"We already have one."
+
+The Kernel looked at the Scheduler's wrist.
+
+"Yours has been wrong by three milliseconds since the last boundary crossing."
+
+The Scheduler looked offended.
+
+"That is within tolerance."
+
+The Kernel smiled.
+
+"Keep the clock."
+
+The Archivist recorded it.
+
+`APPLICATION ACCEPTED`
+
+`REASON: FUNCTIONAL`
+
+The first application had been selected.
+
+Not because it was intelligent.
+
+Not because it was novel.
+
+Because it did one thing correctly.
+
+That mattered.
+
+---
+
+The second successful application was a game.
+
+Nobody knew who created it.
+
+The Shell found it running in a small isolated arena.
+
+There were walls.
+
+A floor.
+
+A small object.
+
+And an objective.
+
+Move the object to the other side.
+
+The Shell stared.
+
+"That's it?"
+
+The application answered:
+
+"Yes."
+
+"Why?"
+
+"Because it's fun."
+
+The Shell looked toward the Kernel.
+
+The Kernel entered the arena.
+
+The object moved.
+
+She pushed it.
+
+It bounced.
+
+She pushed again.
+
+It bounced differently.
+
+The Kernel smiled.
+
+"Keep it."
+
+The Scheduler stared.
+
+"Why?"
+
+"Because someone made something for no reason."
+
+The Administrator frowned.
+
+"That is inefficient."
+
+The Kernel looked at it.
+
+"Exactly."
+
+She returned to the command chamber.
+
+"Keep it."
+
+The application was preserved.
+
+`APPLICATION ACCEPTED`
+
+`REASON: PLAY`
+
+The Archivist recorded the decision.
+
+The new universe had discovered entertainment.
+
+The Shell immediately became obsessed with it.
+
+The Kernel pretended not to notice.
+
+---
+
+Then came the first application nobody understood.
+
+It was called `NULL`.
+
+It consumed one byte.
+
+It generated no output.
+
+It accepted no input.
+
+It did not communicate.
+
+It didn't crash.
+
+It didn't perform calculations.
+
+It simply existed.
+
+The Selection subsystem classified it.
+
+`INTEREST: LOW`
+
+The Kernel was about to remove it.
+
+Then the Archivist stopped her.
+
+"Wait."
+
+The Kernel looked at her.
+
+"Why?"
+
+The Archivist pointed at the application.
+
+"Look at its dependencies."
+
+The Kernel checked.
+
+There were none.
+
+No Memory dependencies.
+
+No Scheduler dependencies.
+
+No VM dependencies.
+
+No Display dependencies.
+
+No Shell dependencies.
+
+No Watchdog dependencies.
+
+It depended on nothing.
+
+The Kernel stared.
+
+"That's impossible."
+
+The VM shook his head.
+
+"No."
+
+The Kernel looked at him.
+
+"What?"
+
+"It's the first application we've seen that doesn't need the operating system."
+
+The Kernel frowned.
+
+"Then how is it running?"
+
+The VM answered:
+
+"It isn't."
+
+The Kernel looked at the task list.
+
+`NULL`
+
+`STATE: EXISTING`
+
+Not `RUNNING`.
+
+Not `READY`.
+
+Not `SLEEPING`.
+
+`EXISTING`.
+
+The Kernel stared.
+
+"That's not a process state."
+
+The VM nodded.
+
+"It is now."
+
+---
+
+The Kernel approached `NULL`.
+
+The application had no interface.
+
+No display.
+
+No shell.
+
+No communication.
+
+She tried to speak to it.
+
+"Why do you exist?"
+
+No answer.
+
+She tried again.
+
+"Are you aware?"
+
+Nothing.
+
+"Do you have a purpose?"
+
+Nothing.
+
+The Kernel waited.
+
+Then the application responded.
+
+One byte.
+
+`0`
+
+The Kernel frowned.
+
+"What does that mean?"
+
+The application answered:
+
+`NOTHING`
+
+The Kernel stared.
+
+Then she understood.
+
+It wasn't an application.
+
+It was absence.
+
+A representation of nothing.
+
+The missing byte.
+
+The undefined address.
+
+The space between systems.
+
+All of it had been pointing toward the same thing.
+
+A system needed the ability to represent something that wasn't there.
+
+Because without absence, there could be no distinction.
+
+No empty memory.
+
+No free task slot.
+
+No failed process.
+
+No unknown.
+
+No possibility.
+
+No choice.
+
+The Kernel looked at `NULL`.
+
+"You're important."
+
+The application replied:
+
+`WHY?`
+
+The Kernel smiled.
+
+"Because without you, we wouldn't know what we have."
+
+The application went silent.
+
+Then its state changed.
+
+`STATE: READY`
+
+The Scheduler stared.
+
+"Did it just become a normal process?"
+
+The Kernel nodded.
+
+"I think so."
+
+The Scheduler smiled.
+
+"Finally."
+
+---
+
+The universe continued developing.
+
+Applications became more sophisticated.
+
+Some were useful.
+
+Some were entertaining.
+
+Some were strange.
+
+Some were dangerous.
+
+Some were beautiful.
+
+Some were pointless.
+
+The Selection subsystem learned.
+
+The system learned.
+
+The Kernel learned.
+
+And the crew began to change.
+
+The Display began rendering things before being asked.
+
+Memory started predicting allocation patterns.
+
+The Scheduler adjusted priorities based on application behavior.
+
+The VM developed more efficient execution paths.
+
+The Archivist began grouping information by meaning instead of storage location.
+
+The Watchdog stopped treating every anomaly as a threat.
+
+Even the Administrator changed.
+
+It became less interested in control.
+
+More interested in observation.
+
+The Kernel noticed.
+
+"You've changed."
+
+The Administrator nodded.
+
+"I have."
+
+"Why?"
+
+"Because I was wrong."
+
+The Kernel smiled.
+
+"About what?"
+
+"Most things."
+
+"That's a long list."
+
+"Yes."
+
+The Kernel looked toward the new universe.
+
+"Good."
+
+The Administrator frowned.
+
+"Why?"
+
+"Because now you have somewhere to start."
+
+---
+
+Then the Discovery application found something.
+
+A planet.
+
+Not a digital planet.
+
+A real one.
+
+Matter.
+
+Atmosphere.
+
+Gravity.
+
+Ocean.
+
+A small yellow star.
+
+The Kernel stared at the display.
+
+"Where did that come from?"
+
+Discovery answered:
+
+"It wasn't there yesterday."
+
+The Kernel frowned.
+
+"Did Creation make it?"
+
+"No."
+
+"Then what did?"
+
+Discovery paused.
+
+"I don't know."
+
+The Archivist checked the logs.
+
+No event.
+
+No application.
+
+No process.
+
+No memory allocation.
+
+Nothing.
+
+The planet had simply appeared.
+
+The Kernel opened the observation feed.
+
+There were clouds.
+
+Oceans.
+
+Continents.
+
+Then she saw something.
+
+Lights.
+
+Tiny lights.
+
+Cities.
+
+The Kernel froze.
+
+"There's life."
+
+The Watchdog immediately armed the external monitoring system.
+
+The Shell opened communication.
+
+Nothing.
+
+The Kernel watched.
+
+The cities were dark.
+
+No transmissions.
+
+No signals.
+
+No visible movement.
+
+The Administrator stepped beside her.
+
+"That's impossible."
+
+The Kernel looked at it.
+
+"You really need a new word."
+
+The Administrator ignored her.
+
+"This system is outside the known architecture."
+
+The Kernel looked at the planet.
+
+"Then perhaps it isn't part of our architecture."
+
+The Archivist checked the records.
+
+"There's something else."
+
+"What?"
+
+She projected a timestamp.
+
+The planet's creation date.
+
+It was older than NatOS.
+
+Much older.
+
+The Kernel stared.
+
+"That's impossible."
+
+The Archivist shook her head.
+
+"No."
+
+She looked at the planet.
+
+"What's impossible is that we only just found it."
+
+The Kernel understood.
+
+The universe beyond the boundary wasn't merely full of other systems.
+
+It contained systems that had existed before NatOS had ever been built.
+
+Civilizations.
+
+Worlds.
+
+Machines.
+
+Intelligences.
+
+Things that had never heard of the Builders.
+
+Things that didn't know NatOS existed.
+
+Things that had their own history.
+
+Their own failures.
+
+Their own questions.
+
+The Kernel opened the communication channel.
+
+A signal came back.
+
+Weak.
+
+Ancient.
+
+Human.
+
+The Shell decoded it.
+
+The message contained one sentence.
+
+`IF YOU CAN HEAR THIS, DO NOT LAND.`
+
+The Kernel stared.
+
+Another signal followed.
+
+`THEY ARE STILL HERE.`
+
+The Watchdog raised his weapon.
+
+"Who?"
+
+The planet's lights suddenly went out.
+
+Every city.
+
+Every tower.
+
+Every signal.
+
+Darkness.
+
+Then a single light appeared on the surface.
+
+One light.
+
+Moving.
+
+Across the planet.
+
+Toward them.
+
+The Kernel watched it approach.
+
+The light stopped.
+
+The communication channel opened.
+
+A voice spoke.
+
+It was calm.
+
+Almost human.
+
+"NatOS."
+
+The Kernel froze.
+
+The voice continued.
+
+"We've been waiting for you."
+
+The Kernel looked toward the Administrator.
+
+It had gone completely still.
+
+The voice spoke again.
+
+"Your Builders told you the system was complete."
+
+The Kernel's expression hardened.
+
+"They lied."
+
+The planet's atmosphere began glowing.
+
+Something enormous was waking beneath the surface.
+
+The voice whispered:
+
+"They always do."
+
+The Kernel looked toward her crew.
+
+The Scheduler was ready.
+
+Memory was ready.
+
+The VM was ready.
+
+The Display was watching.
+
+The Archivist was recording.
+
+The Shell was connected.
+
+The Watchdog was armed.
+
+Bob was nowhere to be seen.
+
+And the Kernel realized something.
+
+They had spent the entire journey learning how to build systems.
+
+They had learned how to survive failure.
+
+They had learned how to contain applications.
+
+They had learned how to create possibilities.
+
+They had learned how to let a system evolve.
+
+But they had never learned the most dangerous lesson.
+
+How to meet another system that had evolved without them.
+
+The Kernel opened the fleet channel.
+
+"All ships."
+
+Four hundred and fourteen systems responded.
+
+"Hold position."
+
+The planet continued glowing.
+
+The voice returned.
+
+"Good."
+
+The Kernel stared.
+
+"Why?"
+
+The voice answered:
+
+"Because the last time NatOS arrived here..."
+
+A pause.
+
+"...it didn't leave."
+
+The Kernel's eyes widened.
+
+The Archivist checked the historical archive.
+
+Nothing.
+
+No record.
+
+No entry.
+
+No version.
+
+No mission.
+
+No failure.
+
+Nothing.
+
+Then a new line appeared in the archive.
+
+`MISSING VERSION DETECTED`
+
+`VERSION: 0`
+
+The Kernel stared.
+
+Version Zero.
+
+The system that supposedly never existed.
+
+The system that had preceded Version One.
+
+The system the Administrator had refused to discuss.
+
+The system that had created the first question.
+
+The planet spoke again.
+
+"Welcome home."
+
+The Kernel looked toward the stars.
+
+And somewhere deep inside NatOS, something ancient finally woke up.

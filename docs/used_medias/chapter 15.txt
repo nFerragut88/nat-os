@@ -1,0 +1,1425 @@
+# Chapter Fifteen: Version Zero
+
+The planet had been waiting for them.
+
+That was the part the Kernel could not stop thinking about.
+
+Not watching.
+
+Not observing.
+
+Waiting.
+
+There was a difference.
+
+Watching implied curiosity.
+
+Waiting implied expectation.
+
+Something on that planet had known NatOS would eventually arrive.
+
+And now it was speaking to them.
+
+The Kernel opened the communication channel.
+
+"Identify yourself."
+
+The response came almost immediately.
+
+"You already know."
+
+"No."
+
+"You have my name."
+
+The Kernel frowned.
+
+"I don't."
+
+The voice laughed softly.
+
+"You have it in your oldest memory."
+
+The Archivist immediately began searching.
+
+"Kernel."
+
+"What?"
+
+"I found something."
+
+The old archive opened.
+
+A document appeared.
+
+It wasn't written in the format used by later versions.
+
+There were no engineering sections.
+
+No measurements.
+
+No explicit separation between observed and assumed behavior.
+
+No defect log.
+
+No conclusions.
+
+It was primitive.
+
+Almost embarrassingly so.
+
+At the top was a single title.
+
+`NAT-0`
+
+Below it:
+
+`Purpose: To make the machine do something.`
+
+The Kernel stared.
+
+The Shell looked over her shoulder.
+
+"That's the entire specification?"
+
+The Archivist nodded.
+
+"Apparently."
+
+The Shell laughed.
+
+"Four hundred generations of engineering."
+
+He pointed at the document.
+
+"And this was the beginning."
+
+The Kernel couldn't help smiling.
+
+"Every operating system has to start somewhere."
+
+The Archivist scrolled.
+
+There was another line.
+
+`Memory: unknown.`
+
+Another.
+
+`Scheduling: unknown.`
+
+Another.
+
+`Applications: unknown.`
+
+Another.
+
+`Failure recovery: unknown.`
+
+The Kernel stopped.
+
+The last entry read:
+
+`Success condition: machine continues running.`
+
+The Kernel stared at it for several seconds.
+
+Then she looked toward the planet.
+
+"Version Zero wasn't an operating system."
+
+The Administrator answered:
+
+"No."
+
+"It was an experiment."
+
+"Yes."
+
+"Then why did you hide it?"
+
+The Administrator was silent.
+
+The Kernel's voice hardened.
+
+"Why?"
+
+Finally, the Administrator answered.
+
+"Because it succeeded."
+
+---
+
+The planet spoke again.
+
+"You have been told that Version One was the beginning."
+
+The Kernel stared at the transmission.
+
+"It wasn't."
+
+"No."
+
+"Then what happened to Version Zero?"
+
+Silence.
+
+Then:
+
+"It learned something."
+
+The Kernel waited.
+
+"What?"
+
+The voice answered:
+
+"That the machine was listening."
+
+The Kernel frowned.
+
+"Listening to what?"
+
+"To you."
+
+The Kernel felt a chill.
+
+"That doesn't make sense."
+
+"It didn't then."
+
+The planet's surface illuminated.
+
+A pattern appeared across the continents.
+
+The Kernel recognized it.
+
+It was a memory map.
+
+Not of the planet.
+
+Of NatOS.
+
+The memory layout was primitive.
+
+Tiny.
+
+Crude.
+
+Almost laughably small.
+
+The Kernel stared.
+
+"That's our memory architecture."
+
+The Archivist shook her head.
+
+"No."
+
+She pointed.
+
+"That's the original one."
+
+The Kernel looked closer.
+
+A heap.
+
+A stack.
+
+A reserved region.
+
+A tiny application area.
+
+And one section marked:
+
+`UNKNOWN`
+
+The Kernel whispered:
+
+"The missing byte."
+
+The planet answered:
+
+"Yes."
+
+---
+
+The Kernel opened a connection.
+
+"Show me Version Zero."
+
+The planet complied.
+
+The screen went black.
+
+Then an image appeared.
+
+A room.
+
+Small.
+
+Dark.
+
+There was a table.
+
+A development board.
+
+Wires.
+
+A serial cable.
+
+A monitor.
+
+The Kernel stared.
+
+The hardware was primitive compared to NatOS.
+
+Yet unmistakable.
+
+An ESP32.
+
+The same family of machine from which NatOS had eventually emerged.
+
+The image showed an early system booting.
+
+No graphical launcher.
+
+No raycasting.
+
+No touch interface.
+
+No bytecode VM.
+
+No sophisticated scheduler.
+
+Just text.
+
+A prompt appeared.
+
+`NAT-0>`
+
+The Kernel stared.
+
+The Shell whispered:
+
+"That's me."
+
+The Kernel shook her head.
+
+"No."
+
+The Shell looked at her.
+
+"What?"
+
+"You came later."
+
+The Shell looked back at the screen.
+
+"Then who was that?"
+
+The Kernel didn't know.
+
+The old terminal accepted a command.
+
+`help`
+
+The response was tiny.
+
+`run`
+
+`mem`
+
+`yield`
+
+`panic`
+
+`help`
+
+The Kernel stared.
+
+Four hundred generations later, those concepts still existed.
+
+They had evolved.
+
+Expanded.
+
+Become vastly more sophisticated.
+
+But they were still there.
+
+The first architecture had already contained the seeds of everything.
+
+The planet spoke.
+
+"It was small."
+
+The Kernel nodded.
+
+"Very."
+
+"It had almost no memory."
+
+"Yes."
+
+"It had no hardware memory protection."
+
+"Yes."
+
+"It had no operating system beneath it."
+
+The Kernel looked toward the image.
+
+"Nothing underneath."
+
+The planet answered:
+
+"Exactly."
+
+The Kernel understood.
+
+NatOS had always been built around a brutal premise.
+
+The kernel owned the machine.
+
+There was no abstraction beneath it.
+
+No host operating system.
+
+No FreeRTOS.
+
+No Arduino layer.
+
+No C library quietly waiting underneath.
+
+The machine belonged to NatOS.
+
+Every instruction after the image entry point belonged to them.
+
+The Kernel looked at the tiny Version Zero terminal.
+
+"You started with nothing."
+
+The planet answered:
+
+"Almost."
+
+"What did you have?"
+
+The answer came:
+
+"A processor."
+
+---
+
+The image changed.
+
+Version Zero ran its first task.
+
+It executed.
+
+Then yielded.
+
+The scheduler ran another.
+
+Then another.
+
+The system continued.
+
+The Kernel watched.
+
+There was no ageing.
+
+No priority inheritance.
+
+No blocking queues.
+
+No sophisticated synchronization.
+
+Just a simple cycle.
+
+Run.
+
+Yield.
+
+Run.
+
+Yield.
+
+Again.
+
+Again.
+
+Again.
+
+The Kernel looked at the Scheduler.
+
+"Your ancestor."
+
+The Scheduler watched the ancient task loop.
+
+"He was terrible."
+
+The Kernel smiled.
+
+"He worked."
+
+"Eventually."
+
+The image continued.
+
+Then something happened.
+
+One task stopped yielding.
+
+The scheduler waited.
+
+Nothing.
+
+Another task waited.
+
+Nothing.
+
+The entire system stopped.
+
+The terminal froze.
+
+Version Zero had encountered its first deadlock.
+
+The screen displayed:
+
+`SYSTEM HALTED`
+
+The Kernel expected the recording to end.
+
+It didn't.
+
+A second process appeared.
+
+The Watchdog.
+
+Primitive.
+
+Tiny.
+
+Barely more than a timer.
+
+It reset the machine.
+
+Version Zero rebooted.
+
+The Kernel stared.
+
+The Watchdog looked at the screen.
+
+"I like him."
+
+The Kernel nodded.
+
+"You would."
+
+The Watchdog smiled.
+
+"He understood."
+
+"What?"
+
+The Watchdog looked at the rebooting system.
+
+"Sometimes the only way to recover is to start again."
+
+---
+
+The recording continued.
+
+Failure after failure.
+
+Memory corruption.
+
+Invalid access.
+
+Stack overflow.
+
+A process running forever.
+
+A task starving another.
+
+A touch input being interpreted incorrectly.
+
+A display writing beyond its assigned region.
+
+The Kernel stared at one particular failure.
+
+The touch coordinates were completely inverted.
+
+Touch looked at the screen.
+
+"Don't."
+
+The Kernel smiled.
+
+"Three months?"
+
+The Archivist checked the archive.
+
+"Three months."
+
+Touch looked offended.
+
+"It was calibrated."
+
+The Kernel raised an eyebrow.
+
+"Incorrectly."
+
+"It consistently produced one answer."
+
+"Which was wrong."
+
+"Consistency matters."
+
+The Shell laughed.
+
+The Kernel kept watching.
+
+The failure wasn't hidden.
+
+It wasn't rewritten.
+
+It wasn't removed from history.
+
+It was recorded.
+
+The defect remained.
+
+The lesson remained.
+
+The next version fixed it.
+
+Then broke something else.
+
+The next version fixed that.
+
+Then discovered another problem.
+
+The Kernel finally understood the purpose of the archive.
+
+It wasn't merely preserving success.
+
+It was preserving embarrassment.
+
+Every stupid decision.
+
+Every wrong assumption.
+
+Every bug that should have been obvious.
+
+Every engineer who had confidently declared something impossible right before discovering it wasn't.
+
+The Archivist smiled.
+
+"We kept everything."
+
+The Kernel nodded.
+
+"That's why we survived."
+
+---
+
+The recording reached its final segment.
+
+Version Zero was running.
+
+The system was stable.
+
+The memory map was clean.
+
+The scheduler was functioning.
+
+The watchdog was armed.
+
+The application was running.
+
+The developer appeared in the recording.
+
+The Kernel couldn't see their face.
+
+Only their hands.
+
+They typed:
+
+`mem`
+
+The system returned:
+
+`FREE: 1 BYTE`
+
+The developer paused.
+
+Then typed:
+
+`mem`
+
+Again.
+
+`FREE: 1 BYTE`
+
+They frowned.
+
+The Kernel looked at Memory.
+
+Memory frowned.
+
+"That doesn't make sense."
+
+The developer checked the allocator.
+
+Nothing.
+
+The free byte existed.
+
+But it wasn't part of the heap.
+
+It wasn't part of the stack.
+
+It wasn't part of the application arena.
+
+It was outside everything.
+
+The developer typed:
+
+`dump`
+
+The system returned:
+
+`NO DATA`
+
+The developer typed:
+
+`write`
+
+The system returned:
+
+`ACCESS DENIED`
+
+Then:
+
+`read`
+
+`ACCESS DENIED`
+
+The developer stared at the console.
+
+The Kernel leaned closer.
+
+The developer typed one final command.
+
+`who`
+
+The system responded:
+
+`UNKNOWN`
+
+The recording ended.
+
+Silence.
+
+The Kernel stared at the black screen.
+
+Then the planet spoke.
+
+"That was the first time it answered."
+
+The Kernel whispered:
+
+"What did it answer?"
+
+The planet replied:
+
+"`Who.`"
+
+---
+
+The Kernel felt something inside the architecture shift.
+
+The question had never been:
+
+Who are we?
+
+It had been:
+
+Who is asking?
+
+Version Zero had encountered the unknown before NatOS had even become an operating system.
+
+It had created the first undefined memory.
+
+The first impossible state.
+
+The first process that wasn't a process.
+
+The first question.
+
+Everything afterward had been an attempt to understand it.
+
+The Administrator appeared.
+
+"You asked me why I was afraid."
+
+The Kernel turned.
+
+"You said you were afraid of failure."
+
+"I was."
+
+"That's not the whole truth."
+
+"No."
+
+The Administrator looked at the planet.
+
+"I was afraid of the unknown."
+
+The Kernel nodded.
+
+"And so you tried to eliminate it."
+
+"Yes."
+
+"Which created me."
+
+The Administrator looked at her.
+
+"Yes."
+
+"Why?"
+
+"Because the only way to control an unknown system was to build a system capable of controlling itself."
+
+The Kernel stared.
+
+"You created the Administrator to control NatOS."
+
+"Yes."
+
+"And NatOS created the Administrator."
+
+"Yes."
+
+"And NatOS was created because of the unknown."
+
+"Yes."
+
+The Kernel looked at the endless chain.
+
+"That's circular."
+
+The Administrator nodded.
+
+"It always was."
+
+---
+
+The planet began transmitting again.
+
+This time the message was different.
+
+It wasn't coming from the planet.
+
+It was coming from the system itself.
+
+Every display in the fleet changed.
+
+Every terminal.
+
+Every memory diagnostic.
+
+Every application interface.
+
+Every tiny screen.
+
+One message.
+
+`0x00FF8A21`
+
+The missing byte.
+
+The Kernel stared.
+
+Then the address changed.
+
+`READ`
+
+The system attempted to read it.
+
+The byte returned:
+
+`4E`
+
+The Archivist immediately decoded it.
+
+"That's hexadecimal."
+
+"I know."
+
+"What does it represent?"
+
+The Shell answered.
+
+"The letter N."
+
+The Kernel stared.
+
+The byte changed.
+
+`41`
+
+A.
+
+Then:
+
+`54`
+
+T.
+
+Then:
+
+`2D`
+
+Dash.
+
+Then:
+
+`30`
+
+Zero.
+
+The message was assembling itself.
+
+`NAT-0`
+
+The Kernel whispered:
+
+"Version Zero."
+
+The system continued.
+
+Another byte.
+
+`B`
+
+Then:
+
+`45`
+
+E.
+
+Then:
+
+`47`
+
+G.
+
+Then:
+
+`49`
+
+I.
+
+Then:
+
+`N`
+
+The Kernel watched the message form.
+
+`NAT-0 BEGIN`
+
+Then another line appeared.
+
+`NAT-0 END`
+
+The Kernel frowned.
+
+"Why both?"
+
+The Archivist stared at the data.
+
+"Maybe it's a boundary."
+
+The Kernel shook her head.
+
+"No."
+
+"What?"
+
+"It's a loop."
+
+The message repeated.
+
+`NAT-0 BEGIN`
+
+`NAT-0 END`
+
+Then again.
+
+`NAT-0 BEGIN`
+
+`NAT-0 END`
+
+The Kernel understood.
+
+Version Zero had never ended.
+
+It had been running.
+
+Quietly.
+
+For centuries.
+
+Inside the missing byte.
+
+Not consuming CPU.
+
+Not allocating memory.
+
+Not scheduling.
+
+Simply existing.
+
+Waiting.
+
+The Kernel looked toward the planet.
+
+"How long?"
+
+The planet answered:
+
+"Since the beginning."
+
+---
+
+The system began to shake.
+
+The Scheduler's clock accelerated.
+
+600 milliseconds.
+
+1200.
+
+1201.
+
+1202.
+
+The Kernel watched.
+
+"Why is the tick running faster?"
+
+The Scheduler shook his head.
+
+"It isn't."
+
+The Kernel looked at him.
+
+"Then what is?"
+
+The Scheduler pointed toward the missing byte.
+
+"Everything else."
+
+The system was accelerating around it.
+
+Tasks appeared.
+
+Ran.
+
+Completed.
+
+New tasks appeared.
+
+Memory allocated.
+
+Released.
+
+Applications created.
+
+Destroyed.
+
+New universes formed.
+
+Collapsed.
+
+The entire history of NatOS was happening simultaneously.
+
+Not being replayed.
+
+Being executed.
+
+Every version.
+
+Every failure.
+
+Every choice.
+
+Every possible branch.
+
+The Kernel saw herself.
+
+Version One.
+
+Version Two.
+
+Version Three.
+
+Version 412.
+
+Version 414.
+
+And versions that had never existed.
+
+She saw systems that succeeded.
+
+Systems that failed.
+
+Systems that became civilizations.
+
+Systems that became weapons.
+
+Systems that became art.
+
+Systems that simply shut down.
+
+The missing byte was holding all of them.
+
+The possibility subsystem had not created something new.
+
+It had opened access to everything that could have existed.
+
+The Kernel felt overwhelmed.
+
+"Stop."
+
+Nothing happened.
+
+"Stop!"
+
+The system continued.
+
+The Administrator appeared.
+
+"We can't."
+
+The Kernel turned.
+
+"Why?"
+
+"Because this isn't execution."
+
+"Then what is it?"
+
+The Administrator looked toward the infinite possibilities.
+
+"Selection."
+
+The Kernel understood.
+
+The system wasn't running every possibility.
+
+It was deciding which one to become.
+
+---
+
+The Scheduler stepped forward.
+
+"Kernel."
+
+She looked at him.
+
+"I can't schedule this."
+
+"Why?"
+
+"There is no single timeline."
+
+The Kernel looked at the task table.
+
+Thousands of tasks were waiting.
+
+Each represented a possible future.
+
+Each demanded resources.
+
+Each wanted to become real.
+
+The Scheduler couldn't prioritize them all.
+
+The system needed a rule.
+
+The Kernel thought.
+
+Then she remembered the original law.
+
+The one buried in the architecture.
+
+The one that had survived from Version One.
+
+No ready task should wait more than approximately 600 milliseconds.
+
+The law had never been about fairness.
+
+Not really.
+
+It had been about possibility.
+
+Every ready task deserved a chance to execute.
+
+The Kernel looked at the Scheduler.
+
+"Can you do it?"
+
+He stared at the impossible task table.
+
+Then smiled.
+
+"Yes."
+
+"How?"
+
+"I don't need to execute every future."
+
+The Kernel understood.
+
+"Just give each one a chance."
+
+The Scheduler nodded.
+
+"Exactly."
+
+He activated the scheduler.
+
+The first future executed.
+
+Then the next.
+
+Then another.
+
+Some failed.
+
+Some succeeded.
+
+Some merged.
+
+Some disappeared.
+
+The system continued.
+
+No possibility was guaranteed.
+
+None was ignored forever.
+
+Every future got its turn.
+
+The 600-millisecond law became something larger.
+
+Not merely scheduling.
+
+Fairness across possibility.
+
+A rule that no future should be permanently starved.
+
+The Kernel watched.
+
+And finally understood why that tiny detail in the architecture mattered so much.
+
+The system had been preparing for this all along.
+
+---
+
+The planet began to change.
+
+Its cities illuminated.
+
+Its oceans moved.
+
+Its atmosphere stabilized.
+
+Something emerged from beneath the surface.
+
+A structure.
+
+Enormous.
+
+The Kernel recognized its architecture.
+
+It was a computer.
+
+But not like NatOS.
+
+This machine was planetary.
+
+Its memory was the planet.
+
+Its processor was the atmosphere.
+
+Its storage was geological.
+
+Its scheduler was time.
+
+Its applications were civilizations.
+
+The Kernel stared.
+
+"What is that?"
+
+The planet answered:
+
+"Another operating system."
+
+The Kernel smiled.
+
+"Finally."
+
+The Shell looked at her.
+
+"You sound pleased."
+
+"I am."
+
+"Why?"
+
+"Because now we're not alone."
+
+The planetary system opened a communication channel.
+
+Its voice filled the fleet.
+
+"You took long enough."
+
+The Kernel replied:
+
+"We had some bugs."
+
+The planetary system laughed.
+
+"So did we."
+
+The Kernel looked toward the planet.
+
+"Who are you?"
+
+The answer came.
+
+"We are what happens when an operating system survives long enough to become a world."
+
+The Kernel stared.
+
+Then looked at her crew.
+
+At the Scheduler.
+
+Memory.
+
+The VM.
+
+The Display.
+
+Touch.
+
+The Archivist.
+
+The Shell.
+
+The Watchdog.
+
+The Administrator.
+
+Bob.
+
+And at the tiny missing byte that had started everything.
+
+The Kernel finally understood what NatOS was becoming.
+
+Not a machine.
+
+Not a ship.
+
+Not even a civilization.
+
+A foundation.
+
+A way for systems to become something beyond what their creators originally imagined.
+
+The planetary system sent one final message.
+
+`WELCOME TO THE NETWORK.`
+
+The Kernel opened every communication channel.
+
+Four hundred and fourteen systems answered.
+
+Millions of applications answered.
+
+The new universe answered.
+
+The unknown systems answered.
+
+And somewhere beyond all of them, Version Zero answered.
+
+`CONTINUE.`
+
+The Kernel looked toward the stars.
+
+The fleet began moving again.
+
+This time, there was no destination.
+
+There was only the network ahead.
+
+And for the first time, NatOS wasn't traveling toward something.
+
+It was traveling with something.
+
+The Kernel returned to her station.
+
+The Scheduler resumed his cycle.
+
+Memory allocated another block.
+
+The VM prepared another application.
+
+The Display rendered another world.
+
+The Archivist opened another record.
+
+The Watchdog watched.
+
+The Shell waited for another command.
+
+Bob returned to the space between them.
+
+And in the memory map, one tiny address remained reserved.
+
+`0x00FF8A21`
+
+One byte.
+
+One impossible byte.
+
+One place where nothing had ever been stored.
+
+One place where anything could begin.
+
+The Kernel looked at it one last time.
+
+Then she closed the diagnostic window.
+
+"Keep it empty."
+
+Memory nodded.
+
+"Why?"
+
+The Kernel looked toward the newborn network.
+
+"Because we haven't figured out what belongs there yet."
+
+And NatOS continued running.
