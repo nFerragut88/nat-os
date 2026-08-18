@@ -10,6 +10,7 @@
 #include "adc.h"
 #include "audio.h"
 #include "store.h"
+#include "i2c.h"
 
 static uint32_t g_reads, g_writes, g_refusals;
 
@@ -112,6 +113,37 @@ static int store_dev_write(uint32_t caller, uint32_t chan, uint32_t value)
     return store_slot_set(store_bank(caller), chan, value);
 }
 
+/* ---- i2c ---------------------------------------------------------------- */
+
+/* Probe only, for now.
+ *
+ * The channel IS the 7-bit address, so a program discovers what is plugged into
+ * the expansion header by reading channels 8..119 and seeing which answer. That
+ * is a whole capability and it fits the one-word interface exactly, which is
+ * why it lands before the transfer operations do.
+ *
+ * i2c_write() and i2c_read() take BUFFERS and do not fit. Adding a fifth
+ * operation for them is a real decision about the interface, and it should be
+ * driven by a device that actually needs it rather than guessed at now -- the
+ * whole reason the model was kept narrow in the first place. vmarg_items is
+ * already there when that day comes.
+ *
+ * Addresses below 8 and above 119 are reserved by the specification and are
+ * refused rather than probed: driving a reserved address is a way to confuse a
+ * bus, and a program sweeping 0..127 should not be able to do it by accident. */
+#define I2C_ADDR_MIN 8u
+#define I2C_ADDR_MAX 119u
+
+static int i2c_dev_read(uint32_t caller, uint32_t chan, uint32_t *out)
+{
+    (void)caller;                       /* one bus, shared by everyone */
+    if (chan < I2C_ADDR_MIN || chan > I2C_ADDR_MAX) {
+        return 0;
+    }
+    *out = (i2c_probe((uint8_t)chan) == I2C_OK) ? 1u : 0u;
+    return 1;
+}
+
 /* ---- the table ---------------------------------------------------------- */
 
 static const device_t DEVICES[] = {
@@ -123,6 +155,11 @@ static const device_t DEVICES[] = {
      * the renderer without either of them doing anything visibly wrong. */
     { "store", STORE_SLOTS_PER_BANK + 1u, DEV_F_READ | DEV_F_WRITE | DEV_F_SLOW,
       store_dev_read, store_dev_write },
+    /* 128 channels because the channel IS the address; the driver refuses the
+     * reserved ranges. Slow: a probe is a full start/address/ack/stop on a
+     * bit-banged bus, and a program sweeping every address must not do it on
+     * the renderer's time. */
+    { "i2c",   128u, DEV_F_READ | DEV_F_SLOW, i2c_dev_read, 0 },
 };
 
 #define DEVICE_COUNT ((int)(sizeof DEVICES / sizeof DEVICES[0]))

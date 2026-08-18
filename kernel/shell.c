@@ -957,7 +957,11 @@ static void execute(char *line)
         char *cval  = split(cchan);
 
         if (!*cid) {
-            uart_puts("   id  name      chans  flags     value\n");
+            /* The last column samples CHANNEL 0, which is not always a
+             * meaningful thing to read: i2c's channel 0 is a reserved bus
+             * address and refuses by design. Labelled `ch0` rather than `value`
+             * so a correct refusal does not read as a broken device. */
+            uart_puts("   id  name      chans  flags     ch0\n");
             for (uint32_t i = 0; i < (uint32_t)device_count(); i++) {
                 uint32_t chans = 0, flags = 0;
                 device_info(i, &chans, &flags);
@@ -1018,6 +1022,60 @@ static void execute(char *line)
                     uart_puts("   refused\n");
                 }
             }
+        }
+    }
+    else if (str_eq(line, "light")) {
+        /* One reading, and a beep if it is dark.
+         *
+         * This was app_dev's resident loop, which seized the speaker and beeped
+         * at the room whenever a shadow fell across the board. A demo should
+         * demonstrate and then get out of the way; a thing you want on demand
+         * belongs at the prompt.
+         *
+         * Both halves go through the device table, so this exercises the same
+         * path an application takes rather than a private shortcut. */
+        char *cth = arg;
+        int threshold = *cth ? parse_int(cth) : 400;
+        uint32_t v = 0;
+        if (!device_read(DEVICE_CALLER_KERNEL, 0u, 0u, &v)) {
+            uart_puts("   light sensor refused\n");
+        } else {
+            uart_puts("   light = ");
+            uart_put_dec(v);
+            if (threshold > 0 && v < (uint32_t)threshold) {
+                uint32_t packed = (1000u << 16) | 20u;
+                device_write(DEVICE_CALLER_KERNEL, 1u, 0u, packed);
+                uart_puts("  (dark, below ");
+                uart_put_dec((unsigned int)threshold);
+                uart_puts(" -- beeped)");
+            }
+            uart_puts("\n   usage: light [threshold]\n");
+        }
+    }
+    else if (str_eq(line, "i2cscan")) {
+        /* Sweep the bus THROUGH THE DEVICE TABLE.
+         *
+         * i2c.c already has i2c_scan(), which prints its own report and talks
+         * to the driver directly. This one reads device 3 channel by channel,
+         * exactly as an application would, so what it reports is what a program
+         * would find. A scanner that used a private path could agree with the
+         * hardware and still disagree with every program on the board. */
+        uart_puts("   sweeping 0x08..0x77 through device 3\n");
+        int found = 0;
+        for (uint32_t a = 8u; a <= 119u; a++) {
+            uint32_t present = 0;
+            if (device_read(DEVICE_CALLER_KERNEL, 3u, a, &present) && present) {
+                uart_puts("   0x");
+                uart_put_hex(a);
+                uart_puts("  answered\n");
+                found++;
+            }
+        }
+        if (!found) {
+            uart_puts("   nothing answered. With no pull-ups fitted SDA floats"
+                      " high and every\n   address can appear to answer, so a"
+                      " silent bus is the honest result\n   for an empty"
+                      " header.\n");
         }
     }
     else if (str_eq(line, "vmargtest")) {

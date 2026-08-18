@@ -28,7 +28,7 @@ start:
 
 names:
         sltu    r1, r11, r10
-        brz     r1, sensing
+        brz     r1, setup           ; NOT `sensing` -- see the note at setup:
 
         ldi     r0, 1               ; DEV_OP_NAME
         mov     r1, r11
@@ -69,13 +69,40 @@ names:
 ; flash sector a minute forever, which is how a part rated for a hundred
 ; thousand cycles gets spent by a program that thought it was being helpful.
 
+; The enumeration loop above exits HERE, not to `sensing`.
+;
+; It used to branch straight to `sensing`, which jumped clean over this block
+; and over `ldi r14, 16` below -- so the slot was never claimed, the counter was
+; still 0 from vm_init, and the read loop exited on its first test. The symptom
+; was a program that printed the device table, announced sixteen readings, and
+; reported a light level of zero without ever having read anything.
+;
+; Nothing diagnosed it, because nothing was wrong: every syscall it made
+; succeeded, and the two it skipped were skipped silently. A jump that lands
+; past setup code is invisible to a machine that cannot know what the code was
+; for.
+
+setup:
         ldi     r0, 3               ; DEV_OP_WRITE
         ldi     r1, 2               ; device 2, store
         ldi     r2, 0               ; slot 0, in OUR bank
         ldi     r3, 777
         sys     device
 
+; ---- read the light sensor a bounded number of times, then STOP ------------
+;
+; This used to loop forever and beep whenever the room went dark, which made it
+; a resident program that seizes the speaker and cannot be reasoned around. A
+; demo should demonstrate and then get out of the way; the on-demand version
+; lives in the shell as `light`.
+;
+; Sixteen readings, published so `ps` can show the last one, then exit.
+
+        ldi     r14, 16             ; readings remaining
+
 sensing:
+        brz     r14, done
+
         ldi     r0, 2               ; DEV_OP_READ
         ldi     r1, 0               ; device 0, light
         ldi     r2, 0               ; channel 0
@@ -85,35 +112,30 @@ sensing:
         mov     r12, r1             ; the reading
         stw     r12, r13, 0         ; publish it where the shell can see it
 
-        ; Deliberately silent. The first version printed every reading and
-        ; buried the console under a hundred lines a second -- a resident
-        ; program that talks continuously is a program nobody can debug around.
-        ; The value is PUBLISHED instead, which is what `ps` reads, and the
-        ; UART is left for things that are actually events.
-
-        ; Dark? A tone needs two numbers and a device takes one word, so the
-        ; caller packs them: (hz << 16) | ticks. That packing is the price of
-        ; keeping every device operation a single scalar.
-        ldi     r1, 400             ; darkness threshold
-        sltu    r2, r12, r1
-        brz     r2, quiet
-
-        ldi     r0, 3               ; DEV_OP_WRITE
-        ldi     r1, 1               ; device 1, beep
-        ldi     r2, 0               ; channel 0
-        ldi     r3, 0x0014          ; ticks = 20  (low half)
-        ldih    r3, 0x03E8          ; hz    = 1000 (high half)
-        sys     device
-
-        ldi     r0, @msg_dark       ; an event, so it is worth saying
+        ; Sixteen lines is not a flood. The version that printed every reading
+        ; of an ENDLESS loop was, which is a different problem: the fault was
+        ; the unbounded loop, not the printing.
+        ldi     r0, @msg_light
         sys     puts
         mov     r0, r12
         sys     putd
         ldi     r0, @msg_nl
         sys     puts
 
-quiet:
+        ldi     r1, 1
+        sub     r14, r14, r1
         jmp     sensing
+
+done:
+        ldi     r0, @msg_done
+        sys     puts
+        mov     r0, r12
+        sys     putd
+        ldi     r0, @msg_nl
+        sys     puts
+
+        ldi     r0, 0
+        sys     exit
 
         .align  4
 publish:
@@ -125,5 +147,6 @@ msg_found:      .string "  [dev] device table: "
 msg_devices:    .string " entries\n"
 msg_dev:        .string "  [dev] "
 msg_colon:      .string " = "
-msg_dark:       .string "  [dev] dark, beeping. light = "
+msg_light:      .string "  [dev] light = "
+msg_done:       .string "  [dev] 16 readings taken, exiting. last light = "
 msg_nl:         .string "\n"
