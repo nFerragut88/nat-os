@@ -263,6 +263,43 @@ Strongest untried lead: `periph_module_reset(0x19)`. nat-os has only ever
 state the ROM bootloader put it in would plausibly receive while refusing to
 transmit. That asymmetry fits the symptom exactly.
 
+### 3.1 Both of those leads are now dead (2026-08-18)
+
+**The MAC reset.** Tried, and it is not the answer. Note first that
+`periph_module_reset()` as written down would have been a **no-op that looked
+like a test**: ESP-IDF's `get_rst_en_mask()` returns 0 for `PERIPH_WIFI_MODULE`.
+The bit has to be pulsed directly — `DPORT_WIFI_RST_EN_REG` bit 2,
+`DPORT_WIFIMAC_RST`, and only bit 2, because resetting the baseband or front end
+would undo the ten-second `register_chipv7_phy` calibration that receive depends
+on.
+
+Result: **receive survived** (beacons from `8e:49:62:f0:ae:bd` and
+`7e:26:f6:5f:57:c6`), and transmit is unchanged — 10 probes handed over, 10
+completions reaped, `forced=0`, nothing answers. Retained behind `macrst` so it
+is opt-in rather than removed.
+
+**The transmit-side init chain.** Three functions that arm what transmit needs,
+all verified present in the image with `nm` *before* being referenced:
+
+| step | function | result |
+|---|---|---|
+| 4 | `hal_mac_rate_autoack_init` | returned, no crash, no change |
+| 5 | `hal_attenna_init` | returned, no crash, no change |
+| 6 | `hal_mac_disable_low_rate` | returned, no crash, no change |
+
+`phyinit` still returns 0 afterwards, which is the canary for §3's link rule —
+naming these three did not pull new objects, exactly as the `nm` check
+predicted.
+
+**What is left.** `lmacInit` and `lmacInitAc` are the remaining candidates and
+are **not** in the image, so calling them changes the link — the precise trap
+that killed `register_chipv7_phy`. Doing it anyway is defensible only with the
+canary watched closely and a way back.
+
+Beyond that the suspicion moves to nat-os's own `wifimac_tx()`: the descriptor
+layout and the TX register programming have never been checked against
+esp32-open-mac line by line, only against its documentation.
+
 ---
 
 ## 4. The `task_sleep` detour, which was not a detour

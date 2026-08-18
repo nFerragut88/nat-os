@@ -17,6 +17,17 @@ int      wifimac_attempted(void);
 uint32_t wifimac_ctrl_before(void);
 uint32_t wifimac_ctrl_after(void);
 
+/* Arm the MAC reset for the NEXT wifimac_init().
+ *
+ * nat-os has only ever ungated the WiFi peripheral, never reset it, so the MAC
+ * runs in whatever state the ROM bootloader left it in -- which would plausibly
+ * receive while refusing to transmit. Opt-in rather than unconditional, because
+ * receive currently works and is the thing this might break. See wifimac.c. */
+void     wifimac_reset_next(int on);
+int      wifimac_reset_done(void);
+uint32_t wifimac_rst_before(void);
+uint32_t wifimac_rst_after(void);
+
 /* Reads the MAC register window twice and reports how many words differ.
  *
  * This is the evidence that the peripheral is RUNNING rather than merely

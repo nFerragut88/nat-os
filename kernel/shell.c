@@ -597,6 +597,25 @@ static void execute(char *line)
                   ? "   crc matches - decode confirmed\n"
                   : "   CRC MISMATCH - the byte order is wrong\n");
     }
+    else if (str_eq(line, "macrst")) {
+        /* Arm the MAC reset for the next macinit.
+         *
+         * UM-NATOS-028 §3 ends on this as the strongest untried lead: this
+         * kernel has only ever UNGATED the WiFi peripheral and never RESET it,
+         * so the MAC runs in whatever state the ROM bootloader left it in. That
+         * would plausibly receive while refusing to transmit, which is exactly
+         * the symptom -- 178 frames of 178 reported complete, nothing heard.
+         *
+         * Sequence: macrst, macinit, chan 1, macrx, probe. If receive still
+         * works AND probes get answered, that is the answer. If receive breaks,
+         * that is also informative and is why this is opt-in. */
+        wifimac_reset_next(!str_eq(arg, "off"));
+        uart_puts(str_eq(arg, "off")
+                  ? "   MAC reset disarmed\n"
+                  : "   MAC reset armed; run 'macinit' next\n"
+                    "   (only DPORT_WIFIMAC_RST bit 2 -- the baseband and front\n"
+                    "    end are left alone so the PHY calibration survives)\n");
+    }
     else if (str_eq(line, "macinit")) {
         /* Liveness is sampled BEFORE the write as well as after.
          *
@@ -632,6 +651,13 @@ static void execute(char *line)
             uart_puts(live1 > live0
                       ? "MAC IS RUNNING - counters advance that did not before\n"
                       : "no new movement; the MAC is readable but may be idle\n");
+            if (wifimac_reset_done()) {
+                uart_puts("   MAC was RESET first: DPORT_WIFI_RST_EN ");
+                uart_put_hex(wifimac_rst_before());
+                uart_puts(" -> ");
+                uart_put_hex(wifimac_rst_after());
+                uart_puts("\n");
+            }
         }
     }
     else if (str_eq(line, "chan")) {
@@ -1508,12 +1534,22 @@ static void execute(char *line)
         /* One stage per invocation. This is the first code to call into libpp,
          * the MAC blob, and if it takes the board down the stage number is the
          * only thing that will survive. */
-        static const char *names[4] = {
-            "ic_mac_init", "hal_init", "ic_enable_rx", "hal_mac_tsf_reset" };
+        /* 0..3 bring the MAC up and let it listen, and were all tried in
+         * UM-NATOS-028 §3 without changing anything. 4..6 are the transmit
+         * side, and every one is already in the image -- checked with nm before
+         * being named, because referencing an UNLINKED symbol changes which
+         * objects the linker pulls and has broken working code here before. */
+        static const char *names[7] = {
+            "ic_mac_init", "hal_init", "ic_enable_rx", "hal_mac_tsf_reset",
+            "hal_mac_rate_autoack_init", "hal_attenna_init",
+            "hal_mac_disable_low_rate" };
         int step = *arg ? parse_int(arg) : wifimac_hw_stage();
-        if (step < 0 || step > 3) {
-            uart_puts("   usage: hwinit [0..3]  (0 ic_mac_init, 1 hal_init,"
-                      " 2 ic_enable_rx, 3 hal_mac_tsf_reset)\n");
+        if (step < 0 || step > 6) {
+            uart_puts("   usage: hwinit [0..6]\n"
+                      "     0 ic_mac_init   1 hal_init   2 ic_enable_rx\n"
+                      "     3 hal_mac_tsf_reset\n"
+                      "     4 hal_mac_rate_autoack_init   <- transmit needs a rate\n"
+                      "     5 hal_attenna_init            6 hal_mac_disable_low_rate\n");
         } else {
             uart_puts("   calling ");
             uart_puts(names[step]);

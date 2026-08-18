@@ -50,6 +50,37 @@
 #define DPORT_WIFI_CLK_EN_REG   0x3FF000CCu
 #define DPORT_WIFI_CLK_WIFI_EN  0x00000406u
 
+/* ---- the reset this kernel has never performed --------------------------
+ *
+ * UM-NATOS-028 §3 ends on this: nat-os has only ever UNGATED the WiFi
+ * peripheral -- turned its clock on -- and never RESET it. The MAC therefore
+ * runs in whatever state the ROM bootloader left it in, and a block
+ * half-initialised that way would plausibly receive while refusing to
+ * transmit. Receive is mostly listen-and-DMA; transmit needs the queues, the
+ * rate control and the PHY handoff all correctly armed. That asymmetry is
+ * exactly the symptom: 178 frames of 178 reported complete, zero answers.
+ *
+ * DPORT_WIFI_RST_EN_REG, bit 2 is the MAC.
+ *
+ *   bit 0  WIFIBB    baseband
+ *   bit 1  FE        front end
+ *   bit 2  WIFIMAC   <- this one
+ *   bit 3  BTBB
+ *   bit 4  BTMAC
+ *
+ * ONLY bit 2. Resetting the baseband or the front end would undo
+ * register_chipv7_phy's calibration -- the ten-second one that currently works
+ * and that receive depends on -- to test a hypothesis about the MAC. If the MAC
+ * reset alone is not enough, widening it is a later and much more expensive
+ * experiment, not a free extra.
+ *
+ * Note also that ESP-IDF's periph_module_reset() does NOTHING for
+ * PERIPH_WIFI_MODULE: get_rst_en_mask() returns 0 for it. So the lead as
+ * originally written down -- "call periph_module_reset(0x19)" -- would have
+ * been a no-op that looked like a test. The bit has to be pulsed directly. */
+#define DPORT_WIFI_RST_EN_REG   0x3FF000D0u
+#define DPORT_WIFIMAC_RST       (1u << 2)
+
 #define MAC_INIT_MASK           0xFFFFE800u
 
 /* 256 words at a time rather than one 4 KB snapshot: the window is 4 KB and a
@@ -67,6 +98,16 @@ static uint32_t g_snap[SCAN_WORDS];
 static int      g_attempted;
 static uint32_t g_channel;
 static uint32_t g_before, g_after;
+
+/* The MAC-reset experiment. See the register note above. */
+static int      g_reset_next;
+static int      g_reset_done;
+static uint32_t g_rst_before, g_rst_after;
+
+void wifimac_reset_next(int on) { g_reset_next = on; }
+int  wifimac_reset_done(void)   { return g_reset_done; }
+uint32_t wifimac_rst_before(void) { return g_rst_before; }
+uint32_t wifimac_rst_after(void)  { return g_rst_after; }
 
 int      wifimac_attempted(void)   { return g_attempted; }
 uint32_t wifimac_ctrl_before(void) { return g_before; }
@@ -102,6 +143,24 @@ int wifimac_init(void)
     }
 
     *(volatile uint32_t *)DPORT_WIFI_CLK_EN_REG |= DPORT_WIFI_CLK_WIFI_EN;
+
+    /* Pulse the MAC out of reset, if asked. Opt-in via wifimac_reset_next()
+     * rather than unconditional, because this is a hypothesis under test and
+     * the previous behaviour -- receive working -- is the thing it might
+     * break. Both orders are then reachable without a reflash. */
+    if (g_reset_next) {
+        volatile uint32_t *rst = (volatile uint32_t *)DPORT_WIFI_RST_EN_REG;
+        g_rst_before = *rst;
+        *rst = g_rst_before | DPORT_WIFIMAC_RST;
+        /* Held briefly. A reset asserted and released in consecutive stores may
+         * not span a peripheral clock edge, and a reset that did not take is
+         * indistinguishable from one that did nothing. */
+        for (volatile int i = 0; i < 1000; i++) {
+        }
+        *rst = g_rst_before & ~DPORT_WIFIMAC_RST;
+        g_rst_after = *rst;
+        g_reset_done = 1;
+    }
 
     /* ram_tx_pwctrl_bg_init() was called here and had to be removed.
      *
@@ -1127,6 +1186,32 @@ int wifimac_hwinit_step(uint32_t step)
     extern int ic_enable_rx(void);
     extern int hal_mac_tsf_reset(int);
 
+    /* Steps 4..6: the transmit side of the chain.
+     *
+     * The four above were tried in UM-NATOS-028 §3 and changed nothing, but
+     * they are all about bringing the MAC up and letting it listen. None of
+     * them arms anything transmit needs.
+     *
+     * These three do, and every one of them is ALREADY IN THE IMAGE -- checked
+     * with nm before being named, which is the rule bought expensively when
+     * referencing ram_tx_pwctrl_bg_init pulled fresh objects out of libphy.a
+     * and killed register_chipv7_phy. Adding a call to something already linked
+     * cannot change which objects the linker pulls.
+     *
+     *   hal_mac_rate_autoack_init  transmit needs a RATE. A MAC whose rate
+     *                              control was never initialised would
+     *                              plausibly accept a frame, report it
+     *                              complete, and put nothing on the air --
+     *                              which is the symptom exactly.
+     *   hal_attenna_init           Espressif's spelling. The antenna path.
+     *   hal_mac_disable_low_rate   sets which rates are permitted at all.
+     *
+     * lmacInit is the other candidate and is NOT linked, so calling it would
+     * change the link. Deliberately not attempted here. */
+    extern int hal_mac_rate_autoack_init(void);
+    extern int hal_attenna_init(void);
+    extern int hal_mac_disable_low_rate(void);
+
     if (!g_attempted) {
         return -1;                  /* macinit has not run */
     }
@@ -1136,6 +1221,9 @@ int wifimac_hwinit_step(uint32_t step)
     case 1: phy_stack_call((uint32_t)&hal_init, 0u, 0u);          break;
     case 2: phy_stack_call((uint32_t)&ic_enable_rx, 0u, 0u);      break;
     case 3: phy_stack_call((uint32_t)&hal_mac_tsf_reset, 0u, 0u); break;
+    case 4: phy_stack_call((uint32_t)&hal_mac_rate_autoack_init, 0u, 0u); break;
+    case 5: phy_stack_call((uint32_t)&hal_attenna_init, 0u, 0u);  break;
+    case 6: phy_stack_call((uint32_t)&hal_mac_disable_low_rate, 0u, 0u); break;
     default: return -2;
     }
     if ((int)step >= g_hw_stage) {
