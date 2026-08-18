@@ -542,8 +542,24 @@ static void spi_tx(const uint8_t *data, uint32_t n)
         if (spi2_dma_tx(data, n)) {
             return;
         }
-        /* Fell through: DMA timed out and is now disabled. The FIFO path
-         * below still works, so the display degrades rather than stopping. */
+        /* ABANDON the span. Do not re-send it.
+         *
+         * This used to fall through to the FIFO path below, which re-sent the
+         * whole buffer -- but a transfer that TIMED OUT is not a transfer that
+         * did nothing. The engine may already have shifted out any amount of it,
+         * so the re-send delivers those bytes twice and every pixel afterwards
+         * lands displaced by however many were duplicated. A recovery path that
+         * corrupts more than the failure it is recovering from.
+         *
+         * Dropping the span costs one row of one frame; the next frame issues a
+         * fresh window and repaints it. The timeout also disabled DMA, so every
+         * transfer after this one takes the FIFO path correctly.
+         *
+         * UM-NATOS-031 section 2 argues this should be fixed BEFORE any change
+         * to the timeout bound, because it is what makes such a change safe
+         * rather than destructive -- advice that arrived one session too late
+         * (UM-NATOS-030 section 3). */
+        return;
     }
     spi2_tx(data, n);
 #else
