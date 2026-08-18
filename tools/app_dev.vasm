@@ -1,0 +1,111 @@
+; Application DEV — the first program to reach a peripheral.
+;
+; Until now an application could draw, read the touchscreen, print, and exchange
+; messages, and that was the entire list. Everything else on this board was
+; reachable only from the kernel. This program enumerates the device table,
+; names every entry, reads the light sensor and sounds the speaker -- none of
+; which required a new syscall, because there is now a device model.
+;
+; It is also the test of that model. If a program written against the table can
+; do this without the kernel being edited, the table works; if it cannot, the
+; shape is wrong and better found here than after six more drivers.
+
+start:
+        ldi     r13, @publish       ; where the reading is published, set once
+
+        ldi     r0, 0               ; DEV_OP_COUNT
+        sys     device
+        mov     r10, r0             ; device count, kept for the loop
+
+        ldi     r0, @msg_found
+        sys     puts
+        mov     r0, r10
+        sys     putd
+        ldi     r0, @msg_devices
+        sys     puts
+
+        ldi     r11, 0              ; id
+
+names:
+        sltu    r1, r11, r10
+        brz     r1, sensing
+
+        ldi     r0, 1               ; DEV_OP_NAME
+        mov     r1, r11
+        ldi     r2, @namebuf
+        ldi     r3, 16
+        sys     device
+
+        ldi     r0, @msg_dev
+        sys     puts
+        mov     r0, r11
+        sys     putd
+        ldi     r0, @msg_colon
+        sys     puts
+        ldi     r0, @namebuf        ; the kernel wrote into our own arena
+        sys     puts
+        ldi     r0, @msg_nl
+        sys     puts
+
+        ldi     r1, 1
+        add     r11, r11, r1
+        jmp     names
+
+; ---- read the light sensor, forever, and beep when it goes dark -------------
+;
+; Device 0 is `light`, device 1 is `beep`. Both are DEV_F_SLOW, so each call
+; ends this program's slice -- which is the point: a syscall costing
+; milliseconds must not be charged to the instruction quantum.
+
+sensing:
+        ldi     r0, 2               ; DEV_OP_READ
+        ldi     r1, 0               ; device 0, light
+        ldi     r2, 0               ; channel 0
+        sys     device
+        brz     r0, sensing         ; refused: try again rather than die
+
+        mov     r12, r1             ; the reading
+        stw     r12, r13, 0         ; publish it where the shell can see it
+
+        ; Deliberately silent. The first version printed every reading and
+        ; buried the console under a hundred lines a second -- a resident
+        ; program that talks continuously is a program nobody can debug around.
+        ; The value is PUBLISHED instead, which is what `ps` reads, and the
+        ; UART is left for things that are actually events.
+
+        ; Dark? A tone needs two numbers and a device takes one word, so the
+        ; caller packs them: (hz << 16) | ticks. That packing is the price of
+        ; keeping every device operation a single scalar.
+        ldi     r1, 400             ; darkness threshold
+        sltu    r2, r12, r1
+        brz     r2, quiet
+
+        ldi     r0, 3               ; DEV_OP_WRITE
+        ldi     r1, 1               ; device 1, beep
+        ldi     r2, 0               ; channel 0
+        ldi     r3, 0x0014          ; ticks = 20  (low half)
+        ldih    r3, 0x03E8          ; hz    = 1000 (high half)
+        sys     device
+
+        ldi     r0, @msg_dark       ; an event, so it is worth saying
+        sys     puts
+        mov     r0, r12
+        sys     putd
+        ldi     r0, @msg_nl
+        sys     puts
+
+quiet:
+        jmp     sensing
+
+        .align  4
+publish:
+        .word   0
+namebuf:
+        .space  16
+
+msg_found:      .string "  [dev] device table: "
+msg_devices:    .string " entries\n"
+msg_dev:        .string "  [dev] "
+msg_colon:      .string " = "
+msg_dark:       .string "  [dev] dark, beeping. light = "
+msg_nl:         .string "\n"

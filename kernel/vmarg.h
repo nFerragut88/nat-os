@@ -73,6 +73,15 @@ int vmarg_string(vm_t *vm, uint32_t off, char *dst, uint32_t max);
  * services that take a small struct by offset. */
 int vmarg_u32(vm_t *vm, uint32_t off, uint32_t *out);
 
+/* Copies kernel data INTO the arena, bounds-checked.
+ *
+ * Deliberately a copy rather than a mutable span. Handing a service a writable
+ * pointer into a program's memory is the mirror of the borrowed-string mistake
+ * and fails the same way: the pointer outlives the check the moment anyone
+ * stores it. Services that need to return bytes hand them here instead, and no
+ * writable arena pointer ever leaves this file. */
+int vmarg_store(vm_t *vm, uint32_t off, const void *src, uint32_t len);
+
 /* How many arguments have been checked, and how many were rejected.
  *
  * A harness whose rejection count is zero across a long run is either perfect or

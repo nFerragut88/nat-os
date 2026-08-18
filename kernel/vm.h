@@ -138,7 +138,23 @@ enum {
      * Messages are copied through a kernel mailbox, so no application ever
      * holds a reference to another's memory. */
     VM_SYS_SEND  = 10,
-    VM_SYS_RECV  = 11
+    VM_SYS_RECV  = 11,
+
+    /* The last hand-written syscall. Everything after this is a device.h table
+     * entry rather than an addition to this enum and to vasm.py's SYSCALLS.
+     *
+     *   r0 = operation (DEV_OP_* in device.h)
+     *   0 COUNT             -> r0 = number of devices
+     *   1 NAME  r1=id r2=off r3=max   -> r0 = ok, name written into the arena
+     *   2 READ  r1=id r2=chan         -> r0 = ok, r1 = value
+     *   3 WRITE r1=id r2=chan r3=value-> r0 = ok
+     *   4 INFO  r1=id                 -> r0 = ok, r1 = channels, r2 = flags
+     *
+     * Refusal returns r0 = 0 and is NOT a fault: asking a device something it
+     * cannot answer is legal, and a program that cannot enumerate without dying
+     * cannot enumerate. Faults stay what they have always been -- reaching
+     * outside the arena. */
+    VM_SYS_DEVICE = 12
 };
 
 /* Fault codes. VM_FAULT_NONE is the only non-terminal value. */

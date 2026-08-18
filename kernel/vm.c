@@ -10,6 +10,7 @@
 
 #include "vm.h"
 #include "vmarg.h"
+#include "device.h"
 #include "arena.h"
 #include "display.h"
 #include "ipc.h"
@@ -332,6 +333,93 @@ static int do_syscall(vm_t *vm, uint32_t num)
         }
         fault(vm, VM_FAULT_STRING, off);
         return 1;
+    }
+
+    case VM_SYS_DEVICE: {
+        uint32_t op = vm->reg[0];
+
+        /* Every program-supplied quantity reaching a driver goes through this
+         * one switch, and the only one that is a buffer goes through vmarg.
+         * Drivers below never see the vm, never see the arena, and receive
+         * scalars that have already been checked. */
+        switch (op) {
+        case DEV_OP_COUNT:
+            vm->reg[0] = (uint32_t)device_count();
+            return 0;
+
+        case DEV_OP_INFO: {
+            uint32_t chans = 0, flags = 0;
+            vm->reg[0] = (uint32_t)device_info(vm->reg[1], &chans, &flags);
+            vm->reg[1] = chans;
+            vm->reg[2] = flags;
+            return 0;
+        }
+
+        case DEV_OP_NAME: {
+            const char *nm = device_name(vm->reg[1]);
+            if (!nm) {
+                vm->reg[0] = 0;
+                return 0;               /* refusal, not a fault */
+            }
+            uint32_t n = 0;
+            while (nm[n]) { n++; }
+            n++;                        /* the terminator goes too */
+
+            /* The program says how much room it has; it does not get to be
+             * believed about it. `max` is bounded before anything is copied,
+             * and vmarg_store checks the destination against the arena. */
+            uint32_t max = vm->reg[3];
+            if (max > DEVICE_NAME_MAX) {
+                max = DEVICE_NAME_MAX;
+            }
+            if (n > max) {
+                n = max;
+            }
+            if (n == 0u) {
+                vm->reg[0] = 0;
+                return 0;
+            }
+            char tmp[DEVICE_NAME_MAX];
+            for (uint32_t i = 0; i < n; i++) {
+                tmp[i] = nm[i];
+            }
+            tmp[n - 1u] = 0;            /* always terminated, even truncated */
+
+            if (!vmarg_store(vm, vm->reg[2], tmp, n)) {
+                return 1;               /* harness recorded the fault */
+            }
+            vm->reg[0] = 1;
+            return 0;
+        }
+
+        case DEV_OP_READ: {
+            /* The id is captured BEFORE r1 is overwritten with the result.
+             * Reading it back afterwards asks whether the light LEVEL is a slow
+             * device, which is nonsense that happens to compile. */
+            uint32_t id = vm->reg[1];
+            uint32_t v  = 0;
+            int ok = device_read(id, vm->reg[2], &v);
+            vm->reg[0] = (uint32_t)ok;
+            vm->reg[1] = v;
+            if (device_is_slow(id)) {
+                vm->yield_now = 1;      /* milliseconds, not instructions */
+            }
+            return 0;
+        }
+
+        case DEV_OP_WRITE: {
+            uint32_t id = vm->reg[1];
+            vm->reg[0] = (uint32_t)device_write(id, vm->reg[2], vm->reg[3]);
+            if (device_is_slow(id)) {
+                vm->yield_now = 1;
+            }
+            return 0;
+        }
+
+        default:
+            vm->reg[0] = 0;             /* unknown operation: refused, alive */
+            return 0;
+        }
     }
 
     case VM_SYS_PUTD:

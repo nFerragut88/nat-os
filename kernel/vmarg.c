@@ -100,3 +100,24 @@ int vmarg_u32(vm_t *vm, uint32_t off, uint32_t *out)
     *out = *(volatile const uint32_t *)s.ptr;
     return 1;
 }
+
+int vmarg_store(vm_t *vm, uint32_t off, const void *src, uint32_t len)
+{
+    g_checks++;
+
+    if (len == 0u) {
+        return 1;
+    }
+    if (!vm_in_bounds(vm, off, len)) {
+        return reject(vm, VM_FAULT_BOUNDS, off);
+    }
+
+    /* Byte at a time, into the arena. No writable pointer is produced, so
+     * there is nothing for a caller to hold on to past the check. */
+    const uint8_t *s = (const uint8_t *)src;
+    volatile uint8_t *d = (volatile uint8_t *)(vm->base + off);
+    for (uint32_t i = 0; i < len; i++) {
+        d[i] = s[i];
+    }
+    return 1;
+}

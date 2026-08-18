@@ -38,6 +38,7 @@
 #include "mutex.h"
 #include "shell.h"
 #include "vm.h"
+#include "device.h"
 #include "generated/demo.h"
 #include "generated/spin.h"
 #include "generated/app_a.h"
@@ -47,6 +48,7 @@
 #include "generated/app_gfx_rogue.h"
 #include "generated/app_paint.h"
 #include "generated/app_blit.h"
+#include "generated/app_dev.h"
 #include "generated/app_ping.h"
 #include "generated/app_pong.h"
 #include "uart.h"
@@ -825,6 +827,9 @@ static const shell_program_t PROGRAMS[] = {
     { "gfxrogue", vm_app_gfx_rogue, VM_APP_GFX_ROGUE_LEN, 256u, 0u },
     { "paint",   vm_app_paint, VM_APP_PAINT_LEN, 512u, 0u },
     { "blit",    vm_app_blit,  VM_APP_BLIT_LEN,  512u, 0u },
+    /* The first program that reaches a peripheral. Its arena is larger because
+     * it holds a name buffer the kernel writes into. */
+    { "dev",     vm_app_dev,   VM_APP_DEV_LEN,   768u, VM_APP_DEV_AT_PUBLISH },
     { "ping",    vm_app_ping,  VM_APP_PING_LEN,  512u, 0u },
     { "pong",    vm_app_pong,  VM_APP_PONG_LEN,  512u, 0u },
 };
@@ -1576,6 +1581,7 @@ void kmain(void)
 
     touch_init();
     touch_irq_init();   /* PENIRQ -> matrix -> CPU line 23; see intr.h */
+    device_init();      /* the device table; must precede anything that uses it */
     adc_init();         /* SAR ADC1; the light sensor is channel 6           */
     i2c_init();
     audio_init();       /* DAC2 on gpio26; tones only, see audio.h */         /* bit-banged, SDA gpio22 / SCL gpio27               */

@@ -68,6 +68,10 @@ OPS = {
 SYSCALLS = {
     "exit": 0, "putc": 1, "puts": 2, "putd": 3, "ticks": 4,
     "fill": 5, "text": 6, "dims": 7, "touch": 8, "blit": 9, "send": 10, "recv": 11,
+    # The last entry this table should ever need. Anything new is a device.h
+    # table entry reached through `sys device`, not a thirteenth mnemonic here
+    # and a fourteenth case in vm.c.
+    "device": 12,
 }
 
 ESCAPES = {"n": 10, "r": 13, "t": 9, "0": 0, "\\": 92, '"': 34, "'": 39}
