@@ -1,7 +1,21 @@
 # UM-NATOS-029 — Two Mysteries, One Confirmed Bug, and a Novel That Called It First
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.0 · 2026-08-18 · Status: **One real fault found and fixed; both mysteries still open**
+Revision 1.1 · 2026-08-18 · Status: **Superseded — both mysteries resolved in [UM-NATOS-030](UM-NATOS-030-one-bit.md)**
+
+> **Both mysteries in this report have one cause, and it is not in here.**
+> `DMA_OUTLINK_START` was defined as bit 30, which is `OUTLINK_RESTART`; START is
+> bit 29. Every DMA transfer resumed the old descriptor chain instead of starting
+> the new one, so the panel received a displaced copy of a correct framebuffer.
+>
+> The FIFO path never touches that register, which is why the view "healed" when
+> a spurious timeout disabled DMA, why gfxrogue and `hog draw` (180 px, DMA-sized
+> fills) appeared to repair it by provoking that timeout sooner, and why the
+> `draw` application (20 px, FIFO-sized) never did. §10's conclusions about
+> continuous interleaved drawing are wrong; the mechanism is in UM-NATOS-030 §3.
+>
+> Kept as written, because the eleven eliminated theories in §4 are still
+> eliminated and the reasoning that missed the cause is the point.
 
 ---
 
