@@ -1,0 +1,25 @@
+I am pitching to you something that somewhat resembles an elevator pitch, but this is like the elevator in willy Wonka's chocolate factory that just keeps going and going and going up.
+
+Forget about my software, and forget about the hardware that it is being used for. These are just abstractions of energy.
+
+FiendNet bypasses the ISP.
+
+FiendNet bypasses greed.
+
+FiendNet provides communication.
+
+Please reference DTN_Ark for more context for the infrastructure of how this works, but the way I think about it. Its like a bag of marbles spilled all over the floor.
+
+the bag is the net, 
+the marbles are the user's devices (android with APK or ESP32)
+and the shooters (big marbles) are the Arks (an Ark is a LoRa Node that supports DTN)
+the marbles can talk amongst themselves, but if a marble really wants to move, its gotta use the shooter
+to shoot across the floor to its destination, aka another marble
+
+And i know you are reading this and thinking... this analogy isn't great... because you are using the marble as an analogy for two different things.... the user's device, and the data being transferred.
+But in my mind, just think about the electrons that are spinning around the marbles. That can be the data. And you can say that all the marbles are really all spilled out and in place and nobody moves. And its the electrons moving, bouncing from shooter to shooter, to reach the destination marble.
+
+enough analogies aside.
+
+DTN_Ark.txt describes the real underlying parts to make this really happen and I am just trying to explain this in a way that the average human can understand, but its kind of difficult.
+
