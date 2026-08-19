@@ -8,8 +8,12 @@
 > to ~50%, and nothing radiates. The blast-radius estimate of ~306 kB was wrong
 > by 250x because it ignored `--gc-sections`.
 >
-> Most concrete untried thing, and now free: **`lmacTxFrame`**, the vendor's own
-> transmit entry point, in the image since lmacInit pulled lmac.o.
+> **`lmacTxFrame` is NOT the next step**, despite looking like it. It was
+> garbage-collected along with the per-AC state table it reads, so it is neither
+> linked nor free — and its assert path is an infinite loop inside masked
+> interrupts, its precondition is unreadable, and its first argument is a packet
+> structure that would have to be guessed. UM-NATOS-034 §10.6 records why it was
+> examined and deliberately left alone.
 >
 > **Status 2026-08-19 — the search is now half the size.** UM-NATOS-034 settled
 > the question that had blocked every previous attempt: a second nat-os board,

@@ -352,10 +352,57 @@ they do on this silicon.
 
 `lmacInit` stays, behind the `lmacinit` shell command, called from nowhere at
 boot. It costs 1,200 bytes, breaks nothing, and is the only way to reproduce the
-`chain acks` behaviour for whoever looks next. `lmac.o` also brought
-`lmacTxFrame` into reach for the same price, which is the vendor's own transmit
-entry point and has never been tried — nat-os writes the transmit registers
-directly instead, transcribed from open-mac.
+`chain acks` behaviour for whoever looks next.
 
-That is the most concrete untried thing left, and it is now free.
+### 10.6 `lmacTxFrame`, examined and deliberately not called
+
+Revision 1.2 first claimed `lmac.o` had brought `lmacTxFrame` — the vendor's own
+transmit entry point — into reach for the same price, and that it was the
+obvious next thing. **That was wrong on both counts**, and the correction is
+worth more than the claim was.
+
+Of lmac.o's 50 functions, `--gc-sections` kept exactly two:
+
+```
+40090ee4 T lmacInit
+40090e98 T lmacInitAc
+```
+
+`lmacTxFrame` was discarded, and so was `.bss.our_instances`, the per-AC state
+table it works from. It is not linked and not free.
+
+More importantly it should not be called even if it were. Disassembled, its
+first act is to index that table and check a state byte:
+
+```
+l8ui a6, a5, 18          ; per-AC state, stride 36
+addi a5, a6, -3
+bltui a5, 2, ok          ; proceed only when the state is 3 or 4
+...
+movi a2, 0x6f8           ; assert, line 1784
+callx8 a8
+j    99                  ; jumps to ITSELF -- forever
+```
+
+Four reasons, any one sufficient:
+
+1. **The failure mode is an unrecoverable hang**, not a fault. That loop runs
+   inside `phy_stack_call`, which masks interrupts, so the watchdog may never
+   fire. It needs the power pulled.
+2. **The precondition cannot be checked first.** `our_instances` is a static
+   that is not in the image, so there is no way to read the state byte and learn
+   whether the assert would pass.
+3. **Its first argument is a packet structure that would have to be
+   fabricated**, and it dereferences it immediately. A wrong layout is vendor
+   code walking garbage.
+4. It is not linked, so trying costs the object plus its dependency chain
+   anyway.
+
+This is precisely the situation the project's discipline exists for. A vendor
+function whose assert path is an infinite loop, whose precondition is
+unreadable, and whose argument must be guessed, is not a lead — it is a way to
+lose an afternoon and a working receiver at the same time.
+
+Left undone, on purpose, and recorded so nobody re-derives it as an obvious
+next step.
 
