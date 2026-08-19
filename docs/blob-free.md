@@ -101,15 +101,41 @@ changed is the default, and what the default *says*.
 
 ## The remaining dependency, and the finish line
 
-One thing stands between this and a kernel that is entirely its own code:
+> **Closed the same day. See UM-NATOS-035.**
+
+One thing stood between this and a kernel that is entirely its own code:
 
 ```
 vendor/bootloader.bin    17 KB   Espressif's second-stage bootloader
 ```
 
-The book has always flagged it as borrowed and replaceable, and unlike the PHY
-it is **fully documented** — UM-NATOS-002 already describes the image format
-this project's own build produces.
+Unlike the PHY it is **fully documented** — UM-NATOS-002 already describes the
+image format this project's own build produces — so writing a replacement was a
+bounded, achievable project. It was also the only one left.
 
-Writing a replacement is a bounded, achievable project. It is also, now, the
-only one left.
+### It is written
+
+`boot/`, **2,736 bytes**. It reads the image header at `0x10000`, maps the DROM
+segment through the flash MMU, copies the DRAM and IRAM segments, enables the
+cache and jumps. `build.ps1 -Flash` builds and flashes it by default;
+`-VendorBootloader` restores Espressif's for recovery or comparison.
+
+It was short for one reason: `kernel/flash.c` drives SPI1 through its registers
+with no ROM calls and no dependence on the cache, so the usual
+read-flash-before-flash-works problem was already solved by a file written for
+an unrelated purpose. It is compiled into the bootloader unchanged.
+
+Verified on hardware: full boot, every self-test PASS, SD, display, I²C, VM,
+`romcall` returning the published CRC-32 check value, and every string in the
+log arriving through the MMU entry the bootloader wrote.
+
+### What is left, stated plainly
+
+| | |
+|---|---|
+| ROM first-stage loader | in silicon; not replaceable by anyone |
+| `vendor/partitions.bin` | 3 KB at `0x8000`, **read by nothing in this chain** — kept for external tooling |
+| `vendor/bootloader.bin` | out of the boot path; kept as the recovery image |
+
+**The executable chain from reset to shell prompt is now this project's own code,
+except for the part that is physically in the chip.**

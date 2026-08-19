@@ -15,6 +15,10 @@ param(
     [string]$Port = "COM5",
     [string]$Vendor,           # bootloader/partition source; defaults to vendor/
 
+    # Flash Espressif's second stage at 0x1000 instead of ours. The recovery
+    # path, and the A/B control if our bootloader is ever suspected.
+    [switch]$VendorBootloader,
+
     # Which board this image is for. Selects a pin map and a set of fitted
     # peripherals from kernel/board_<name>.h.
     #
@@ -191,12 +195,38 @@ if ($LASTEXITCODE -ne 0) { throw "elf2image failed" }
 Write-Host ("  image: {0:N0} bytes" -f (Get-Item $bin).Length)
 
 if ($Flash) {
-    foreach ($f in @("bootloader.bin", "partitions.bin")) {
-        if (-not (Test-Path (Join-Path $borrowed $f))) { throw "missing $f in $borrowed - see vendor/README.md" }
+    # The bootloader at 0x1000 is ours now (boot/, UM-NATOS-035). It is built
+    # here rather than assumed present, so `build.ps1 -Flash` can never write a
+    # stale second stage next to a fresh kernel -- the two agree about the image
+    # format, and a mismatch between them is not a class of bug worth inventing.
+    #
+    # -VendorBootloader falls back to Espressif's copy. Keep that path working:
+    # it is how a broken bootloader gets recovered, and the day it is needed is
+    # not the day to be debugging it.
+    if ($VendorBootloader) {
+        if (-not (Test-Path (Join-Path $borrowed "bootloader.bin"))) {
+            throw "missing bootloader.bin in $borrowed - see vendor/README.md"
+        }
+        $stage2 = Join-Path $borrowed "bootloader.bin"
+        Write-Host "  stage 2: vendor (Espressif)" -ForegroundColor Yellow
+    } else {
+        & (Join-Path $PSScriptRoot "boot\build_boot.ps1")
+        if ($LASTEXITCODE -ne 0) { throw "bootloader build failed" }
+        $stage2 = Join-Path $PSScriptRoot "boot\build\boot.bin"
+        Write-Host "  stage 2: ours" -ForegroundColor Green
     }
+
+    # The partition table stays borrowed and stays at 0x8000. Nothing in this
+    # chain reads it any more -- boot.c hardcodes 0x10000 -- but esptool and
+    # every external tool expect one to be there, and 3 KB is cheaper than the
+    # surprise.
+    if (-not (Test-Path (Join-Path $borrowed "partitions.bin"))) {
+        throw "missing partitions.bin in $borrowed - see vendor/README.md"
+    }
+
     Write-Host "== flashing $Port ==" -ForegroundColor Cyan
     & $python $esptool --chip esp32 --port $Port --baud 460800 write_flash -z `
-        0x1000  (Join-Path $borrowed "bootloader.bin") `
+        0x1000  $stage2 `
         0x8000  (Join-Path $borrowed "partitions.bin") `
         0x10000 $bin
     if ($LASTEXITCODE -ne 0) { throw "flash failed" }
