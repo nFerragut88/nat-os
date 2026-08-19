@@ -1,7 +1,7 @@
 # UM-NATOS-034 — The Second Receiver
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.3 · 2026-08-19 · Status: **Negative result, and a definitive one** — §9, §10 and §11 add three more; §11 corrects §10.4
+Revision 1.4 · 2026-08-19 · Status: **Negative result, and a definitive one** — §12 removes the last doubt about the receiver
 
 ---
 
@@ -502,4 +502,59 @@ far.
 
 Until someone does that, transmit is a research problem rather than a task with
 a next step.
+
+---
+
+## 12. The receiver, proved against a known-good transmitter (revision 1.4)
+
+Every conclusion in this report rests on a receiver whose only proven reference
+was a router across the house. That left one gap: "our transmitter is silent"
+and "our receiver is deaf in some way we have not noticed" were never fully
+separated. §5 already showed the receiver's frame count varies a lot with what
+else is running, which made the gap real rather than theoretical.
+
+Closing it needed a transmitter we control that definitely works. So: ESP-IDF
+5.4.1, unmodified, as a SoftAP on the second board — `tools/idf_ref`.
+
+```
+REF-AP ssid=natref channel=6 mac=5c:01:3b:51:2b:41
+```
+
+nat-os, promiscuous on channel 6, 30 cm away:
+
+```
+frames=235  recycled=235  networks=2
+5c:01:3b:51:2b:41  x170  "natref"
+44:25:38:19:0d:1a  x53   "TC7NR"
+```
+
+**170 beacons in 15 seconds**, MAC and SSID matching the reference exactly.
+
+### 12.1 What this settles
+
+| | beacons heard |
+|---|---|
+| ESP-IDF SoftAP, ~10 Hz, 30 cm | **170** |
+| nat-os transmitter, ~10 Hz, 30 cm | **0** |
+
+Same receiver, same channel, same room, same session. The receiver is not the
+problem, and now it is not the problem *by measurement against a working
+transmitter* rather than by inference from a distant router.
+
+Stated precisely: the two rows are not simultaneous, because a radio cannot
+hear itself and there are only two boards. The comparison is across runs. What
+is shared is everything else.
+
+### 12.2 And a correction about what this needed
+
+§11.4 said differential tracing needed "a second toolchain and a bare devkit —
+the CYD's JTAG pins are the display's". The JTAG part is true and was
+irrelevant: it reached for the heaviest method and then let that method's
+constraint rule out the whole approach. **The CYD is an ordinary ESP32-WROOM-32
+and runs ESP-IDF perfectly well.** Nothing here needed JTAG, a devkit, or
+anything but the two boards already on the desk and a UART.
+
+The second toolchain part is fair — this is the first thing in the project that
+depends on Espressif's tooling rather than replacing it, and the first build
+took 379 seconds.
 
