@@ -214,6 +214,34 @@ cause" a measurement instead of an inference — and it was nearly wrecked by
 - **MISO still reads all zeros**, which is why the framebuffer had to be dumped
   over the UART rather than read back off the glass. `panelpull` is written and
   untested.
-- **`panic.c` fills 320 pixels wide on a 240-wide panel** (`display_fill_rect(0,
-  0, 320, 20, ...)`). Latent, found while reading; not exercised because nothing
-  had panicked.
+~~**`panic.c` fills 320 pixels wide on a 240-wide panel.**~~ **Fixed** — §8.
+
+
+---
+
+## 8. A latent one, found by reading and closed by firing it
+
+`panic_screen()` drew its title bar with:
+
+```c
+display_fill_rect(0, 0, 320, 20, COLOR_WHITE);   /* 320 is the panel's HEIGHT */
+```
+
+The panel is 240 wide and 320 tall, so this asked for a rectangle a third wider
+than the screen. It now says `DISP_W`.
+
+**It had never produced a wrong pixel.** `display_fill_rect()` clips `w` against
+`DISP_W` before drawing, so the driver silently corrected it every time. That is
+precisely why it survived: the only code that draws this screen runs after the
+system has already failed, so it is seen rarely, and when it is seen it looks
+right.
+
+Named rather than replaced with `240`, because the two dimensions being
+confusable *is* the defect. A sweep of the rest of the kernel for the same
+mistake found no other instance.
+
+Verified by causing a real panic (`fault`) rather than by inspection — the panel
+path is one of Chapter 12's "mechanisms that had never fired", and this is the
+second time it has been fired deliberately. The screen renders and every line is
+legible. The fix is invisible by construction, which is the correct outcome for
+removing a constant the driver was already compensating for.

@@ -69,7 +69,17 @@ static void panic_screen(void)
     display_enter_panic_mode();
 
     display_clear(COLOR_BLUE);
-    display_fill_rect(0, 0, 320, 20, COLOR_WHITE);
+    /* DISP_W, not a literal. This read `320` -- the panel's HEIGHT -- so the
+     * title bar asked for a rectangle a third wider than the screen.
+     *
+     * It never showed, because display_fill_rect() clips w against DISP_W and
+     * quietly drew the right thing. That is exactly why it survived: the only
+     * code in this kernel that draws it runs after the system has already
+     * failed, so nobody sees it often, and when they do it looks correct.
+     *
+     * Naming the constant is the fix rather than writing 240, because the two
+     * dimensions being confusable is the whole defect. */
+    display_fill_rect(0, 0, DISP_W, 20, COLOR_WHITE);
     display_text(6, 6, "KERNEL PANIC", COLOR_BLUE, COLOR_WHITE, 1);
 
     display_text(6, 36, g_panic_what, COLOR_WHITE, COLOR_BLUE, 1);

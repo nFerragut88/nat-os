@@ -791,6 +791,20 @@ Two findings:
   use.
 - **The AHB alias is validated behaviourally, not from documentation.**
 
+> **Since written.** The panel path carried a latent geometry fault the whole
+> time: `panic_screen()` drew its title bar 320 pixels wide on a 240-wide panel —
+> the two dimensions written the wrong way round. It never produced a wrong
+> pixel, because `display_fill_rect()` clips width against `DISP_W` and silently
+> corrected it on every call.
+>
+> That is this chapter's own thesis arriving from a new direction. A mechanism
+> that fires rarely is not just untested, it is *unexamined*: the panic screen is
+> only ever seen after the system has already failed, so the rare look it does
+> get is not a careful one, and a driver that quietly fixes your arithmetic
+> removes the last chance of noticing. Found by reading, fixed to `DISP_W`, and
+> then verified by causing a real panic rather than by inspection —
+> UM-NATOS-033 §8.
+
 ---
 
 **Part II ends here.** The kernel is complete: it boots, it interrupts, it
