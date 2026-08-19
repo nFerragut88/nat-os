@@ -252,6 +252,38 @@ win_call_vendor:
  *   uint32_t rom_call3(uint32_t fn, uint32_t a, uint32_t b, uint32_t c);
  */
     .align 4
+/* Four-argument windowed call.
+ *
+ * rom_call3 was enough until the clock bring-up needed rom_i2c_writeReg, which
+ * takes (block, host_id, reg_add, data). Identical to rom_call3 with one more
+ * argument moved into the callee's window; kept as its own symbol rather than
+ * generalising, because the register moves are the whole body and a shared
+ * version would be longer than both.
+ */
+    .global rom_call4
+    .type rom_call4, @function
+rom_call4:
+    addi    a1, a1, -32
+    s32i    a0,  a1, 0
+    s32i    a12, a1, 4              /* callee-saved under call0; CALL8 eats them */
+    s32i    a13, a1, 8
+    s32i    a14, a1, 12
+    s32i    a15, a1, 16
+    mov     a10, a3
+    mov     a11, a4
+    mov     a12, a5
+    mov     a13, a6
+    callx8  a2
+    mov     a2,  a10
+    l32i    a0,  a1, 0
+    l32i    a12, a1, 4
+    l32i    a13, a1, 8
+    l32i    a14, a1, 12
+    l32i    a15, a1, 16
+    addi    a1, a1, 32
+    ret
+    .size rom_call4, . - rom_call4
+
     .global rom_call3
     .type rom_call3, @function
 rom_call3:

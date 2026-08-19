@@ -203,6 +203,25 @@ if ($Flash) {
     # -VendorBootloader falls back to Espressif's copy. Keep that path working:
     # it is how a broken bootloader gets recovered, and the day it is needed is
     # not the day to be debugging it.
+    # -WiFi forces Espressif's second stage, for now.
+    #
+    # UM-NATOS-036: with our bootloader, register_chipv7_phy() panics with
+    # StoreProhibited inside phy_enter_critical. The clock difference that used
+    # to HANG it is fixed (kernel/clock.c), and that fix is real and applies to
+    # every build -- but at least one more thing Espressif's loader leaves
+    # behind is still missing, and it has not been found. Eight register
+    # differences were applied and did not explain it; the windowed ABI was
+    # tested and is intact.
+    #
+    # The blob-free default build is unaffected and fully verified on our
+    # loader. This gate exists so that WiFi research is not silently conducted
+    # on a broken foundation -- debugging the PHY on top of an unexplained
+    # bootloader gap is exactly how this project has previously lost sessions.
+    if ($WiFi -and -not $VendorBootloader) {
+        Write-Host "  stage 2: vendor (forced by -WiFi; see UM-NATOS-036)" -ForegroundColor Yellow
+        $VendorBootloader = $true
+    }
+
     if ($VendorBootloader) {
         if (-not (Test-Path (Join-Path $borrowed "bootloader.bin"))) {
             throw "missing bootloader.bin in $borrowed - see vendor/README.md"

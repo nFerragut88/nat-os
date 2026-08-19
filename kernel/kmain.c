@@ -56,6 +56,7 @@
 #include "timer.h"
 #include "task.h"
 #include "watchdog.h"
+#include "clock.h"
 #include "panic.h"
 #include "xtensa.h"
 
@@ -1644,6 +1645,34 @@ void kmain(void)
     uart_puts("  vecbase      : ");
     uart_put_hex(xt_get_vecbase());
     uart_puts("\n");
+
+    /* Immediately after vecbase, and before anything that measures time.
+     *
+     * After vecbase because reaching the PLL means calling a windowed ROM
+     * function, and windowed code needs the overflow handlers that line above
+     * just installed. Before everything else because every duration this
+     * kernel reports is derived from CCOUNT, so a clock changed later would
+     * silently rescale measurements taken earlier.
+     *
+     * This used to be Espressif's bootloader's job, inherited without the
+     * kernel knowing it depended on it. UM-NATOS-035's replacement loader does
+     * not do it, and the board ran at 40 MHz while every cycle-derived
+     * instrument agreed it had not. See clock.c. */
+    int clk_rc = clock_init(BOARD_XTAL_MHZ);
+    uart_puts("  cpu clock    : ");
+    uart_put_dec(clock_cpu_mhz());
+    uart_puts(" MHz ");
+    if (clk_rc != 0) {
+        uart_puts("(clock_init REFUSED - unsupported crystal)\n");
+    } else if (clock_pll_switched()) {
+        uart_puts("(PLL, switched by the kernel)\n");
+    } else {
+        uart_puts("(PLL, already set by the bootloader)\n");
+    }
+    /* The measurement, not the intent. If these disagree, believe this one. */
+    if (clock_source() != 1u) {
+        uart_puts("  *** SOC_CLK_SEL is not PLL - the board is running slow ***\n");
+    }
 
     console_init();
     ipc_init();

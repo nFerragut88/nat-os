@@ -33,6 +33,9 @@ uint32_t win_call_vendor(uint32_t depth, uint32_t seed);
  * first vendor code this kernel runs. */
 uint32_t rom_call3(uint32_t fn, uint32_t a, uint32_t b, uint32_t c);
 
+/* Four arguments, for rom_i2c_writeReg(). See clock.c. */
+uint32_t rom_call4(uint32_t fn, uint32_t a, uint32_t b, uint32_t c, uint32_t d);
+
 /* Calls a windowed function that calls BACK into call0 code on every
  * iteration -- proof the reverse bridge round-trips. */
 uint32_t win_call_bridge(uint32_t fn_add, uint32_t depth);

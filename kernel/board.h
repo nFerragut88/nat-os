@@ -57,6 +57,15 @@
  * the header rather than in the build script means someone reading the board
  * definition learns what the board IS, not what today's command line happened
  * to say. */
+/* Crystal frequency, in MHz. Both boards so far are 40; a 26 MHz part exists
+ * and would need a different PLL divider table, which clock_init() refuses
+ * rather than approximates -- applying the wrong row would lock the PLL to the
+ * wrong frequency and make every timing in the system wrong by a ratio, which
+ * is the exact failure clock.c was written to fix. */
+#ifndef BOARD_XTAL_MHZ
+#  define BOARD_XTAL_MHZ 40u
+#endif
+
 #if defined(BOARD_WIFI_OVERRIDE)
 #  undef  BOARD_HAS_WIFI
 #  define BOARD_HAS_WIFI 1

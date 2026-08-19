@@ -1,7 +1,16 @@
 # UM-NATOS-035 — The Last Borrowed Thing
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.0 · 2026-08-19 · Status: **Written, flashed, and running on hardware**
+Revision 1.1 · 2026-08-19 · Status: **Running on hardware; §8's verification was incomplete — see UM-NATOS-036**
+
+> **CORRECTION.** This bootloader shipped without configuring the SoC clock,
+> which Espressif's does. The board ran at 40 MHz instead of 80, and every
+> instrument in §8 was blind to it because they are all derived from CCOUNT.
+> The `-WiFi` build was also never tested on it and does not work.
+>
+> The clock is fixed in `kernel/clock.c`. The WiFi gap is open and `-WiFi`
+> is gated to Espressif's loader. UM-NATOS-036 has the whole account,
+> including what §8 should have said.
 
 ---
 
