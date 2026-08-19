@@ -89,8 +89,8 @@ ref = open_port(REF_PORT, reset=True)
 ref_txt = read_for(ref, 22.0)
 ref.close()
 ref_dumps = parse(ref_txt)
-mac = re.search(r"REF-AP .*mac=([0-9a-f:]{17})", ref_txt)
-print(f"   AP mac {mac.group(1) if mac else '?'}   dumps captured: {len(ref_dumps)}")
+mac = re.search(r"REF-(?:AP|RAW) .*mac=([0-9a-f:]{17})", ref_txt)
+print(f"   ref mac {mac.group(1) if mac else '?'}   dumps captured: {len(ref_dumps)}")
 
 # ---- nat-os: drive it into the same state, then dump twice ----------------
 print("\n== nat-os (transmitting, or trying to) ==", flush=True)

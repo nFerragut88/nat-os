@@ -1065,6 +1065,20 @@ extern void lmacInit(void);
  * one below the AP's ...2b:41, which is the station interface. nat-os has one
  * identity, so it writes the same address to all three rather than inventing
  * an interface split it does not have. */
+/* There are TWO address slots and which one is live depends on the interface.
+ *
+ * The first reference build was a SoftAP and put its address at 0x3FF73008. The
+ * second is a STA doing raw injection -- the job nat-os actually does -- and
+ * puts it at 0x3FF73000, leaving 0x3FF73008 for the AP interface it does not
+ * have. `machw` originally wrote only 0x3FF73008, which is to say it programmed
+ * the slot belonging to the mode nat-os is not in.
+ *
+ * That is the differential earning its keep twice on the same register block:
+ * the first diff found the address was never written at all, the second found
+ * it was written to the wrong slot. Both are only visible by comparing against
+ * a reference doing the same job. */
+#define MAC_ADDR_STA_LOW  0x3FF73000u
+#define MAC_ADDR_STA_HIGH 0x3FF73004u
 #define MAC_ADDR0_LOW   0x3FF73008u
 #define MAC_ADDR0_HIGH  0x3FF7300Cu
 #define MAC_MASK0_LOW   0x3FF73028u
@@ -1082,6 +1096,9 @@ void wifimac_set_hw_addr(const uint8_t mac[6])
                   ((uint32_t)mac[2] << 16) | ((uint32_t)mac[3] << 24);
     uint32_t hi = (uint32_t)mac[4] | ((uint32_t)mac[5] << 8);
 
+    /* The STA slot first: it is the one that matches what this driver does. */
+    *(volatile uint32_t *)MAC_ADDR_STA_LOW  = lo;
+    *(volatile uint32_t *)MAC_ADDR_STA_HIGH = hi;
     *(volatile uint32_t *)MAC_ADDR0_LOW  = lo;
     *(volatile uint32_t *)MAC_ADDR0_HIGH = hi;
     *(volatile uint32_t *)MAC_ADDR1_LOW  = lo;
@@ -1098,8 +1115,8 @@ void wifimac_set_hw_addr(const uint8_t mac[6])
 
 void wifimac_get_hw_addr(uint32_t *lo, uint32_t *hi)
 {
-    *lo = *(volatile uint32_t *)MAC_ADDR0_LOW;
-    *hi = *(volatile uint32_t *)MAC_ADDR0_HIGH;
+    *lo = *(volatile uint32_t *)MAC_ADDR_STA_LOW;
+    *hi = *(volatile uint32_t *)MAC_ADDR_STA_HIGH;
 }
 
 /* ---- the WiFi power domain -----------------------------------------------

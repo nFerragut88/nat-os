@@ -1,7 +1,7 @@
 # UM-NATOS-034 — The Second Receiver
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.6 · 2026-08-19 · Status: **Negative result** — §13 finds a real bug by differential; §14 finds the limit of the technique
+Revision 1.7 · 2026-08-19 · Status: **Negative result** — §15 matches the reference to the job and sharpens the shortlist to nineteen
 
 ---
 
@@ -720,4 +720,88 @@ step for whoever continues.
 job.** This report spent its first eleven sections comparing a transmitter
 against a receiver and being careful about it; §13 compared two transmitters in
 different modes and briefly forgot to be.
+
+---
+
+## 15. A reference doing the same job, and a sharper list
+
+§14.2 said the next step was to match the reference to nat-os rather than the
+reverse. Done: `tools/idf_ref` is now promiscuous, unassociated, on a fixed
+channel, pushing a hand-built raw 802.11 probe request out every 100 ms via
+`esp_wifi_80211_tx()`. That is nat-os's job, described exactly.
+
+### 15.1 The reference was verified before it was trusted
+
+`esp_wifi_80211_tx()` can fail silently, and a reference that is not really
+transmitting would poison every comparison drawn from it. nat-os was used as the
+detector:
+
+```
+802.11 frame: probe-req  len=72
+bssid ff:ff:ff:ff:ff:ff
+bytes: ... 40 00 00 00 ff ff ff ff ff ff 5c 01 3b 51 2b 40 ff ff ff ff ff ff
+                                         ^^^^^^^^^^^^^^^^^ the reference's MAC
+```
+
+Frame rate at the receiver went from ~1.5/s (the house router alone) to about
+20/s. The reference radiates, and says who it is while doing it.
+
+### 15.2 The diff did not shrink; it got sharper
+
+| | SoftAP reference | raw-injection reference |
+|---|---|---|
+| stable and different | 342 | 335 |
+| buffer RAM (`0x3FF74000`+) | 245 | 245 |
+| **MAC control registers** | — | **58** |
+| **of those, "reference has a value, nat-os has zero"** | — | **19** |
+
+Total barely moved, which is worth stating plainly because the expectation in
+§14.2 was that it would. What changed is the *quality*: "reference has
+something, nat-os has nothing" is the shape that cannot be a legitimate mode
+difference, and there are nineteen of them.
+
+### 15.3 The same register block, caught a second time
+
+```
+0x3ff73000  ref=513b015c  nat=00000000
+0x3ff73004  ref=0000402b  nat=00000000
+```
+
+The MAC address again — at `0x3FF73000`, **not** `0x3FF73008` where the SoftAP
+reference kept it. There are two address slots and the live one depends on the
+interface: the AP build used `0x3FF73008`, the STA build uses `0x3FF73000`.
+
+`machw` had programmed only `0x3FF73008` — the slot belonging to the mode nat-os
+is not in. §13 found the address was never written; §15 found it was then
+written to the wrong place. Both were visible only against a reference doing the
+same job.
+
+Fixed, both slots now written. Receive unaffected. **Transmit unchanged:**
+`frames addressed to us=0`, three times, with an active peer 30 cm away.
+
+### 15.4 The handoff
+
+Nineteen registers, each with an address and a value, where a working
+transmitter holds something and this one holds nothing:
+
+```
+3ff73000 513b015c   3ff73004 0000402b   3ff73040 513b015c   3ff73044 0000402b
+3ff73048 513b015c   3ff7304c 0000412b   3ff73068 ffffffff   3ff7306c 0000ffff
+3ff7311c 3ffae000   3ff73124 3ffae000   3ff73148 00000900   3ff7314c 00003000
+3ff73164 0000000c   3ff73800 00030000   3ff73804 00030000   3ff73c40 01e839e0
+3ff73c54 00000404   3ff73c78 00000003   3ff73d40 00000010
+```
+
+Applied together with the address slots and the masks, transmit is still silent.
+Applied individually, no single one has changed the outcome.
+
+That is where this stops. Not because the list is exhausted — `0x3FF73C40`
+holding `01e839e0` against zero is a pointer-shaped value nobody has chased —
+but because the pattern of this session is now clear: **each register poke costs
+a few minutes and eliminates one thing, and there is no evidence the answer is
+in the register set at all.** The difference may be in ordering, in timing, in
+the PHY block the dump does not reach, or in a ROM call neither side exposes.
+
+`tools/idf_ref`, `reg_diff.py` and `wifireg` make any future attempt cheap. The
+next person should start from §15.4 and should not start from a theory.
 
