@@ -1,5 +1,20 @@
 # 01 — Make transmit reach the air
 
+> **Status 2026-08-19 — the search is now half the size.** UM-NATOS-034 settled
+> the question that had blocked every previous attempt: a second nat-os board,
+> promiscuous on the same channel 30 cm away, hears a real access point but
+> never hears the transmitter, in both directions, while the transmitter
+> reports 302 and 219 completions.
+>
+> **Nothing demodulable reaches the air.** Framing and content are exonerated;
+> the fault is in the RF/PHY path. The leads below survive and are now the
+> whole of the search rather than a third of it.
+>
+> Two things UM-NATOS-034 adds: `chain acks` disagrees with the completion
+> count by an order of magnitude and is the only transmit counter not claiming
+> success, and `tools/serial/wifi_link.py` now answers "did anything radiate"
+> in about a minute.
+
 **Size:** large. **Risk:** real — may cost the working receive path.
 **Blocked on:** willingness to accept a link change.
 
