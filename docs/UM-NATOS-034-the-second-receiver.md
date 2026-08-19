@@ -1,7 +1,7 @@
 # UM-NATOS-034 — The Second Receiver
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 3.0 · 2026-08-19 · Status: **CLOSED as a negative, independently confirmed** — §29: a MediaTek adapter sees the control transmitter beaconing 30 cm away and does not see nat-os. Every comparable layer measured and matching; nothing radiates — §22 fixes a real 9.5 dB TX-power defect that is not the cause; §24 verifies the descriptor layout; §25 finds the last candidate was never in the archive this report named, transcribes it in 251 bytes with no new blob, and eliminates it too
+Revision 3.1 · 2026-08-19 · Status: **CLOSED as a negative, independently confirmed** — §30 corrects three overstatements about the i2c traces — §29: a MediaTek adapter sees the control transmitter beaconing 30 cm away and does not see nat-os. Every comparable layer measured and matching; nothing radiates — §22 fixes a real 9.5 dB TX-power defect that is not the cause; §24 verifies the descriptor layout; §25 finds the last candidate was never in the archive this report named, transcribes it in 251 bytes with no new blob, and eliminates it too
 
 ---
 
@@ -2364,12 +2364,100 @@ The radio did not start working. These did, and none of them were the goal:
   dependency that had never been stated and that had the board running at half
   speed (UM-NATOS-036).
 - **`kernel/appcpu.c`** — core 1, startable, as an instrument.
-- **`docs/data/i2c-trace-*.json`** — the ESP32's PHY analog calibration
-  sequence, 5,095 transactions, captured on both firmwares. Not published
-  anywhere the author can find.
+- **`docs/data/i2c-trace-*.json`** — a recording of the analog-config bus during
+  PHY init on both firmwares. A capture, not a decode -- see §30 for what it is
+  and its five known defects.
 - A **9.5 dB transmit-power defect** in the PHY init data, found and fixed.
 - Six broken or mis-aimed instruments caught, each recorded with what it would
   have cost.
 
 An investigation that fails to find its target and produces a verified negative
 across every layer is not the same as a wasted one. But it is finished.
+
+---
+
+## 30. What the i2c traces actually are — three corrections
+
+**Added revision 3.1, 2026-08-19.** §27–§29 describe these files in terms that
+do not survive looking at them properly. Asked directly what they contain and
+whether they are worth sharing, the honest answers required correcting the
+report first.
+
+### 30.1 They are not 5,095 "transactions"
+
+They are **5,095 observed state changes of the host register**, which is not the
+same thing.
+
+The upper byte carries control bits, and a single logical write appears more
+than once as those bits advance:
+
+```
+   0  ts=     0  raw=0x0368026a  upper=0x03  blk=0x6a reg=0x02 data=0x68
+   1  ts=   283  raw=0x0168026a  upper=0x01  blk=0x6a reg=0x02 data=0x68
+   2  ts=  1444  raw=0x0326006a  upper=0x03  blk=0x6a reg=0x00 data=0x26
+   3  ts=  1727  raw=0x0126006a  upper=0x01  blk=0x6a reg=0x00 data=0x26
+```
+
+**35.4% of adjacent row pairs carry identical block/register/data with a
+different control byte** — the same write, seen twice. The distinct-write count
+is therefore substantially lower than 5,095, and every count in §27, §28 and
+§29 is a count of state changes wearing a transaction's label.
+
+The comparison in §28 is not invalidated by this — both sides are counted the
+same way — but the numbers mean something narrower than they were made to say.
+
+### 30.2 "One host word per block" is unsupported
+
+§27.2 asserted it, from `phyi2c` showing five words each holding a different
+block. The capture watched those same five words and recorded **eight** blocks:
+`0x62`, `0x63`, `0x64`, `0x66`, `0x67`, `0x68`, `0x6a`, `0x6b`.
+
+Eight through five. So the mapping is not one-to-one, and worse, **the capture
+does not record which word each change came from** — it stores only the value.
+The relationship between host words and analog blocks is unknown, and §27 stated
+it as established.
+
+### 30.3 "Not published anywhere the author can find" — I had not looked
+
+§28.5 and §29.6 both say that. It was written without searching, which makes it
+an assertion about the world derived from not having checked, and this report has
+a §25.5 about exactly that habit.
+
+Having now checked: esp32-open-mac's public documentation does not cover the PHY
+analog front end, the regi2c bus, `0x3FF4E000`, or those block IDs. Their stated
+position is that the blobs "are currently still needed for hardware
+initialization" and "will eventually be fully replaced with open source code."
+
+So the area is plausibly uncovered **in that project's public docs**. That is a
+much smaller claim than the one made, and one README is not a literature search.
+
+### 30.4 What the files therefore are, stated accurately
+
+A recording of traffic on the ESP32's internal analog-configuration bus during
+`register_chipv7_phy()`, from two firmwares.
+
+Each row is `(index, cycles_since_first, raw_word, block, register, data)`.
+Across the reference capture: eight analog blocks, with 2 to 14 distinct
+registers seen in each.
+
+**This is a bus capture, not reverse engineering.** It records that block `0x62`
+register `0x0a` received `0xb0`. It says nothing whatever about what block `0x62`
+is, what register `0x0a` controls, or what `0xb0` means. It is raw material for
+reverse engineering and should never be described as its product.
+
+### 30.5 Known defects, if this is ever shared or reused
+
+1. **A lower bound.** Sampling is ~0.6 µs on the reference against writes ~1 µs
+   apart. Some are missed. Never treat it as a complete sequence, and never
+   attempt to replay it as one.
+2. **Phase duplicates**, §30.1. Not filtered.
+3. **Source word not recorded**, §30.2.
+4. **Incomplete coverage.** `phyi2c` showed `0x3FF4E02C`, `40`, `44`, `50` and
+   `54` also moving during PHY init. The capture watches none of them.
+5. **No semantics.** None of it is decoded, and nothing here is a step toward
+   decoding it.
+
+All five are fixable — record the word index, filter on the control byte, widen
+to every host word that moves, and accept the rate limit explicitly rather than
+silently. None of that was done, because the trace existed to answer a
+comparison question and it answered it.
