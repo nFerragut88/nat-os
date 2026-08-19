@@ -1019,6 +1019,44 @@ int wifimac_tx_busy(void)
 
 uint32_t wifimac_tx_forced(void) { return g_tx_forced; }
 
+/* ---- lmacInit, and why this is behind a command rather than in macinit ----
+ *
+ * open-mac's wifi_hw_start_openmac() calls this and nat-os never has. It is the
+ * lower MAC: the layer that owns the transmit queues and the arbitration state
+ * machine above the registers UM-NATOS-034 §9 eliminated.
+ *
+ * THIS REFERENCE CHANGES THE LINK, and that is the whole risk. lmacInit lives
+ * in lmac.o, which is not currently in the image; naming it pulls the object
+ * in, and lmac.o needs 47 symbols that are not present either. Measured, those
+ * resolve into pp.o, trc.o, wdev.o, esf_buf.o, hal_mac_tx.o and rate_control.o
+ * -- 305,888 bytes against a 142,016-byte image, before the second round of
+ * cascade. One of the 47 is tx_pwctrl_background, in the same object as the
+ * calibration that broke last time this was attempted.
+ *
+ * So it is deliberately NOT wired into macinit. Flashing must stay safe, and
+ * the canary -- phyinit returning 0 -- has to be checkable BEFORE anything
+ * calls into the new code. A build that links but crashes on boot would take
+ * the working receiver with it and tell us nothing.
+ *
+ * Windowed, like every vendor entry point, so it goes through phy_stack_call.
+ */
+extern void lmacInit(void);
+
+extern void lmacInitAc(uint32_t ac);
+
+void wifimac_lmac_init(void)
+{
+    phy_stack_call((uint32_t)&lmacInit, 0u, 0u);
+}
+
+/* The four EDCA access categories. open-mac calls lmacInit and lmacInitAc
+ * together; which categories it arms is not recorded, so all four are offered
+ * and the caller sweeps. Free: lmacInitAc came into the image with lmacInit. */
+void wifimac_lmac_init_ac(uint32_t ac)
+{
+    phy_stack_call((uint32_t)&lmacInitAc, ac, 0u);
+}
+
 
 static volatile uint32_t *tx_reg(uint32_t base, uint32_t stride_bytes)
 {

@@ -2056,6 +2056,19 @@ static void execute(char *line)
         uart_put_dec(wifimac_rx_to_us());
         uart_puts("  (any non-zero means something HEARD us)\n");
     }
+    else if (str_eq(line, "lmacinit")) {
+        /* The lower MAC. Run macinit first, then this, then try to transmit.
+         *
+         * Separate from macinit on purpose: naming lmacInit changed the link,
+         * and the canary for that (phyinit returning 0) has to be checkable
+         * before any of the newly-linked code runs. */
+        uart_puts("   lmacInit ...\n");
+        wifimac_lmac_init();
+        for (uint32_t ac = 0; ac < 4u; ac++) {
+            wifimac_lmac_init_ac(ac);
+        }
+        uart_puts("   lmacInit + lmacInitAc(0..3) returned\n");
+    }
     else if (str_eq(line, "wifitx")) {
         /* The two registers the vendor's init writes and this driver never has.
          *

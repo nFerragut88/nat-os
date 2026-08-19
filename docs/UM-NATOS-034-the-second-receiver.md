@@ -1,7 +1,7 @@
 # UM-NATOS-034 — The Second Receiver
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.1 · 2026-08-19 · Status: **Negative result, and a definitive one** — §9 adds a second, smaller negative
+Revision 1.2 · 2026-08-19 · Status: **Negative result, and a definitive one** — §9 and §10 add two more, and §10 corrects the lead list itself
 
 ---
 
@@ -272,4 +272,90 @@ that broke last time.
 
 `wifitx` and `tools/serial/wifi_sweep.py` remain. Both are one command away from
 re-testing any future guess in about a minute.
+
+---
+
+## 10. `lmacInit`: the risk taken, and the model that was wrong (revision 1.2)
+
+The link change everyone had been avoiding since UM-NATOS-028 was made
+deliberately, with the safety procedure from `next_moves/01` followed step by
+step. It did not fix transmit. It corrected three things that were believed
+about the problem, and two of them mattered more than the attempt.
+
+### 10.1 The blast-radius model was badly wrong
+
+§9.5 predicted **305,888 bytes** of vendor object pulled in by one reference,
+against a 142,016-byte image. Measured:
+
+| | predicted | actual |
+|---|---|---|
+| image growth | ~306 kB | **+1,200 bytes** |
+| new text symbols | hundreds | **10** |
+
+The model forgot `--gc-sections`. The archive members *are* pulled in to resolve
+the 47 undefined symbols, and then everything not reachable from `lmacInit`
+itself is discarded. What survived was `lmacInit`, `lmacInitAc`, `lmacConfMib`,
+`rcAttach`, `rc_cal` and `wDev_reset_bcnSendTick`.
+
+**The thing this project has feared for three reports cost 1,200 bytes.** The
+fear was well-founded when it was formed — `register_chipv7_phy` really did
+break — but it was never re-measured, and it had grown into a reason not to try.
+
+### 10.2 The canary held, and so did everything else
+
+Flashed to one board only, leaving the second on the previous image as an
+unchanged receiver, so the control could not drift with the experiment.
+
+| check | result |
+|---|---|
+| `phyinit` returns 0 | **yes** — the exact canary that failed last time |
+| receive after the link change | **yes**, AP decoded, descriptors recycling |
+| `lmacInit` through the windowed bridge | returned cleanly |
+| system after | apps running, DMA 109,336 transfers 0 timeouts, `heap check=0` |
+
+### 10.3 It changed the transmit path and still did not radiate
+
+`chain acks` — the one transmit counter that has never claimed success (§5) —
+moved, and moved twice:
+
+| configuration | chain acks / completions |
+|---|---|
+| before | 39/302, 10/219 — roughly 5–13% |
+| `lmacInit` | **82/165 — about 50%** |
+| `lmacInit` + `lmacInitAc(0..3)` | 8/172 — back down to 5% |
+
+So the lower MAC is genuinely wired to that counter, and arming all four access
+categories made it *worse*. The receiver's answer never changed: `networks=1`,
+the real access point, and never the transmitter's MAC.
+
+### 10.4 The correction that matters most: two of the three leads do not exist
+
+`next_moves/01` has listed three remaining leads since UM-NATOS-028. Searching
+the archives nat-os actually has:
+
+| lead | where it is |
+|---|---|
+| `lmacInit` / `lmacInitAc` | `lmac.o` — **present, now tried, does not fix it** |
+| `coex_bt_high_prio` | **not in libpp or libphy at all** |
+| `esp_wifi_power_domain_on` | **not in libpp or libphy at all** |
+
+Both missing ones are ESP-IDF functions, not vendor-blob functions. `hal_coex.o`
+exists in the archive and exports nothing.
+
+**So the lead list has been two-thirds fictional.** Not wrong about what
+open-mac calls — wrong about what is reachable from here. Any future attempt at
+those two has to replicate them from documentation as direct register writes, in
+the way §9 replicated the CCA and EDCA pokes, and nobody has established what
+they do on this silicon.
+
+### 10.5 What is kept
+
+`lmacInit` stays, behind the `lmacinit` shell command, called from nowhere at
+boot. It costs 1,200 bytes, breaks nothing, and is the only way to reproduce the
+`chain acks` behaviour for whoever looks next. `lmac.o` also brought
+`lmacTxFrame` into reach for the same price, which is the vendor's own transmit
+entry point and has never been tried — nat-os writes the transmit registers
+directly instead, transcribed from open-mac.
+
+That is the most concrete untried thing left, and it is now free.
 

@@ -1,5 +1,16 @@
 # 01 — Make transmit reach the air
 
+> **CORRECTION 2026-08-19 — two of the three leads below do not exist.**
+> `coex_bt_high_prio` and `esp_wifi_power_domain_on` are ESP-IDF functions and
+> are **not in libpp or libphy at all**; `hal_coex.o` exports nothing. Only
+> `lmacInit` was reachable, and UM-NATOS-034 §10 has now tried it: it links for
+> 1,200 bytes, the canary holds, receive survives, `chain acks` jumps from ~10%
+> to ~50%, and nothing radiates. The blast-radius estimate of ~306 kB was wrong
+> by 250x because it ignored `--gc-sections`.
+>
+> Most concrete untried thing, and now free: **`lmacTxFrame`**, the vendor's own
+> transmit entry point, in the image since lmacInit pulled lmac.o.
+>
 > **Status 2026-08-19 — the search is now half the size.** UM-NATOS-034 settled
 > the question that had blocked every previous attempt: a second nat-os board,
 > promiscuous on the same channel 30 cm away, hears a real access point but
