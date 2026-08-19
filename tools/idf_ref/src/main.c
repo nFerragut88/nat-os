@@ -50,7 +50,7 @@
  * A negative from a deaf receiver is not evidence, and the first run of
  * link_test.py reported one as though it were.
  */
-#define REF_LINK_AP 0
+#define REF_LINK_AP 1
 
 /* A probe request with a wildcard SSID and a basic rate set. Hand-built so the
  * bytes on the air are ours rather than the stack's, the same way nat-os builds

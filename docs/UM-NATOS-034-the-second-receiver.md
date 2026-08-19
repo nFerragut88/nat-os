@@ -1,7 +1,7 @@
 # UM-NATOS-034 — The Second Receiver
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 2.9 · 2026-08-19 · Status: **Every comparable layer measured and matching** — §28 starts nat-os's APP CPU, captures its analog programming, and finds all eight blocks present with comparable traffic; what remains needs an SDR — §22 fixes a real 9.5 dB TX-power defect that is not the cause; §24 verifies the descriptor layout; §25 finds the last candidate was never in the archive this report named, transcribes it in 251 bytes with no new blob, and eliminates it too
+Revision 3.0 · 2026-08-19 · Status: **CLOSED as a negative, independently confirmed** — §29: a MediaTek adapter sees the control transmitter beaconing 30 cm away and does not see nat-os. Every comparable layer measured and matching; nothing radiates — §22 fixes a real 9.5 dB TX-power defect that is not the cause; §24 verifies the descriptor layout; §25 finds the last candidate was never in the archive this report named, transcribes it in 251 bytes with no new blob, and eliminates it too
 
 ---
 
@@ -2274,3 +2274,102 @@ transaction reveals, and that is where this stops being a software problem.
 
 Recommending it is not a retreat. It is the first instrument proposed here that
 is not a variation on the one that has now returned six negatives.
+
+---
+
+## 29. A receiver that is not an ESP32
+
+**Added revision 3.0, 2026-08-19.** §28 closed by saying every instrument in
+this report is an ESP32 looking at an ESP32, and recommending an SDR. There was
+a better receiver already on the desk.
+
+### 29.1 The test
+
+Both boards beaconing simultaneously, 2.4 GHz channel 6, same bench, same
+moment, distinct SSIDs:
+
+| SSID | board | role |
+|---|---|---|
+| `NATOS-CTRL-6` | `tools/idf_ref`, ESP-IDF SoftAP | control — known-good transmitter |
+| `NATOS-TX-TEST` | nat-os, `beacon` at 100 ms | test |
+
+Receiver: the project owner's laptop. **MediaTek MT7921 Wi-Fi 6**, a different
+vendor, different silicon, different driver stack, different decoder.
+
+It had already proved it can hear this bench without being asked to: during §21's
+link test, `idf_ref` logged `20:0b:74:0d:42:bd` among the transmitters it heard,
+and that is this adapter's MAC.
+
+### 29.2 The result
+
+> **`NATOS-CTRL-6` appears. `NATOS-TX-TEST` does not.**
+
+### 29.3 What this closes
+
+Every negative in this report until now carried the same caveat, stated
+repeatedly and never removed: the receiver was always an ESP32, so
+"unreceivable by an ESP32" and "not transmitted" could not be separated. §24.2
+narrowed it as far as opening the FCS-failure filter allowed, and no further.
+
+That caveat is gone. Two receiver families, two vendors, agreeing — with a
+perfect control transmitting from 30 cm away at the same instant on the same
+channel, which the same receiver sees without difficulty.
+
+**nat-os does not emit a decodable 802.11 frame.** This is no longer an
+inference from instruments that share a common ancestor with the thing being
+measured.
+
+### 29.4 What it does not close
+
+A WiFi adapter still requires a well-formed frame. So this cannot distinguish:
+
+- no RF energy leaving the antenna at all, from
+- RF energy leaving it that no 802.11 receiver can demodulate.
+
+That distinction still wants a spectrum view, and it is still worth £25 if
+anyone returns to this. But it is now a question about *where* in the transmit
+chain rather than *whether*, and for the practical purpose — does nat-os
+transmit usable WiFi — the answer is settled and independently confirmed.
+
+### 29.5 The state of the investigation
+
+Every layer that can be compared has been measured, and matches:
+
+| layer | verdict |
+|---|---|
+| MAC transmit state machine | same sequence as a working stack (§20) |
+| MAC / PHY / baseband registers | 2,048 registers, one difference, matched (§26) |
+| `register_chipv7_phy` arguments | identical, after fixing a real 9.5 dB TX-power defect (§22) |
+| TX descriptor layout | bit-for-bit `lldesc_t` (§24.1) |
+| OS adapter table | complete (§24.6) |
+| analog programming over regi2c | all eight blocks, comparable volumes (§28) |
+| **radiated output, non-Espressif receiver** | **nothing (§29)** |
+
+Everything the CPU can observe is the same. Nothing comes out. There is no
+remaining layer that has been argued about rather than measured, and no
+candidate left that this project can enumerate.
+
+That is where it stops being a debugging problem and becomes a decision about
+what to spend time on — which `docs/blob-free.md` and §17 both answered before
+this session started, and which the SX1262 answers with a documented register
+map and no blob at all.
+
+### 29.6 What the session produced anyway
+
+The radio did not start working. These did, and none of them were the goal:
+
+- **`boot/`** — a second-stage bootloader, 2,736 bytes against Espressif's
+  17,536 (UM-NATOS-035).
+- **`kernel/clock.c`** — the PLL brought up by the kernel, closing an inherited
+  dependency that had never been stated and that had the board running at half
+  speed (UM-NATOS-036).
+- **`kernel/appcpu.c`** — core 1, startable, as an instrument.
+- **`docs/data/i2c-trace-*.json`** — the ESP32's PHY analog calibration
+  sequence, 5,095 transactions, captured on both firmwares. Not published
+  anywhere the author can find.
+- A **9.5 dB transmit-power defect** in the PHY init data, found and fixed.
+- Six broken or mis-aimed instruments caught, each recorded with what it would
+  have cost.
+
+An investigation that fails to find its target and produces a verified negative
+across every layer is not the same as a wasted one. But it is finished.

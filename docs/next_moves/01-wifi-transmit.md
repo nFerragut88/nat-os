@@ -149,6 +149,29 @@
 > KIND of evidence — an SDR to see whether any RF energy appears at all, or a
 > full trace of ESP-IDF's PHY register writes from reset. Not another candidate.
 
+> **CLOSED 2026-08-19 — UM-NATOS-034 §29.**
+> Both boards beaconing simultaneously on 2.4 GHz channel 6, distinct SSIDs,
+> 30 cm apart. Receiver: a **MediaTek MT7921** laptop adapter -- different
+> vendor, different silicon, different decoder, and already proven to hear this
+> bench because idf_ref logged its MAC during §21.
+>
+> `NATOS-CTRL-6` (ESP-IDF) appears. `NATOS-TX-TEST` (nat-os) does not.
+>
+> That removes the caveat every earlier negative carried -- that the receiver
+> was always an ESP32, so "unreceivable by an ESP32" and "not transmitted"
+> could not be separated. Two receiver families now agree, against a perfect
+> control.
+>
+> Every comparable layer has been measured and matches: MAC state machine, 2,048
+> MAC/PHY/baseband registers, phyinit's arguments, the descriptor layout, the OS
+> adapter table, and the analog regi2c programming. Everything the CPU can
+> observe is the same; nothing comes out.
+>
+> **Not a next move any more.** What remains is a spectrum question -- no RF at
+> all, versus RF that no 802.11 receiver can demodulate -- and that is ~£25 of
+> SDR, not another session of registers. The SX1262 gives the same capability
+> with a published register map and no blob.
+
 **Size:** large. **Risk:** real — may cost the working receive path.
 **Blocked on:** willingness to accept a link change.
 
