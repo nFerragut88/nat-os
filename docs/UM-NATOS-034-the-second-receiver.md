@@ -1,7 +1,7 @@
 # UM-NATOS-034 — The Second Receiver
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.7 · 2026-08-19 · Status: **Negative result** — §15 matches the reference to the job and sharpens the shortlist to nineteen
+Revision 1.8 · 2026-08-19 · Status: **Negative result** — §17 asks whether the thing is possible at all, and answers yes
 
 ---
 
@@ -847,4 +847,106 @@ eliminating something, none radiating.
 That is the evidence for §15.4's conclusion rather than an argument against it:
 **there is still no sign the answer is in the register set.** The next person
 should read §15.4 before poking anything, and should probably not poke anything.
+
+---
+
+## 17. Is this the same as open-mac, and is it possible at all?
+
+Two questions asked at the end of the session. The second deserves a straight
+answer rather than a hedge.
+
+### 17.1 The same job, one layer apart
+
+Yes, substantially. `wifimac_tx()` was transcribed line by line from open-mac's
+`transmit_80211_frame` and verified against it register by register
+(UM-NATOS-028 section 3.2). Both projects replace Espressif's closed MAC
+software with their own register writes while still calling the closed PHY blob.
+Both read the same undocumented block at 0x3FF73xxx.
+
+**But open-mac runs on top of ESP-IDF, and that is the whole difference.**
+
+open-mac replaces the MAC *protocol* layer only. Before a line of its code runs,
+ESP-IDF has already done the power domain, the clocks, the coexistence arbiter,
+the PHY init and lmacInit -- the entire undocumented bring-up. It inherits a
+radio that is *already keyed up*, and answers the question "how do I frame and
+queue a packet on it".
+
+nat-os declined all of that, so it must perform the bring-up itself, and **the
+bring-up is the part nobody wrote down.** That is exactly why the three things
+open-mac calls and nat-os does not turned out to be `esp_wifi_power_domain_on`,
+`coex_bt_high_prio` and `lmacInit` -- all initialisation, none of it protocol.
+
+So nat-os is attempting something **strictly harder** than open-mac. open-mac
+stands on Espressif's initialisation and rewrites what sits above it; nat-os
+stands on nothing and must rediscover what sits below. And the layer open-mac
+actually contributes -- the protocol -- is the part that already works here.
+`wifimac_tx()` has been verified twice and is not the problem.
+
+### 17.2 Is it possible?
+
+**Yes.** Four reasons, in order of weight.
+
+**Receive already works, from scratch.** This kernel brings up the PHY, tunes a
+channel, arms DMA, recycles descriptors and decodes 802.11 frames with no
+ESP-IDF underneath it. That is not a small piece of the same problem, it is most
+of it, already done.
+
+**Nothing is sealed.** ESP-IDF is open source and on this machine. The blob is a
+binary we possess and can disassemble. The hardware is on the desk and answers
+in seconds. There is no cryptographic gate, no signed firmware, no missing key
+-- only undocumented ordering.
+
+**The OS shim already exists.** `wifi_osi_impl.c` implements the interface the
+vendor stack expects and `ositest` exercises it end to end. The usual blocker
+for running vendor networking code outside its RTOS is already solved here.
+
+**A method exists that cannot fail in principle.** Below.
+
+### 17.3 Why the diff failed, and what would not
+
+The differential compared **destinations, not routes.**
+
+A snapshot shows state. Hardware bring-up depends on *sequence*, and on
+transient values that do not survive to be photographed. A register written to 1
+and then back to 0 appears as 0 in both dumps and vanishes from the diff. So the
+nineteen candidates of section 15.4 may not contain the answer at all -- not
+because the method is bad, but because the answer may be an order rather than a
+value.
+
+What would work is a **trace**: every register write ESP-IDF makes from reset
+through its first successful transmission, in order, with values, then replayed.
+
+That is obtainable. ESP-IDF's register accesses go through macros, and
+instrumenting them logs every C-level write with address, value and order --
+which covers all of esp_wifi's init, the part nat-os is missing. The blob's
+internal writes are not caught that way, but **both stacks call the same blob
+identically**, so replaying the C-level sequence around the same blob calls
+should converge. Espressif also maintains a QEMU fork with ESP32 support that
+can trace memory accesses including the blob's.
+
+None of that is exotic. It is tedious, mechanical, and not blocked.
+
+### 17.4 The honest estimate, and the real question
+
+Weeks to months of focused work. Not an afternoon, and not a hundred sessions of
+poking registers -- poking is the thing that does not scale. Twenty eliminations
+in one session and no defect found, because each poke tests one hypothesis and
+there are thousands of them. A trace tests all of them at once.
+
+But possibility is not priority, and the strategic question is separate from the
+technical one.
+
+**nat-os's founding constraint is no ESP-IDF.** WiFi on this chip appears to
+require an initialisation sequence that exists only inside ESP-IDF and the blob.
+Reproducing it is possible, and is also, precisely, reimplementing the thing the
+project exists to avoid. That tension is real, and it is a decision about what
+nat-os *is* rather than a bug to be fixed.
+
+An SX1262 has no equivalent problem. It is a documented SPI peripheral with a
+published register map: write what the datasheet names, in the order it gives,
+and the radio keys up. There is no "part Espressif never wrote down", which is
+the thing that has cost four sessions here.
+
+So: possible, yes. Worth it, only if owning this particular radio matters more
+than the months. That is not a question this report can answer.
 
