@@ -15,3 +15,7 @@ desktop.ini
 # working files from serial captures
 /ztrack*.log
 /fb-*.png
+
+# Host-tool scratch output. The traces worth keeping live in docs/data/.
+regdiff.txt
+tx_trace.json

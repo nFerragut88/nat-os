@@ -34,6 +34,7 @@ which is a signature worth naming rather than filtering away.
 Usage: tx_trace.py [port] [out.json]
 """
 import json
+import os
 import re
 import sys
 import time
@@ -42,7 +43,12 @@ from collections import defaultdict
 import serial
 
 PORT = sys.argv[1] if len(sys.argv) > 1 else "COM6"
-OUT = sys.argv[2] if len(sys.argv) > 2 else "tx_trace.json"
+# Default into docs/data/ rather than the working directory. This file is the
+# evidence behind UM-NATOS-034 §18 -- the raw trace a reader would need to
+# check the claims in it -- so it belongs beside the report, not in whatever
+# directory the tool happened to be run from.
+OUT = sys.argv[2] if len(sys.argv) > 2 else os.path.join(
+    os.path.dirname(__file__), "..", "..", "docs", "data", "tx-trace-idf-ref.json")
 
 HDR = re.compile(r"TRACE base=([0-9a-f]{8}) words=(\d+) snaps=(\d+) cycles=(\d+)")
 ROW = re.compile(r"^T (\d+) ([0-9a-f]{8}) ([0-9a-f]{8}) ([0-9a-f]{8})")
