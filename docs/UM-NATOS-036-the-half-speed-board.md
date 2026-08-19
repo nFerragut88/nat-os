@@ -1,7 +1,7 @@
 # UM-NATOS-036 — The Half-Speed Board
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.0 · 2026-08-19 · Status: **Regression found and fixed; one consequence still open**
+Revision 1.1 · 2026-08-19 · Status: **Fixed, and now verified against an independent clock (§11); one consequence still open (§7)**
 
 ---
 
@@ -297,3 +297,63 @@ project owns. Finding that was worth the session.
 ---
 
 *Filed 2026-08-19.*
+
+---
+
+## 11. Verifying the fix against something that is not CCOUNT
+
+**Added revision 1.1.**
+
+§6 reported the fix verified: `cpu clock : 80 MHz (PLL, switched by the kernel)`,
+all self-tests passing, on both bootloaders.
+
+That verification had the same shape as the defect. It read `SOC_CLK_SEL` and
+printed a number derived from it. **A register is a statement of intent; it is
+not a measurement of a frequency.** §9's rule — *a successful measurement is not
+evidence, if the measurement and the fault share a dependency* — applies to the
+fix as much as to the bug, and §6 did not notice.
+
+`tools/serial/measure_mhz.py` uses a reference the board cannot influence: the
+host's clock. The scheduler tick is programmed at `TICK_INTERVAL_CYCLES =
+800000` CPU cycles and the reporter prints a monotonic `t=` count, so
+
+```
+ticks_per_second x 800000 = CPU Hz
+```
+
+80 MHz is 100 ticks/s; 40 MHz is 50. Nothing in that chain reads a clock
+register.
+
+### 11.1 Measured
+
+| configuration | measured |
+|---|---|
+| default build, **our** bootloader | **78.1 MHz** |
+| default build, Espressif's bootloader (early-return path) | **78.1 MHz** |
+| `-WiFi` build, Espressif's bootloader (as gated) | **78.1 MHz** |
+| **negative control** — our bootloader, `clock_init()` switch disabled | **39.8 MHz** |
+
+The negative control is the part that makes the rest mean anything. An
+instrument that has never produced a wrong answer has not been shown to be
+capable of one, and this project has now been bitten three times by detectors
+that could only say what was expected. Disabling the switch and rebuilding
+produced 39.8 MHz — a clean 1.96x separation, and independent confirmation that
+the original diagnosis was right rather than merely consistent.
+
+All three shipped configurations agree exactly, which is the second thing worth
+having: the frequency no longer depends on which loader ran or which path
+`clock_init()` took.
+
+### 11.2 The residual, stated rather than rounded away
+
+78.1 against an expected 80.0 is 2.4% low, and 78.1/39.8 is 1.96 rather than
+exactly 2. Both are small, both are consistent across configurations, and
+neither is explained. The most plausible cause is tick accounting — a handler
+that reprograms CCOMPARE from the current CCOUNT rather than by adding the
+interval accumulates its own latency once per tick — but that has not been
+checked, and it is recorded here as an open minor discrepancy rather than
+rounded to "80 MHz confirmed".
+
+What the measurement establishes is not the third significant figure. It is that
+the board runs at roughly 80 and not at roughly 40, measured by something with no
+stake in the answer.
