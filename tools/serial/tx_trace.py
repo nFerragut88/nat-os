@@ -9,9 +9,19 @@ eliminated the shortlist, and left two shapes of cause that no snapshot can
 reach: the ORDER in which state is established, and TRANSIENT writes to
 self-clearing bits, which read back zero before any snapshot could see them.
 
-The firmware side captures a 16-register window into DRAM at ~0.55 us per
-sample while the other core transmits one frame. This side turns that into
-something a person can read.
+The firmware side captures a 16-register window into DRAM while the other core
+transmits a burst of eight frames into it. This side turns that into something a
+person can read.
+
+MEASURED sample period: 1.92 us. The design predicted 0.55 us from 8 cycles per
+word; a MAC peripheral read costs about 28 cycles. So a write that is overwritten
+within ~2 us is still invisible, and any negative result from this tool has to be
+read with that number in hand.
+
+The burst is eight frames rather than one because esp_wifi_80211_tx() queues to
+the WiFi task and returns -- with a single frame, an empty window meant nothing,
+since the transmit may simply have happened outside it. With eight, silence at an
+address is evidence the transmit path does not touch it.
 
 ---- the volatile problem, again, and why it is different here ---------------
 
@@ -124,7 +134,7 @@ if not windows:
     print("!! no trace windows parsed. Is tools/idf_ref flashed to this port?")
     raise SystemExit(1)
 
-# Two passes over the same 16 bases. Pairing them tests the assumption the
+# Two passes over the same 64 bases. Pairing them tests the assumption the
 # sweep rests on: that a transmit does the same thing twice. If it does not,
 # nothing reconstructed across windows can be trusted, and that is a finding
 # rather than a setback.
