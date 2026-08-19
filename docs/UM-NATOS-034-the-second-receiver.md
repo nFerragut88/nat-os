@@ -1,7 +1,7 @@
 # UM-NATOS-034 — The Second Receiver
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 3.1 · 2026-08-19 · Status: **CLOSED as a negative, independently confirmed** — §30 corrects three overstatements about the i2c traces — §29: a MediaTek adapter sees the control transmitter beaconing 30 cm away and does not see nat-os. Every comparable layer measured and matching; nothing radiates — §22 fixes a real 9.5 dB TX-power defect that is not the cause; §24 verifies the descriptor layout; §25 finds the last candidate was never in the archive this report named, transcribes it in 251 bytes with no new blob, and eliminates it too
+Revision 3.2 · 2026-08-19 · Status: **CLOSED as a negative** — §30 corrects three overstatements about the i2c traces; §31 corrects a load-bearing one about the transmit path — §29: a MediaTek adapter sees the control transmitter beaconing 30 cm away and does not see nat-os. Every comparable layer measured and matching; nothing radiates — §22 fixes a real 9.5 dB TX-power defect that is not the cause; §24 verifies the descriptor layout; §25 finds the last candidate was never in the archive this report named, transcribes it in 251 bytes with no new blob, and eliminates it too
 
 ---
 
@@ -2461,3 +2461,49 @@ All five are fixable — record the word index, filter on the control byte, wide
 to every host word that moves, and accept the rate limit explicitly rather than
 silently. None of that was done, because the trace existed to answer a
 comparison question and it answered it.
+
+---
+
+## 31. "The same blob with the same arguments" was true of PHY init only
+
+**Added revision 3.2, 2026-08-19.** Asked how far this is from working, and the
+answer required checking a claim this report has leaned on repeatedly:
+
+> both boards call the same blob with arguments already verified identical
+> (Â§22), so any difference at all is the answer
+
+That is true of `register_chipv7_phy`. **It was never true of transmit**, and
+several sections used it as though it were.
+
+| | ESP-IDF | nat-os |
+|---|---|---|
+| PHY init | `register_chipv7_phy` in `libphy.a` | same function, same archive, arguments verified identical (Â§22) |
+| **transmit** | `esp_wifi_80211_tx` in **`libnet80211.a`** â†’ `libpp` â†’ hal â†’ registers | **hand-written register writes**, reconstructed from a disassembly of `hal_mac_txq_enable` |
+
+`esp_wifi_80211_tx` is defined in `libnet80211.a`. **nat-os does not have that
+archive** â€” `vendor/phy/` holds `libphy_natos.a` and `libpp_natos.a` and nothing
+else. And `wifimac_tx()` calls no vendor function at all; it writes the hardware
+directly.
+
+So the two firmwares are not running the same transmit code, have never been
+running the same transmit code, and one of them is running a reimplementation of
+one function out of a chain that spans three archives on the other side.
+
+### 31.1 What this does and does not change
+
+It does **not** weaken Â§20, Â§26, Â§28 or Â§29. Those measured the hardware's
+resulting state and the radiated output, and those measurements stand: the MAC
+reaches the same states, the registers match, the analog bus traffic is
+comparable, and nothing comes out.
+
+What it changes is the *inference* drawn from them. "Everything is identical and
+nothing works" was always slightly wrong â€” the transmit software was never
+identical. The correct statement is narrower:
+
+> Every observable **end state** matches. The **path** taken to it on the nat-os
+> side is this project's own reconstruction of an undocumented sequence, and has
+> never been compared against the original because the original is not linked.
+
+That is a materially better description of where the fault could be hiding, and
+it reopens exactly one thing Â§25 declared exhausted: the possibility that the
+reconstruction is incomplete in a way no end-state comparison can show.
