@@ -37,6 +37,8 @@
 #ifndef NATOS_BOARD_H
 #define NATOS_BOARD_H
 
+#include <stdint.h>   /* board_pin_owner takes a uint32_t */
+
 /* Selected with -DBOARD_CYD or -DBOARD_LORA32 from build.ps1. Defaulting rather
  * than erroring, because every existing report was measured on the CYD and a
  * build that silently changed board would invalidate all of them. */
@@ -48,13 +50,26 @@
 #  include "board_cyd.h"
 #endif
 
+/* build.ps1 -WiFi turns the subsystem back on without editing a board header.
+ *
+ * The board file states the intent -- this kernel is blob-free by default -- and
+ * the flag is how you opt out for a session of research. Keeping the default in
+ * the header rather than in the build script means someone reading the board
+ * definition learns what the board IS, not what today's command line happened
+ * to say. */
+#if defined(BOARD_WIFI_OVERRIDE)
+#  undef  BOARD_HAS_WIFI
+#  define BOARD_HAS_WIFI 1
+#endif
+
 /* Every board must answer all of these, including with 0. An omission would
  * otherwise read as "not fitted" through the preprocessor's own default, which
  * is a silent wrong answer rather than a build failure. */
 #if !defined(BOARD_NAME)        || !defined(BOARD_HAS_DISPLAY) || \
     !defined(BOARD_HAS_TOUCH)   || !defined(BOARD_HAS_SD)      || \
     !defined(BOARD_HAS_AUDIO)   || !defined(BOARD_HAS_LDR)     || \
-    !defined(BOARD_HAS_LORA)   || !defined(BOARD_SPARE_PIN)
+    !defined(BOARD_HAS_LORA)   || !defined(BOARD_SPARE_PIN) || \
+    !defined(BOARD_HAS_WIFI)
 #  error "board header must define BOARD_NAME, BOARD_SPARE_PIN and every BOARD_HAS_* switch"
 #endif
 

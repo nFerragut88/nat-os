@@ -13,6 +13,7 @@
  */
 
 #include "panic.h"
+#include "board.h"
 #include "uart.h"
 #include "window.h"
 #include "watchdog.h"
@@ -220,11 +221,13 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
     /* How deep the PHY got before dying. Meaningless unless a PHY call was in
      * flight, but when one was, this is the difference between a stack that
      * ran out and a fault that merely happened to land in a spill. */
+#if BOARD_HAS_WIFI
     uart_puts("  phystack : ");
     uart_put_dec(phy_stack_used());
     uart_puts(" of ");
     uart_put_dec(phy_stack_size());
     uart_puts(" bytes used\n");
+#endif /* BOARD_HAS_WIFI */
 
     halt_forever();
 }

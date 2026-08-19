@@ -594,6 +594,10 @@ static void execute(char *line)
         uart_put_hex(r);
         uart_puts("\n");
     }
+#if BOARD_HAS_WIFI
+    /* Blob-dependent. These reach libphy/libpp through the windowed
+     * bridge; a build with BOARD_HAS_WIFI 0 links no vendor archive at
+     * all and these commands do not exist. See docs/blob-free.md. */
     else if (str_eq(line, "phyver")) {
         /* First call into Espressif's RADIO blob.
          *
@@ -630,6 +634,7 @@ static void execute(char *line)
             uart_puts("\n");
         }
     }
+#endif /* BOARD_HAS_WIFI */
     else if (str_eq(line, "efusedump")) {
         /* Raw block 0. The decode below it was wrong on the first attempt and
          * the OUI check caught it, so this prints the source bytes rather than
@@ -663,6 +668,10 @@ static void execute(char *line)
                   ? "   crc matches - decode confirmed\n"
                   : "   CRC MISMATCH - the byte order is wrong\n");
     }
+#if BOARD_HAS_WIFI
+    /* Blob-dependent. These reach libphy/libpp through the windowed
+     * bridge; a build with BOARD_HAS_WIFI 0 links no vendor archive at
+     * all and these commands do not exist. See docs/blob-free.md. */
     else if (str_eq(line, "macrst")) {
         /* Arm the MAC reset for the next macinit.
          *
@@ -774,6 +783,7 @@ static void execute(char *line)
         wifimac_beacon_stop();
         uart_puts("   stopped\n");
     }
+#endif /* BOARD_HAS_WIFI */
     else if (str_eq(line, "fifopoke")) {
         /* One tiny draw, deliberately small enough to take the FIFO path.
          *
@@ -2037,6 +2047,7 @@ static void execute(char *line)
             uart_puts("   usage: touchcfg <prio 0..2> <sleep ticks, 0=yield>\n");
         }
     }
+#if BOARD_HAS_WIFI
     else if (str_eq(line, "hwinit")) {
         /* One stage per invocation. This is the first code to call into libpp,
          * the MAC blob, and if it takes the board down the stage number is the
@@ -2068,6 +2079,11 @@ static void execute(char *line)
             uart_puts("\n");
         }
     }
+#endif /* BOARD_HAS_WIFI */
+#if BOARD_HAS_WIFI
+    /* Blob-dependent. These reach libphy/libpp through the windowed
+     * bridge; a build with BOARD_HAS_WIFI 0 links no vendor archive at
+     * all and these commands do not exist. See docs/blob-free.md. */
     else if (str_eq(line, "txpwr")) {
         /* One step per invocation, so the probe test after each says which
          * step mattered. "txpwr" alone just reports. */
@@ -2437,6 +2453,7 @@ static void execute(char *line)
             uart_puts("\n");
         }
     }
+#endif /* BOARD_HAS_WIFI */
     else if (str_eq(line, "tickrate")) {
         /* How many ticks pass per real second.
          *
@@ -2474,6 +2491,10 @@ static void execute(char *line)
         uart_put_dec(t1);
         uart_puts("\n");
     }
+#if BOARD_HAS_WIFI
+    /* Blob-dependent. These reach libphy/libpp through the windowed
+     * bridge; a build with BOARD_HAS_WIFI 0 links no vendor archive at
+     * all and these commands do not exist. See docs/blob-free.md. */
     else if (str_eq(line, "mactsf")) {
         /* Two independent clocks over half a second. The MAC's counter has no
          * connection to the CPU's CCOUNT, so agreement to a fraction of a
@@ -2522,6 +2543,7 @@ static void execute(char *line)
         uart_put_dec((unsigned int)osi_impl_service_start());
         uart_puts("\n");
     }
+#endif /* BOARD_HAS_WIFI */
     else if (str_eq(line, "bridgetest")) {
         /* Proves windowed code can call BACK into this call0 kernel.
          * osi_add lives here, in call0; the loop calling it is windowed. */

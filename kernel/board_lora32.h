@@ -40,6 +40,7 @@
 #define BOARD_HAS_AUDIO   0
 #define BOARD_HAS_LDR     0
 #define BOARD_HAS_LORA    1
+#define BOARD_HAS_WIFI    0   /* a relay node has a radio already */
 
 /* ---- SX1262 on SPI3, routed through the GPIO matrix ----------------------
  *

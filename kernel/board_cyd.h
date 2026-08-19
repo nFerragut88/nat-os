@@ -24,6 +24,32 @@
 #define BOARD_HAS_LDR     1
 #define BOARD_HAS_LORA    0
 
+/* ---- WiFi, and the only vendor binaries in this project ------------------
+ *
+ * OFF by default, and that is a statement rather than a convenience.
+ *
+ * Everything else in this kernel is code from this project: the scheduler, the
+ * heap, arenas, the VM, the display, touch, SD, SPI3, ADC, I2C, audio, flash,
+ * persistence, IPC, the renderer. Thirty-three of thirty-seven source files
+ * link nothing anyone else wrote.
+ *
+ * WiFi is the exception. It needs libphy.a for analog RF calibration -- VCO and
+ * PLL tuning, filter calibration, I/Q imbalance, temperature compensation --
+ * and that cannot be reimplemented from public information. Not "is hard":
+ * Espressif has never published the RF characterisation it encodes. Even
+ * esp32-open-mac, a dedicated reverse-engineering effort, keeps the PHY blob
+ * and replaces only the MAC above it.
+ *
+ * So WiFi on this chip cannot be clean, and -- the part that decides it --
+ * SUCCEEDING AT TRANSMIT WOULD NOT MAKE IT CLEAN. After however many months,
+ * the image still links 1.4 MB of somebody else's binary. The work buys
+ * function, never independence.
+ *
+ * Build with -WiFi to get it back. The research is not deleted; UM-NATOS-027,
+ * 028 and 034 are among the better records in the project and the drivers still
+ * compile. It is simply not what this kernel is by default. */
+#define BOARD_HAS_WIFI    0
+
 /* ---- panel: ILI9341 on SPI2 (HSPI), IO_MUX direct ------------------------
  *
  * RST is NOT wired to a GPIO on this board; it follows the ESP32's own reset,

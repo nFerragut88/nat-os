@@ -21,7 +21,13 @@ param(
     #   cyd      ESP32-2432S028R, the display board everything was measured on
     #   lora32   an ESP32 + SX1262 relay node -- PIN MAP NOT YET VERIFIED
     [ValidateSet("cyd", "lora32")]
-    [string]$Board = "cyd"
+    [string]$Board = "cyd",
+
+    # Build the WiFi subsystem, and with it the only vendor binaries this
+    # project links. Off by default: everything else in the kernel is code from
+    # this project, and libphy cannot be reimplemented from public information,
+    # so WiFi is the one part that can never be clean. See docs/blob-free.md.
+    [switch]$WiFi
 )
 
 $ErrorActionPreference = "Stop"
@@ -65,6 +71,7 @@ $cflags = @(
     "-I", "$root\kernel",
     "-DBOARD_$($Board.ToUpper())"
 )
+if ($WiFi) { $cflags += "-DBOARD_WIFI_OVERRIDE=1" }
 
 Write-Host "== board: $Board ==" -ForegroundColor Cyan
 
@@ -84,7 +91,13 @@ if ($vasm) {
 
 Write-Host "== compiling ==" -ForegroundColor Cyan
 $objs = @()
+# The three files that reach the vendor blobs. Excluded entirely unless -WiFi,
+# so a default build has no path to libphy at all -- not a stubbed one, not a
+# dead-code one. If it is not compiled it cannot link, and `nm` can prove it.
+$blobFiles = @("phyinit.c", "wifimac.c", "wifi_osi_impl.c")
+
 foreach ($src in (Get-ChildItem "$root\kernel" -Include *.c,*.S -Recurse)) {
+    if ((-not $WiFi) -and ($blobFiles -contains $src.Name)) { continue }
     $obj = Join-Path $build ($src.BaseName + ".o")
     Write-Host ("  {0}" -f $src.Name)
     & $gcc @cflags -c $src.FullName -o $obj
@@ -156,6 +169,8 @@ if (Test-Path "$root\vendor\phy\libphy_natos.a") {
         "-T", "$sdk\ld\esp32.rom.ld"
     )
     Write-Host "  linking libpp_natos.a + libphy_natos.a + esp32.rom.ld" -ForegroundColor DarkGray
+} elseif (-not $WiFi) {
+    Write-Host "  no vendor archives: this image is blob-free" -ForegroundColor Green
 }
 
 $ldflags = @(
