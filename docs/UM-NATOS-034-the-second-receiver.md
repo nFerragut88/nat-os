@@ -1715,11 +1715,8 @@ Recorded so the next session does not re-derive them:
   is ever disassembled further.
 - **Analyse the `.a` archives, not the linked golden binary** — the archives
   retain inline strings and compiler annotations that the link discards.
-- **OS adapter table hooking** for ISR-context callbacks. Relevant to a standing
-  nat-os defect: `ositest` reports `osi vtable checks = 0x2e, INCOMPLETE (want
-  0x3F)` — two of six checks fail. nat-os's transmit path writes registers
-  directly and does not go through the table, so this is unlikely to be the
-  transmit fault, but it is a known-incomplete interface.
+- **OS adapter table hooking** for ISR-context callbacks. The technique stands;
+  the defect it was attached to does not — see §24.6.
 - **`PLCP0` = `tx_config`** in the community's naming. nat-os treats these as
   two registers four bytes apart (`0x3FF73D1C` and `0x3FF73D20`), both writable
   and both written. Worth settling which convention is right if the register map
@@ -1728,3 +1725,34 @@ Recorded so the next session does not re-derive them:
   PLCP2 and DURATION but nothing between PLCP2 and DURATION. Those two words are
   HT-only in the community's map and nat-os transmits at non-HT rates, so this
   is expected — but it has not been confirmed.
+
+### 24.6 The OSI table is not incomplete. Correcting §24.5.
+
+§24.5 listed a standing defect: `ositest` reporting `osi vtable checks = 0x2e,
+INCOMPLETE (want 0x3F)`, two of six checks failing. The bitmask decodes as
+`0x01` malloc/free, `0x02` semaphore, `0x04` queue, `0x08` event group, `0x10`
+free-heap-size, `0x20` random — so `0x2e` means **both heap checks failed** while
+the pool-backed ones passed. A blob unable to allocate memory through the OS
+adapter would have been an excellent candidate for a MAC that runs but does not
+radiate.
+
+**It does not reproduce.** `0x3F ALL PASS`, every time:
+
+| condition | result |
+|---|---|
+| framebuffer on, 89 KB free | `0x3f ALL PASS` |
+| framebuffer off | `0x3f ALL PASS` |
+| after `wifipd on` / `phyinit` / `macinit` — the state that matters | `0x3f ALL PASS` |
+| the exact earlier sequence: `wintest 12`, `vendorcall 10`, `romcall`, then `ositest` | `0x3f ALL PASS` |
+| twice in a row, to check for stickiness | `0x3f ALL PASS` |
+
+The cause of the single `0x2e` is unknown and is not being guessed at here. What
+is certain is that it is not a standing defect, and that §24.5 recorded it as one
+**on the strength of a single observation, made in passing, while checking
+something else.**
+
+That is the process error worth keeping. This report has spent four sections on
+detectors that agreed with a hypothesis by being broken; this is the mirror
+image — one unverified reading promoted into the record as a known fault, where
+it would have cost the next session a day. A number seen once is an observation.
+It becomes a defect when it reproduces.
