@@ -187,11 +187,12 @@ static void trace_task(void *arg)
  *     T <snapshot> <addr> <old> <new>
  *     TRACEEND changes=<n>
  */
-static void trace_dump(void)
+static void trace_dump(int do_tx)
 {
-    printf("TRACE base=%08x words=%u snaps=%u cycles=%u\n",
+    printf("TRACE base=%08x words=%u snaps=%u cycles=%u mode=%s\n",
            (unsigned)g_trace_base, (unsigned)TRACE_WORDS,
-           (unsigned)TRACE_SNAPS, (unsigned)(g_trace_t1 - g_trace_t0));
+           (unsigned)TRACE_SNAPS, (unsigned)(g_trace_t1 - g_trace_t0),
+           do_tx ? "tx" : "idle");
 
     uint32_t changes = 0;
     for (uint32_t s = 1; s < TRACE_SNAPS; s++) {
@@ -231,7 +232,7 @@ static void spin_us(uint32_t us)
  * With one frame, silence was ambiguous. With eight, silence at an address is
  * evidence the transmit path does not touch it.
  */
-static void traced_tx(uint32_t base)
+static void traced_tx(uint32_t base, int do_tx)
 {
     g_trace_base = base;
     g_trace_done = 0;
@@ -242,13 +243,15 @@ static void traced_tx(uint32_t base)
     spin_us(30);
 
     for (int i = 0; i < 8; i++) {
-        esp_wifi_80211_tx(WIFI_IF_STA, probe_req, sizeof probe_req, true);
+        if (do_tx) {
+            esp_wifi_80211_tx(WIFI_IF_STA, probe_req, sizeof probe_req, true);
+        }
         spin_us(400);
     }
 
     while (!g_trace_done) {
     }
-    trace_dump();
+    trace_dump(do_tx);
 }
 
 /* Promiscuous mode needs a callback registered even when nothing is done with
@@ -318,11 +321,28 @@ void app_main(void)
      * observed -- it is reconstructed from the snapshot index, which assumes the
      * sequence repeats. The second pass tests that assumption rather than
      * trusting it. */
+    /* Idle and transmit captures INTERLEAVED per window, not split into passes.
+     *
+     * UM-NATOS-034 §19 found out the hard way why this matters. The MAC is
+     * receiving real ambient traffic throughout -- a nearby access point
+     * delivers frames continuously -- and that background produces state
+     * changes indistinguishable from transmit ones. §18 had no control at all
+     * and misidentified background activity as the transmit signature.
+     *
+     * A control taken minutes later would be a weaker one, because ambient
+     * traffic varies. Back-to-back on the same window is as close to "same
+     * conditions, one variable" as this experiment can get.
+     *
+     * This is the first version of the nat-os/ESP-IDF comparison with a control
+     * on BOTH sides. */
     for (int pass = 0; pass < 2; pass++) {
         printf("TRACEPASS %d\n", pass);
         for (uint32_t w = 0; w < 64; w++) {
-            traced_tx(0x3FF73000u + w * TRACE_WORDS * 4u);
-            vTaskDelay(pdMS_TO_TICKS(60));
+            uint32_t base = 0x3FF73000u + w * TRACE_WORDS * 4u;
+            traced_tx(base, 0);                /* control first */
+            vTaskDelay(pdMS_TO_TICKS(40));
+            traced_tx(base, 1);                /* same window, with a burst */
+            vTaskDelay(pdMS_TO_TICKS(40));
         }
     }
     printf("TRACESWEEPEND\n");

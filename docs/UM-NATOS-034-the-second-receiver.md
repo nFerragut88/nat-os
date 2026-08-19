@@ -1,7 +1,7 @@
 # UM-NATOS-034 — The Second Receiver
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 2.0 · 2026-08-19 · Status: **§18's lead retracted in §19, and replaced by the first positive evidence** — the MAC completes a transmit cycle, and still nothing reaches the air
+Revision 2.1 · 2026-08-19 · Status: **Bounded** — §20 puts a control on both sides and finds the two MACs execute the same transmit sequence; the fault is below the MAC and above the antenna
 
 ---
 
@@ -1226,3 +1226,104 @@ posting a frame and everything else is subtracted?*
 
 That is a small change to `idf_ref` — a pass with no `esp_wifi_80211_tx()` —
 and it is the first version of this comparison with a control on both sides.
+
+---
+
+## 20. A control on both sides, and what is left
+
+**Added revision 2.1, 2026-08-19.**
+
+§19 ended by naming the one experiment this line of work had never run: the same
+idle control on `tools/idf_ref`. §18's trace was taken during transmit bursts,
+so its activity was a mix of transmit and background with nothing separating
+them.
+
+`idf_ref` now captures each window twice, **back to back**: once with no
+`esp_wifi_80211_tx()` at all, once with a burst of eight. Back-to-back because
+ambient traffic varies over minutes, so a control taken later would be a weak
+one. `tools/serial/tx_control.py` pairs them.
+
+### 20.1 The result
+
+`0x3FF73DB8` transitions on the reference board, by mode:
+
+```
+--- idle (no frame sent) ---          --- transmitting ---
+    000 -> 210   x10                     000 -> 210   x8     <- also idle
+    210 -> 230   x10                     210 -> 230   x8     <- also idle
+    230 -> 020   x10                     230 -> 020   x7     <- also idle
+    020 -> 000   x10                     000 -> 258   x10    <- NEVER idle
+    (nothing else)                       258 -> 220   x9     <- NEVER idle
+                                         220 -> 020   x11
+                                         258 <-> 259  x98    (parked, toggling)
+```
+
+**`0x210 -> 0x230` is background on ESP-IDF too.** It appears at the same rate
+with and without a transmit, on the reference board, against its own control.
+§18's central identification is now refuted twice by independent experiments —
+once on nat-os (§19), once here.
+
+**ESP-IDF's real transmit signature is `-> 0x258 -> 0x220 -> 0x020`.** Those
+transitions occur ten and nine times with a burst and *zero* times without.
+
+### 20.2 The two MACs do the same thing
+
+Set the two transmit-caused paths side by side:
+
+```
+ESP-IDF   000 -> (058) -> 258 -> 220 -> 020 -> 000
+nat-os    000 ->  058  -> 258 -> 220 -> 020 -> 000
+```
+
+They are the same path. nat-os's MAC runs the transmit state machine ESP-IDF's
+MAC runs, in the same order, through the same states, including the `258 <-> 259`
+toggle while parked.
+
+Two boards, two firmwares, two independently-derived controls, agreeing.
+
+### 20.3 What this settles, and what it costs
+
+**Settled: the fault is not in the MAC layer.** That is where nat-os's own code
+lives — `wifimac.c`, `wifimac_tx()`, the register writes this project
+reconstructed from disassembly — and at the MAC's own status registers the two
+firmwares are now indistinguishable. Combined with §5:
+
+> nat-os's MAC executes the same transmit sequence as a working stack's MAC,
+> **and nothing reaches the air.**
+
+The fault is below the MAC and above the antenna: the PHY/RF path.
+
+This is the third instrument to reach that conclusion and the first to reach it
+positively. §5 inferred it from an absent radio signal, §19 from nat-os's own
+MAC completing a cycle; this one from a working stack and a failing one being
+identical where they can be compared.
+
+**The cost is that it points at the blob.** The MAC is nat-os's code and could be
+fixed. The PHY is 847 KB of Espressif's binary that this project calls but does
+not control, and §16 already established it cannot be replaced from public
+information. The remaining difference is in *how nat-os calls `libphy`* — the
+calibration sequence, its arguments, or the state it expects — not in any
+register nat-os writes directly.
+
+That is a smaller search space than the project has had at any previous point,
+and it is a less tractable one.
+
+### 20.4 What is worth doing next
+
+Two things, and the second is the honest one.
+
+**A `phyinit` argument and sequence differential.** nat-os calls
+`register_chipv7_phy` with an init-data blob and a calibration mode; ESP-IDF
+calls it with data derived from NVS-stored calibration and a mode chosen by
+whether calibration data is valid. Those arguments, and what ESP-IDF does to the
+PHY *after* that call, are the remaining candidates. Unlike the register hunt,
+this is a bounded list.
+
+**And the strategic answer §17 already gave.** An SX1262 over SPI3 has no PHY
+blob, no undocumented calibration, and a published register map. The hardware is
+ordered. Every session spent here buys function on one radio; the LoRa path buys
+the same capability on a radio this project can actually own — which is what
+`docs/conceptual/the-ark-and-fiendnet.md` needs it for.
+
+The transmit investigation is not abandoned. It is now correctly bounded, which
+is what four sessions of register work was actually for.

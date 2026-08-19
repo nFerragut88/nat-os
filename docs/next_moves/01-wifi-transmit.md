@@ -75,6 +75,36 @@
 > reference board gives the first version of this comparison with a control on
 > both sides.
 
+> **UPDATE 2026-08-19 (latest) — BOUNDED. See UM-NATOS-034 §20.**
+> `tools/idf_ref` now runs an idle control back-to-back with each transmit
+> capture, so background can be subtracted on the reference board too
+> (`tools/serial/tx_control.py`). First version of this comparison with a
+> control on BOTH sides.
+>
+> `0x210 -> 0x230` is background on ESP-IDF as well — same rate with and without
+> a transmit. Its real transmit signature is `-> 0x258 -> 0x220 -> 0x020`,
+> x10/x9 with a burst and **x0** without.
+>
+> That is **the same path nat-os takes**:
+> ```
+> ESP-IDF   000 -> (058) -> 258 -> 220 -> 020 -> 000
+> nat-os    000 ->  058  -> 258 -> 220 -> 020 -> 000
+> ```
+>
+> **So the fault is not in the MAC layer** — where all of nat-os's own transmit
+> code lives. At the MAC's status registers a working stack and a failing one
+> are indistinguishable. With §5 (nothing on the air), the fault is below the
+> MAC and above the antenna: the PHY/RF path.
+>
+> **What is left is how nat-os CALLS libphy** — `register_chipv7_phy`'s
+> init-data blob and calibration mode, and whatever ESP-IDF does to the PHY
+> after that call. A bounded list, unlike the register hunt. But it points at
+> 847 KB of binary this project does not control, and §16 already established
+> it cannot be replaced from public information.
+>
+> §20.4 states the strategic alternative plainly: the SX1262 has no PHY blob, a
+> published register map, and the hardware is ordered.
+
 **Size:** large. **Risk:** real — may cost the working receive path.
 **Blocked on:** willingness to accept a link change.
 
