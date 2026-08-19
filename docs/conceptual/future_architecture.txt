@@ -1,0 +1,75 @@
+Exactly. That's one of the annoying realities of the ESP32 family: "ESP32" is now basically a brand name for a small zoo of wildly different architectures.
+
+For NatOS, I'd separate them roughly like this:
+
+* **Original ESP32 / ESP32-S0WD**: Xtensa LX6, dual-core, register-window architecture. This is the environment where `-mabi=call0` is particularly relevant.
+* **ESP32-S2**: Xtensa LX7, single-core. Still Xtensa, so the general ABI/kernel considerations remain relevant, although the hardware differs.
+* **ESP32-S3**: Xtensa LX7, dual-core. Also capable of running a serious custom kernel, and probably a more interesting target if you want modern peripherals and AI-oriented instructions.
+* **ESP32-C3/C6/H2**: RISC-V. Completely different CPU architecture. `-mabi=call0` is irrelevant because there's no Xtensa register-window machinery to begin with.
+* **ESP32-P4**: RISC-V and substantially more powerful, but it's a very different class of device from the little ESP32 boards you've been building around.
+
+For NatOS, this actually suggests a useful architectural split:
+
+```text
+                    NatOS
+                      │
+              ┌───────┴───────┐
+              │               │
+          CPU layer       Hardware layer
+              │               │
+       ┌──────┴──────┐   ┌────┴───────┐
+       │             │   │            │
+     Xtensa        RISC-V       ESP32 peripherals
+       │             │
+   call0 ABI      RISC-V ABI
+   context        context
+   switching      switching
+```
+
+The **kernel concepts** don't need to change:
+
+```text
+scheduler
+interrupts
+process/task state
+virtual machine/bytecode
+IPC
+timers
+drivers
+memory management
+```
+
+Only the architecture-specific layer changes.
+
+That is actually a pretty good fit for the way you've been designing NatOS. Your low-level bytecode/kernel infrastructure can remain conceptually stable while the CPU backend handles the ugly little details humans apparently decided should exist.
+
+And there's an important consequence: **don't make `-mabi=call0` part of NatOS itself.** Make it part of the Xtensa backend/toolchain configuration.
+
+Then you can eventually have:
+
+```text
+NatOS
+├── kernel
+├── scheduler
+├── bytecode VM
+├── device abstraction
+│
+├── arch/
+│   ├── xtensa/
+│   │   ├── context.S
+│   │   ├── interrupts.S
+│   │   └── call0 ABI
+│   │
+│   └── riscv/
+│       ├── context.S
+│       ├── interrupts.S
+│       └── RISC-V ABI
+│
+└── drivers/
+    ├── gpio
+    ├── spi
+    ├── display
+    └── ...
+```
+
+That would let the **same NatOS programming model** eventually run on both an ESP32-S3 and an ESP32-C3/C6 without pretending that the CPUs are secretly identical because Espressif put "ESP32" on both boxes.

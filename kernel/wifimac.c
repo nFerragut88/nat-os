@@ -1042,6 +1042,77 @@ uint32_t wifimac_tx_forced(void) { return g_tx_forced; }
  */
 extern void lmacInit(void);
 
+/* ---- the WiFi power domain -----------------------------------------------
+ *
+ * open-mac calls esp_wifi_power_domain_on() and nat-os never has. UM-NATOS-034
+ * §10.4 recorded that as unreachable, because the symbol is not in libpp or
+ * libphy -- which is true and was the wrong conclusion. It is not a blob
+ * function at all. It is ESP-IDF, it is open source, and it is six register
+ * operations on documented registers:
+ *
+ *     CLEAR RTC_CNTL_DIG_PWC_REG.WIFI_FORCE_PD
+ *     delay 10 us
+ *     enable the WiFi/BT common clock
+ *     SET then CLEAR DPORT_CORE_RST_EN_REG.MODEM_RESET_FIELD_WHEN_PU
+ *     CLEAR RTC_CNTL_DIG_ISO_REG.WIFI_FORCE_ISO
+ *
+ * ---- why the isolation bit is the suspect --------------------------------
+ *
+ * WIFI_FORCE_ISO clamps the signals crossing OUT of the WiFi power domain, so
+ * a powered-down domain cannot float its outputs into the rest of the chip.
+ * With it still asserted the digital side behaves perfectly -- registers accept
+ * writes, the MAC takes frames, descriptors retire, completion counters climb
+ * -- and nothing reaches the analog side.
+ *
+ * That is the symptom of UM-NATOS-034 stated register by register, and it fits
+ * the one asymmetry nobody has explained: receive works, so the domain has
+ * power; only the outbound path is dead.
+ *
+ * Hypothesis, not fact. But better sourced than §9's CCA guess: that was
+ * semantics inferred from disassembly, this is Espressif's own source for the
+ * exact function open-mac calls.
+ *
+ * ---- ORDER MATTERS ---------------------------------------------------------
+ *
+ * MODEM_RESET_FIELD_WHEN_PU includes WIFIMAC_RST. This RESETS the MAC, so it
+ * must run BEFORE macinit, not after. Running it on a live MAC would undo the
+ * bring-up and look like a new failure. */
+#define RTC_CNTL_DIG_PWC_REG      0x3FF48084u
+#define RTC_CNTL_WIFI_FORCE_PD    (1u << 17)
+#define RTC_CNTL_DIG_ISO_REG      0x3FF48088u
+#define RTC_CNTL_WIFI_FORCE_ISO   (1u << 28)
+#define DPORT_CORE_RST_EN_REG     0x3FF000D0u
+#define DPORT_WIFI_CLK_EN_REG     0x3FF000CCu
+/* WIFIBB | WIFIMAC | BTBB | BTMAC | RW_BTMAC = bits 0,2,3,4,9 */
+#define MODEM_RESET_FIELD_WHEN_PU 0x0000021Du
+#define DPORT_WIFI_CLK_COMMON     0x000003C9u
+
+#define PDREG(a) (*(volatile uint32_t *)(a))
+
+void wifimac_power_domain_read(uint32_t *pwc, uint32_t *iso, uint32_t *clk)
+{
+    *pwc = PDREG(RTC_CNTL_DIG_PWC_REG);
+    *iso = PDREG(RTC_CNTL_DIG_ISO_REG);
+    *clk = PDREG(DPORT_WIFI_CLK_EN_REG);
+}
+
+void wifimac_power_domain_on(void)
+{
+    PDREG(RTC_CNTL_DIG_PWC_REG) &= ~RTC_CNTL_WIFI_FORCE_PD;
+
+    /* The 10 us the reference implementation waits, by cycle count. */
+    uint32_t t0 = xt_ccount();
+    while ((xt_ccount() - t0) < 800u) {
+    }
+
+    PDREG(DPORT_WIFI_CLK_EN_REG) |= DPORT_WIFI_CLK_COMMON;
+
+    PDREG(DPORT_CORE_RST_EN_REG) |=  MODEM_RESET_FIELD_WHEN_PU;
+    PDREG(DPORT_CORE_RST_EN_REG) &= ~MODEM_RESET_FIELD_WHEN_PU;
+
+    PDREG(RTC_CNTL_DIG_ISO_REG) &= ~RTC_CNTL_WIFI_FORCE_ISO;
+}
+
 extern void lmacInitAc(uint32_t ac);
 
 void wifimac_lmac_init(void)

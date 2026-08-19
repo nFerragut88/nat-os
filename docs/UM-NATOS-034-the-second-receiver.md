@@ -1,7 +1,7 @@
 # UM-NATOS-034 — The Second Receiver
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.2 · 2026-08-19 · Status: **Negative result, and a definitive one** — §9 and §10 add two more, and §10 corrects the lead list itself
+Revision 1.3 · 2026-08-19 · Status: **Negative result, and a definitive one** — §9, §10 and §11 add three more; §11 corrects §10.4
 
 ---
 
@@ -405,4 +405,101 @@ lose an afternoon and a working receiver at the same time.
 
 Left undone, on purpose, and recorded so nobody re-derives it as an obvious
 next step.
+
+---
+
+## 11. The power domain: not a blob problem after all (revision 1.3)
+
+§10.4 concluded that `esp_wifi_power_domain_on` was unreachable because the
+symbol is not in `libpp` or `libphy`. True, and the wrong conclusion.
+
+**It is not a blob function.** It is ESP-IDF, it is open source, and it is six
+register operations on documented registers:
+
+```c
+void IRAM_ATTR esp_wifi_bt_power_domain_on(void)
+{
+    CLEAR_PERI_REG_MASK(RTC_CNTL_DIG_PWC_REG, RTC_CNTL_WIFI_FORCE_PD);
+    esp_rom_delay_us(10);
+    wifi_bt_common_module_enable();
+    DPORT_SET_PERI_REG_MASK(DPORT_CORE_RST_EN_REG, MODEM_RESET_FIELD_WHEN_PU);
+    DPORT_CLEAR_PERI_REG_MASK(DPORT_CORE_RST_EN_REG, MODEM_RESET_FIELD_WHEN_PU);
+    CLEAR_PERI_REG_MASK(RTC_CNTL_DIG_ISO_REG, RTC_CNTL_WIFI_FORCE_ISO);
+    wifi_bt_common_module_disable();
+}
+```
+
+That is a general lesson worth more than the experiment: **"the symbol is not in
+the archive" is not the same as "the behaviour is out of reach."** Two of the
+three leads this project has carried since UM-NATOS-028 were dismissed on that
+confusion.
+
+### 11.1 The isolation hypothesis, dead on arrival
+
+`WIFI_FORCE_ISO` clamps signals leaving the WiFi power domain. Asserted, the
+digital side would work perfectly while nothing reached the analog side — §3's
+symptom stated as a register.
+
+Read on a fresh boot, before anything touched them:
+
+```
+DIG_PWC = 0x00155550   WIFI_FORCE_PD(17)  = clear
+DIG_ISO = 0xaaaa5000   WIFI_FORCE_ISO(28) = clear
+```
+
+Both already clear. The ROM or the second-stage bootloader sets this up, and the
+domain has been powered and un-isolated the entire time. **Hypothesis
+eliminated in one read**, which is the cheapest any of them has been.
+
+### 11.2 One thing was genuinely unset
+
+`WIFI_CLK = 0xfffce030`, and `DPORT_WIFI_CLK_WIFI_BT_COMMON_M` is `0x3C9`.
+Those bits AND to **zero** — the WiFi/BT common module clock was never enabled.
+Applying the sequence set them (`0xe030` → `0xe3f9`).
+
+### 11.3 Result: another behaviour change, still no radiation
+
+Full bring-up after the sequence: `phyinit` 0, MAC running, channel tuned,
+receiver armed, `lmacInit` clean. Then beaconing at 10 Hz with the second board
+listening 30 cm away.
+
+`chain acks` moved again, and this time strangely:
+
+| configuration | chain acks / frames handed over |
+|---|---|
+| baseline | 39/302, 10/219 — about 5–13% |
+| `lmacInit` | 82/165 |
+| `lmacInit` + `lmacInitAc(0..3)` | 8/172 |
+| **+ power domain sequence** | **236/124 — nearly twice the frames sent** |
+
+Chain acknowledgements now **exceed** the number of frames queued, which has
+never happened. Something in the DMA chain is being processed more than once per
+frame. That is a specific, new, unexplained observation and the best remaining
+thread.
+
+The receiver's answer did not change: `networks=1`, the real access point, never
+the transmitter's MAC. System healthy throughout — `heap check=0`, DMA 1,070,824
+transfers 0 timeouts, receive decoding normally.
+
+### 11.4 Where this leaves transmit
+
+Three attempts in one session, each cheap, each eliminating something, none
+radiating:
+
+| attempt | cost | result |
+|---|---|---|
+| CCA / EDCA pokes | none | registers live, no radiation |
+| `lmacInit` / `lmacInitAc` | 1,200 bytes | `chain acks` 5%→50%→5%, no radiation |
+| power domain sequence | none | common clock was off, now on; `chain acks` > frames, no radiation |
+
+What has not been tried, and is now the honest next step, is **differential
+tracing**: run ESP-IDF's own stack on identical hardware, capture every register
+write it makes during a transmit, and diff it against nat-os. That converts the
+problem from guessing which register matters into reading which one differs.
+It needs a second toolchain and a bare devkit — the CYD's JTAG pins are the
+display's — and it is a different kind of work from anything in this project so
+far.
+
+Until someone does that, transmit is a research problem rather than a task with
+a next step.
 

@@ -2056,6 +2056,41 @@ static void execute(char *line)
         uart_put_dec(wifimac_rx_to_us());
         uart_puts("  (any non-zero means something HEARD us)\n");
     }
+    else if (str_eq(line, "wifipd")) {
+        /* The WiFi power domain. `wifipd` reads, `wifipd on` applies.
+         *
+         * MUST run BEFORE macinit: the sequence pulses WIFIMAC_RST, so
+         * applying it to a live MAC undoes the bring-up and would read as
+         * a new failure rather than as this command doing its job.
+         *
+         * Reading first because the answer may already be visible. If
+         * WIFI_FORCE_ISO is asserted, the WiFi domain is ISOLATED -- its
+         * outputs clamped -- which is UM-NATOS-034 stated as a register:
+         * the digital side works, completions climb, nothing reaches the
+         * analog side. */
+        uint32_t pwc = 0, iso = 0, clk = 0;
+        wifimac_power_domain_read(&pwc, &iso, &clk);
+        uart_puts("   DIG_PWC  = "); uart_put_hex(pwc);
+        uart_puts("   WIFI_FORCE_PD(17) = ");
+        uart_puts((pwc & (1u << 17)) ? "SET  <-- powered down\n"
+                                     : "clear\n");
+        uart_puts("   DIG_ISO  = "); uart_put_hex(iso);
+        uart_puts("   WIFI_FORCE_ISO(28) = ");
+        uart_puts((iso & (1u << 28)) ? "SET  <-- ISOLATED\n"
+                                     : "clear\n");
+        uart_puts("   WIFI_CLK = "); uart_put_hex(clk); uart_puts("\n");
+
+        if (str_eq(arg, "on")) {
+            wifimac_power_domain_on();
+            wifimac_power_domain_read(&pwc, &iso, &clk);
+            uart_puts("   applied. now PWC="); uart_put_hex(pwc);
+            uart_puts(" ISO="); uart_put_hex(iso);
+            uart_puts(" CLK="); uart_put_hex(clk);
+            uart_puts("\n   run phyinit / macinit / chan / macrx now\n");
+        } else {
+            uart_puts("   read only. 'wifipd on' applies it (before macinit).\n");
+        }
+    }
     else if (str_eq(line, "lmacinit")) {
         /* The lower MAC. Run macinit first, then this, then try to transmit.
          *
