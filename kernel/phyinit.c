@@ -24,19 +24,41 @@
 #include "phyinit.h"
 #include "window.h"
 #include "uart.h"
+#include "efuse.h"
 
 #define DPORT_WIFI_CLK_EN_REG        0x3FF000CCu
 #define DPORT_WIFI_CLK_WIFI_BT_COMMON 0x000003C9u
 
 #define PHY_RF_CAL_FULL 2u
 
-/* Espressif's default PHY initialisation parameters. */
+/* Espressif's default PHY initialisation parameters.
+ *
+ * ---- indices 44..49, and how they were wrong ------------------------------
+ *
+ * These six are the TRANSMIT POWER table, in units of 0.25 dBm, one per rate
+ * group. In ESP-IDF's phy_init_data.h they are written as
+ *
+ *     LIMIT(CONFIG_ESP_PHY_MAX_TX_POWER * 4, 40, 78)
+ *     LIMIT(CONFIG_ESP_PHY_MAX_TX_POWER * 4, 40, 72)   ... and so on
+ *
+ * with `#define LIMIT(val, low, high) ((val < low) ? low : (val > high) ? high
+ * : val)` and a default max of 20 dBm. So the values ESP-IDF actually passes
+ * are 80 clamped to each ceiling: **78, 72, 66, 60, 56, 52**.
+ *
+ * This table originally held `40, 40, 40, 40, 40, 40` -- the macro's LOW bound,
+ * copied six times instead of evaluated. nat-os was transmitting between 3 and
+ * 9.5 dB below the reference at every rate, with 10.0 dBm where ESP-IDF uses
+ * 19.5.
+ *
+ * Found by diffing the arguments rather than the registers. Every other byte of
+ * the 128 matches exactly; these six were the whole difference.
+ */
 static const uint8_t g_phy_init_data[128] = {
     3, 3, 0x05, 0x09, 0x06, 0x05, 0x03, 0x06, 0x05, 0x04, 0x06, 0x04,
     0x05, 0x00, 0x00, 0x00, 0x00, 0x05, 0x09, 0x06, 0x05, 0x03, 0x06, 0x05,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xfc, 0xfc, 0xfe, 0xf0,
-    0xf0, 0xf0, 0xe0, 0xe0, 0xe0, 0x18, 0x18, 0x18, 40, 40, 40, 40,
-    40, 40, 0, 1, 1, 2, 2, 3, 4, 5, 0, 0,
+    0xf0, 0xf0, 0xe0, 0xe0, 0xe0, 0x18, 0x18, 0x18, 78, 72, 66, 60,
+    56, 52, 0, 1, 1, 2, 2, 3, 4, 5, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -82,6 +104,29 @@ int phyinit_run(void)
 
     /* Ungate the radio's clock before anything reaches its registers. */
     *(volatile uint32_t *)DPORT_WIFI_CLK_EN_REG |= DPORT_WIFI_CLK_WIFI_BT_COMMON;
+
+    /* The calibration buffer's MAC field, which ESP-IDF fills and this did not.
+     *
+     *     ESP_ERROR_CHECK(esp_efuse_mac_get_default(sta_mac));
+     *     memcpy(cal_data->mac, sta_mac, 6);
+     *     register_chipv7_phy(init_data, cal_data, calibration_mode);
+     *
+     * esp_phy_calibration_data_t is version[4] then mac[6] then the opaque
+     * remainder, so the six bytes go at offset 4. nat-os was passing a zeroed
+     * .bss buffer, which means a MAC of 00:00:00:00:00:00.
+     *
+     * Its role is to tie stored calibration to the chip that produced it, so
+     * with PHY_RF_CAL_FULL -- which recalibrates regardless -- it may well not
+     * matter. Filled anyway: it costs six bytes, it is unambiguously what the
+     * working stack does, and leaving a known difference in place while hunting
+     * an unknown one is how this investigation has previously wasted sessions. */
+    {
+        uint8_t mac[6];
+        efuse_factory_mac(mac);
+        for (int i = 0; i < 6; i++) {
+            g_phy_cal_data[4 + i] = mac[i];
+        }
+    }
 
     g_phy_attempted = 1;
     g_phy_result = rom_call3((uint32_t)&register_chipv7_phy,

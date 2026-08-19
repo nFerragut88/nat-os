@@ -1,7 +1,7 @@
 # UM-NATOS-034 — The Second Receiver
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 2.2 · 2026-08-19 · Status: **Bounded, and measured** — §20 finds the two MACs execute the same transmit sequence; §21 re-runs the two-board test with a control on each receiver and confirms nothing radiates
+Revision 2.3 · 2026-08-19 · Status: **Bounded, measured, arguments exhausted** — §22 finds nat-os was asking for 10 dBm where ESP-IDF asks for 19.5, fixes it, and it still does not transmit
 
 ---
 
@@ -1420,3 +1420,108 @@ one plus a memory:
 
 The fault is below the MAC and above the antenna. Nothing in the record now
 rests on an unmeasured assumption about either instrument.
+
+---
+
+## 22. The arguments, compared
+
+**Added revision 2.3, 2026-08-19.**
+
+§20 and §21 bounded the fault to the RF/PHY path and named what was left: *how
+nat-os calls `libphy`*. `register_chipv7_phy` takes three arguments. Here they
+are, against `esp_phy/src/phy_init.c`.
+
+### 22.1 Argument 1 — the init data. Six bytes were wrong.
+
+A byte-for-byte diff of nat-os's `g_phy_init_data[128]` against ESP-IDF's
+`phy_init_data.h`, with `LIMIT()` evaluated and `CONFIG_ESP_PHY_MAX_TX_POWER`
+at its default 20:
+
+```
+   idx   ESP-IDF   nat-os    delta   note
+    44       78       40    +9.5dB  TX power  11b 1/2 Mbps
+    45       72       40    +8.0dB  TX power  11b 5.5/11
+    46       66       40    +6.5dB  TX power  11g 6-24
+    47       60       40    +5.0dB  TX power  11g 36/48
+    48       56       40    +4.0dB  TX power  11g 54
+    49       52       40    +3.0dB  TX power  11n MCS7
+```
+
+**Six of 128 bytes differ, and all six are the transmit power table.** The other
+122 match exactly.
+
+ESP-IDF writes them as `LIMIT(CONFIG_ESP_PHY_MAX_TX_POWER * 4, 40, 78)` and so
+on, with
+
+```c
+#define LIMIT(val, low, high) ((val < low) ? low : (val > high) ? high : val)
+```
+
+so the values actually passed are `80` clamped to each ceiling: 78, 72, 66, 60,
+56, 52. nat-os's table held `40, 40, 40, 40, 40, 40` — **the macro's LOW bound,
+copied six times instead of evaluated.** Units are 0.25 dBm, so nat-os was
+asking for 10.0 dBm where the reference asks for 19.5.
+
+Fixed.
+
+### 22.2 Argument 2 — the calibration buffer's MAC field
+
+```c
+ESP_ERROR_CHECK(esp_efuse_mac_get_default(sta_mac));
+memcpy(cal_data->mac, sta_mac, 6);
+register_chipv7_phy(init_data, cal_data, calibration_mode);
+```
+
+`esp_phy_calibration_data_t` is `version[4]`, `mac[6]`, then the opaque
+remainder. nat-os passed a zeroed `.bss` buffer, so a MAC of all zeros.
+
+Its role is to tie stored calibration to the chip that produced it, and with
+`PHY_RF_CAL_FULL` — which recalibrates regardless — it may well not matter.
+Filled anyway. Leaving a known difference in place while hunting an unknown one
+is how this investigation has previously lost sessions.
+
+### 22.3 Argument 3 — the calibration mode. Matches.
+
+nat-os passes `PHY_RF_CAL_FULL`. ESP-IDF passes `PHY_RF_CAL_FULL` on the
+no-NVS path, and on the NVS path falls back to it whenever stored data fails to
+load — which is every first boot. No difference.
+
+### 22.4 The result: both fixed, and it still does not transmit
+
+Verified in the linked image (`4e 48 42 3c 38 34` at `g_phy_init_data + 44`),
+`phyinit` returns 0, and the two-board rig from §21:
+
+```
+idf_ref heard 52 frames from 2 sources over 45 s
+   44:25:38:19:0d:1a  x37       <- ambient AP, control passes
+   6e:a6:d8:b0:78:b1  x15
+   5c:01:3b:50:3f:64  ABSENT    <- nat-os
+```
+
+**Still nothing.** Which was the expectation rather than a surprise: 10 dBm is
+10 mW, audible across a room, so a 9.5 dB shortfall was never going to explain
+total silence at 30 cm. The defect is real, it is in the RF domain, it is fixed,
+and it is not the cause.
+
+Recorded as a clean negative. Two concrete differences in the PHY arguments
+have been found and eliminated, and the argument list is now exhausted.
+
+### 22.5 What is left in the surrounding sequence
+
+The arguments match. What does not is what ESP-IDF does *around* the call, in
+`esp_phy_enable()`:
+
+| ESP-IDF | nat-os | verdict |
+|---|---|---|
+| `esp_phy_common_clock_enable()` → `DPORT_WIFI_CLK_WIFI_BT_COMMON_M` = `0x3c9` | ungates `0x3c9` | **identical** |
+| `phy_update_wifi_mac_time(false, ts)` before the clock enable | not called | candidate |
+| `coex_bt_high_prio()` after init, unconditional on ESP32 | not called | **not available** |
+| `esp_phy_release_init_data()` | n/a, static table | not applicable |
+
+`coex_bt_high_prio()` is the one previously listed as a lead and then recorded
+as absent from the archives. That stands, and the reason is now clear: it lives
+in `libcoexist.a`, which nat-os does not link and which is not among the two
+archives this project has. It is called unconditionally on ESP32 by every
+working stack.
+
+That is a short list, and it is the last of the bounded ones.
