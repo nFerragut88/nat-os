@@ -1,7 +1,7 @@
 # UM-NATOS-034 — The Second Receiver
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.4 · 2026-08-19 · Status: **Negative result, and a definitive one** — §12 removes the last doubt about the receiver
+Revision 1.5 · 2026-08-19 · Status: **Negative result** — §13 replaces guessing with a method, and finds a real bug with it
 
 ---
 
@@ -557,4 +557,112 @@ anything but the two boards already on the desk and a UART.
 The second toolchain part is fair — this is the first thing in the project that
 depends on Espressif's tooling rather than replacing it, and the first build
 took 379 seconds.
+
+---
+
+## 13. Phase B: the differential, and the address that was never set
+
+Three attempts at guessing which register mattered each eliminated something and
+none found it. This stops guessing.
+
+Both stacks call the same PHY blob, so whatever it does internally is identical.
+Any difference between a radio that transmits and one that does not has to be
+visible in the registers the *surrounding* code touches — and both firmwares can
+dump those.
+
+**The point of a differential is that you do not need to know what a register
+means to notice that it differs.**
+
+### 13.1 The filter that makes it readable
+
+Most of that address space is counters — the TSF timer, statistics, free-running
+clocks — and a naive diff is almost entirely those.
+
+So each board dumps **twice**, a second apart. Anything that moves between a
+board's own two dumps is volatile by definition and discarded.
+
+```
+addresses dumped by both : 1408
+volatile (discarded)     :   35
+stable, comparable       : 1373
+STABLE AND DIFFERENT     :  342
+```
+
+Of the 342, 245 are in `0x3FF74000`+ and hold random-looking values on both
+sides — buffer RAM, not control registers. That leaves **97 real candidates**,
+which is a list a person can read.
+
+### 13.2 What it found immediately
+
+```
+0x3ff73008   ESP-IDF: 513b015c    nat-os: 00000000
+0x3ff7300c   ESP-IDF: 0000412b    nat-os: 00000000
+```
+
+Little-endian, that is `5c:01:3b:51:2b:41` — **the reference AP's own MAC
+address**, exactly as its firmware printed it. The same at `0x3FF73040/44`
+(ending `2b:40`, the station interface) and `0x3FF73048/4C`. The match masks at
+`0x3FF73028` and `0x3FF73068` hold `ffffffff` / `0001ffff` in the reference and
+**zero** in nat-os.
+
+**This driver has been running with a hardware MAC address of
+00:00:00:00:00:00 since it was written.** `hal_mac_set_bssid` is even in the
+image — it survives `--gc-sections` because vendor code references it — and
+nat-os has never called it.
+
+That is a real defect found in about a minute by a method that had not been
+tried, after three sessions of informed guessing found nothing.
+
+### 13.3 Fixed, and it did not fix transmit
+
+`machw` programs all three address slots and both masks from the chip's own
+eFuse MAC:
+
+```
+before: 0x00000000 0x00000000
+after : 0x503b015c 0x0000643f     = 5c:01:3b:50:3f:64
+```
+
+Then, with the reference AP 30 cm away — an *active* peer, so a probe request
+that arrives earns a probe response addressed back:
+
+```
+sent 10 probe requests   frames addressed to us=0
+sent 10 probe requests   frames addressed to us=0
+sent 10 probe requests   frames addressed to us=0
+```
+
+Nothing. Receive was re-checked afterwards and is unaffected — 757 frames,
+hearing both the reference (556) and the router (171) — so the masks did not
+break the working path.
+
+### 13.4 The remaining candidates, which are now specific
+
+The diff hands over a shortlist instead of a hunch. The ones that look like
+state rather than noise:
+
+| address | ESP-IDF | nat-os | reads like |
+|---|---|---|---|
+| `0x3ff73118` / `311c` | `400a0000` / `3ffae000` | `ffffffff` / `00000000` | **a DRAM pointer** — `3ffae000` is data RAM |
+| `0x3ff73120` / `3124` | `400a0000` / `3ffae000` | `ffffffff` / `00000000` | the same pair again |
+| `0x3ff73c40` | `01e839e0` | `00000000` | another pointer-shaped value |
+| `0x3ff730f8`–`3104` | `05000000` | `87800000` | a mode or rate field |
+| `0x3ff73400`–`3430` | rate-table-looking bytes | different bytes | per-rate configuration |
+| `0x3ff73148` / `314c` | `00000900` / `00003000` | `00000000` | unset in nat-os |
+
+Two independent pointer pairs into DRAM that nat-os leaves at zero and
+`ffffffff` are the most interesting thing on the list, because a transmit path
+handed no buffer is a transmit path that completes and radiates nothing —
+which is the symptom, stated as a register, for the fourth time this report.
+
+### 13.5 What actually changed today
+
+Transmit still does not work. What changed is the *method*:
+
+- three sessions of guessing produced three eliminations and no defects
+- one differential produced a real defect in a minute and a shortlist of six
+  more, each with an address and a value to try
+
+`tools/idf_ref` and `tools/serial/reg_diff.py` make that repeatable. Anyone
+picking this up starts from a list, not a theory.
 

@@ -175,6 +175,10 @@ void     wifimac_aifs_set(uint32_t aifs);  /* 0..15, bits 27:24 of TX_CONFIG  */
 void     wifimac_cw_set(uint32_t cw);      /* 0..1023, bits 21:12             */
 
 /* The lower MAC. Naming it changes the link -- see wifimac.c. */
+/* The MAC's own hardware address. Never written before UM-NATOS-034 §13. */
+void wifimac_set_hw_addr(const uint8_t mac[6]);
+void wifimac_get_hw_addr(uint32_t *lo, uint32_t *hi);
+
 void wifimac_power_domain_read(uint32_t *pwc, uint32_t *iso, uint32_t *clk);
 void wifimac_power_domain_on(void);   /* run BEFORE macinit -- it resets the MAC */
 void wifimac_lmac_init(void);

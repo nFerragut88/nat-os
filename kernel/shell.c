@@ -142,6 +142,23 @@ static void hog_task(void)
 }
 
 /* Splits the line in place at the first space; returns the argument, or "". */
+/* One line per eight registers, address first -- the format tools/idf_ref
+ * prints, so one host script parses both. */
+static void regdump_range(const char *tag, uint32_t base, uint32_t words)
+{
+    for (uint32_t i = 0; i < words; i += 8u) {
+        uart_puts("REG ");
+        uart_puts(tag);
+        uart_puts(" ");
+        uart_put_hex(base + i * 4u);
+        for (uint32_t j = 0; j < 8u && (i + j) < words; j++) {
+            uart_puts(" ");
+            uart_put_hex(*(volatile uint32_t *)(base + (i + j) * 4u));
+        }
+        uart_puts("\n");
+    }
+}
+
 static char *split(char *line)
 {
     while (*line && *line != ' ') {
@@ -2055,6 +2072,49 @@ static void execute(char *line)
         uart_puts("   sent 10 probe requests\n   frames addressed to us=");
         uart_put_dec(wifimac_rx_to_us());
         uart_puts("  (any non-zero means something HEARD us)\n");
+    }
+    else if (str_eq(line, "regdump")) {
+        /* The same ranges, in the same format, as tools/idf_ref prints.
+         *
+         * Phase B of UM-NATOS-034: both stacks call the same PHY blob, so
+         * whatever it does internally is identical. The difference between
+         * a radio that transmits and one that does not has to show in the
+         * registers the surrounding code touches -- a layer both sides can
+         * dump and a host can diff.
+         *
+         * Printed TWICE by the caller, a second apart, so counters can be
+         * filtered: anything that moves between one board's own two dumps
+         * is free-running and gets discarded. Without that the diff is
+         * almost entirely TSF timer.
+         *
+         * console_lock across the whole dump. The reporter emits two
+         * kilobytes every 200 ms, and a status line landing in the middle
+         * of the hex is exactly how fbdump manufactured a render bug that
+         * did not exist (UM-NATOS-030 §5.1). */
+        console_lock();
+        regdump_range("dport", 0x3FF00000u, 64u);
+        regdump_range("rtc",   0x3FF48000u, 64u);
+        regdump_range("mac",   0x3FF73000u, 1280u);
+        uart_puts("REGEND\n");
+        console_unlock();
+    }
+    else if (str_eq(line, "machw")) {
+        /* Program the MAC hardware with this chip's own address.
+         *
+         * The differential against ESP-IDF found 0x3FF73008/000C holding the
+         * reference's MAC and nat-os holding zero -- this driver has run with
+         * an address of 00:00:00:00:00:00 since it was written. Run after
+         * macinit, before beaconing. */
+        uint8_t mac[6];
+        uint32_t lo = 0, hi = 0;
+        efuse_factory_mac(mac);
+        wifimac_get_hw_addr(&lo, &hi);
+        uart_puts("   before: "); uart_put_hex(lo);
+        uart_puts(" "); uart_put_hex(hi); uart_puts("\n");
+        wifimac_set_hw_addr(mac);
+        wifimac_get_hw_addr(&lo, &hi);
+        uart_puts("   after : "); uart_put_hex(lo);
+        uart_puts(" "); uart_put_hex(hi); uart_puts("\n");
     }
     else if (str_eq(line, "wifipd")) {
         /* The WiFi power domain. `wifipd` reads, `wifipd on` applies.

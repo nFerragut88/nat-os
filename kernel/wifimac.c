@@ -1042,6 +1042,66 @@ uint32_t wifimac_tx_forced(void) { return g_tx_forced; }
  */
 extern void lmacInit(void);
 
+/* ---- the MAC's own address, which this driver has never written ----------
+ *
+ * Found by differential register dump against ESP-IDF transmitting on identical
+ * hardware (UM-NATOS-034 §13). At 0x3FF73008 the reference holds 0x513b015c and
+ * at 0x3FF7300C 0x0000412b -- little-endian, that is 5c:01:3b:51:2b:41, exactly
+ * the MAC its own firmware printed. nat-os holds ZERO in both, and in the two
+ * further address slots at 0x3FF73040 and 0x3FF73048, and zero in the match
+ * masks at 0x3FF73028 and 0x3FF73068 where the reference has 0xffffffff and
+ * 0x0001ffff.
+ *
+ * So this MAC has been running with an address of 00:00:00:00:00:00 for the
+ * whole life of the project. `hal_mac_set_bssid` is even in the image -- it
+ * survived --gc-sections because vendor code references it -- and nat-os has
+ * never called it.
+ *
+ * Whether that is why nothing radiates is exactly what this is for. It is at
+ * minimum wrong, it is cheap, and it needs no symbol named: the addresses came
+ * out of a diff and the value comes from this chip's own eFuse.
+ *
+ * Three slots because the reference fills three: 0x3FF73040 carries ...2b:40,
+ * one below the AP's ...2b:41, which is the station interface. nat-os has one
+ * identity, so it writes the same address to all three rather than inventing
+ * an interface split it does not have. */
+#define MAC_ADDR0_LOW   0x3FF73008u
+#define MAC_ADDR0_HIGH  0x3FF7300Cu
+#define MAC_MASK0_LOW   0x3FF73028u
+#define MAC_MASK0_HIGH  0x3FF7302Cu
+#define MAC_ADDR1_LOW   0x3FF73040u
+#define MAC_ADDR1_HIGH  0x3FF73044u
+#define MAC_ADDR2_LOW   0x3FF73048u
+#define MAC_ADDR2_HIGH  0x3FF7304Cu
+#define MAC_MASK2_LOW   0x3FF73068u
+#define MAC_MASK2_HIGH  0x3FF7306Cu
+
+void wifimac_set_hw_addr(const uint8_t mac[6])
+{
+    uint32_t lo = (uint32_t)mac[0] | ((uint32_t)mac[1] << 8) |
+                  ((uint32_t)mac[2] << 16) | ((uint32_t)mac[3] << 24);
+    uint32_t hi = (uint32_t)mac[4] | ((uint32_t)mac[5] << 8);
+
+    *(volatile uint32_t *)MAC_ADDR0_LOW  = lo;
+    *(volatile uint32_t *)MAC_ADDR0_HIGH = hi;
+    *(volatile uint32_t *)MAC_ADDR1_LOW  = lo;
+    *(volatile uint32_t *)MAC_ADDR1_HIGH = hi;
+    *(volatile uint32_t *)MAC_ADDR2_LOW  = lo;
+    *(volatile uint32_t *)MAC_ADDR2_HIGH = hi;
+
+    /* The match masks the reference carries. */
+    *(volatile uint32_t *)MAC_MASK0_LOW  = 0xFFFFFFFFu;
+    *(volatile uint32_t *)MAC_MASK0_HIGH = 0x0001FFFFu;
+    *(volatile uint32_t *)MAC_MASK2_LOW  = 0xFFFFFFFFu;
+    *(volatile uint32_t *)MAC_MASK2_HIGH = 0x0001FFFFu;
+}
+
+void wifimac_get_hw_addr(uint32_t *lo, uint32_t *hi)
+{
+    *lo = *(volatile uint32_t *)MAC_ADDR0_LOW;
+    *hi = *(volatile uint32_t *)MAC_ADDR0_HIGH;
+}
+
 /* ---- the WiFi power domain -----------------------------------------------
  *
  * open-mac calls esp_wifi_power_domain_on() and nat-os never has. UM-NATOS-034
