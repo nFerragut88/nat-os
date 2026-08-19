@@ -917,6 +917,71 @@ uint32_t wifimac_beacon_len(void) { return g_beacon_len; }
 
 #define TX_SLOT 0u
 
+/* ---- two registers the vendor init writes and this driver never has -------
+ *
+ * Recovered by disassembling hal_mac.o rather than by guessing. Both functions
+ * are LEAF functions -- no calls, just a read-modify-write -- so they can be
+ * replicated here as direct pokes with no link change at all. That matters: the
+ * other route to them is referencing the symbols, and hal_mac.o is already in
+ * the image only because --gc-sections kept the nine functions nat-os calls.
+ *
+ *   hal_mac_tx_set_cca(mode):
+ *       reg 0x3FF73C58 -> (val & 0x3FFFFFFF) | (mode << 30)
+ *
+ *   hal_mac_tx_config_edca(p):
+ *       reg 0x3FF73D1C - qid*8 -> AIFS into bits 27:24, CW into bits 21:12
+ *
+ * WHY THIS IS THE SUSPECT. wifimac_tx() was verified line by line against
+ * open-mac and is clean; the queue really is armed (the 0xC0000000 into PLCP0
+ * at the end of it is exactly hal_mac_txq_enable). Yet UM-NATOS-034 showed the
+ * MAC reporting 302 completions while a receiver 30 cm away heard nothing.
+ *
+ * A completion is a MAC-level event: the descriptor was retired. It says
+ * nothing about whether the medium-access layer ever granted a transmit
+ * opportunity. CCA is what tells the MAC whether the channel is busy, and this
+ * driver has never written that register in its life; AIFS is the arbitration
+ * spacing, and bits 27:24 have only ever held their reset value.
+ *
+ * A MAC that believes the channel is permanently busy would behave EXACTLY as
+ * observed -- accept the frame, arm the queue, retire the descriptor, and never
+ * key the radio.
+ *
+ * Stated as a hypothesis because that is what it is. The bit positions come
+ * from the disassembly and are solid; what the values MEAN comes from 802.11
+ * convention and is not. Hence a sweep rather than a single write. */
+#define WIFI_TX_CCA_REG  0x3FF73C58u
+
+/* Defined below, next to the transmit path it belongs to. */
+static volatile uint32_t *tx_reg(uint32_t base, uint32_t stride_bytes);
+
+uint32_t wifimac_cca_get(void)
+{
+    return *(volatile uint32_t *)WIFI_TX_CCA_REG;
+}
+
+void wifimac_cca_set(uint32_t mode)
+{
+    volatile uint32_t *r = (volatile uint32_t *)WIFI_TX_CCA_REG;
+    *r = (*r & 0x3FFFFFFFu) | ((mode & 3u) << 30);
+}
+
+uint32_t wifimac_txcfg_get(void)
+{
+    return *tx_reg(WIFI_TX_CONFIG_BASE, 8u);
+}
+
+void wifimac_aifs_set(uint32_t aifs)
+{
+    volatile uint32_t *r = tx_reg(WIFI_TX_CONFIG_BASE, 8u);
+    *r = (*r & 0xF0FFFFFFu) | ((aifs & 0xFu) << 24);
+}
+
+void wifimac_cw_set(uint32_t cw)
+{
+    volatile uint32_t *r = tx_reg(WIFI_TX_CONFIG_BASE, 8u);
+    *r = (*r & 0xFFC00FFFu) | ((cw & 0x3FFu) << 12);
+}
+
 /* Static, not heap: the descriptor address is handed to hardware masked to its
  * low 20 bits, and it must be 4-byte aligned. A static in .bss satisfies both
  * without depending on what the allocator happens to return. */

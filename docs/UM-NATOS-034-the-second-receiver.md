@@ -1,7 +1,7 @@
 # UM-NATOS-034 — The Second Receiver
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.0 · 2026-08-19 · Status: **Negative result, and a definitive one**
+Revision 1.1 · 2026-08-19 · Status: **Negative result, and a definitive one** — §9 adds a second, smaller negative
 
 ---
 
@@ -190,3 +190,86 @@ half the size, and the next attempt has a rig that answers in seconds instead of
 a question nobody could answer at all.
 
 `tools/serial/wifi_link.py` runs the whole thing.
+
+---
+
+## 9. Postscript: CCA and EDCA, eliminated (revision 1.1)
+
+The rig above made a cheap follow-up possible, and it is recorded because a
+plausible hypothesis that dies is worth as much as one that lives.
+
+### 9.1 The hypothesis
+
+`hal_mac.o` is already in the image — `--gc-sections` kept the nine functions
+nat-os calls and discarded the other thirty-eight as unreferenced. Two of the
+discarded ones are **leaf functions**, pure read-modify-writes with no calls, so
+they can be replicated as direct pokes with no link change whatsoever:
+
+```
+hal_mac_tx_set_cca(mode):   0x3FF73C58        bits 31:30 = mode
+hal_mac_tx_config_edca(p):  0x3FF73D1C - qid*8  AIFS 27:24, CW 21:12
+```
+
+Read on a live board after `phyinit`, `macinit`, `chan 6`, both were **entirely
+zero** — the first time anyone had looked. A MAC that believes the channel is
+permanently busy would behave exactly as §3 describes: accept the frame, arm the
+queue, retire the descriptor, key nothing.
+
+### 9.2 The result
+
+Swept against the two-board rig, one register at a time, transmitter beaconing
+continuously throughout:
+
+| swept | receiver saw the transmitter's MAC |
+|---|---|
+| CCA mode 0, 1, 2, 3 | no |
+| AIFS 2, 3, 7 | no |
+| CW 15, 31 | no |
+
+`scan` on the receiver ended every run the same way: `networks=1`, the real
+access point, and nothing else. **Eliminated.**
+
+### 9.3 What was learned anyway
+
+**Those registers are live.** Setting AIFS=7 and CW=31 drove `forced` from 0 to
+699 out of 947 frames — the driver's own guard for a completion that never
+arrives. The transmit state machine demonstrably responds to them. It simply
+does not radiate either way.
+
+**And a misreading, corrected.** `wifimac_tx()` already writes `|= 0x02000000`,
+which is bit 25 — *inside* the AIFS field — and `|= 0x00003000`, which is CW
+bits 1:0. So AIFS was never 0 during a transmit; it was 2, and CW was 3. The
+existing driver had been setting sane-ish EDCA values by accident, through bits
+nobody had decoded. The "degenerate arbitration" half of the hypothesis was
+wrong before it was tested.
+
+### 9.4 Two instrument failures, both mine
+
+The first sweep keyed on the receiver's raw frame-count **delta**, and flagged
+every single step as a hit. A real access point in the room delivers about 1.5
+frames a second, so any eight-second window shows a dozen new frames whatever
+the transmitter does. **The instrument was measuring the neighbourhood.** The
+detector must key on the transmitter's source MAC, which is the entire reason
+this rig exists (§2).
+
+The second was worse in kind: the patch that fixed the detector silently failed
+to apply, and the run went ahead with the broken one still in place. The
+conclusion survived only because the raw `scan` output at the end is ground
+truth and needs no detector at all.
+
+Recorded because §7 already had two invalid runs of three, and this is two more.
+A rig built to stop bad measurements does not stop bad measurements; it only
+makes them cheap to notice.
+
+### 9.5 Where that leaves it
+
+The zero-link-risk surface is now exhausted. Everything remaining —
+`esp_wifi_power_domain_on`, `lmacInit`, `coex_bt_high_prio` — requires naming a
+symbol, and the measured blast radius of the largest is **305,888 bytes of
+vendor object pulled in by one reference, against a 142,016-byte image**, with
+`tx_pwctrl_background` among the cascade — the same object as the calibration
+that broke last time.
+
+`wifitx` and `tools/serial/wifi_sweep.py` remain. Both are one command away from
+re-testing any future guess in about a minute.
+

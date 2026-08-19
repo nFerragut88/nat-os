@@ -2056,6 +2056,63 @@ static void execute(char *line)
         uart_put_dec(wifimac_rx_to_us());
         uart_puts("  (any non-zero means something HEARD us)\n");
     }
+    else if (str_eq(line, "wifitx")) {
+        /* The two registers the vendor's init writes and this driver never has.
+         *
+         *   wifitx            read them, change nothing
+         *   wifitx cca <0-3>  CCA mode, bits 31:30 of 0x3FF73C58
+         *   wifitx aifs <0-15> arbitration spacing, bits 27:24 of TX_CONFIG
+         *   wifitx cw <n>     contention window, bits 21:12
+         *
+         * Separate subcommands on purpose. UM-NATOS-034 narrowed transmit to
+         * "the MAC retires the frame and nothing radiates", and the standing
+         * rule from reverting two changes together is that it destroys the
+         * information about which one mattered. One poke, one measurement.
+         *
+         * Reading first is not politeness. Nobody has ever looked at what these
+         * hold, and the reset value is itself evidence -- an AIFS of zero would
+         * mean the arbitration spacing has been degenerate this whole time. */
+        char *what = arg;
+        char *val  = split(what);
+
+        if (!*what) {
+            uint32_t cca = wifimac_cca_get();
+            uint32_t cfg = wifimac_txcfg_get();
+            uart_puts("   CCA  0x3FF73C58 = ");
+            uart_put_hex(cca);
+            uart_puts("   mode(31:30)=");
+            uart_put_dec((cca >> 30) & 3u);
+            uart_puts("\n   TXCFG            = ");
+            uart_put_hex(cfg);
+            uart_puts("   aifs(27:24)=");
+            uart_put_dec((cfg >> 24) & 0xFu);
+            uart_puts("  cw(21:12)=");
+            uart_put_dec((cfg >> 12) & 0x3FFu);
+            uart_puts("\n   usage: wifitx cca|aifs|cw <value>\n");
+        } else {
+            int v = parse_int(val);
+            if (v < 0) {
+                uart_puts("   value must be a non-negative decimal\n");
+            } else if (str_eq(what, "cca")) {
+                wifimac_cca_set((uint32_t)v);
+                uart_puts("   CCA now ");
+                uart_put_hex(wifimac_cca_get());
+                uart_puts("\n");
+            } else if (str_eq(what, "aifs")) {
+                wifimac_aifs_set((uint32_t)v);
+                uart_puts("   TXCFG now ");
+                uart_put_hex(wifimac_txcfg_get());
+                uart_puts("\n");
+            } else if (str_eq(what, "cw")) {
+                wifimac_cw_set((uint32_t)v);
+                uart_puts("   TXCFG now ");
+                uart_put_hex(wifimac_txcfg_get());
+                uart_puts("\n");
+            } else {
+                uart_puts("   usage: wifitx cca|aifs|cw <value>\n");
+            }
+        }
+    }
     else if (str_eq(line, "txstat")) {
         uart_puts("   tx handed to hardware=");
         uart_put_dec(wifimac_tx_sent());

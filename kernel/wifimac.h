@@ -163,4 +163,15 @@ int      wifimac_beacon_start(const char *ssid);
 void     wifimac_beacon_stop(void);
 uint32_t wifimac_beacon_len(void);
 
+/* ---- CCA and EDCA, recovered from hal_mac.o by disassembly ---------------
+ *
+ * The vendor's init writes these; this driver never has. Both underlying
+ * functions are leaves, so these are direct pokes and cost no link change.
+ * See the note in wifimac.c for why they are the suspect for transmit. */
+uint32_t wifimac_cca_get(void);
+void     wifimac_cca_set(uint32_t mode);   /* 0..3, bits 31:30 of 0x3FF73C58 */
+uint32_t wifimac_txcfg_get(void);
+void     wifimac_aifs_set(uint32_t aifs);  /* 0..15, bits 27:24 of TX_CONFIG  */
+void     wifimac_cw_set(uint32_t cw);      /* 0..1023, bits 21:12             */
+
 #endif /* NATOS_WIFIMAC_H */
