@@ -1,7 +1,7 @@
 # UM-NATOS-034 — The Second Receiver
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.9 · 2026-08-19 · Status: **Negative result, now with a route** — §17 asks whether the thing is possible at all and answers yes; §18 stops asking and measures
+Revision 2.0 · 2026-08-19 · Status: **§18's lead retracted in §19, and replaced by the first positive evidence** — the MAC completes a transmit cycle, and still nothing reaches the air
 
 ---
 
@@ -1106,3 +1106,123 @@ anyone starts.
 `0x3FF73DB8` sequence — `0x210`, then `0x230`, then watch bit 5 clear — around
 its existing `wifimac_tx()`. If the radiated-signal test from §5 stays silent,
 that is one more clean negative. If it does not, this is over.
+
+---
+
+## 19. The lead in §18 was wrong, and the instrument that replaced it
+
+**Added revision 2.0, 2026-08-19.**
+
+§18.5 proposed writing `0x3FF73DB8`'s cycle — `0x210`, then `0x230`, watching
+bit 5 self-clear — into `wifimac_tx()`, on the reading that it was a control
+register with a self-clearing "go" bit that nat-os never writes.
+
+### 19.1 It is read-only
+
+Probed with the MAC running and the receiver armed — the exact state in which
+ESP-IDF's trace shows it cycling:
+
+```
+   register     wrote      read-back   verdict
+   0x3FF73DB8   ffffffff   00000000    READ-ONLY
+   0x3FF73DB8   55555555   00000000
+   0x3FF73DB8   00000230   00000000
+   0x3FF73DAC   ffffffff   00000000    READ-ONLY
+   0x3FF73DB0   ffffffff   00000000    READ-ONLY
+   0x3FF73DB4   ffffffff   0ff00a06    READ-ONLY, and free-running
+   0x3FF73D1C   ffffffff   0f3fffff    WRITABLE   <- positive control
+   0x3FF73D20   ffffffff   3fffffff    WRITABLE   <- positive control
+```
+
+The positive controls matter: `0x3FF73D1C` and `0x3FF73D20` are the two
+registers `wifimac_tx()` actually writes, and they accept every pattern. So the
+probe works, and the rejection is real.
+
+**Bit 5 self-clears because the hardware clears it.** nat-os does not write
+these registers because it *cannot*. The proposed fix would have been code that
+provably does nothing.
+
+The error is worth naming, because §18.4 listed it as a caveat and then reasoned
+past it: *"not every change is a write."* A polling trace cannot tell a software
+store from a hardware update, and §18 picked the busiest structured block and
+called it a control path.
+
+### 19.2 What they are instead: an instrument
+
+Read-only status is worth more than the lead it replaced. Every transmit counter
+nat-os owns is its own bookkeeping — `hardware=`, `completions reaped=`,
+`chain acks=` — and this project has a rule about that:
+
+> a successful completion count is not evidence.
+
+These are inside the MAC. `txwatch` samples them around one posted frame.
+
+**And it needed two corrections before it said anything true.**
+
+The first window was 64 samples ≈ 100 µs, and showed nat-os reaching `0x258` and
+stopping. That would have been reported as "nat-os never completes a transmit".
+It is wrong: ESP-IDF's own completion comes ~320 µs after entering `0x258`. At
+768 samples / 728 µs, nat-os completes the full cycle. *A measurement that ends
+before the event cannot be told apart from an event that never happens.*
+
+The second was the absence of a control. With one, the MAC turned out to run
+`0x210 → 0x230 → 0x020` — the exact pattern §18 identified as the transmit
+signature — **while nothing was being transmitted at all.**
+
+### 19.3 The result
+
+Ten trials each, one posted probe request versus nothing posted, same session,
+same channel, receiver armed throughout:
+
+| | control | transmit |
+|---|---|---|
+| `0x058` seen | **0/10** | **5/10** |
+| `0x258` seen | **0/10** | **8/10** |
+| `0x210 → 0x230` seen | 3/10 | 2/10 |
+| `0x3FF73D84` steps | 8 | 2 |
+| `0x3FF73D88` steps | 9 | 2 |
+| `0x3FF73D8C` steps | 12 | 10 |
+
+Three things follow.
+
+**nat-os's transmit does reach the MAC.** `0x058` and `0x258` never occur idle
+and occur in most transmit trials. The state path
+`0x000 → 0x058 → 0x258 → 0x220 → 0x020 → 0x000` is caused by `wifimac_tx()` and
+by nothing else. This kernel is not failing to arm the hardware.
+
+**`0x210 → 0x230` is background.** It appears in both columns at the same rate,
+so it is not a transmit signature — it is the receiver, the TSF timer, or beacon
+timing. §18's central identification is retracted.
+
+**The counters are background too.** `D84` and `D88` step *less* during transmit
+than idle, which is what receive-side counters do when the radio is busy
+elsewhere.
+
+### 19.4 Why this is progress
+
+The evidence about the transmit fault has, until now, been entirely negative:
+§5's second receiver hears nothing. "Nothing on the air" is consistent with a
+fault anywhere from frame construction to the antenna.
+
+This is the first **positive**, hardware-sourced statement about where the
+boundary is. The MAC runs a complete transmit state cycle, distinguishable from
+its idle behaviour, in response to nat-os posting a frame. Combined with §5:
+
+> the MAC completes a transmit cycle **and** nothing reaches the air
+
+which puts the fault after the MAC's state machine and before the antenna —
+independently corroborating §5's RF/PHY conclusion from the MAC's own registers
+rather than from an absent signal. Two unrelated instruments now agree, and
+neither is nat-os's own bookkeeping.
+
+### 19.5 Next
+
+**Run the idle control on `tools/idf_ref`.** §18's trace was taken during
+transmit bursts, so its `0x210 → 0x230` activity is a mix of transmit and
+background, and nothing there separates them. The same two-column experiment on
+the reference board answers the question this whole line of work has been
+circling: *what does ESP-IDF's MAC do that nat-os's does not, when both are
+posting a frame and everything else is subtracted?*
+
+That is a small change to `idf_ref` — a pass with no `esp_wifi_80211_tx()` —
+and it is the first version of this comparison with a control on both sides.

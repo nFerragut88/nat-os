@@ -51,6 +51,30 @@
 > Caveats on why the 2-of-41 number is weaker than it looks are in §18.4; read
 > them before acting on it.
 
+> **UPDATE 2026-08-19 (later) — §18's lead is RETRACTED. See UM-NATOS-034 §19.**
+> `0x3FF73DB8` is **read-only**. It rejects `0xFFFFFFFF`, `0x55555555` and
+> `0x230` alike, while `0x3FF73D1C`/`0x3FF73D20` — the two registers
+> `wifimac_tx()` does write — accept all three. Bit 5 self-clears because the
+> HARDWARE clears it. Writing that sequence would have been a no-op.
+>
+> With a proper control (`txwatch idle`), `0x210 -> 0x230` turns out to happen
+> **while nothing is being transmitted**, so it was never a transmit signature.
+>
+> **The replacement is better.** Ten trials each, transmit vs nothing posted:
+> `0x058`/`0x258` appear 5/10 and 8/10 with a frame and **0/10** without. So
+> nat-os's transmit DOES reach the MAC, which runs a full state cycle
+> `000 -> 058 -> 258 -> 220 -> 020 -> 000` that never occurs idle.
+>
+> That is the first POSITIVE hardware-sourced evidence in this investigation.
+> With §5 (second receiver hears nothing) it bounds the fault: **after the MAC's
+> state machine, before the antenna.** Two unrelated instruments agree, and
+> neither is nat-os's own bookkeeping.
+>
+> **Next: run the idle control on `tools/idf_ref`.** §18's trace mixed transmit
+> and background with nothing to separate them. A no-transmit pass on the
+> reference board gives the first version of this comparison with a control on
+> both sides.
+
 **Size:** large. **Risk:** real — may cost the working receive path.
 **Blocked on:** willingness to accept a link change.
 

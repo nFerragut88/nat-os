@@ -2104,6 +2104,140 @@ static void execute(char *line)
         uart_put_hex(wifimac_txpwr_get());
         uart_puts("\n");
     }
+    else if (str_eq(line, "txwatch")) {
+        /* Ask the MAC, rather than ourselves, whether a frame went out.
+         *
+         * ---- why this exists ---------------------------------------------
+         *
+         * UM-NATOS-034 §18 traced ESP-IDF transmitting and found 0x3FF73DB8
+         * cycling 0x000 -> 0x210 -> 0x230 -> 0x020 -> 0x000 once per frame,
+         * with three counters stepping alongside it. It read as a control
+         * register with a self-clearing "go" bit that nat-os never writes,
+         * and §18.5 proposed writing that sequence in wifimac_tx().
+         *
+         * THAT WAS WRONG. The block is READ-ONLY -- 0x3FF73DAC, 0x3FF73DB0 and
+         * 0x3FF73DB8 reject 0xFFFFFFFF, 0x55555555 and 0x230 alike, while
+         * 0x3FF73D1C and 0x3FF73D20, which wifimac_tx() does write, accept all
+         * three. Bit 5 self-clears because the HARDWARE clears it. nat-os does
+         * not write these because it cannot.
+         *
+         * Which makes them worth far more than the lead they replaced.
+         *
+         * Every transmit counter this kernel owns is its own bookkeeping --
+         * `hardware=`, `completions reaped=`, `chain acks=` -- and this project
+         * has a rule about that, paid for repeatedly:
+         *
+         *     a successful completion count is not evidence.
+         *
+         * These are not our counters. 0x3FF73D84/88/8C are inside the MAC and
+         * step once per frame on a radio that is demonstrably transmitting. So:
+         *
+         *   they move  -> the MAC believes it transmitted, and the fault is
+         *                 downstream of it, in the RF/PHY path
+         *   they don't -> the MAC never started, and the fault is upstream, in
+         *                 how nat-os arms it
+         *
+         * Either answer halves a search space that has been whole for four
+         * sessions, and neither can be forged by nat-os's own code.
+         *
+         * ---- method -------------------------------------------------------
+         *
+         * wifimac_tx() posts to the hardware and returns; the transmit happens
+         * after it. So sampling in a tight loop immediately afterwards catches
+         * the state machine if there is one. 64 samples is a few hundred
+         * microseconds -- the whole cycle takes ~20 of ESP-IDF's 1.9 us samples,
+         * so this is comfortably wider than the event.
+         *
+         * Reads only. This command cannot perturb what it measures. */
+        static const uint32_t WATCH[] = {
+            0x3FF73D84u, 0x3FF73D88u, 0x3FF73D8Cu,   /* the three counters */
+            0x3FF73DACu, 0x3FF73DB0u, 0x3FF73DB8u,   /* the state block    */
+        };
+        /* 768 samples, not 64.
+         *
+         * The first version used 64 and would have produced a wrong answer. On
+         * ESP-IDF the state reaches 0x258 quickly and only completes --
+         * 0x258 -> 0x220 -> 0x020 -> 0x000 -- about 320 us later. 64 samples is
+         * roughly 100 us, so it would have shown nat-os reaching 0x258 and
+         * stopping, and "stopping" would have been this instrument's window
+         * ending rather than the hardware's behaviour.
+         *
+         * That is the same error UM-NATOS-034 §18 made with one frame per
+         * window, and it is worth stating twice: a measurement that ends before
+         * the event cannot be told apart from an event that never happens,
+         * unless somebody checks the timescales. */
+        enum { NW = 6, NS = 768 };
+        static uint32_t snap[NS][NW];
+        uint32_t t0, t1;
+
+        for (uint32_t w = 0; w < NW; w++) {
+            snap[0][w] = *(volatile uint32_t *)WATCH[w];
+        }
+
+        /* `txwatch idle` samples WITHOUT posting a frame.
+         *
+         * The control, and it is not optional. The first run of this command
+         * showed the MAC stepping through a whole state cycle and it read as
+         * evidence that the transmit reached the hardware. It is only evidence
+         * of that if the cycle does NOT happen when nothing is transmitted --
+         * and this MAC has a receiver armed, a TSF timer running and beacon
+         * timing to service, any of which could produce state changes on its
+         * own.
+         *
+         * UM-NATOS-034 §5 needed a second board to learn this lesson about
+         * transmit. It costs one argument to learn it here. */
+        int idle = str_eq(arg, "idle");
+        if (!idle) {
+            wifimac_probe_request();
+        }
+
+        __asm__ __volatile__("rsr.ccount %0" : "=r"(t0));
+        for (uint32_t i = 1; i < NS; i++) {
+            for (uint32_t w = 0; w < NW; w++) {
+                snap[i][w] = *(volatile uint32_t *)WATCH[w];
+            }
+        }
+        __asm__ __volatile__("rsr.ccount %0" : "=r"(t1));
+
+        uart_puts(idle ? "   NOTHING posted (control); MAC status sampled "
+                        : "   one frame posted; MAC status sampled ");
+        uart_put_dec(NS);
+        uart_puts("x over ");
+        /* Printed, so the window can be COMPARED with ESP-IDF's rather than
+         * assumed comparable. 80 MHz, so cycles/80 is microseconds. */
+        uart_put_dec((t1 - t0) / 80u);
+        uart_puts(" us\n");
+        uart_puts("   sample  addr        from      to\n");
+        uint32_t changes = 0;
+        for (uint32_t i = 1; i < NS; i++) {
+            for (uint32_t w = 0; w < NW; w++) {
+                if (snap[i][w] != snap[i - 1][w]) {
+                    uart_puts("   ");
+                    uart_put_dec(i);
+                    uart_puts("\t0x");
+                    uart_put_hex(WATCH[w]);
+                    uart_puts("  ");
+                    uart_put_hex(snap[i - 1][w]);
+                    uart_puts("  ");
+                    uart_put_hex(snap[i][w]);
+                    uart_puts("\n");
+                    changes++;
+                }
+            }
+        }
+        if (changes == 0u) {
+            uart_puts("   NOTHING MOVED.\n");
+            uart_puts("   The MAC's own counters did not step. On a radio that\n");
+            uart_puts("   transmits these advance once per frame, so this says\n");
+            uart_puts("   the transmit never started -- the fault is upstream of\n");
+            uart_puts("   the RF path, in how this kernel arms the hardware.\n");
+        } else {
+            uart_puts("   ");
+            uart_put_dec(changes);
+            uart_puts(" changes -- the MAC moved. Compare the shape against\n");
+            uart_puts("   UM-NATOS-034 §18: 0x210 -> 0x230 -> 0x020 -> 0x000.\n");
+        }
+    }
     else if (str_eq(line, "probe")) {
         /* Ten, spaced by the caller re-running this: APs answer probe requests
          * but not reliably on the first try, and a single unanswered one would
