@@ -2349,6 +2349,11 @@ static void execute(char *line)
         regdump_range("dport", 0x3FF00000u, 64u);
         regdump_range("rtc",   0x3FF48000u, 64u);
         regdump_range("mac",   0x3FF73000u, 1280u);
+        /* The PHY and baseband blocks -- see UM-NATOS-034 §26. Ranges must
+         * match tools/idf_ref exactly or reg_diff.py cannot pair them. */
+        regdump_range("bb0",   0x3FF5C000u, 512u);
+        regdump_range("bb1",   0x3FF5D000u, 512u);
+        regdump_range("phy",   0x3FF71000u, 1024u);
         uart_puts("REGEND\n");
         console_unlock();
     }

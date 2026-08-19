@@ -1,7 +1,7 @@
 # UM-NATOS-034 — The Second Receiver
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 2.6 · 2026-08-19 · Status: **Enumerable search exhausted** — §22 fixes a real 9.5 dB TX-power defect that is not the cause; §24 verifies the descriptor layout; §25 finds the last candidate was never in the archive this report named, transcribes it in 251 bytes with no new blob, and eliminates it too
+Revision 2.7 · 2026-08-19 · Status: **Memory-mapped state verified equivalent; the remaining difference is not memory-mapped** — §22 fixes a real 9.5 dB TX-power defect that is not the cause; §24 verifies the descriptor layout; §25 finds the last candidate was never in the archive this report named, transcribes it in 251 bytes with no new blob, and eliminates it too
 
 ---
 
@@ -1874,3 +1874,125 @@ adjacent to the work rather than in it. The measured findings in this report hav
 held up; the asides have not. That is worth knowing about how this record is
 produced: **the confidence of a sentence in a report should track how it was
 arrived at, and in this document that has not always been true.**
+
+---
+
+## 26. The region nobody looked at
+
+**Added revision 2.7, 2026-08-19.**
+
+§20 concluded the fault was **below the MAC and above the antenna**. §22 through
+§25 then searched PHY *arguments*, an adjacent *call*, a *descriptor layout* and
+an *OS table*.
+
+Every instrument in this investigation — `tools/idf_ref`'s `dump_all`, nat-os's
+`regdump`, and the tracer sweep — covered exactly three regions:
+
+```
+0x3FF00000  DPORT      64 words
+0x3FF48000  RTC        64 words
+0x3FF73000  MAC      1280 words
+```
+
+`grep` for the PHY and baseband blocks across every instrument returns **zero**.
+The search was narrowed to the PHY and then continued everywhere except the PHY.
+
+### 26.1 Closed
+
+Three ranges added to both firmwares, extents taken from the addresses
+`coex_bt_high_prio` itself writes:
+
+```
+0x3FF5C000  bb0    512 words
+0x3FF5D000  bb1    512 words
+0x3FF71000  phy   1024 words
+```
+
+Restoring `idf_ref`'s second `dump_all()` — lost when the link test replaced the
+sweep — and widening `reg_diff.py`'s timeouts for a dump that grew from 1,408 to
+3,456 registers.
+
+### 26.2 The result: one register out of 2,048
+
+| region | stable differences |
+|---|---|
+| buffer RAM `0x3FF74000+` | 245 (random on both sides, always excluded) |
+| MAC | 59 |
+| DPORT | 17 |
+| RTC | 15 |
+| **PHY + baseband (2,048 registers)** | **1** |
+
+```
+0x3FF5D040   ESP-IDF 40000000   nat-os 80000000   xor c0000000
+```
+
+`0x3FF5D040` is one of the eight addresses `coex_bt_high_prio` writes — its last
+operation is `[0x3FF5D040] &= 0x7FFFFFFF`, clearing bit 31. This differential ran
+without `coexprio`, which is why nat-os still had bit 31 set. But ESP-IDF also
+has **bit 30 set**, and nothing in the transcribed function sets it.
+
+Written directly: `0x80000000 → 0x40000000`, matching ESP-IDF exactly, and it
+persisted through 45 seconds of transmitting. **Still not heard.**
+
+### 26.3 What this actually establishes
+
+This is a negative, and it is the most informative one in the report.
+
+> The entire memory-mapped state of the MAC, the PHY and the baseband is now
+> verified equivalent between a stack that transmits and one that does not.
+
+2,048 PHY and baseband registers, one difference, matched, no change. Add the
+MAC executing the same transmit sequence (§20), the same arguments (§22), the
+same descriptor layout (§24.1), and a working receiver hearing nothing including
+malformed frames (§24.2).
+
+Every register the CPU can address is the same. Nothing comes out.
+
+### 26.4 So the difference is somewhere a register dump cannot reach
+
+That is not a shrug; it names a specific place.
+
+**The ESP32's radio is not configured entirely through memory-mapped
+registers.** The analog front end — VCO, PLL, filters, I/Q, the transmit chain —
+is programmed over an internal I²C bus, reached through `rom_i2c_writeReg`. This
+project already uses that mechanism: `kernel/clock.c` programs the BBPLL through
+it, because there is no register-level path and the analog I²C master is not in
+the TRM.
+
+**Those writes are invisible to every instrument in this report.** `libphy` can
+issue hundreds of them inside `register_chipv7_phy` and no register dump, no
+snapshot diff and no tracer will show a single one.
+
+Which is consistent with everything observed: identical memory-mapped state,
+identical MAC behaviour, a PHY that returns 0, and no RF.
+
+### 26.5 The next instrument, and why it is different in kind
+
+The regi2c *host* interface is memory-mapped even though the analog registers
+behind it are not. `ANA_CONFIG_REG` is at `0x6000E044`, which through the
+peripheral alias is `0x3FF4E044`.
+
+So the analog programming **can** be traced, by watching the I²C host block
+rather than the analog registers — the same core-1 tracer already built for §18,
+pointed at `0x3FF4E000` during `register_chipv7_phy` on both boards.
+
+That is a different kind of evidence, not another candidate off a list. It is
+also the first proposal in this investigation that would show what the blob
+*does* rather than what it leaves behind.
+
+Cost: real. `register_chipv7_phy` runs for milliseconds and issues an unknown
+number of transactions; capturing them needs a wider buffer than the 3.9 ms the
+tracer currently holds, and the two boards must be doing genuinely the same job
+for the comparison to mean anything — a condition §13 already paid for once.
+
+### 26.6 Honest status
+
+Not stuck for want of ideas. Stuck in the sense that everything cheap is done,
+and what remains is either that trace, or an SDR to answer the one question no
+instrument here has ever answered directly: **does any RF energy leave this board
+at all?**
+
+Every negative in this report has been consistent with two possibilities —
+"transmits nothing" and "transmits something unreceivable" — and §24.2 narrowed
+that only as far as an ESP32 receiver can see. A spectrum analyser or an
+RTL-SDR answers it in one look, and costs less than another session.

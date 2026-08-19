@@ -90,6 +90,18 @@ static void dump_all(void)
     dump_range("dport", 0x3FF00000u, 64u);
     dump_range("rtc",   0x3FF48000u, 64u);
     dump_range("mac",   0x3FF73000u, 1280u);
+    /* The PHY and baseband blocks.
+     *
+     * Never dumped before, by any instrument in this investigation, which is
+     * the gap UM-NATOS-034 §26 is about: §20 bounded the fault to below the MAC
+     * and the search then continued everywhere except below the MAC.
+     *
+     * Extents chosen from the addresses coex_bt_high_prio itself writes --
+     * 0x3FF5C080, 0x3FF5D040, 0x3FF710D0, 0x3FF71300 -- widened to cover the
+     * blocks they sit in. */
+    dump_range("bb0",   0x3FF5C000u, 512u);
+    dump_range("bb1",   0x3FF5D000u, 512u);
+    dump_range("phy",   0x3FF71000u, 1024u);
     printf("REGEND\n");
 }
 
@@ -441,6 +453,12 @@ void app_main(void)
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 
+    dump_all();
+    /* A SECOND dump, a second later, so the host can discard anything that
+     * moves on its own. Without two, reg_diff.py refuses to run -- correctly:
+     * an unfiltered diff of a 3,456-register dump is noise wearing a result's
+     * clothes. This was lost when the link test replaced the sweep. */
+    vTaskDelay(pdMS_TO_TICKS(1000));
     dump_all();
 
     /* Core 1, pinned. The WiFi stack and its blobs live on core 0, so the

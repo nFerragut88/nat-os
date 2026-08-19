@@ -86,7 +86,7 @@ def cmd(s, c, wait):
 # ---- reference: dumps itself twice a few seconds after boot ---------------
 print("== reference (ESP-IDF, transmitting) ==", flush=True)
 ref = open_port(REF_PORT, reset=True)
-ref_txt = read_for(ref, 22.0)
+ref_txt = read_for(ref, 45.0)
 ref.close()
 ref_dumps = parse(ref_txt)
 mac = re.search(r"REF-(?:AP|RAW) .*mac=([0-9a-f:]{17})", ref_txt)
@@ -105,9 +105,9 @@ for c in ("fb off", "wifipd on", "phyinit", "macinit", "chan 6",
     print(f"   {c:<14} {tag[0] if tag else ''}")
 time.sleep(3.0)
 
-nat_txt = cmd(nat, "regdump", 12.0)
+nat_txt = cmd(nat, "regdump", 30.0)
 time.sleep(1.0)
-nat_txt += cmd(nat, "regdump", 12.0)
+nat_txt += cmd(nat, "regdump", 30.0)
 nat.close()
 nat_dumps = parse(nat_txt)
 print(f"   dumps captured: {len(nat_dumps)}")
