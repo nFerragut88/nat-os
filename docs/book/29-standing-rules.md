@@ -390,7 +390,73 @@ corruption; `sd.h` on the pin map being assumed until a card answers.
 
 ---
 
-## 29.6 The rules, as a checklist
+## 29.6 Rules earned after this book was compiled
+
+Six more, from UM-NATOS-030 — the one-bit display defect that cost eleven correct
+eliminations. They are kept separate rather than renumbered into §29.2–29.4
+because the numbered twelve are cited by number elsewhere in the record.
+
+### Rule 13 — A counter cannot see a picture
+
+Six instruments agreed the display was working: `SPI_USR` self-clearing,
+110,507 completed transfers, zero timeouts, a matching byte count, and a boot
+self-test reporting `dma=320/0`. All six were telling the truth. The pixels were
+still landing in the wrong place.
+
+Where the output is *visual*, get the output out of the machine and look at it.
+Do not accept a proxy. `fbdump` — dump the framebuffer over the UART and rebuild
+it as a PNG on the host — is what ended a day of correct measurements of the
+wrong thing.
+
+This is Rule 5's mirror image. Rule 5 says an instrument declaring itself invalid
+outranks the values beside it; this says instruments that are *all valid* can
+still be collectively silent about the only thing that matters.
+
+### Rule 14 — When a diagnostic and a subsystem share a resource, the diagnostic will corrupt the evidence
+
+`fbdump`'s first run did not hold the console. The reporter's periodic status
+line landed in the middle of the hex, the host parser silently dropped 61
+malformed rows and reassembled the survivors as if contiguous, and the result was
+a convincing rainbow-streaked mess that was reported as proof of a render bug.
+
+The buffer was pristine. Hold the lock, or measure something else.
+
+### Rule 15 — Read positions; never infer them from arrival order
+
+The same dump now carries an explicit index on every row. Position that is
+*inferred* from the order things arrived is an assumption wearing the costume of
+a measurement, and it hid a defect twice.
+
+### Rule 16 — A tool must refuse to interpret incomplete input
+
+A fixed capture window truncated the dump at row 49, silently, twice. The host
+now reads to an explicit terminator and prints `rows received N/112, malformed M,
+missing [...]`.
+
+**`!! DUMP INCOMPLETE` is worth more than a plausible image.**
+
+### Rule 17 — Before fixing a defect, find out what depends on it
+
+The display's wall-clock timeout bound was genuinely wrong and fixing it was
+correct in isolation. It was also the only thing keeping the display usable: the
+spurious trip disabled DMA, and the FIFO fallback is where the real defect was
+absent. Raising the bound made the device worse.
+
+A defect that has been present long enough acquires dependents. Find them before
+removing it, or the fix and the regression arrive in the same commit.
+
+### Rule 18 — One-bit register constants deserve the datasheet, not recall
+
+`OUTLINK_START` is bit 29 and `OUTLINK_RESTART` is bit 30. They are adjacent,
+and **both produce a transfer that completes**, so there is no failing path to
+follow back — only wrong pixels a long way downstream.
+
+This is §29.5's *"fetch a constant; do not recall it"* arriving for the second
+time, at a cost of one day. A rule that has to be learned twice is a rule that
+was under-weighted the first time, which is why it is repeated here as a numbered
+one rather than left in the source-carries list.
+
+## 29.7 The rules, as a checklist
 
 For the reader who wants one page:
 
@@ -414,11 +480,18 @@ For the reader who wants one page:
 13. Was it *triggered*, or merely confirmed to exist?
 14. Is there a counter that must be zero *and* one that must be non-zero?
 
+**Before believing an instrument:**
+15. Does it share a resource with the thing it measures?
+16. Are positions read, or inferred from arrival order?
+17. Would it refuse incomplete input, or interpret it?
+18. If the output is visual, has anyone got the actual output *out* and looked?
+
 **Before committing a fix:**
-15. Does the blast radius match the defect?
-16. Is this a fix or a tolerance? Say which.
-17. If this reverts more than one thing, that is a hypothesis, not a conclusion.
-18. Did the number improve, and did anyone look at the screen?
+19. Does the blast radius match the defect?
+20. Is this a fix or a tolerance? Say which.
+21. If this reverts more than one thing, that is a hypothesis, not a conclusion.
+22. Did the number improve, and did anyone look at the screen?
+23. What currently depends on this defect?
 
 ---
 

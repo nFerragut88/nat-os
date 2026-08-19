@@ -5,8 +5,7 @@
 This project's whole discipline is that the record must not lie. These are
 places where it currently does, through nothing worse than the tree moving on.
 
-> **Status 2026-08-18: 6.1 through 6.4 are done.** Only 6.5 (rebuild the PDFs)
-> remains.
+> **Status 2026-08-18: this move is COMPLETE.** All five items done.
 
 ---
 
@@ -129,10 +128,47 @@ it limits exists.**
 The oldest surviving error in the project, and the only one found by reading
 rather than measuring.
 
-## 6.5 Rebuild the PDFs
+## ~~6.5 Rebuild the PDFs~~ — done
 
 `docs/pdf/` is stale for anything touched since 028. `docs/style/build_pdfs.py`
 does the work; it needs Chrome or Chromium and now falls back to an installed
 Chrome if no bundled Chromium is present.
 
 Lowest priority of everything in this folder.
+
+**Outcome, 2026-08-18.** 33 report PDFs, the book interior and the cover, all
+rebuilt in dependency order — reports, then interior, then cover, because the
+cover's spine is derived from the measured interior.
+
+| | before | after |
+|---|---|---|
+| Report PDFs | 29 | 33 |
+| Book interior | 372 pages | **390** |
+| Spine (premium colour) | 0.8377 in | **0.9153 in** |
+| Cover wrap | 13.124 in | **13.165 in** |
+
+Both KDP validators pass.
+
+**"Lowest priority" was wrong, and in an interesting way.** This item looked
+mechanical — run two scripts — and rebuilding is exactly what exposed three
+things no amount of re-reading the Markdown would have:
+
+1. **The old cover no longer fits the book.** The spine is a function of page
+   count, and the book grew 372 → 390. A cover and an interior that are each
+   individually valid can still be unusable together, and nothing in the
+   Markdown layer can see that.
+2. **The cover printed a hardcoded page count.** `build_cover.py` derived the
+   spine from the measured interior with considerable care and then rendered the
+   literal string `"372"` onto the back cover as art — the one number a reader
+   can check against the object in their hand. Now read from the same measured
+   value as the spine.
+3. **The cover also printed "twenty-eight engineering reports", twice**, on a
+   book drawing on thirty-two. Fixed by hand; flagged in the book README as
+   literals that need changing when the counts move, since unlike the page count
+   they have no measurable source.
+
+Also folded in while here: chapter 29 gained **Rules 13–18** from UM-NATOS-030,
+which 6.4 had missed because 6.4's list named chapters 18, 25, 28 and 31 and not
+29. Rule 18 is *"one-bit register constants deserve the datasheet, not recall"* —
+which is §29.5's "fetch a constant; do not recall it" arriving for the second
+time, at a cost of one day. Promoted to a numbered rule for exactly that reason.

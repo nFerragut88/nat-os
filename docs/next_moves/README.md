@@ -109,16 +109,23 @@ Each has its own file. Roughly in order of value, but they are independent.
 | ~~[03](03-permissions.md)~~ | ~~Per-application device permissions~~ — **done**, UM-NATOS-032 | — | — |
 | [04](04-scheduler-timing.md) | A real-time path for control loops | medium | nothing needs it *yet* |
 | [05](05-open-unknowns.md) | Two unexplained behaviours | small | nothing |
-| [06](06-documentation-debt.md) | Claims that have gone stale | small | nothing |
+| ~~[06](06-documentation-debt.md)~~ | ~~Claims that have gone stale~~ — **done**, all five items | — | — |
 
-02 and 03 are done. Of what is left:
-
-**If you only do one thing:** [06](06-documentation-debt.md). It is the smallest
-and it is the one that decays — every report written on top of a stale claim
-inherits it.
+02, 03 and 06 are done. What is left is 01, 04 and 05.
 
 **If you want the satisfying one:** [01](01-wifi-transmit.md), knowing it may
 cost a working receive path and a day.
+
+**If you want the cheap one:** [05](05-open-unknowns.md). Two unexplained
+behaviours, and one of them — phantom touches that once *launched a program* —
+is the only open item in the tree that can act on its own.
+
+**A note from 06.** It was filed as the smallest and least urgent move and turned
+up the oldest surviving error in the project: priority inheritance was claimed in
+four places and never wired to a lock. Rebuilding the PDFs — the item explicitly
+called "lowest priority of everything in this folder" — found three more, because
+a cover and an interior can each be valid and still not fit each other. **Doc
+debt is not cosmetic when the documents are the record.**
 
 **Note for 03's successor:** permissions shipped with a named prerequisite.
 There is no image identity — no signature, no content hash — so what exists is

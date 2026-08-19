@@ -206,7 +206,7 @@ def build_html(pages: int, img: dict[str, str], spine: float,
       <div style="margin-top:.13in; font:700 8.4pt Verdana; color:{YELLOW};
                   letter-spacing:.05em;">AND EVERY DEFECT<br>THAT GOT THERE FIRST</div>
       <div style="margin-top:.10in; font:8.2pt/1.4 Verdana; color:#9aa3ab;">
-        31 chapters &middot; 7 appendices<br>28 engineering reports</div>
+        31 chapters &middot; 7 appendices<br>32 engineering reports</div>
     </div>
 
     <!-- launcher, shell, notes -->
@@ -267,11 +267,19 @@ def build_html(pages: int, img: dict[str, str], spine: float,
                      ("Bit-banged I2C", CYAN), ("LEDC audio", GREEN),
                      ("802.11 receive", RED)])
 
+    # The page count comes from the MEASURED interior, not a literal.
+    #
+    # It used to be the string "372", which was correct when written and wrong
+    # the next time the book grew -- printed on the back cover, where it is the
+    # one number a reader can check against the object in their hand. This
+    # script already derives the spine from the real page count and refuses to
+    # emit a cover that does not fit; a hardcoded page count is the same class of
+    # error with none of the checking.
     stats = "".join(
         f'''<div style="flex:1;">
               <div class="statv">{v}</div><div class="statl">{l}</div></div>'''
-        for v, l in [("372", "pages"), ("35", "opcodes"), ("0", "escapes"),
-                     ("12", "standing rules")])
+        for v, l in [(str(pages), "pages"), ("35", "opcodes"), ("0", "escapes"),
+                     ("18", "standing rules")])
 
     # KDP prints a barcode over the bottom right of the back cover, so nothing
     # goes below barcode_top unless it also stays left of barcode_left.
@@ -295,7 +303,7 @@ def build_html(pages: int, img: dict[str, str], spine: float,
       faults at offset 256 of a 256-byte arena, and its neighbours keep running.
       <br><br>
       This is the complete account, built from the source, the commit history
-      and twenty-eight engineering reports &mdash; and it records the failures
+      and thirty-two engineering reports &mdash; and it records the failures
       with the same care as the successes, because <b>that is where the
       transferable knowledge is</b>. A touch axis inverted for three months
       behind a calibration that could only ever return one answer. Three
