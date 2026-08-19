@@ -1,7 +1,12 @@
 # UM-NATOS-002 — Boot Chain and Image Format
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.0 · 2026-08-14 · Status: current — measured on hardware
+Revision 2.0 · 2026-08-19 · Status: current — L1 is now this project's own
+
+> **Revised.** When this was written the second stage was Espressif's. It is now
+> `boot/`, 2,736 bytes, described in UM-NATOS-035. §2.2, §5 and §6 are rewritten
+> below; everything about the ROM, the image format and the L1↔kernel interface
+> was unaffected by the change, which is the point §2.2 made and which held.
 
 ---
 
@@ -26,10 +31,10 @@ actually run on the device" precisely enough to debug a failure to boot.
 └────────┬─────────┘
          ▼
 ┌──────────────────┐
-│ L1  2nd stage    │  17,536 bytes, borrowed
-│                  │  reads partition table @ 0x8000
-│                  │  finds app partition   @ 0x10000
-│                  │  parses image header, copies segments
+│ L1  2nd stage    │  2,736 bytes, OURS (boot/)
+│                  │  image header @ 0x10000, fixed offset
+│                  │  DROM -> flash MMU, RAM -> copy
+│                  │  enables the cache, jumps
 └────────┬─────────┘
          ▼
 ┌──────────────────┐
@@ -50,18 +55,33 @@ Not modifiable.
 
 ### 2.2 Stage L1 — second-stage bootloader
 
-Borrowed from the CYD PlatformIO project. Responsibilities relevant to us:
+**Ours, since UM-NATOS-035.** `boot/`, 2,736 bytes against Espressif's 17,536.
+What it does:
 
-1. Read the partition table at `0x8000`.
-2. Locate the application partition (offset `0x10000`).
-3. Read the image header at that offset.
-4. Copy each declared segment to its declared load address.
-5. Verify the image checksum and SHA-256 hash.
-6. Jump to the declared entry point.
+1. Read the image header at `0x10000` — a fixed offset, not looked up.
+2. For each segment: map it through the flash MMU if it is DROM, copy it
+   otherwise (via a bounce buffer if the destination is instruction memory).
+3. Enable the data cache.
+4. Jump to the declared entry point.
+
+Deliberately *not* done: no partition table is read, no checksum or SHA-256 is
+verified, no OTA slot is selected, no secure boot or flash encryption is
+supported. This kernel has exactly one image at one offset; Espressif's
+bootloader is six times larger because it is general, and the generality is
+unused here. UM-NATOS-035 §9 has the accounting.
+
+`vendor/bootloader.bin` stays in the tree as the recovery image and as the A/B
+control — `build.ps1 -Flash -VendorBootloader`. That path is kept working and
+tested, and it earned its keep within hours (UM-NATOS-036 §2).
 
 **The interface between L1 and nat-os is entirely the image header.** Nothing
-else is shared — no symbols, no runtime, no calling convention. This is why the
-bootloader is replaceable without touching kernel code.
+else is shared — no symbols, no runtime, no calling convention.
+
+That claim was made in revision 1.0 as the reason the bootloader was replaceable
+without touching kernel code. **It was not quite true, and §6 is where the
+untruth was already written down.** The header is the only interface *by
+design*; the machine state L1 leaves behind is an interface too, and an
+undeclared one. See §6.
 
 ### 2.3 Stage L2 — nat-os
 
@@ -143,29 +163,58 @@ self-check lines that follow prove more; see UM-NATOS-006.
 
 | Offset | Contents | Size | Origin |
 |---|---|---|---|
-| `0x1000` | Second-stage bootloader | 17,536 B | Borrowed |
-| `0x8000` | Partition table | 3,072 B | Borrowed |
-| `0x10000` | nat-os kernel image | 1,216 B | **Ours** |
+| `0x1000` | Second-stage bootloader | 2,736 B | **Ours** (`boot/`) |
+| `0x8000` | Partition table | 3,072 B | Borrowed, and read by nothing |
+| `0x10000` | nat-os kernel image | 80,496 B | **Ours** |
 
-Everything from `0x10000` onward is available to the project. The two borrowed
-regions total under 21 KB.
+The partition table is still flashed because esptool and external tooling expect
+one at `0x8000`. Nothing in this boot chain reads it — L1 hardcodes `0x10000`.
+Generating our own is a struct and a CRC; it has not been done because removing
+the borrow would change nothing that runs.
+
+So the executable chain from reset to shell prompt is this project's own code,
+except for the mask ROM, which is silicon.
 
 ## 6. Known dependencies on L1 behaviour
 
-These are places where nat-os currently relies on the bootloader or ROM having
-done something, and would break if L1 were replaced naively.
+These are places where nat-os relies on the bootloader or ROM having done
+something, and would break if L1 were replaced naively.
 
-1. **UART0 is already configured.** The kernel writes bytes into the TX FIFO
-   without setting baud rate, pin mux, or line discipline. This works because
-   the ROM configured UART0 at 115200 for its own output. A replacement L1 that
-   did not do this would produce a silent kernel. *Resolution: implement UART
-   configuration in the kernel — small, and removes the dependency.*
-2. **Flash cache is configured but unused.** M0 executes entirely from RAM. When
-   the kernel outgrows IRAM it will begin depending on the cache mapping L1 set
-   up, which is currently unexamined.
-3. **CPU clock.** Running at whatever L1 selected. No kernel code reads or sets
-   the clock, so all current timing (including the M0 delay loop) is of unknown
-   absolute rate.
+> **This list was right, and it was not read before L1 was replaced.**
+> Item 3 below, written 2026-08-14, describes exactly the defect that landed on
+> 2026-08-19 and took most of a session to find: the kernel ran at 40 MHz
+> instead of 80 because the new L1 did not select a clock, and every timing
+> instrument in the system is derived from CCOUNT and so could not detect it.
+> UM-NATOS-036 has the account.
+>
+> The lesson is not about clocks. **A section headed "would break if L1 were
+> replaced naively" is a checklist, and replacing L1 is when you run it.** The
+> statuses below are now maintained rather than merely recorded.
+
+1. **UART0 is already configured.** *Status: still a dependency, and now a
+   handled one.* The kernel writes into the TX FIFO without setting baud rate,
+   pin mux or line discipline, relying on the ROM having configured UART0 at
+   115200. Our L1 does not disturb it, and `kernel/clock.c` rescales
+   `UART_CLKDIV` by the frequency ratio when it switches to the PLL — without
+   that the console would have gone to garbage at the moment the clock doubled.
+   Full independence would still mean configuring UART0 in the kernel.
+2. **Flash cache.** *Status: RESOLVED — now ours.* The kernel outgrew IRAM and
+   does depend on the DROM mapping, and that mapping is now made by our own L1:
+   MMU table at `0x3FF10000`, one 64 KB page per entry. See UM-NATOS-035 §14.
+3. **CPU clock.** *Status: RESOLVED — moved into the kernel.* Was "running at
+   whatever L1 selected". `kernel/clock.c` now brings the SoC to 80 MHz off the
+   PLL itself, returns early if it finds a bootloader has already done it, and
+   **reports what it found** in the boot banner. The kernel no longer has an
+   unstated requirement; it has a stated and checked one.
+4. **RTC watchdog.** *New.* The ROM arms it and expects the application to take
+   ownership. Both our L1 and `watchdog_disable_all()` disarm it, deliberately
+   twice — see UM-NATOS-035 §5.2.
+5. **`0x3FF480B0` / `0x3FF480B4`, the RTC retention frequency registers.**
+   *New, and the reason item 3 was found at all.* The PHY blob does not measure
+   the crystal frequency; it looks it up in `RTC_XTAL_FREQ_REG`. A bootloader
+   that leaves it zero makes `register_chipv7_phy()` hang. `clock_init()` writes
+   both on every path, including the one where a bootloader already set the
+   clock.
 
 ## 7. Failure modes and first diagnostic step
 
@@ -196,3 +245,5 @@ the banner.
 - UM-NATOS-004 — Memory Map (segment addresses and the overlap risk)
 - UM-NATOS-005 — Build and Flash Pipeline
 - UM-NATOS-006 — Milestone 0 Verification Report
+- **UM-NATOS-035 — The Last Borrowed Thing** (L1 replaced; §14 is the reference)
+- **UM-NATOS-036 — The Half-Speed Board** (what §6 item 3 cost when unread)

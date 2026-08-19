@@ -39,10 +39,23 @@ project starts writing its own code*.
 | Layer | Contents | nat-os |
 |---|---|---|
 | L0 | Mask-ROM bootloader | Silicon. Cannot be replaced. |
-| L1 | Second-stage bootloader: clock config, flash cache/MMU init, image loading | **Borrowed.** Replaceable later. |
+| L1 | Second-stage bootloader: image loading, flash cache/MMU init | **Written from scratch** (`boot/`, UM-NATOS-035). Clock config moved UP to L2 — see below. |
 | L2 | Scheduler, context switching, synchronisation, memory allocation | **Written from scratch** |
 | L3 | Driver model, virtual filesystem, inter-process communication | **Written from scratch** |
 | L4 | Application format, loader, virtual machine, shell | **Written from scratch** |
+
+> **L1 was replaced on 2026-08-19 and one of its jobs moved rather than
+> followed.** This table used to read *"L1: clock config, flash cache/MMU init,
+> image loading — Borrowed"*, and the first of those three is the one that
+> caused UM-NATOS-036: the replacement L1 loads images and sets up the MMU, and
+> does not select a clock, so the board ran at half speed with no instrument able
+> to notice.
+>
+> Clock configuration is now `kernel/clock.c`, at L2. That is the better home —
+> choosing a CPU frequency is an operating system's decision, and it makes the
+> kernel independent of what loaded it — but the thing worth recording is that
+> **this table already said L1 did it.** So did UM-NATOS-002 §6. The dependency
+> was documented twice and read neither time before L1 was replaced.
 
 ### 3.1 Rationale for an L2 start
 

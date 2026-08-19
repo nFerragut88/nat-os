@@ -1,7 +1,7 @@
 # UM-NATOS-035 — The Last Borrowed Thing
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.1 · 2026-08-19 · Status: **Running on hardware; §8's verification was incomplete — see UM-NATOS-036**
+Revision 1.2 · 2026-08-19 · Status: **Running on hardware; §8's verification was incomplete — see UM-NATOS-036. §14 is the mechanical reference.**
 
 > **CORRECTION.** This bootloader shipped without configuring the SoC clock,
 > which Espressif's does. The board ran at 40 MHz instead of 80, and every
@@ -445,4 +445,159 @@ done. The remaining work is capability, not independence:
 
 ---
 
-*Filed 2026-08-19. Written, flashed, verified on hardware the same session.*
+---
+
+## 14. Reference — how it actually works
+
+**Added revision 1.2.** The sections above explain why the bootloader is the way
+it is. They do not say what it *does*, and `docs/README.md` states that these
+reports exist so the project can be picked up cold without re-deriving decisions
+from the source. Judged against that, §§1–13 fell short: every constant lived
+only in `boot/boot.c`'s comments. This closes it.
+
+Every address below was read from the SDK headers named beside it.
+
+### 14.1 The image header, at `0x10000`
+
+24 bytes, then a 4-byte header per segment. `boot/boot.c` mirrors it as a packed
+struct:
+
+```
+offset  size  field
+  0      1    magic          0xE9
+  1      1    segment_count
+  2      1    spi_mode
+  3      1    spi_speed / spi_size
+  4      4    entry_addr
+  8      1    wp_pin
+  9      3    spi_pin_drv
+ 12      2    chip_id
+ 14      1    min_chip_rev
+ 15      8    reserved
+ 23      1    hash_appended
+--- then, per segment ---
+  0      4    load_addr
+  4      4    data_len          (always a multiple of 4)
+```
+
+Segments follow one another with no padding between them. The loader walks them
+in order, keeping a running flash offset.
+
+### 14.2 Dispatch, by destination
+
+The whole of the loader's logic is one three-way branch on `load_addr`:
+
+| range | meaning | action |
+|---|---|---|
+| `0x3F400000`–`0x3F800000` | DROM, flash-mapped | write an MMU entry; copy nothing |
+| `≥ 0x40000000` | instruction bus | copy **in 32-bit words**, via a DRAM bounce buffer |
+| otherwise | DRAM, byte-accessible | `flash_read()` straight to the destination |
+
+The middle row is §6's defect. IRAM answers aligned 32-bit accesses only, and
+`kernel/flash.c` reassembles the SPI FIFO a byte at a time.
+
+### 14.3 The flash MMU
+
+From `soc/dport_reg.h`, `soc/ext_mem_defs.h`, `hal/mmu_ll.h`:
+
+```
+table base      0x3FF10000      one 32-bit entry per 64 KB page
+page size       0x10000
+DROM window     0x3F400000 .. 0x3F800000
+entry index     (vaddr & 0x3FFFFF) >> 16
+entry value     paddr >> 16          i.e. the physical flash page number
+MMU_INVALID     bit 8                so a valid entry is a page number under 256
+```
+
+A segment at virtual `0x3f400020` from flash offset `0x11018` therefore maps the
+page *containing* each, not the exact addresses — the low 16 bits of virtual and
+physical must already agree, and in an esptool-produced image they do, because
+`elf2image` places DROM so that they do. That congruence is not a coincidence to
+rely on silently; UM-NATOS-011 is where this project first met it.
+
+### 14.4 The cache
+
+From `soc/dport_reg.h`:
+
+```
+DPORT_PRO_CACHE_CTRL_REG    0x3FF00040
+DPORT_PRO_CACHE_CTRL1_REG   0x3FF00044
+  PRO_CACHE_ENABLE          bit 3   (in CTRL)
+  PRO_CACHE_FLUSH_ENA       bit 4
+  PRO_CACHE_FLUSH_DONE      bit 5
+  PRO_CACHE_MASK_DROM0      bit 4   (in CTRL1 — cleared to let DROM through)
+```
+
+Order matters twice, and both are §5:
+
+- the cache is **disabled** while MMU entries are written;
+- it is **enabled once, after the segment loop**, never inside it, so the cache
+  controller is never a second bus master while SPI1 is still copying.
+
+### 14.5 Reading flash with the cache off
+
+`kernel/flash.c`, unchanged, compiled into the loader:
+
+```c
+int      flash_read(uint32_t addr, void *dst, uint32_t len);
+uint32_t flash_read_id(void);
+```
+
+It drives SPI1 through its registers — no ROM calls — saves and restores the six
+registers it touches, sets its own clock, and never reads a flash-mapped address
+to do its work. `flash_read_id()` is the loader's first act after the watchdog:
+an id of `0` or `0xFFFFFF` means the bus is dead, and every read after it would
+be garbage that looks like data. The measured id on this board is `0x00684016`.
+
+### 14.6 Memory map
+
+```
+boot .text   0x40078000 .. 0x40080000   (32 KB window, ~2.2 KB used)
+boot .data   0x3FFF0000 .. 0x3FFF6000   (24 KB window, ~0.4 KB used)
+
+nat-os IRAM  0x40080000 .. 0x400A0000   <- must not overlap the above
+nat-os DRAM  0x3FFB0000 .. 0x3FFDC200   <- must not overlap the above
+```
+
+No DROM region in `boot.ld`, deliberately: this runs with the cache off, so
+`.rodata` goes to DRAM (§4.1).
+
+### 14.7 Order of operations
+
+```
+boot_start.S   set a1 = _stack_top          (not the ROM's stack)
+               zero .bss                    (NOLOAD; holds last boot's garbage)
+               call0 boot_main
+
+boot_main      rtc_wdt_disable()            0x3FF480A4 = 0x50D83AA1, 0x3FF4808C = 0, relock
+               flash_read_id()              sanity, before anything depends on it
+               read header at 0x10000       reject if magic != 0xE9
+               per segment: MMU / bounce-copy / direct copy
+               cache_enable_drom()          once, here
+               jump to hdr.entry_addr
+```
+
+### 14.8 What it does not do, and the consequence
+
+No partition table, no checksum, no SHA-256, no OTA, no secure boot, no flash
+encryption — and, as UM-NATOS-036 found the hard way, **no clock configuration.**
+That last one is not in this list as a defect any more: `kernel/clock.c` owns it,
+which is a better place for it (UM-NATOS-036 §5). But it belongs in this section
+because a reader comparing this loader with Espressif's needs to know that the
+difference exists and where the responsibility went.
+
+### 14.9 Recovery
+
+```powershell
+.\build.ps1 -Flash -VendorBootloader          # Espressif's, and the A/B control
+python esptool.py --chip esp32 --port COM5 write_flash 0x1000 vendor\bootloader.bin
+```
+
+The board cannot be bricked this way: ROM download mode is reached by holding
+GPIO0 low at reset and does not depend on anything in flash.
+
+---
+
+*Filed 2026-08-19. Written, flashed, verified on hardware the same session.
+Revision 1.1 corrected §8's verification claim; revision 1.2 added §14, because
+the report explained itself well and documented itself badly.*
