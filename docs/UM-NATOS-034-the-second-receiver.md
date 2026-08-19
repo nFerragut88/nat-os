@@ -1,7 +1,7 @@
 # UM-NATOS-034 — The Second Receiver
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.8 · 2026-08-19 · Status: **Negative result** — §17 asks whether the thing is possible at all, and answers yes
+Revision 1.9 · 2026-08-19 · Status: **Negative result, now with a route** — §17 asks whether the thing is possible at all and answers yes; §18 stops asking and measures
 
 ---
 
@@ -950,3 +950,159 @@ the thing that has cost four sessions here.
 So: possible, yes. Worth it, only if owning this particular radio matters more
 than the months. That is not a question this report can answer.
 
+
+---
+
+## 18. The trace, and the first new evidence in four sessions
+
+**Added revision 1.9, 2026-08-19, same day as UM-NATOS-035.**
+
+§13 ended on a sentence that turned out to be the whole problem:
+
+> the snapshot diff compares destinations, not routes.
+
+Thirty stable register differences were applied wholesale and nothing changed.
+That eliminated the shortlist and left two shapes of cause that a snapshot
+cannot reach by construction:
+
+- **order** — both firmwares arrive at the same state by different paths, and
+  the hardware cares which;
+- **transients** — a write to a self-clearing bit. A "go" bit reads back zero a
+  microsecond later, so no number of snapshots, however carefully filtered, can
+  ever contain it.
+
+The second would explain every observation in this project at once: completions
+counted, canary intact, receive unaffected, nothing on the air.
+
+### 18.1 The instrument
+
+`tools/idf_ref` now traces instead of only dumping. Core 1 reads a 16-register
+window into DRAM as fast as the bus allows, with no comparison and no branching
+beyond the loop; core 0 transmits into the middle of that; the buffer is
+differenced afterwards and printed as an ordered list of changes.
+`tools/serial/tx_trace.py` drives the sweep and reduces the output.
+
+**Measured, not estimated:** 1.92 µs per sample. The design predicted 0.55 µs
+from 8 cycles per word; a read from the MAC peripheral bus costs about 28
+cycles, not 8. So the blind spot is three times wider than designed — anything
+faster than ~2 µs can still be missed — and it is recorded here rather than
+quietly corrected, because **the width of this instrument's blind spot is the
+one number a reader needs in order to judge a negative result from it.**
+
+Two design errors were found and fixed by running it:
+
+1. **One frame per window was not enough.** `esp_wifi_80211_tx()` queues to the
+   WiFi task and returns; when the hardware is actually touched is decided by a
+   scheduler this code does not control. The first sweep's only active window
+   came back empty on the second pass — not noise, a broken experiment. Eight
+   frames spread across the window fixed it, and changed what silence *means*:
+   with one frame, an empty window was ambiguous; with eight, it is evidence.
+
+2. **The first sweep covered the wrong 1 KB.** `0x3FF73000`–`0x3FF73400` was
+   chosen because every register this project had found interesting fell inside
+   it. Fifteen of those sixteen windows were completely silent, and the two
+   addresses §12 spent a session on — `0x3FF73C40`, `0x3FF73C68` — were outside
+   the swept range entirely. The sweep is now the full 4 KB, 64 windows.
+
+A third correction was to `tx_trace.py` itself, which printed *"nothing but
+clocks (both)"* for windows where **nothing had changed at all**. Thirty-two
+thousand samples of a register that never moved is not "only counters moved". It
+was the instrument claiming to have seen something it had not, and it is now
+labelled `SILENT`.
+
+### 18.2 What it found
+
+Forty-four of sixty-four windows are silent across 32,768 samples each. The
+transmit path is live in **41 addresses**, and they are concentrated:
+
+| region | changes | shape |
+|---|---|---|
+| `0x3FF73C00` | 4092 | free-running — changes every sample |
+| `0x3FF73D80`, `DB4` | 4183 | the busiest structured block |
+| `0x3FF732F0`–`FC` | 1347 | four registers moving together |
+| `0x3FF73834` | 382 | monotonically counting down |
+| `0x3FF73428`, `73424` | 172 | paired |
+| `0x3FF73CB8` | 98 | toggles `0x2000`/`0x4000`/`0` |
+| `0x3FF73D84`–`D8C`, `DAC`, `DB0`, `DB8` | ~400 | counters and a state machine |
+
+`0x3FF73DB8` is the one worth staring at. It cycles, repeatedly, and each cycle
+is accompanied by `0x3FF73D8C`, `73D88` and `73D84` each incrementing once:
+
+```
+0x000  ->  0x210  ->  0x230  ->  0x020  ->  0x000
+```
+
+`0x210` is bits 4 and 9. `0x230` adds **bit 5**, and bit 5 is gone again one or
+two samples later. Post, trigger, in flight, done — the shape of a transmit slot
+being used, with a self-clearing bit in the middle of it.
+
+That is a candidate, not a conclusion. It is named here so that the next session
+does not have to re-derive it, and so that if it turns out to be wrong there is
+a record of why it looked right.
+
+### 18.3 The comparison
+
+nat-os's `wifimac.c` names **25** MAC registers. Of those, **21 are silent
+during ESP-IDF's entire transmit.** The overlap is four:
+
+```
+0x3FF73C48   0x3FF73CC8   0x3FF73D1C   0x3FF73D20
+```
+
+And `wifimac_tx()` itself — verified line by line against `hal_mac_txq_enable`,
+and this project's own code rather than a blob call — writes exactly two
+addresses inside the traced range: `0x3FF73D1C` and `0x3FF73D20`, slot 0. The
+rest of its writes go to `0x3FF742xx`, which is outside it.
+
+**So nat-os's transmit touches 2 of the 41 registers ESP-IDF's transmit
+touches**, and none of the busy structured block at `0x3FF73D80`–`0x3FF73DB8`.
+
+### 18.4 What this does and does not establish
+
+It has to be said plainly, because the number above is the most suggestive thing
+this project has produced on WiFi and suggestive is exactly where it has gone
+wrong before.
+
+**Three reasons the comparison is weaker than it looks:**
+
+1. **A transmit-time trace cannot see initialisation.** A register written once
+   at setup and never again is silent in every window. nat-os calls
+   `ic_mac_init` and `lmacInit`, which are blob code and write registers
+   `wifimac.c` never names. "Not in the source" is not "not written".
+
+2. **Not every change is a write.** `0x3FF73C00` changing at every one of 2,047
+   possible transitions is a free-running counter, not something ESP-IDF wrote.
+   Several of the 41 will be hardware-updated status and statistics, which nat-os
+   would be wrong to write.
+
+3. **The two firmwares are not doing the same job.** §13 already paid for
+   forgetting this: the reference was a SoftAP and nat-os a minimal sniffer, and
+   most of the differences were legitimate. It is a promiscuous raw injector now,
+   which is much closer, but "closer" is not "identical".
+
+**What it does establish** is narrower and still worth the session: the transmit
+path's live register set is now *known*, it is 41 addresses rather than a 4 KB
+block, and 44 windows of it are provably not involved. Every previous attempt
+searched a space nobody had bounded.
+
+### 18.5 The next step, stated exactly
+
+**Run the same tracer on nat-os and diff the two traces.**
+
+This is the comparison the instrument was built for, and it is immune to all
+three caveats above — because a blind spot present in both instruments cannot
+manufacture a difference, only hide one. It is the same argument the second
+receiver rests on, and that is the argument that settled a question three months
+of single-board tests could not.
+
+One obstacle, and it is real: **nat-os is single-core.** The tracer works by
+capturing on one core while the other transmits. nat-os would have to start the
+APP CPU — unstall it through `DPORT_APPCPU_CTRL` and point it at a capture loop
+that touches nothing else. That is a bounded piece of work and squarely this
+project's kind, but it is not free, and it should be recorded as the cost before
+anyone starts.
+
+**The lead most worth testing first**, and it is cheap: have nat-os write the
+`0x3FF73DB8` sequence — `0x210`, then `0x230`, then watch bit 5 clear — around
+its existing `wifimac_tx()`. If the radiated-signal test from §5 stays silent,
+that is one more clean negative. If it does not, this is over.

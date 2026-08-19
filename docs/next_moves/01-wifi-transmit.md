@@ -30,6 +30,27 @@
 > success, and `tools/serial/wifi_link.py` now answers "did anything radiate"
 > in about a minute.
 
+> **UPDATE 2026-08-19 — the search space is now bounded, and there is a lead.**
+> UM-NATOS-034 §18 replaces snapshot diffing with a *trace*: core 1 captures a
+> 16-register window at 1.92 us per sample while core 0 transmits, swept across
+> the full 4 KB MAC block. `tools/idf_ref` + `tools/serial/tx_trace.py`.
+>
+> **44 of 64 windows are silent.** ESP-IDF's transmit path is live in 41
+> addresses. nat-os's `wifimac.c` names 25 MAC registers, 21 of which never move
+> during ESP-IDF's transmit, and `wifimac_tx()` writes just 2 of the 41.
+>
+> **The lead:** `0x3FF73DB8` cycles `0x000 -> 0x210 -> 0x230 -> 0x020 -> 0x000`
+> per frame, with three counters incrementing alongside. Bit 5 appears and
+> self-clears within two samples -- the exact shape a snapshot can never see, and
+> the exact shape that would explain completions counted with nothing on the air.
+> nat-os writes nothing in that block.
+>
+> **Cheapest next test:** write that sequence around `wifimac_tx()` and re-run
+> the §5 two-board radiated test. **Decisive next test:** run the tracer on
+> nat-os and diff, which needs the APP CPU started -- bounded work, not free.
+> Caveats on why the 2-of-41 number is weaker than it looks are in §18.4; read
+> them before acting on it.
+
 **Size:** large. **Risk:** real — may cost the working receive path.
 **Blocked on:** willingness to accept a link change.
 
