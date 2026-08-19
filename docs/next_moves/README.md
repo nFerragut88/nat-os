@@ -104,17 +104,35 @@ Each has its own file. Roughly in order of value, but they are independent.
 
 | # | move | size | blocked on |
 |---|---|---|---|
-| [01](01-wifi-transmit.md) | Make transmit reach the air | large, risky | accepting a link change |
+| ~~[01](01-wifi-transmit.md)~~ | ~~Make transmit reach the air~~ — **closed as a negative**, UM-NATOS-034 §29 | — | — |
 | ~~[02](02-vm-events-and-frames.md)~~ | ~~VM entry points~~ — **done**, UM-NATOS-031 rev 1.1 | — | — |
 | ~~[03](03-permissions.md)~~ | ~~Per-application device permissions~~ — **done**, UM-NATOS-032 | — | — |
 | [04](04-scheduler-timing.md) | A real-time path for control loops | medium | nothing needs it *yet* |
 | [05](05-open-unknowns.md) | Two unexplained behaviours | small | nothing |
+| [07](07-irom.md) | A flash-executable region, before IRAM runs out | medium | nothing |
+| [08](08-wifi-via-loaded-blob.md) | WiFi transmit via the vendor path, blob supplied at runtime | large | 07 |
 | ~~[06](06-documentation-debt.md)~~ | ~~Claims that have gone stale~~ — **done**, all five items | — | — |
 
-02, 03 and 06 are done. What is left is 01, 04 and 05.
+02, 03 and 06 are done. **01 is closed** — see below. What is left is 04, 05,
+07 and 08.
 
-**If you want the satisfying one:** [01](01-wifi-transmit.md), knowing it may
-cost a working receive path and a day.
+**01 closed as a negative, 2026-08-19.** Both boards beaconing 30 cm apart on
+the same channel; a MediaTek laptop adapter sees the ESP-IDF control and does
+not see nat-os. Every comparable layer was measured and matches — MAC state
+machine, 2,048 MAC/PHY/baseband registers, `phyinit`'s arguments, the descriptor
+layout, the OS adapter table, and the analog regi2c programming. Everything the
+CPU can observe is identical; nothing radiates. UM-NATOS-034 §29.
+
+**But §31 corrected the claim that held it shut.** "Both call the same blob with
+the same arguments" was true of PHY init and never of transmit: ESP-IDF's path
+runs through `libnet80211.a`, which this tree does not have, while `wifimac_tx()`
+is a hand-written reconstruction that calls no vendor code at all. That is what
+[08](08-wifi-via-loaded-blob.md) is.
+
+**If you want the one that pays off regardless:** [07](07-irom.md). IRAM is
+128 KB, the `-WiFi` build uses 112 KB of it, and there is no flash-executable
+region at all. That ceiling constrains everything — LoRa, DTN, the filesystem —
+not just the radio.
 
 **If you want the cheap one:** [05](05-open-unknowns.md). Two unexplained
 behaviours, and one of them — phantom touches that once *launched a program* —
