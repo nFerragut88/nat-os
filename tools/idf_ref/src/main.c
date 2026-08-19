@@ -32,6 +32,26 @@
 
 #define REF_CHANNEL 6
 
+/* The multi-minute register sweep. Off for the link test, which needs this
+ * board beaconing steadily rather than busy for five minutes first. */
+#define REF_TRACE_SWEEP 0
+
+/* Which half of the two-board link test this build is for.
+ *
+ *   1 = AP.  Beacons NATOS-CTRL-6 continuously so nat-os's `scan` can list it.
+ *            Direction A -- "can nat-os hear this board?"
+ *   0 = STA + promiscuous, receive only. Direction B -- "can this board hear
+ *            nat-os?"
+ *
+ * They must be separate builds, and finding that out cost a wrong verdict.
+ * With AP mode and promiscuous enabled together, this board heard FOUR frames
+ * in forty seconds and could not hear an access point that nat-os hears
+ * continuously -- ESP-IDF's promiscuous receive is all but disabled in AP mode.
+ * A negative from a deaf receiver is not evidence, and the first run of
+ * link_test.py reported one as though it were.
+ */
+#define REF_LINK_AP 0
+
 /* A probe request with a wildcard SSID and a basic rate set. Hand-built so the
  * bytes on the air are ours rather than the stack's, the same way nat-os builds
  * its own. Addresses are filled in at run time from the chip's own MAC. */
@@ -254,13 +274,81 @@ static void traced_tx(uint32_t base, int do_tx)
     trace_dump(do_tx);
 }
 
-/* Promiscuous mode needs a callback registered even when nothing is done with
- * the frames: the point is to be in the same RECEIVE configuration as nat-os,
- * which is armed and promiscuous while it transmits. */
+/* ==== link test: does each board hear the other? ==========================
+ *
+ * UM-NATOS-034 §5 established that a second board 30 cm away hears a real
+ * access point but never hears nat-os transmitting, and every conclusion since
+ * — including §20's — rests on it. The receiver in that test was validated
+ * against an access point. **It has never been pointed at this board.**
+ *
+ * That leaves an assumption load-bearing and unmeasured: that a receiver which
+ * hears an AP would also hear a nearby ESP32. If it would not, §5 is a
+ * statement about the receiver rather than the transmitter, and a great deal of
+ * the record needs revisiting.
+ *
+ * So: two directions, both measured.
+ *
+ *   A. this board -> nat-os. AP mode with an unmistakable SSID, beaconing
+ *      continuously. nat-os's `scan` lists beacon sources by BSSID and SSID,
+ *      so no change is needed on that side, and the result cannot be a
+ *      counter artefact — either the SSID string appears or it does not.
+ *
+ *   B. nat-os -> this board. The tally below.
+ *
+ * ---- why a tally and not a frame count -----------------------------------
+ *
+ * `tools/serial/wifi_sweep.py` once keyed its detector on a frame-count delta
+ * and reported a hit at every step, because a real access point delivers
+ * ~1.5 frames/s and the counter always moves. The lesson was written down:
+ *
+ *     key on the transmitter's source MAC, never on frame volume.
+ *
+ * This keeps a per-source-MAC count. nat-os's address either appears in it or
+ * it does not, and no amount of ambient traffic can put it there.
+ */
+#define REF_SSID "NATOS-CTRL-6"
+
+#define SRC_MAX 24
+static uint8_t  g_src[SRC_MAX][6];
+static uint32_t g_src_n[SRC_MAX];
+static uint32_t g_src_count;
+static uint32_t g_frames;
+
 static void sniff(void *buf, wifi_promiscuous_pkt_type_t type)
 {
-    (void)buf;
     (void)type;
+    const wifi_promiscuous_pkt_t *p = (const wifi_promiscuous_pkt_t *)buf;
+    if (!p || p->rx_ctrl.sig_len < 16) {
+        return;
+    }
+    g_frames++;
+
+    /* addr2 -- the transmitter. Bytes 10..15 of an 802.11 header. */
+    const uint8_t *a2 = p->payload + 10;
+
+    for (uint32_t i = 0; i < g_src_count; i++) {
+        if (memcmp(g_src[i], a2, 6) == 0) {
+            g_src_n[i]++;
+            return;
+        }
+    }
+    if (g_src_count < SRC_MAX) {
+        memcpy(g_src[g_src_count], a2, 6);
+        g_src_n[g_src_count] = 1;
+        g_src_count++;
+    }
+}
+
+static void link_report(void)
+{
+    printf("LINK frames=%u sources=%u\n",
+           (unsigned)g_frames, (unsigned)g_src_count);
+    for (uint32_t i = 0; i < g_src_count; i++) {
+        printf("LINKSRC %02x:%02x:%02x:%02x:%02x:%02x %u\n",
+               g_src[i][0], g_src[i][1], g_src[i][2],
+               g_src[i][3], g_src[i][4], g_src[i][5], (unsigned)g_src_n[i]);
+    }
+    printf("LINKEND\n");
 }
 
 void app_main(void)
@@ -273,17 +361,41 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
 
-    /* STA mode but never associated -- the interface exists so frames can be
-     * pushed through it, and nothing connects to anything. */
+    /* AP mode, for the link test.
+     *
+     * nat-os's `scan` tracks BEACON sources only -- it lists BSSIDs and SSIDs.
+     * A probe request from this board would therefore be invisible to it no
+     * matter how well the receiver works, so direction A would fail for a
+     * reason that has nothing to do with radios.
+     *
+     * An AP beacons ~10x a second with a name in every frame. The result is a
+     * string appearing on nat-os's console or not appearing, which is about as
+     * hard to misread as evidence gets. Raw injection still works alongside it
+     * for direction B. */
+#if REF_LINK_AP
+    wifi_config_t ap = { 0 };
+    memcpy(ap.ap.ssid, REF_SSID, sizeof(REF_SSID));
+    ap.ap.ssid_len = sizeof(REF_SSID) - 1;
+    ap.ap.channel  = REF_CHANNEL;
+    ap.ap.authmode = WIFI_AUTH_OPEN;
+    ap.ap.max_connection = 1;
+    ap.ap.beacon_interval = 100;
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap));
+    ESP_ERROR_CHECK(esp_wifi_start());
+#else
+    /* STA, never associated -- the configuration in which this board's
+     * promiscuous receive actually works. See REF_LINK_AP. */
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_start());
+#endif
 
     ESP_ERROR_CHECK(esp_wifi_set_promiscuous_rx_cb(sniff));
     ESP_ERROR_CHECK(esp_wifi_set_promiscuous(true));
     ESP_ERROR_CHECK(esp_wifi_set_channel(REF_CHANNEL, WIFI_SECOND_CHAN_NONE));
 
     uint8_t mac[6];
-    ESP_ERROR_CHECK(esp_wifi_get_mac(WIFI_IF_STA, mac));
+    ESP_ERROR_CHECK(esp_wifi_get_mac(REF_LINK_AP ? WIFI_IF_AP : WIFI_IF_STA, mac));
     memcpy(&probe_req[10], mac, 6);          /* addr2: this chip */
 
     printf("REF-RAW mode=promiscuous channel=%d mac=%02x:%02x:%02x:%02x:%02x:%02x\n",
@@ -335,6 +447,7 @@ void app_main(void)
      *
      * This is the first version of the nat-os/ESP-IDF comparison with a control
      * on BOTH sides. */
+#if REF_TRACE_SWEEP
     for (int pass = 0; pass < 2; pass++) {
         printf("TRACEPASS %d\n", pass);
         for (uint32_t w = 0; w < 64; w++) {
@@ -346,9 +459,26 @@ void app_main(void)
         }
     }
     printf("TRACESWEEPEND\n");
+#endif
 
+    /* Link test. Beacons go out on their own once the AP is started -- that is
+     * direction A, and nat-os's `scan` should list REF_SSID. Raw probe requests
+     * are injected alongside so the receiver has two frame types to catch, and
+     * link_report() prints every source MAC heard, which is direction B.
+     *
+     * WIFI_IF_AP, not WIFI_IF_STA: the interface has to be one that exists in
+     * the current mode, and this board is now an AP. */
     for (;;) {
-        esp_wifi_80211_tx(WIFI_IF_STA, probe_req, sizeof probe_req, true);
-        vTaskDelay(pdMS_TO_TICKS(100));
+#if REF_LINK_AP
+        for (int i = 0; i < 10; i++) {
+            esp_wifi_80211_tx(WIFI_IF_AP, probe_req, sizeof probe_req, true);
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
+#else
+        /* Receive only. A transmitter that also listens would put its own
+         * frames in its own tally, which is noise with no upside here. */
+        vTaskDelay(pdMS_TO_TICKS(1000));
+#endif
+        link_report();
     }
 }

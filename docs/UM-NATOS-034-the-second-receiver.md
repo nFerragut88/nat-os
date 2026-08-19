@@ -1,7 +1,7 @@
 # UM-NATOS-034 — The Second Receiver
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 2.1 · 2026-08-19 · Status: **Bounded** — §20 puts a control on both sides and finds the two MACs execute the same transmit sequence; the fault is below the MAC and above the antenna
+Revision 2.2 · 2026-08-19 · Status: **Bounded, and measured** — §20 finds the two MACs execute the same transmit sequence; §21 re-runs the two-board test with a control on each receiver and confirms nothing radiates
 
 ---
 
@@ -1327,3 +1327,96 @@ the same capability on a radio this project can actually own — which is what
 
 The transmit investigation is not abandoned. It is now correctly bounded, which
 is what four sessions of register work was actually for.
+
+---
+
+## 21. The two-board test, measured rather than inherited
+
+**Added revision 2.2, 2026-08-19.**
+
+§20 concluded that the transmit fault is below the MAC, by pairing a measurement
+made that day — the two MACs execute the same transmit sequence — with §5's
+"nothing reaches the air", which is from an earlier session and was not re-run.
+
+Worse, §5 had a gap of its own. Its receiver was validated against **a real
+access point**. It was never pointed at `tools/idf_ref`. So one assumption was
+carrying the weight of the whole investigation without ever being measured:
+*that a receiver which hears an access point would also hear a nearby ESP32.*
+
+Both boards were run together, both directions, each with a control on its own
+receiver.
+
+### 21.1 The wrong answer on the way
+
+The first attempt put `idf_ref` in AP mode — so it would beacon for direction A —
+and left promiscuous receive on for direction B. In that combination it heard
+**four frames in forty seconds**, and could not hear the access point nat-os
+hears continuously. ESP-IDF's promiscuous receive is all but disabled in AP mode.
+
+The script reported *"CONTROL PASSES, TEST FAILS — the expected result"* anyway,
+from a deaf receiver. It also compared every received address against `None`,
+because its regex looked for a colon-separated MAC that `machw` does not print:
+a detector that could not have succeeded.
+
+Two failures, both producing the expected answer. That is the worst way for a
+test to be wrong, and it is the third time in this investigation that an
+instrument has agreed with the hypothesis by not working —
+`wifi_sweep.py`'s frame-count detector, §18's missing control, and now this.
+
+> **A negative from an instrument that has not been shown to work is not a
+> negative. It is nothing at all.**
+
+The two directions need two separate builds, and `REF_LINK_AP` now selects one.
+
+### 21.2 Direction A — can nat-os hear `idf_ref`?
+
+`idf_ref` as an AP beaconing `NATOS-CTRL-6` on channel 6. nat-os's `scan`:
+
+```
+frames=366  recycled=366  networks=2
+5c:01:3b:51:2b:41  x175  "NATOS-CTRL-6"     <- idf_ref
+44:25:38:19:0d:1a  x10   "TC7NR"            <- ambient AP, the control
+```
+
+**175 beacons, by BSSID and by name.** nat-os's receiver hears this transmitter,
+easily, and hears an unrelated one at the same time.
+
+### 21.3 Direction B — can `idf_ref` hear nat-os?
+
+`idf_ref` back in STA + promiscuous, receive only. nat-os beaconing and sending
+probe requests continuously for 45 seconds, 30 cm away, same channel:
+
+```
+idf_ref heard 315 frames from 3 sources
+   44:25:38:19:0d:1a  x291      <- ambient AP, the control
+   6e:a6:d8:b0:78:b1  x21
+   e2:49:d2:8f:5e:6d  x3
+
+nat-os MAC = 5c:01:3b:50:3f:64  (decoded from machw's 0x503b015c 0x0000643f)
+```
+
+**Zero.** A receiver taking 315 frames from three transmitters over the same
+45 seconds records nothing at all from the board sitting next to it.
+
+### 21.4 What is now on measured ground
+
+| | control | result |
+|---|---|---|
+| `idf_ref` → nat-os | nat-os also hears an ambient AP | **175 frames** |
+| nat-os → `idf_ref` | `idf_ref` hears an ambient AP ×291, plus two more | **0 frames** |
+
+Two boards, 30 cm apart, one channel, one session. One of them transmits and is
+heard 175 times. The other transmits and is heard zero times. Both receivers are
+proven working, in the same run, by transmitters neither of them controls.
+
+§5's foundation is confirmed. It is no longer inherited, and the receiver in it
+is no longer assumed to be able to hear an ESP32 — it demonstrably can.
+
+So §20's conclusion stands on two measurements from the same session rather than
+one plus a memory:
+
+> nat-os's MAC executes the same transmit sequence as a working stack's MAC
+> (§20), **and** a proven receiver 30 cm away hears nothing from it (§21).
+
+The fault is below the MAC and above the antenna. Nothing in the record now
+rests on an unmeasured assumption about either instrument.
