@@ -174,12 +174,48 @@ uint32_t display_spi_clock_preset(uint32_t which)
  */
 #define SPI2_DMA_CONF      (SPI2_BASE + 0x100u)
 #define SPI2_DMA_OUT_LINK  (SPI2_BASE + 0x104u)
+#define SPI2_DMA_STATUS    (SPI2_BASE + 0x10Cu)
+#define DMA_STATUS_TX_EN   (1u << 1)   /* outbound channel running */
+#define SPI2_DMA_INT_RAW   (SPI2_BASE + 0x114u)
 #define SPI2_DMA_INT_CLR   (SPI2_BASE + 0x11Cu)
 
-#define DMA_OUT_RST        (1u << 2)
+/* DMA completion, which is NOT the same event as the SPI transaction ending.
+ *
+ * SPI_USR clears when the peripheral has shifted out the bit count in
+ * MOSI_DLEN. The DMA engine is a separate state machine feeding it, and
+ * OUT_TOTAL_EOF is the bit that says that engine has retired the descriptor.
+ * Waiting on the first and not the second is the difference between "the pixels
+ * I asked for went out" and "the machine that was sending them has stopped". */
+#define DMA_OUT_DONE_INT      (1u << 6)
+#define DMA_OUT_EOF_INT       (1u << 7)
+#define DMA_OUT_TOTAL_EOF_INT (1u << 8)
+
+/* SPI_DMA_CONF_REG bits, taken from soc/spi_reg.h rather than from memory.
+ *
+ * Two of these were wrong, both by one position, both onto a REAL neighbouring
+ * bit that the hardware accepted without complaint:
+ *
+ *   DMA_OUT_RST was (1u << 2), which is SPI_IN_RST -- the INBOUND channel.
+ *   The outbound channel is bit 3 and had never been reset in the life of this
+ *   driver. Every "reset before each transfer" this file performs, and the long
+ *   comment justifying it, acted on the receive path that this display never
+ *   uses.
+ *
+ *   DMA_OUTDSCR_BURST was (1u << 11), which is SPI_INDSCR_BURST_EN. Outbound
+ *   descriptor burst is bit 10, so it was never enabled either.
+ *
+ * Both are the same shape of error as UM-NATOS-030's OUTLINK_START/RESTART: an
+ * adjacent bit, a peripheral that reports success, and a fault that only shows
+ * as pixels landing progressively further from where they belong. The IN/OUT
+ * pairs are defined together here so the next reader sees which neighbour is
+ * which without going back to the manual. */
+#define DMA_IN_RST         (1u << 2)
+#define DMA_OUT_RST        (1u << 3)
 #define DMA_AHBM_FIFO_RST  (1u << 4)
 #define DMA_AHBM_RST       (1u << 5)
-#define DMA_OUTDSCR_BURST  (1u << 11)
+#define DMA_OUT_EOF_MODE   (1u << 9)
+#define DMA_OUTDSCR_BURST  (1u << 10)
+#define DMA_INDSCR_BURST   (1u << 11)
 #define DMA_OUT_DATA_BURST (1u << 12)
 
 /* SPI_DMA_OUT_LINK_REG: addr in 19:0, STOP at 28, START at 29, RESTART at 30.
@@ -272,8 +308,28 @@ static int spi2_dma_tx(const uint8_t *data, uint32_t n)
      * share the peripheral's AHB master FIFO, and switching between them
      * without resetting it leaves the engine reading from a buffer the CPU
      * path was using. Same sequence spi2_dma_init() performs once. */
-    GPIO_REG(SPI2_DMA_CONF) |= DMA_OUT_RST | DMA_AHBM_FIFO_RST | DMA_AHBM_RST;
-    GPIO_REG(SPI2_DMA_CONF) &= ~(DMA_OUT_RST | DMA_AHBM_FIFO_RST | DMA_AHBM_RST);
+    /* The AHB master FIFO only -- NOT the outbound channel.
+     *
+     * This line used to name DMA_OUT_RST, but that constant was (1u << 2),
+     * which is SPI_IN_RST: the inbound channel, which this write-only driver
+     * never uses. So for the whole life of this file the "reset the outbound
+     * channel before every transfer" that the comment above describes was a
+     * no-op on an unrelated bit.
+     *
+     * Correcting the constant made it real, and it immediately broke the
+     * engine: the first transfer completed and the second never signalled EOF,
+     * because resetting the outbound channel between back-to-back transfers
+     * tears down the state that produces that signal. The reset belongs at
+     * INIT, where spi2_dma_init() now does it once with the right bit.
+     *
+     * What genuinely does need clearing per transfer is the shared AHB master
+     * FIFO, for the reason the comment above gives: this driver alternates
+     * transports within one window, and the CPU path and the DMA path share it.
+     *
+     * Two wrongs had been cancelling out. The bit was wrong, so the reset never
+     * happened, so nobody found out that doing it here is harmful. */
+    GPIO_REG(SPI2_DMA_CONF) |= DMA_AHBM_FIFO_RST | DMA_AHBM_RST;
+    GPIO_REG(SPI2_DMA_CONF) &= ~(DMA_AHBM_FIFO_RST | DMA_AHBM_RST);
 
     GPIO_REG(SPI2_DMA_INT_CLR) = 0xFFFFFFFFu;
 
@@ -285,6 +341,32 @@ static int spi2_dma_tx(const uint8_t *data, uint32_t n)
     g_desc.next  = 0;
 
     GPIO_REG(SPI2_DMA_OUT_LINK) = ((uint32_t)&g_desc & 0xFFFFFu) | DMA_OUTLINK_START;
+
+    /* Let the DMA engine fill the peripheral's FIFO before the shifter starts.
+     *
+     * Starting the outlink and the transaction back to back is a race. The DMA
+     * channel needs a few cycles to fetch the descriptor and push the first
+     * words across; if SPI_USR is set before that lands, the shifter sends
+     * whatever the FIFO already held and the real data arrives behind it. That
+     * puts a CONSTANT few bytes in front of every transfer, which is exactly the
+     * measured symptom -- a single blit row already displaced to the right, and
+     * the displacement growing by roughly a pixel per transfer as each one adds
+     * its own.
+     *
+     * Waited on as a CONDITION rather than as a delay. SPI_DMA_STATUS bit 1 is
+     * DMA_TX_EN: the outbound channel is running. A fixed spin count did work
+     * here, and would rot the first time the clock, the compiler or the
+     * transfer size changed -- this project already has a rule about describing
+     * a loop by its bound rather than by the bound's value on the day, and a
+     * magic 16 is that mistake wearing different clothes.
+     *
+     * Still bounded, because a condition that never arrives must not wedge the
+     * display task. Falling through after the bound leaves exactly the previous
+     * behaviour, so the worst case is the bug this replaced, not a hang. */
+    for (uint32_t spins = 0;
+         !(GPIO_REG(SPI2_DMA_STATUS) & DMA_STATUS_TX_EN) && spins < 1000u;
+         spins++) {
+    }
 
     GPIO_REG(SPI2_MOSI_DLEN) = n * 8u - 1u;
     GPIO_REG(SPI2_CMD)       = SPI_USR_BIT;
@@ -325,6 +407,48 @@ static int spi2_dma_tx(const uint8_t *data, uint32_t n)
     uint32_t start = xt_ccount();
     while (GPIO_REG(SPI2_CMD) & SPI_USR_BIT) {
         if ((xt_ccount() - start) > 40000000u) {     /* ~500 ms at 80 MHz */
+            g_dma_timeouts++;
+            g_dma_ok = 0;
+            return 0;
+        }
+    }
+
+    /* And then wait for the DMA ENGINE, which is a different question.
+     *
+     * SPI_USR clearing says the peripheral shifted out the bits MOSI_DLEN asked
+     * for. It says nothing about the outbound DMA channel, which is a separate
+     * state machine feeding that peripheral and may still be pushing bytes into
+     * its FIFO. Returning here left those bytes in flight; the next transfer
+     * then reset the channel, wrote a new descriptor and started it -- and
+     * whatever was already queued went out ahead of the new data.
+     *
+     * The result is a few extra bytes at the head of EVERY transfer. Each one
+     * pushes the panel's write cursor a little further than the pixels account
+     * for, so the image walks to the right, by a constant amount per transfer,
+     * accumulating for as long as the window stays open. Measured before the
+     * fix: a single blit row already offset, and 24 rows offset by about 16 px
+     * more -- roughly one pixel per transfer. Over the 3D view's 224 rows that
+     * is most of a screen width, which is why its close button appeared on the
+     * far side of the panel from where the framebuffer put it.
+     *
+     * This could only ever have been seen after UM-NATOS-030. Before that fix
+     * the engine spuriously timed out within about twelve seconds and disabled
+     * itself, so every transfer took the FIFO path and this code effectively
+     * never ran. Fixing the one bit did not introduce the fault; it started
+     * executing the path that had always contained it.
+     *
+     * Bounded by the same wall-clock rule and the same reasoning as above. A
+     * channel that will not retire its descriptor is a channel to stop using. */
+    /* Either bit satisfies this. OUT_EOF fires when the last byte of a
+     * descriptor carrying eof=1 has gone out; OUT_TOTAL_EOF fires when a whole
+     * linked chain has. This driver sends ONE descriptor per transfer, so
+     * OUT_EOF is the one that actually arrives -- waiting on TOTAL_EOF alone
+     * timed out on the first transfer and disabled the engine, which is a
+     * cleaner failure than it sounds: the guard caught my own wrong bit
+     * immediately instead of producing subtly wrong pixels. */
+    while (!(GPIO_REG(SPI2_DMA_INT_RAW) &
+             (DMA_OUT_EOF_INT | DMA_OUT_TOTAL_EOF_INT))) {
+        if ((xt_ccount() - start) > 40000000u) {
             g_dma_timeouts++;
             g_dma_ok = 0;
             return 0;
@@ -453,7 +577,50 @@ uint32_t display_dport_reg(void)     { return g_spi2_dport; }
  * Returns bytes read into `out`, MSB-first as they arrive. The first byte of
  * every ILI9341 read is a dummy; callers deal with that themselves because the
  * count differs per command. */
+/* Bit positions taken from the ESP32 IO_MUX header, not from memory:
+ * FUN_PD is bit 7, FUN_PU bit 8, FUN_IE bit 9, MCU_SEL bits 14:12. Checked
+ * because "one-bit register constants deserve the datasheet, not recall" is
+ * this project's most expensive rule (UM-NATOS-030 §6). The same check
+ * confirmed MCU_SEL = 1 really is HSPIQ on these pads -- FUNC_MTDI_HSPIQ is 1
+ * and FUNC_MTDI_GPIO12 is 2, which is the opposite of what it looks like. */
+#define IO_MUX_FUN_PD (1u << 7)
+#define IO_MUX_FUN_PU (1u << 8)
+
 void display_panel_read(uint8_t cmd, uint8_t *out, uint32_t n)
+{
+    display_panel_read_pull(cmd, out, n, DISPLAY_PULL_NONE);
+}
+
+/* The same read, with an internal pull applied to MISO for the duration.
+ *
+ * This is the experiment that separates "the panel's SDO is not populated on
+ * this module" from "something is actively holding the line low", which is the
+ * distinction UM-NATOS-030 §7 could not make and next_moves/05 §5.1 lists as
+ * candidate 1. A negative read alone cannot separate them: an unconnected pin
+ * and a pin driven low both give 0x00.
+ *
+ * A weak internal pull loses to anything actually driving the net and wins on a
+ * floating one. So:
+ *
+ *   pull-up gives 0xFF, pull-down gives 0x00   -> nothing is driving MISO.
+ *                                                 The pad works; the panel is
+ *                                                 not connected to it.
+ *   both give 0x00                             -> something drives it low, and
+ *                                                 "unpopulated" is wrong.
+ *   both give the same NON-trivial bytes       -> the panel is answering and
+ *                                                 the earlier zeros were a
+ *                                                 timing or framing fault.
+ *
+ * ---- the strapping hazard, stated plainly ---------------------------------
+ *
+ * GPIO12 is MTDI. Sampled HIGH at reset it selects a 1.8 V flash supply and the
+ * board does not boot. This function therefore enables the pull-up for
+ * microseconds and restores the pad before returning, on every path, and never
+ * enables pad HOLD -- hold is the one mechanism that would carry a pad state
+ * across a reset. A momentary input pull while the CPU is running is not the
+ * same thing as a pull present at reset release, but the window is kept as
+ * small as it can be rather than argued about. */
+void display_panel_read_pull(uint8_t cmd, uint8_t *out, uint32_t n, int pull)
 {
     if (n == 0u || n > 16u) {
         return;
@@ -464,8 +631,15 @@ void display_panel_read(uint8_t cmd, uint8_t *out, uint32_t n)
     uint32_t saved_clk  = GPIO_REG(SPI2_CLOCK);
     uint32_t saved_user = GPIO_REG(SPI2_USER);
 
+    uint32_t pad = IO_MUX_HSPI_IN_FUNC;
+    if (pull == DISPLAY_PULL_UP) {
+        pad |= IO_MUX_FUN_PU;
+    } else if (pull == DISPLAY_PULL_DOWN) {
+        pad |= IO_MUX_FUN_PD;
+    }
+
     GPIO_REG(SPI2_CLOCK)    = SPI2_CLKDIV_READ;
-    GPIO_REG(IO_MUX_GPIO12) = IO_MUX_HSPI_IN_FUNC;
+    GPIO_REG(IO_MUX_GPIO12) = pad;
 
     /* Command phase: D/CX low, write only. */
     gpio_clear(PIN_DC);
@@ -496,6 +670,10 @@ void display_panel_read(uint8_t cmd, uint8_t *out, uint32_t n)
     }
 
     gpio_set(PIN_CS);
+
+    /* Restore the pad BEFORE anything else can go wrong, and unconditionally.
+     * This clears any pull applied above; see the strapping note. */
+    GPIO_REG(IO_MUX_GPIO12) = IO_MUX_HSPI_IN_FUNC;
 
     GPIO_REG(SPI2_USER)  = saved_user;
     GPIO_REG(SPI2_CLOCK) = saved_clk;

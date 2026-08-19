@@ -76,6 +76,14 @@ int kmain_touch_task_id(void) { return id_touch; }
  * with a finger, which is not a test anyone can repeat reliably. */
 static volatile uint32_t g_last_rawx, g_last_rawy, g_last_x, g_last_y, g_last_z;
 
+/* Emit one compact pressure line per report. Off by default: it exists to
+ * answer the phantom-touch question over a long unattended run, and an
+ * instrument that is always on is one more thing competing for the console.
+ *
+ * Defined here rather than beside g_touch_events_off further down, because
+ * task_report() reads it and is above that point in the file. */
+volatile int g_ztrack = 0;
+
 /* Defined below with the other self-tests, but called from the reporter, which
  * is the only context where a running tick makes it meaningful. */
 static void m6_critical_test(void);
@@ -487,6 +495,36 @@ static void task_report(void)
             uart_put_dec((unsigned int)task_state_of(i));
         }
         uart_puts("\n");
+
+        /* One line per report, on its own, machine-parseable.
+         *
+         * Deliberately NOT appended to the status line above. That line is two
+         * kilobytes of counters and a host parser reading a field out of it is
+         * one field-order change away from silently reading the wrong number --
+         * which is a mistake this project has already paid for twice. A prefix
+         * nothing else emits can be grepped without understanding anything
+         * else on the console. */
+        if (g_ztrack) {
+            touch_window_t w;
+            touch_window(&w);
+            uart_puts("ZTRK t=");
+            uart_put_dec(timer_ticks());
+            uart_puts(" n=");
+            uart_put_dec(w.n);
+            uart_puts(" min=");
+            uart_put_dec(w.min);
+            uart_puts(" max=");
+            uart_put_dec(w.max);
+            uart_puts(" over=");
+            uart_put_dec(w.over);
+            uart_puts(" pen=");
+            uart_put_dec(w.pen);
+            uart_puts(" thr=");
+            uart_put_dec(touch_threshold());
+            uart_puts(" blips=");
+            uart_put_dec(touch_blips());
+            uart_puts("\n");
+        }
 
         console_unlock();
     }
@@ -1361,6 +1399,7 @@ static void task_display(void)
  * running: if spurious presses are still being READ while nothing acts on them,
  * that is worth seeing rather than hiding. */
 volatile int g_touch_events_off = 0;
+
 
 static void task_touch(void)
 {

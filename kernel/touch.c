@@ -114,6 +114,16 @@ void touch_get_calibration(uint32_t *xmin, uint32_t *xmax,
 
 #define Z_THRESHOLD 300u
 
+/* Consecutive qualifying samples before a press is reported. See the note at
+ * the decision itself. Two is the smallest value that rejects a lone sample,
+ * and the cost of each extra one is 10 ms of latency at the 100 Hz poll rate. */
+#define TOUCH_DOWN_SAMPLES 2u
+
+static uint32_t g_down_run;     /* consecutive qualifying samples so far   */
+static uint32_t g_blips;        /* runs that died before qualifying        */
+
+uint32_t touch_blips(void) { return g_blips; }
+
 /* Latest reading, published for consumers that must not touch the bus
  * themselves. A syscall doing its own SPI would cost milliseconds per call and
  * contend with the polling task for the controller. */
@@ -156,6 +166,60 @@ uint32_t touch_max_z1(void) { return g_max_z1; }
 uint32_t touch_min_z2(void) { return g_min_z2; }
 uint32_t touch_max_z(void)  { return g_max_z; }
 uint32_t touch_irq_lows(void) { return g_irq_low; }
+
+/* ---- the pressure window, for the phantom-touch question ------------------
+ *
+ * Two unattended runs logged spurious presses at ~374 s and ~390 s with nobody
+ * in the room, and in one of them they LAUNCHED A PROGRAM. The leading
+ * hypothesis is thermal drift: if the pressure baseline walks with board
+ * temperature, a fixed threshold starts tripping at a repeatable time, and six
+ * minutes is about right for a small board to reach equilibrium.
+ *
+ * Testing that needs the pressure trend, and the counters above cannot give it:
+ * they are maxima since boot, so they are monotonic and say nothing about when.
+ *
+ * Sampling the latest value periodically is worse than useless here. Touch polls
+ * at 100 Hz and a report is emitted every ~2 s, so a single-sample noise spike
+ * would be seen with probability 1/200 -- and a spike is exactly the shape being
+ * hunted. This instrument therefore reports the MAXIMUM and the COUNT ABOVE
+ * THRESHOLD since it was last read, and resets on read. It cannot miss a spike,
+ * and a window that reports zero is real evidence of quiet rather than evidence
+ * of having looked away.
+ *
+ * `min` was intended as the drift indicator, on the reasoning that a baseline
+ * walking upward would show there long before reaching the threshold. IT DOES
+ * NOT WORK. Idle samples occasionally read z2 at its 4095 rail, and
+ * z = z1 + 4095 - z2 then evaluates to exactly 0, so the window minimum is
+ * pinned at the floor whatever the baseline is doing. Across 374 windows and
+ * 56,042 samples it read 0 every single time.
+ *
+ * What actually answered the question was the mean of `max` across time bins --
+ * 53.6 over the first third of a 13-minute run against 52.4 over the last. Left
+ * in place because it costs nothing and a floor that never moves is still worth
+ * seeing, but the load-bearing number is `max`, not `min`. Recorded here rather
+ * than quietly fixed: the instrument's designer was wrong about which of its
+ * own outputs carried the evidence, which is exactly the kind of thing this
+ * kernel writes down. */
+static uint32_t g_win_max;
+static uint32_t g_win_min = 0xFFFFFFFFu;
+static uint32_t g_win_n;        /* samples in this window                  */
+static uint32_t g_win_over;     /* samples with z above Z_THRESHOLD        */
+static uint32_t g_win_pen;      /* samples with PENIRQ low                 */
+
+void touch_window(touch_window_t *out)
+{
+    out->max  = g_win_max;
+    out->min  = (g_win_min == 0xFFFFFFFFu) ? 0u : g_win_min;
+    out->n    = g_win_n;
+    out->over = g_win_over;
+    out->pen  = g_win_pen;
+
+    g_win_max = 0u;
+    g_win_min = 0xFFFFFFFFu;
+    g_win_n = g_win_over = g_win_pen = 0u;
+}
+
+uint32_t touch_threshold(void) { return Z_THRESHOLD; }
 
 /* The controller is specified to about 2 MHz and a GPIO loop runs faster than
  * that, so each edge is held briefly. Cheaper and more predictable than tuning
@@ -427,6 +491,14 @@ int touch_read(touch_state_t *out)
     if (z2 < g_min_z2) { g_min_z2 = z2; }
     if (answered && z > g_max_z) { g_max_z = z; }
 
+    /* Every sample enters the window, including the ones that decide nothing.
+     * A quiet window is the measurement here as much as a loud one is. */
+    g_win_n++;
+    if (z > g_win_max) { g_win_max = z; }
+    if (z < g_win_min) { g_win_min = z; }
+    if (z > Z_THRESHOLD) { g_win_over++; }
+    if (pen) { g_win_pen++; }
+
     out->raw_x = rx;
     out->raw_y = ry;
     out->z     = z;
@@ -467,7 +539,37 @@ int touch_read(touch_state_t *out)
      * stopped masking it. Two populations separated by a factor of a hundred,
      * and a threshold that has been sitting unused in this file the whole
      * time. */
-    out->down  = pen && (z > Z_THRESHOLD);
+    /* ---- and it must persist ---------------------------------------------
+     *
+     * A press is only reported after TOUCH_DOWN_SAMPLES consecutive samples
+     * meet the condition above.
+     *
+     * Two unattended runs logged spurious presses with nobody in the room, and
+     * in one of them a phantom tap LAUNCHED A PROGRAM (next_moves/05 §5.2).
+     * That is a device acting on its own, which on a machine meant to run
+     * unattended is a defect rather than a curiosity.
+     *
+     * This is a mitigation, not a diagnosis, and it is worth having either way:
+     * a real finger is present for tens of samples at 100 Hz, and a noise spike
+     * is not. Requiring two costs 10 ms of latency on a press -- below anything
+     * a person can perceive -- and removes every single-sample event.
+     *
+     * It deliberately does NOT hide the phenomenon. `g_blips` counts runs that
+     * started and died before qualifying, so a rejected event still leaves a
+     * mark; a mitigation that silences its own evidence is how a fault gets
+     * forgotten rather than fixed. If blips climb on an idle board, the
+     * underlying electrical question is still open and still visible. */
+    int raw_down = pen && (z > Z_THRESHOLD);
+
+    if (raw_down) {
+        if (g_down_run < 0xFFFFu) { g_down_run++; }
+    } else {
+        /* A run that ended before qualifying was noise, by definition. */
+        if (g_down_run > 0u && g_down_run < TOUCH_DOWN_SAMPLES) { g_blips++; }
+        g_down_run = 0u;
+    }
+
+    out->down = (g_down_run >= TOUCH_DOWN_SAMPLES);
 
     if (out->down) {
         g_events++;

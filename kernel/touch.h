@@ -64,6 +64,37 @@ uint32_t touch_max_z(void);
 /* Samples in which PENIRQ was asserted. */
 uint32_t touch_irq_lows(void);
 
+/* ---- pressure over a window of time --------------------------------------
+ *
+ * The counters above are maxima since boot. They answer "did pressure ever
+ * reach X" and cannot answer "is the baseline moving", which is the question
+ * the phantom touches pose.
+ *
+ * Reading this RESETS it, so consecutive reads tile the timeline without gaps
+ * and without overlap. `max` and `over` cannot miss a single-sample spike the
+ * way periodic sampling of the latest value would; `min` is where a drifting
+ * baseline shows up first, long before it reaches the threshold. */
+typedef struct {
+    uint32_t max;       /* highest z in the window                         */
+    uint32_t min;       /* lowest z -- the baseline                        */
+    uint32_t n;         /* samples taken                                   */
+    uint32_t over;      /* samples above the press threshold               */
+    uint32_t pen;       /* samples with PENIRQ asserted                    */
+} touch_window_t;
+
+void     touch_window(touch_window_t *out);
+uint32_t touch_threshold(void);
+
+/* Candidate presses rejected for not persisting across consecutive samples.
+ *
+ * This is the mitigation's own evidence. A press now needs two qualifying
+ * samples in a row, which removes every single-sample event -- but a rejected
+ * event must still leave a mark, or the fix would silence the phenomenon it was
+ * built for and the electrical question would be quietly forgotten. Non-zero on
+ * an idle board means the panel is still producing spurious samples and only
+ * their consequences have been removed. */
+uint32_t touch_blips(void);
+
 /* Raw-axis spans while touched, and the first point of the first touch. */
 uint32_t touch_rx_min(void);
 uint32_t touch_rx_max(void);

@@ -29,6 +29,7 @@
 #include "efuse.h"
 #include "xtensa.h"
 #include "vmarg.h"
+#include "gpio.h"      /* GPIO_REG, for spidump */
 #include "device.h"
 #include "term.h"
 
@@ -769,6 +770,26 @@ static void execute(char *line)
                   ? "   touch events suppressed; sampling and telemetry still live\n"
                   : "   touch events delivered again\n");
     }
+    else if (str_eq(line, "ztrack")) {
+        /* One pressure line per report, for as long as it takes.
+         *
+         * The phantom presses arrived at ~374 s and ~390 s in two independent
+         * runs, which is consistent enough to be a mechanism rather than an
+         * accident. The leading candidate is thermal: a small board reaches
+         * equilibrium in about that time, and a pressure baseline that walks
+         * with temperature would start crossing a fixed threshold at a
+         * repeatable moment.
+         *
+         * What settles it is the BASELINE, not the presses. If `min` climbs
+         * steadily toward `thr` over six minutes, the hypothesis is confirmed
+         * before a single phantom press occurs; if `min` sits flat and `max`
+         * spikes once from nowhere, it is an electrical event and thermal drift
+         * is dead. The two look nothing alike, which is what makes this worth
+         * running rather than reasoning about. */
+        extern volatile int g_ztrack;
+        g_ztrack = !str_eq(arg, "off");
+        uart_puts(g_ztrack ? "   ZTRK lines on\n" : "   ZTRK lines off\n");
+    }
     else if (str_eq(line, "panelid")) {
         /* Does MISO work at all?
          *
@@ -803,6 +824,173 @@ static void execute(char *line)
         uart_puts(found     ? "\n   0x93 0x41 present -- MISO WORKS, readback is viable\n"
                 : all_zero  ? "\n   everything zero -- MISO is dead or the pad is misconfigured\n"
                             : "\n   answered, but not the ILI9341 signature; check clock and dummy count\n");
+    }
+    else if (str_eq(line, "lrtest")) {
+        /* Is display_blit()'s offset CONSTANT, or does it accumulate per row?
+         *
+         * Established so far, all by measurement rather than reading:
+         *   - the panel's x axis is correct   (red at x=0 appears on the left)
+         *   - display_fill_rect() lands correctly
+         *   - the 3D view's FRAMEBUFFER is correct (dumped; close button at
+         *     buffer x=220, the right edge)
+         *   - on the glass that button appears at the LEFT, and a narrow strip
+         *     at the left keeps whatever was underneath
+         *   - display_blit() lands a few pixels RIGHT of display_fill_rect()
+         *
+         * The last two only fit together if the error GROWS. A constant offset
+         * of a few pixels cannot carry a button from x=220 round to x=0; 224
+         * rows of a few pixels each can. The 3D view is 224 rows and is the only
+         * caller of the contiguous path, which is why it is the only place this
+         * ever showed.
+         *
+         * So: blit a tall band of VERTICAL bars. Vertical bars are the right
+         * test object because the failure mode writes itself across them --
+         *
+         *   bars stay vertical, whole band offset -> constant, one-time
+         *   bars SLANT                            -> accumulates per row, and
+         *                                            the slope is the per-row
+         *                                            error, readable by eye
+         *
+         * A reference band drawn with fill_rect sits at the bottom, so "where
+         * should they be" is on the same screen as "where they are". */
+        extern volatile int g_display_frozen;
+        g_display_frozen = 1;
+
+        /* Measure the per-transfer error DIRECTLY, instead of inferring it.
+         *
+         * Bands of bars showed that something drifts, but not how much or per
+         * what. This draws MARKERS: a short white bar at x=0..15 drawn three
+         * ways, stacked, with a fill_rect marker as the ruler.
+         *
+         *   ref   fill_rect, 16 px wide            -- the zero mark
+         *   one   ONE blit row, full width         -- is a SINGLE transfer OK?
+         *   many  row 24 of a 24-row blit          -- has it drifted by then?
+         *
+         * If `one` sits under `ref`, a single contiguous transfer is correct and
+         * the error is per-transfer accumulation. If `one` is already offset,
+         * every transfer is wrong and row count is irrelevant. The gap between
+         * `one` and `many` is the accumulated error over 24 transfers, readable
+         * against the 16 px marker width.
+         *
+         * This is the smallest experiment that distinguishes the two, and its
+         * answer is a number rather than an impression. */
+        enum { MANY_H = 24u };
+        static uint16_t one_row[DISP_W];
+        static uint16_t many[DISP_W * MANY_H];
+
+        for (uint32_t col = 0; col < DISP_W; col++) {
+            one_row[col] = (col < 16u) ? COLOR_WHITE : COLOR_BLACK;
+        }
+        for (uint32_t row = 0; row < MANY_H; row++) {
+            for (uint32_t col = 0; col < DISP_W; col++) {
+                /* Only the LAST row carries the marker, so what is measured is
+                 * where the 24th transfer landed, not a smear of all of them. */
+                many[row * DISP_W + col] =
+                    (row == MANY_H - 1u && col < 16u) ? COLOR_GREEN : COLOR_BLACK;
+            }
+        }
+
+        display_lock();
+        display_fill_rect(0u, 0u, DISP_W, DISP_H, COLOR_BLACK);
+
+        /* Ruler: ticks every 16 px so an offset can be counted, not estimated. */
+        for (uint32_t t = 0; t < DISP_W; t += 16u) {
+            display_fill_rect(t, 60u, 1u, 8u, COLOR_GREY);
+        }
+
+        /* ref -- fill_rect, the zero mark */
+        display_fill_rect(0u, 70u, 16u, 8u, COLOR_RED);
+
+        /* one -- a single full-width blit row */
+        display_blit(0u, 82u, DISP_W, 1u, one_row, DISP_W);
+
+        /* many -- the 24th row of a 24-row contiguous blit */
+        display_blit(0u, 94u, DISP_W, MANY_H, many, DISP_W);
+
+        display_text(4u, 140u, "RED=FILLRECT",  COLOR_WHITE, COLOR_BLACK, 1u);
+        display_text(4u, 155u, "WHT=1 BLIT ROW", COLOR_WHITE, COLOR_BLACK, 1u);
+        display_text(4u, 170u, "GRN=24TH ROW",  COLOR_WHITE, COLOR_BLACK, 1u);
+        display_text(4u, 195u, "TICKS=16PX",    COLOR_WHITE, COLOR_BLACK, 1u);
+        display_unlock();
+
+        uart_puts("   top band  : 48 rows, display_blit contiguous path\n"
+                  "   bottom band: same bars, display_fill_rect\n"
+                  "   Each bar is 40 px: R G B Y C M, left to right.\n"
+                  "   Do the top band's bars stay VERTICAL, or slant?\n"
+                  "   'dfreeze off' when done.\n");
+    }
+    else if (str_eq(line, "panelpull")) {
+        /* Is anything connected to MISO at all?
+         *
+         * `panelid` establishes that the read returns zeros. It cannot say WHY,
+         * and the two candidates need different responses: a module whose SDO
+         * is not populated is a dead end, while a line held low by something is
+         * a bug worth chasing. A negative read cannot separate them, because an
+         * unconnected pin and a pin driven low both read 0x00.
+         *
+         * A weak internal pull loses to anything driving the net and wins on a
+         * floating one, so reading the SAME command three ways is decisive:
+         *
+         *   up 0xFF / down 0x00  -> nothing drives MISO. The pad is fine and
+         *                           the panel is not attached to it.
+         *   both 0x00            -> something holds it low; "not populated" is
+         *                           the wrong explanation.
+         *   same real bytes      -> the panel answers and the zeros were a
+         *                           framing or timing fault after all.
+         *
+         * Eight bytes rather than five, because the second candidate in
+         * next_moves/05 §5.1 is a wrong dummy-clock count -- and a framing
+         * error shows as 0x93 0x41 sitting at an unexpected offset rather than
+         * as silence. Reading past where the signature should be costs nothing
+         * and tests that at the same time.
+         *
+         * GPIO12 is MTDI, a strapping pin. The pull is applied for microseconds
+         * inside the read and cleared before it returns; pad hold is never
+         * enabled. See display.c. */
+        static const struct { const char *name; int pull; } WAYS[] = {
+            { "none", DISPLAY_PULL_NONE },
+            { "up  ", DISPLAY_PULL_UP   },
+            { "down", DISPLAY_PULL_DOWN },
+        };
+
+        uint8_t got[3][8];
+        for (int w = 0; w < 3; w++) {
+            display_panel_read_pull(0xD3u, got[w], 8u, WAYS[w].pull);
+            uart_puts("   0xD3 pull=");
+            uart_puts(WAYS[w].name);
+            uart_puts(" ->");
+            for (int i = 0; i < 8; i++) {
+                uart_puts(" ");
+                uart_put_hex(got[w][i]);
+            }
+            uart_puts("\n");
+        }
+
+        /* Interpretation, stated by the kernel rather than left to a reader
+         * squinting at three rows of hex. */
+        int follows = 1, all_zero = 1, sig = 0;
+        for (int i = 0; i < 8; i++) {
+            if (got[1][i] != 0xFFu || got[2][i] != 0x00u) { follows = 0; }
+            for (int w = 0; w < 3; w++) {
+                if (got[w][i]) { all_zero = 0; }
+            }
+            if (i < 7 && got[0][i] == 0x93u && got[0][i + 1] == 0x41u) { sig = 1; }
+        }
+
+        if (sig) {
+            uart_puts("   0x93 0x41 present -- MISO WORKS\n");
+        } else if (follows) {
+            uart_puts("   reads follow the pull -- NOTHING DRIVES MISO.\n"
+                      "   The pad and the read path are fine; the panel's SDO\n"
+                      "   is not connected on this module. Readback is not\n"
+                      "   available on this board and no software change helps.\n");
+        } else if (all_zero) {
+            uart_puts("   zero regardless of pull -- something HOLDS the line\n"
+                      "   low. Not simply unpopulated; worth chasing.\n");
+        } else {
+            uart_puts("   mixed -- see the rows above; the line is doing\n"
+                      "   something, so check clock and dummy count next.\n");
+        }
     }
     else if (str_eq(line, "view3d")) {
         /* Open or close the 3D view from the terminal.
@@ -878,8 +1066,19 @@ static void execute(char *line)
         uart_put_dec(display_dma_transfers());
         uart_puts("  timeouts ");
         uart_put_dec(display_dma_timeouts());
-        uart_puts(display_dma_timeouts() ? "  <- DMA is OFF, everything is on the FIFO path\n"
-                                         : "  (DMA still active)\n");
+        /* Report the FLAG, not the timeout count.
+         *
+         * This line used to infer the transport from display_dma_timeouts(),
+         * which is only one of the two ways DMA gets switched off -- `dmaoff`
+         * is the other. So after forcing the FIFO path by hand it cheerfully
+         * printed "DMA still active", which is the exact failure this file
+         * catalogues elsewhere: a diagnostic reporting what it assumed rather
+         * than what is true. It nearly invalidated a transport A/B test. */
+        uart_puts(display_dma_enabled() ? "  (DMA active)\n"
+                                        : "  <- DMA is OFF, everything is on the FIFO path\n");
+        if (!display_dma_enabled() && !display_dma_timeouts()) {
+            uart_puts("   (forced off by hand, not by a timeout)\n");
+        }
     }
     else if (str_eq(line, "hog")) {
         /* An application's SCHEDULING, with none of its drawing.
@@ -1413,6 +1612,35 @@ static void execute(char *line)
         uart_puts(" rejects=");
         uart_put_dec(vmarg_rejects());
         uart_puts(vmarg_rejects() ? "\n" : "  <- ZERO REJECTS, the test is inert\n");
+    }
+    else if (str_eq(line, "spidump")) {
+        /* Read the SPI2 configuration back off the chip.
+         *
+         * Every theory about why the DMA path displaces pixels has been argued
+         * from what the code WRITES. This prints what the peripheral actually
+         * HOLDS, which is the only version that matters -- and this driver has
+         * already been caught twice writing a real but wrong neighbouring bit
+         * that the hardware accepted without complaint (UM-NATOS-030's
+         * OUTLINK_START, and DMA_OUT_RST landing on the inbound channel).
+         *
+         * Expected, after spi2_dma_init():
+         *   DMA_CONF  bits 10 and 12 set (OUTDSCR_BURST, OUT_DATA_BURST),
+         *             nothing else -- in particular NOT bit 16 (DMA_CONTINUE),
+         *             which would make a transfer restart itself and is the one
+         *             bit that would explain an offset growing per transfer.
+         *   USER      USR_MOSI set; USR_COMMAND / USR_ADDR / USR_DUMMY clear,
+         *             since any of those prepend bits to every transaction. */
+        uart_puts("   DMA_CONF  = "); uart_put_hex(GPIO_REG(0x3FF64100u));
+        uart_puts("\n   USER      = "); uart_put_hex(GPIO_REG(0x3FF6401Cu));
+        uart_puts("\n   USER1     = "); uart_put_hex(GPIO_REG(0x3FF64020u));
+        uart_puts("\n   USER2     = "); uart_put_hex(GPIO_REG(0x3FF64024u));
+        uart_puts("\n   CTRL      = "); uart_put_hex(GPIO_REG(0x3FF64008u));
+        uart_puts("\n   CTRL2     = "); uart_put_hex(GPIO_REG(0x3FF64014u));
+        uart_puts("\n   CLOCK     = "); uart_put_hex(GPIO_REG(0x3FF64018u));
+        uart_puts("\n   MOSI_DLEN = "); uart_put_hex(GPIO_REG(0x3FF64028u));
+        uart_puts("\n   PIN       = "); uart_put_hex(GPIO_REG(0x3FF64034u));
+        uart_puts("\n   DMA_INT_RAW = "); uart_put_hex(GPIO_REG(0x3FF64114u));
+        uart_puts("\n");
     }
     else if (str_eq(line, "dmaoff")) {
         /* One variable: the transport. `dmaoff` puts every transfer on the

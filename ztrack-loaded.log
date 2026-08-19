@@ -1,0 +1,767 @@
+     0.2 ZTRK lines on
+     0.2 STATUS touch s/e=897/0 irq=0 z1max=3 z2min=4033 zmax=62 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=45/0  s
+     0.2 ZTRK t=1268 n=901 min=0 max=62 over=0 pen=0 thr=300
+     1.0 STATUS touch s/e=1003/0 irq=0 z1max=3 z2min=4033 zmax=62 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=50/0  
+     1.0 ZTRK t=1483 n=109 min=0 max=47 over=0 pen=0 thr=300
+     3.0 STATUS touch s/e=1090/0 irq=0 z1max=19 z2min=4033 zmax=62 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=54/0 
+     3.0 ZTRK t=1686 n=86 min=0 max=55 over=0 pen=0 thr=300
+     5.1 STATUS touch s/e=1180/0 irq=0 z1max=19 z2min=4033 zmax=62 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=59/0 
+     5.1 ZTRK t=1892 n=90 min=0 max=43 over=0 pen=0 thr=300
+     7.2 STATUS touch s/e=1269/0 irq=0 z1max=19 z2min=4033 zmax=62 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=64/0 
+     7.2 ZTRK t=2099 n=89 min=0 max=51 over=0 pen=0 thr=300
+     9.2 STATUS touch s/e=1359/0 irq=0 z1max=19 z2min=4033 zmax=62 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=68/0 
+     9.2 ZTRK t=2305 n=90 min=0 max=51 over=0 pen=0 thr=300
+    11.3 STATUS touch s/e=1450/0 irq=0 z1max=19 z2min=4033 zmax=62 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=73/0 
+    11.3 ZTRK t=2514 n=91 min=0 max=49 over=0 pen=0 thr=300
+    13.4 STATUS touch s/e=1547/0 irq=0 z1max=19 z2min=4033 zmax=62 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=77/0 
+    13.4 ZTRK t=2720 n=91 min=0 max=22 over=0 pen=0 thr=300
+    15.5 STATUS touch s/e=1632/0 irq=0 z1max=19 z2min=4033 zmax=62 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=82/0 
+    15.5 ZTRK t=2927 n=91 min=0 max=59 over=0 pen=0 thr=300
+    17.6 STATUS touch s/e=1722/0 irq=0 z1max=19 z2min=4033 zmax=62 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=86/0 
+    17.6 ZTRK t=3133 n=91 min=0 max=55 over=0 pen=0 thr=300
+    19.6 STATUS touch s/e=1820/0 irq=0 z1max=19 z2min=4033 zmax=62 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=91/0 
+    19.6 ZTRK t=3342 n=97 min=0 max=47 over=0 pen=0 thr=300
+    21.6 STATUS touch s/e=1907/0 irq=0 z1max=19 z2min=4033 zmax=62 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=95/0 
+    21.6 ZTRK t=3542 n=87 min=0 max=50 over=0 pen=0 thr=300
+    23.7 STATUS touch s/e=1996/0 irq=0 z1max=19 z2min=4033 zmax=62 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=100/0
+    23.7 ZTRK t=3748 n=89 min=1 max=47 over=0 pen=0 thr=300
+    25.8 STATUS touch s/e=2088/0 irq=0 z1max=19 z2min=4033 zmax=62 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=104/0
+    25.8 ZTRK t=3954 n=92 min=0 max=54 over=0 pen=0 thr=300
+    27.9 STATUS touch s/e=2183/0 irq=0 z1max=19 z2min=4033 zmax=62 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=109/0
+    27.9 ZTRK t=4163 n=95 min=0 max=29 over=0 pen=0 thr=300
+    29.9 STATUS touch s/e=2268/0 irq=0 z1max=19 z2min=4033 zmax=62 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=114/0
+    29.9 ZTRK t=4366 n=86 min=0 max=50 over=0 pen=0 thr=300
+    31.9 STATUS touch s/e=2359/0 irq=0 z1max=19 z2min=4032 zmax=63 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=118/0
+    31.9 ZTRK t=4573 n=90 min=0 max=63 over=0 pen=0 thr=300
+    34.0 STATUS touch s/e=2449/0 irq=0 z1max=19 z2min=4032 zmax=63 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=123/0
+    34.0 ZTRK t=4781 n=90 min=0 max=47 over=0 pen=0 thr=300
+    36.1 STATUS touch s/e=2539/0 irq=0 z1max=19 z2min=4032 zmax=63 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=127/0
+    36.1 ZTRK t=4987 n=90 min=0 max=21 over=0 pen=0 thr=300
+    38.1 STATUS touch s/e=2628/0 irq=0 z1max=19 z2min=4032 zmax=63 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=132/0
+    38.1 ZTRK t=5191 n=89 min=0 max=43 over=0 pen=0 thr=300
+    40.2 STATUS touch s/e=2716/0 irq=0 z1max=19 z2min=4032 zmax=63 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=136/0
+    40.2 ZTRK t=5396 n=88 min=0 max=43 over=0 pen=0 thr=300
+    42.2 STATUS touch s/e=2805/0 irq=0 z1max=19 z2min=3990 zmax=105 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=141/
+    42.2 ZTRK t=5601 n=89 min=0 max=105 over=0 pen=0 thr=300
+    44.3 STATUS touch s/e=2892/0 irq=0 z1max=19 z2min=3990 zmax=105 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=145/
+    44.3 ZTRK t=5805 n=87 min=0 max=55 over=0 pen=0 thr=300
+    46.3 STATUS touch s/e=2980/0 irq=0 z1max=19 z2min=3990 zmax=105 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=150/
+    46.3 ZTRK t=6008 n=89 min=0 max=35 over=0 pen=0 thr=300
+    48.4 STATUS touch s/e=3074/0 irq=0 z1max=19 z2min=3984 zmax=111 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=154/
+    48.4 ZTRK t=6213 n=87 min=0 max=111 over=0 pen=0 thr=300
+    50.4 STATUS touch s/e=3155/0 irq=0 z1max=19 z2min=3984 zmax=111 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=159/
+    50.4 ZTRK t=6419 n=87 min=0 max=67 over=0 pen=0 thr=300
+    52.5 STATUS touch s/e=3243/0 irq=0 z1max=19 z2min=3984 zmax=111 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=163/
+    52.5 ZTRK t=6622 n=88 min=0 max=62 over=0 pen=0 thr=300
+    54.5 STATUS touch s/e=3333/0 irq=0 z1max=19 z2min=3984 zmax=111 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=168/
+    54.5 ZTRK t=6828 n=90 min=0 max=31 over=0 pen=0 thr=300
+    56.6 STATUS touch s/e=3421/0 irq=0 z1max=19 z2min=3984 zmax=111 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=172/
+    56.6 ZTRK t=7032 n=89 min=0 max=101 over=0 pen=0 thr=300
+    58.6 STATUS touch s/e=3511/0 irq=0 z1max=19 z2min=3984 zmax=111 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=176/
+    58.6 ZTRK t=7234 n=89 min=0 max=43 over=0 pen=0 thr=300
+    60.7 STATUS touch s/e=3606/0 irq=0 z1max=19 z2min=3984 zmax=111 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=181/
+    60.7 ZTRK t=7442 n=96 min=0 max=63 over=0 pen=0 thr=300
+    62.7 STATUS touch s/e=3694/0 irq=0 z1max=19 z2min=3984 zmax=111 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=186/
+    62.7 ZTRK t=7642 n=87 min=0 max=54 over=0 pen=0 thr=300
+    64.7 STATUS touch s/e=3785/0 irq=0 z1max=19 z2min=3984 zmax=111 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=190/
+    64.7 ZTRK t=7845 n=91 min=0 max=47 over=0 pen=0 thr=300
+    66.7 STATUS touch s/e=3872/0 irq=0 z1max=19 z2min=3984 zmax=111 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=194/
+    66.7 ZTRK t=8045 n=87 min=0 max=27 over=0 pen=0 thr=300
+    68.8 STATUS touch s/e=3962/0 irq=0 z1max=19 z2min=3984 zmax=111 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=199/
+    68.8 ZTRK t=8253 n=91 min=0 max=39 over=0 pen=0 thr=300
+    70.9 STATUS touch s/e=4052/0 irq=0 z1max=19 z2min=3984 zmax=111 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=204/
+    70.9 ZTRK t=8458 n=89 min=0 max=23 over=0 pen=0 thr=300
+    72.7 STATUS touch s/e=4136/0 irq=0 z1max=19 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=207/
+    72.7 ZTRK t=8638 n=79 min=0 max=147 over=0 pen=0 thr=300
+    75.0 STATUS touch s/e=4234/0 irq=0 z1max=19 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=213/
+    75.0 ZTRK t=8873 n=103 min=0 max=49 over=0 pen=0 thr=300
+    77.0 STATUS touch s/e=4322/0 irq=0 z1max=19 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=217/
+    77.0 ZTRK t=9073 n=88 min=0 max=63 over=0 pen=0 thr=300
+    79.1 STATUS touch s/e=4415/0 irq=0 z1max=19 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=222/
+    79.1 ZTRK t=9277 n=87 min=0 max=23 over=0 pen=0 thr=300
+    81.1 STATUS touch s/e=4498/0 irq=0 z1max=19 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=226/
+    81.1 ZTRK t=9482 n=90 min=0 max=39 over=0 pen=0 thr=300
+    83.2 STATUS touch s/e=4584/0 irq=0 z1max=19 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=230/
+    83.2 ZTRK t=9685 n=86 min=0 max=43 over=0 pen=0 thr=300
+    85.2 STATUS touch s/e=4674/0 irq=0 z1max=19 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=235/
+    85.2 ZTRK t=9891 n=90 min=0 max=67 over=0 pen=0 thr=300
+    87.3 STATUS touch s/e=4762/0 irq=0 z1max=19 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=239/
+    87.3 ZTRK t=10096 n=87 min=0 max=43 over=0 pen=0 thr=300
+    89.4 STATUS touch s/e=4862/0 irq=0 z1max=19 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=244/
+    89.4 ZTRK t=10304 n=94 min=0 max=38 over=0 pen=0 thr=300
+    91.4 STATUS touch s/e=4944/0 irq=0 z1max=19 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=249/
+    91.4 ZTRK t=10504 n=88 min=0 max=51 over=0 pen=0 thr=300
+    93.4 STATUS touch s/e=5030/0 irq=0 z1max=19 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=253/
+    93.4 ZTRK t=10705 n=86 min=0 max=33 over=0 pen=0 thr=300
+    95.4 STATUS touch s/e=5124/0 irq=0 z1max=19 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=257/
+    95.4 ZTRK t=10908 n=88 min=0 max=41 over=0 pen=0 thr=300
+    97.5 STATUS touch s/e=5206/0 irq=0 z1max=27 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=262/
+    97.5 ZTRK t=11114 n=89 min=0 max=127 over=0 pen=0 thr=300
+    99.5 STATUS touch s/e=5297/0 irq=0 z1max=27 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=266/
+    99.5 ZTRK t=11319 n=90 min=0 max=27 over=0 pen=0 thr=300
+   101.5 STATUS touch s/e=5384/0 irq=0 z1max=27 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=271/
+   101.5 ZTRK t=11522 n=87 min=0 max=27 over=0 pen=0 thr=300
+   103.6 STATUS touch s/e=5473/0 irq=0 z1max=27 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=275/
+   103.6 ZTRK t=11726 n=89 min=0 max=75 over=0 pen=0 thr=300
+   105.6 STATUS touch s/e=5562/0 irq=0 z1max=27 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=280/
+   105.6 ZTRK t=11928 n=90 min=0 max=55 over=0 pen=0 thr=300
+   107.7 STATUS touch s/e=5650/0 irq=0 z1max=27 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=284/
+   107.7 ZTRK t=12131 n=88 min=0 max=27 over=0 pen=0 thr=300
+   109.7 STATUS touch s/e=5738/0 irq=0 z1max=27 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=289/
+   109.7 ZTRK t=12336 n=88 min=0 max=49 over=0 pen=0 thr=300
+   111.8 STATUS touch s/e=5828/0 irq=0 z1max=27 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=293/
+   111.8 ZTRK t=12542 n=90 min=0 max=27 over=0 pen=0 thr=300
+   113.8 STATUS touch s/e=5916/0 irq=0 z1max=27 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=298/
+   113.8 ZTRK t=12744 n=87 min=0 max=27 over=0 pen=0 thr=300
+   115.9 STATUS touch s/e=6006/0 irq=0 z1max=27 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=302/
+   115.9 ZTRK t=12949 n=90 min=0 max=49 over=0 pen=0 thr=300
+   117.9 STATUS touch s/e=6095/0 irq=0 z1max=27 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=307/
+   117.9 ZTRK t=13154 n=90 min=0 max=23 over=0 pen=0 thr=300
+   120.0 STATUS touch s/e=6182/0 irq=0 z1max=27 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=311/
+   120.0 ZTRK t=13360 n=86 min=0 max=34 over=0 pen=0 thr=300
+   122.0 STATUS touch s/e=6278/0 irq=0 z1max=27 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=316/
+   122.0 ZTRK t=13568 n=96 min=0 max=59 over=0 pen=0 thr=300
+   124.2 STATUS touch s/e=6369/0 irq=0 z1max=27 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=320/
+   124.2 ZTRK t=13770 n=85 min=0 max=39 over=0 pen=0 thr=300
+   126.1 STATUS touch s/e=6454/0 irq=0 z1max=27 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=325/
+   126.1 ZTRK t=13971 n=85 min=0 max=19 over=0 pen=0 thr=300
+   128.1 STATUS touch s/e=6535/0 irq=0 z1max=27 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=329/
+   128.1 ZTRK t=14175 n=87 min=0 max=43 over=0 pen=0 thr=300
+   130.2 STATUS touch s/e=6633/0 irq=0 z1max=27 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=334/
+   130.2 ZTRK t=14384 n=98 min=0 max=63 over=0 pen=0 thr=300
+   132.3 STATUS touch s/e=6720/0 irq=0 z1max=27 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=338/
+   132.3 ZTRK t=14589 n=87 min=0 max=55 over=0 pen=0 thr=300
+   134.4 STATUS touch s/e=6809/0 irq=0 z1max=27 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=343/
+   134.4 ZTRK t=14797 n=89 min=0 max=39 over=0 pen=0 thr=300
+   136.4 STATUS touch s/e=6905/0 irq=0 z1max=27 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=347/
+   136.4 ZTRK t=15002 n=90 min=0 max=67 over=0 pen=0 thr=300
+   138.5 STATUS touch s/e=6988/0 irq=0 z1max=27 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=352/
+   138.5 ZTRK t=15209 n=89 min=0 max=66 over=0 pen=0 thr=300
+   140.6 STATUS touch s/e=7083/0 irq=0 z1max=27 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=356/
+   140.6 ZTRK t=15416 n=89 min=0 max=62 over=0 pen=0 thr=300
+   142.7 STATUS touch s/e=7169/0 irq=0 z1max=41 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=361/
+   142.7 ZTRK t=15627 n=93 min=0 max=56 over=0 pen=0 thr=300
+   144.7 STATUS touch s/e=7259/0 irq=0 z1max=41 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=366/
+   144.7 ZTRK t=15828 n=89 min=0 max=23 over=0 pen=0 thr=300
+   146.8 STATUS touch s/e=7356/0 irq=0 z1max=41 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=370/
+   146.8 ZTRK t=16034 n=91 min=0 max=55 over=0 pen=0 thr=300
+   148.8 STATUS touch s/e=7448/0 irq=0 z1max=41 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=375/
+   148.8 ZTRK t=16241 n=92 min=0 max=43 over=0 pen=0 thr=300
+   150.9 STATUS touch s/e=7539/0 irq=0 z1max=41 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=379/
+   150.9 ZTRK t=16447 n=91 min=0 max=27 over=0 pen=0 thr=300
+   153.0 STATUS touch s/e=7624/0 irq=0 z1max=41 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=384/
+   153.0 ZTRK t=16654 n=91 min=0 max=35 over=0 pen=0 thr=300
+   155.0 STATUS touch s/e=7713/0 irq=0 z1max=41 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=388/
+   155.0 ZTRK t=16861 n=89 min=0 max=39 over=0 pen=0 thr=300
+   157.0 STATUS touch s/e=7803/0 irq=0 z1max=41 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=393/
+   157.0 ZTRK t=17055 n=85 min=0 max=39 over=0 pen=0 thr=300
+   159.2 STATUS touch s/e=7896/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=397/
+   159.2 ZTRK t=17275 n=98 min=0 max=65 over=0 pen=0 thr=300
+   161.2 STATUS touch s/e=7992/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=402/
+   161.2 ZTRK t=17478 n=90 min=0 max=58 over=0 pen=0 thr=300
+   163.3 STATUS touch s/e=8081/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=406/
+   163.3 ZTRK t=17684 n=89 min=0 max=47 over=0 pen=0 thr=300
+   165.3 STATUS touch s/e=8161/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=411/
+   165.3 ZTRK t=17890 n=86 min=0 max=23 over=0 pen=0 thr=300
+   167.1 STATUS touch s/e=8247/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=415/
+   167.1 ZTRK t=18068 n=81 min=0 max=58 over=0 pen=0 thr=300
+   169.5 STATUS touch s/e=8344/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=420/
+   169.5 ZTRK t=18301 n=102 min=0 max=45 over=0 pen=0 thr=300
+   171.5 STATUS touch s/e=8439/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=425/
+   171.5 ZTRK t=18508 n=89 min=0 max=23 over=0 pen=0 thr=300
+   173.6 STATUS touch s/e=8519/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=429/
+   173.6 ZTRK t=18710 n=87 min=0 max=25 over=0 pen=0 thr=300
+   175.6 STATUS touch s/e=8607/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=433/
+   175.6 ZTRK t=18912 n=87 min=0 max=50 over=0 pen=0 thr=300
+   177.6 STATUS touch s/e=8695/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=438/
+   177.6 ZTRK t=19115 n=89 min=0 max=66 over=0 pen=0 thr=300
+   179.6 STATUS touch s/e=8784/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=442/
+   179.6 ZTRK t=19318 n=88 min=0 max=26 over=0 pen=0 thr=300
+   181.7 STATUS touch s/e=8872/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=447/
+   181.7 ZTRK t=19524 n=89 min=0 max=39 over=0 pen=0 thr=300
+   183.9 STATUS touch s/e=8969/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=451/
+   183.9 ZTRK t=19742 n=90 min=0 max=55 over=0 pen=0 thr=300
+   185.8 STATUS touch s/e=9051/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=456/
+   185.8 ZTRK t=19933 n=89 min=0 max=26 over=0 pen=0 thr=300
+   187.9 STATUS touch s/e=9138/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=460/
+   187.9 ZTRK t=20138 n=87 min=0 max=68 over=0 pen=0 thr=300
+   189.9 STATUS touch s/e=9229/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=465/
+   189.9 ZTRK t=20344 n=91 min=0 max=45 over=0 pen=0 thr=300
+   192.0 STATUS touch s/e=9318/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=469/
+   192.0 ZTRK t=20547 n=89 min=0 max=20 over=0 pen=0 thr=300
+   194.0 STATUS touch s/e=9408/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=474/
+   194.0 ZTRK t=20751 n=89 min=0 max=30 over=0 pen=0 thr=300
+   196.0 STATUS touch s/e=9497/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=478/
+   196.0 ZTRK t=20954 n=90 min=0 max=50 over=0 pen=0 thr=300
+   198.1 STATUS touch s/e=9588/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=483/
+   198.1 ZTRK t=21160 n=91 min=0 max=47 over=0 pen=0 thr=300
+   200.1 STATUS touch s/e=9677/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=487/
+   200.1 ZTRK t=21362 n=89 min=0 max=105 over=0 pen=0 thr=300
+   202.1 STATUS touch s/e=9773/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=492/
+   202.1 ZTRK t=21564 n=89 min=0 max=66 over=0 pen=0 thr=300
+   204.2 STATUS touch s/e=9855/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=496/
+   204.2 ZTRK t=21767 n=89 min=0 max=38 over=0 pen=0 thr=300
+   206.3 STATUS touch s/e=9954/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=501/
+   206.3 ZTRK t=21981 n=98 min=0 max=39 over=0 pen=0 thr=300
+   208.4 STATUS touch s/e=10044/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=506
+   208.4 ZTRK t=22186 n=90 min=0 max=27 over=0 pen=0 thr=300
+   210.4 STATUS touch s/e=10131/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=510
+   210.4 ZTRK t=22393 n=87 min=0 max=59 over=0 pen=0 thr=300
+   212.5 STATUS touch s/e=10220/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=515
+   212.5 ZTRK t=22596 n=89 min=0 max=47 over=0 pen=0 thr=300
+   214.5 STATUS touch s/e=10316/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=519
+   214.5 ZTRK t=22799 n=90 min=0 max=103 over=0 pen=0 thr=300
+   216.4 STATUS touch s/e=10398/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=523
+   216.4 ZTRK t=22992 n=84 min=0 max=23 over=0 pen=0 thr=300
+   218.5 STATUS touch s/e=10489/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=528
+   218.5 ZTRK t=23202 n=95 min=0 max=54 over=0 pen=0 thr=300
+   220.6 STATUS touch s/e=10578/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=533
+   220.6 ZTRK t=23406 n=89 min=0 max=83 over=0 pen=0 thr=300
+   222.7 STATUS touch s/e=10674/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=537
+   222.7 ZTRK t=23621 n=97 min=0 max=43 over=0 pen=0 thr=300
+   224.8 STATUS touch s/e=10762/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=542
+   224.8 ZTRK t=23826 n=87 min=0 max=43 over=0 pen=0 thr=300
+   226.8 STATUS touch s/e=10856/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=546
+   226.8 ZTRK t=24031 n=88 min=0 max=23 over=0 pen=0 thr=300
+   228.9 STATUS touch s/e=10939/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=551
+   228.9 ZTRK t=24235 n=90 min=0 max=67 over=0 pen=0 thr=300
+   230.9 STATUS touch s/e=11028/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=555
+   230.9 ZTRK t=24440 n=88 min=0 max=17 over=0 pen=0 thr=300
+   233.0 STATUS touch s/e=11114/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=560
+   233.0 ZTRK t=24644 n=87 min=0 max=63 over=0 pen=0 thr=300
+   235.0 STATUS touch s/e=11204/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=564
+   235.0 ZTRK t=24846 n=89 min=0 max=66 over=0 pen=0 thr=300
+   237.0 STATUS touch s/e=11291/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=569
+   237.0 ZTRK t=25049 n=88 min=0 max=67 over=0 pen=0 thr=300
+   239.1 STATUS touch s/e=11389/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=573
+   239.1 ZTRK t=25256 n=91 min=0 max=38 over=0 pen=0 thr=300
+   241.2 STATUS touch s/e=11473/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=578
+   241.2 ZTRK t=25462 n=91 min=0 max=59 over=0 pen=0 thr=300
+   243.2 STATUS touch s/e=11564/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=582
+   243.2 ZTRK t=25668 n=90 min=0 max=23 over=0 pen=0 thr=300
+   245.3 STATUS touch s/e=11651/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=587
+   245.3 ZTRK t=25873 n=88 min=0 max=34 over=0 pen=0 thr=300
+   247.3 STATUS touch s/e=11742/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=591
+   247.3 ZTRK t=26078 n=90 min=0 max=35 over=0 pen=0 thr=300
+   249.4 STATUS touch s/e=11828/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=596
+   249.4 ZTRK t=26282 n=87 min=0 max=97 over=0 pen=0 thr=300
+   251.4 STATUS touch s/e=11918/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=600
+   251.4 ZTRK t=26485 n=89 min=0 max=51 over=0 pen=0 thr=300
+   253.5 STATUS touch s/e=12006/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=605
+   253.5 ZTRK t=26689 n=88 min=0 max=47 over=0 pen=0 thr=300
+   255.5 STATUS touch s/e=12093/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=609
+   255.5 ZTRK t=26893 n=87 min=0 max=35 over=0 pen=0 thr=300
+   257.6 STATUS touch s/e=12186/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=614
+   257.6 ZTRK t=27098 n=94 min=0 max=23 over=0 pen=0 thr=300
+   259.6 STATUS touch s/e=12272/0 irq=0 z1max=50 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=618
+   259.6 ZTRK t=27301 n=86 min=0 max=43 over=0 pen=0 thr=300
+   261.6 STATUS touch s/e=12359/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=623
+   261.6 ZTRK t=27502 n=86 min=0 max=72 over=0 pen=0 thr=300
+   263.6 STATUS touch s/e=12446/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=627
+   263.6 ZTRK t=27705 n=88 min=0 max=43 over=0 pen=0 thr=300
+   265.7 STATUS touch s/e=12534/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=631
+   265.7 ZTRK t=27912 n=87 min=0 max=29 over=0 pen=0 thr=300
+   267.7 STATUS touch s/e=12621/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=636
+   267.7 ZTRK t=28115 n=88 min=0 max=50 over=0 pen=0 thr=300
+   269.8 STATUS touch s/e=12709/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=640
+   269.8 ZTRK t=28320 n=87 min=0 max=61 over=0 pen=0 thr=300
+   271.8 STATUS touch s/e=12797/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=645
+   271.8 ZTRK t=28524 n=89 min=0 max=35 over=0 pen=0 thr=300
+   273.9 STATUS touch s/e=12885/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=649
+   273.9 ZTRK t=28727 n=88 min=0 max=42 over=0 pen=0 thr=300
+   275.9 STATUS touch s/e=12979/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=654
+   275.9 ZTRK t=28931 n=87 min=0 max=51 over=0 pen=0 thr=300
+   277.9 STATUS touch s/e=13062/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=658
+   277.9 ZTRK t=29135 n=89 min=0 max=61 over=0 pen=0 thr=300
+   280.0 STATUS touch s/e=13152/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=663
+   280.0 ZTRK t=29340 n=90 min=0 max=67 over=0 pen=0 thr=300
+   282.1 STATUS touch s/e=13242/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=667
+   282.1 ZTRK t=29545 n=90 min=0 max=55 over=0 pen=0 thr=300
+   284.1 STATUS touch s/e=13331/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=672
+   284.1 ZTRK t=29750 n=89 min=0 max=48 over=0 pen=0 thr=300
+   286.1 STATUS touch s/e=13420/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=676
+   286.1 ZTRK t=29952 n=90 min=0 max=29 over=0 pen=0 thr=300
+   288.2 STATUS touch s/e=13511/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=681
+   288.2 ZTRK t=30158 n=90 min=0 max=22 over=0 pen=0 thr=300
+   290.2 STATUS touch s/e=13608/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=685
+   290.2 ZTRK t=30363 n=91 min=0 max=31 over=0 pen=0 thr=300
+   292.3 STATUS touch s/e=13691/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=690
+   292.3 ZTRK t=30566 n=89 min=0 max=59 over=0 pen=0 thr=300
+   294.3 STATUS touch s/e=13780/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=694
+   294.3 ZTRK t=30770 n=89 min=0 max=71 over=0 pen=0 thr=300
+   296.4 STATUS touch s/e=13869/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=699
+   296.4 ZTRK t=30974 n=89 min=0 max=23 over=0 pen=0 thr=300
+   298.4 STATUS touch s/e=13960/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=703
+   298.4 ZTRK t=31179 n=91 min=0 max=64 over=0 pen=0 thr=300
+   300.5 STATUS touch s/e=14054/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=708
+   300.5 ZTRK t=31386 n=94 min=0 max=23 over=0 pen=0 thr=300
+   302.5 STATUS touch s/e=14140/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=712
+   302.5 ZTRK t=31588 n=87 min=0 max=51 over=0 pen=0 thr=300
+   304.5 STATUS touch s/e=14228/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=717
+   304.5 ZTRK t=31788 n=87 min=0 max=91 over=0 pen=0 thr=300
+   306.6 STATUS touch s/e=14318/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=721
+   306.6 ZTRK t=31993 n=90 min=0 max=43 over=0 pen=0 thr=300
+   308.6 STATUS touch s/e=14406/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=726
+   308.6 ZTRK t=32198 n=89 min=0 max=30 over=0 pen=0 thr=300
+   310.7 STATUS touch s/e=14495/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=730
+   310.7 ZTRK t=32404 n=88 min=0 max=46 over=0 pen=0 thr=300
+   312.7 STATUS touch s/e=14582/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=735
+   312.7 ZTRK t=32607 n=87 min=0 max=59 over=0 pen=0 thr=300
+   314.8 STATUS touch s/e=14671/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=739
+   314.8 ZTRK t=32814 n=90 min=0 max=51 over=0 pen=0 thr=300
+   316.8 STATUS touch s/e=14761/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=744
+   316.8 ZTRK t=33017 n=89 min=0 max=20 over=0 pen=0 thr=300
+   318.9 STATUS touch s/e=14852/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=748
+   318.9 ZTRK t=33205 n=85 min=0 max=46 over=0 pen=0 thr=300
+   320.9 STATUS touch s/e=14940/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=753
+   320.9 ZTRK t=33423 n=94 min=0 max=31 over=0 pen=0 thr=300
+   322.9 STATUS touch s/e=15027/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=757
+   322.9 ZTRK t=33627 n=87 min=0 max=27 over=0 pen=0 thr=300
+   325.0 STATUS touch s/e=15116/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=762
+   325.0 ZTRK t=33829 n=89 min=0 max=35 over=0 pen=0 thr=300
+   327.0 STATUS touch s/e=15204/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=766
+   327.0 ZTRK t=34033 n=88 min=0 max=23 over=0 pen=0 thr=300
+   329.0 STATUS touch s/e=15293/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=771
+   329.0 ZTRK t=34237 n=89 min=0 max=26 over=0 pen=0 thr=300
+   331.2 STATUS touch s/e=15390/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=776
+   331.2 ZTRK t=34450 n=98 min=0 max=28 over=0 pen=0 thr=300
+   333.2 STATUS touch s/e=15480/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=780
+   333.2 ZTRK t=34655 n=90 min=0 max=99 over=0 pen=0 thr=300
+   335.4 STATUS touch s/e=15570/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=785
+   335.4 ZTRK t=34860 n=89 min=0 max=39 over=0 pen=0 thr=300
+   337.3 STATUS touch s/e=15666/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=789
+   337.3 ZTRK t=35063 n=90 min=0 max=83 over=0 pen=0 thr=300
+   339.3 STATUS touch s/e=15751/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=793
+   339.3 ZTRK t=35256 n=85 min=0 max=39 over=0 pen=0 thr=300
+   341.5 STATUS touch s/e=15848/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=798
+   341.5 ZTRK t=35478 n=104 min=0 max=50 over=0 pen=0 thr=300
+   343.5 STATUS touch s/e=15945/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=803
+   343.5 ZTRK t=35682 n=90 min=0 max=46 over=0 pen=0 thr=300
+   345.6 STATUS touch s/e=16028/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=807
+   345.6 ZTRK t=35887 n=89 min=0 max=27 over=0 pen=0 thr=300
+   347.6 STATUS touch s/e=16122/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=812
+   347.6 ZTRK t=36090 n=88 min=0 max=66 over=0 pen=0 thr=300
+   349.6 STATUS touch s/e=16210/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=816
+   349.6 ZTRK t=36295 n=88 min=0 max=39 over=0 pen=0 thr=300
+   351.7 STATUS touch s/e=16292/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=821
+   351.7 ZTRK t=36496 n=88 min=0 max=59 over=0 pen=0 thr=300
+   353.8 STATUS touch s/e=16396/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=826
+   353.8 ZTRK t=36708 n=98 min=0 max=55 over=0 pen=0 thr=300
+   355.8 STATUS touch s/e=16478/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=830
+   355.8 ZTRK t=36910 n=89 min=0 max=39 over=0 pen=0 thr=300
+   357.9 STATUS touch s/e=16575/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=834
+   357.9 ZTRK t=37112 n=90 min=0 max=59 over=0 pen=0 thr=300
+   360.0 STATUS touch s/e=16667/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=839
+   360.0 ZTRK t=37322 n=98 min=0 max=66 over=0 pen=0 thr=300
+   362.0 STATUS touch s/e=16756/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=844
+   362.0 ZTRK t=37526 n=89 min=0 max=35 over=0 pen=0 thr=300
+   364.0 STATUS touch s/e=16845/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=848
+   364.0 ZTRK t=37729 n=89 min=0 max=50 over=0 pen=0 thr=300
+   366.1 STATUS touch s/e=16934/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=853
+   366.1 ZTRK t=37932 n=89 min=0 max=83 over=0 pen=0 thr=300
+   368.1 STATUS touch s/e=17023/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=857
+   368.1 ZTRK t=38137 n=89 min=0 max=23 over=0 pen=0 thr=300
+   370.2 STATUS touch s/e=17120/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=862
+   370.2 ZTRK t=38348 n=98 min=0 max=45 over=0 pen=0 thr=300
+   372.2 STATUS touch s/e=17209/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=866
+   372.2 ZTRK t=38550 n=88 min=0 max=67 over=0 pen=0 thr=300
+   374.3 STATUS touch s/e=17303/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=871
+   374.3 ZTRK t=38753 n=88 min=0 max=58 over=0 pen=0 thr=300
+   376.4 STATUS touch s/e=17394/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=875
+   376.4 ZTRK t=38959 n=91 min=0 max=147 over=0 pen=0 thr=300
+   378.4 STATUS touch s/e=17477/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=880
+   378.4 ZTRK t=39161 n=90 min=0 max=59 over=0 pen=0 thr=300
+   380.4 STATUS touch s/e=17568/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=884
+   380.4 ZTRK t=39368 n=90 min=0 max=139 over=0 pen=0 thr=300
+   382.5 STATUS touch s/e=17656/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=889
+   382.5 ZTRK t=39573 n=88 min=0 max=61 over=0 pen=0 thr=300
+   384.6 STATUS touch s/e=17755/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=894
+   384.6 ZTRK t=39788 n=100 min=0 max=27 over=0 pen=0 thr=300
+   386.7 STATUS touch s/e=17842/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=898
+   386.7 ZTRK t=39990 n=86 min=0 max=51 over=0 pen=0 thr=300
+   388.7 STATUS touch s/e=17930/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=903
+   388.7 ZTRK t=40193 n=88 min=0 max=51 over=0 pen=0 thr=300
+   390.8 STATUS touch s/e=18018/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=907
+   390.8 ZTRK t=40399 n=88 min=0 max=44 over=0 pen=0 thr=300
+   392.8 STATUS touch s/e=18104/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=912
+   392.8 ZTRK t=40605 n=86 min=0 max=57 over=0 pen=0 thr=300
+   394.9 STATUS touch s/e=18201/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=916
+   394.9 ZTRK t=40809 n=91 min=0 max=63 over=0 pen=0 thr=300
+   396.9 STATUS touch s/e=18282/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=921
+   396.9 ZTRK t=41011 n=88 min=0 max=27 over=0 pen=0 thr=300
+   398.9 STATUS touch s/e=18369/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=925
+   398.9 ZTRK t=41213 n=87 min=0 max=67 over=0 pen=0 thr=300
+   401.0 STATUS touch s/e=18457/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=930
+   401.0 ZTRK t=41418 n=87 min=0 max=34 over=0 pen=0 thr=300
+   403.0 STATUS touch s/e=18552/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=934
+   403.0 ZTRK t=41622 n=89 min=0 max=27 over=0 pen=0 thr=300
+   405.2 STATUS touch s/e=18641/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=938
+   405.2 ZTRK t=41826 n=89 min=0 max=46 over=0 pen=0 thr=300
+   407.1 STATUS touch s/e=18724/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=943
+   407.1 ZTRK t=42030 n=90 min=0 max=51 over=0 pen=0 thr=300
+   409.1 STATUS touch s/e=18814/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=947
+   409.1 ZTRK t=42234 n=89 min=0 max=31 over=0 pen=0 thr=300
+   411.2 STATUS touch s/e=18902/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=952
+   411.2 ZTRK t=42440 n=89 min=0 max=27 over=0 pen=0 thr=300
+   413.2 STATUS touch s/e=18989/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=956
+   413.2 ZTRK t=42643 n=87 min=0 max=34 over=0 pen=0 thr=300
+   415.3 STATUS touch s/e=19078/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=961
+   415.3 ZTRK t=42845 n=89 min=0 max=35 over=0 pen=0 thr=300
+   417.3 STATUS touch s/e=19173/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=965
+   417.3 ZTRK t=43049 n=88 min=0 max=23 over=0 pen=0 thr=300
+   419.4 STATUS touch s/e=19255/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=970
+   419.4 ZTRK t=43252 n=89 min=0 max=28 over=0 pen=0 thr=300
+   421.4 STATUS touch s/e=19349/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=974
+   421.4 ZTRK t=43452 n=93 min=0 max=67 over=0 pen=0 thr=300
+   423.5 STATUS touch s/e=19446/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=979
+   423.5 ZTRK t=43663 n=97 min=0 max=71 over=0 pen=0 thr=300
+   425.5 STATUS touch s/e=19533/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=984
+   425.5 ZTRK t=43865 n=87 min=0 max=61 over=0 pen=0 thr=300
+   427.5 STATUS touch s/e=19621/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=988
+   427.5 ZTRK t=44068 n=88 min=0 max=47 over=0 pen=0 thr=300
+   429.5 STATUS touch s/e=19711/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=993
+   429.5 ZTRK t=44271 n=90 min=0 max=54 over=0 pen=0 thr=300
+   431.6 STATUS touch s/e=19800/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=997
+   431.6 ZTRK t=44473 n=89 min=0 max=43 over=0 pen=0 thr=300
+   433.6 STATUS touch s/e=19890/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=100
+   433.6 ZTRK t=44679 n=91 min=0 max=22 over=0 pen=0 thr=300
+   435.7 STATUS touch s/e=19983/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=100
+   435.7 ZTRK t=44882 n=92 min=0 max=63 over=0 pen=0 thr=300
+   437.7 STATUS touch s/e=20069/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=101
+   437.7 ZTRK t=45085 n=86 min=0 max=30 over=0 pen=0 thr=300
+   439.8 STATUS touch s/e=20158/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=101
+   439.8 ZTRK t=45289 n=89 min=0 max=21 over=0 pen=0 thr=300
+   441.8 STATUS touch s/e=20246/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=102
+   441.8 ZTRK t=45495 n=89 min=0 max=61 over=0 pen=0 thr=300
+   443.9 STATUS touch s/e=20335/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=102
+   443.9 ZTRK t=45700 n=88 min=0 max=55 over=0 pen=0 thr=300
+   445.9 STATUS touch s/e=20431/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=102
+   445.9 ZTRK t=45900 n=90 min=0 max=39 over=0 pen=0 thr=300
+   447.9 STATUS touch s/e=20512/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=103
+   447.9 ZTRK t=46103 n=87 min=0 max=27 over=0 pen=0 thr=300
+   449.9 STATUS touch s/e=20601/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=103
+   449.9 ZTRK t=46307 n=89 min=0 max=55 over=0 pen=0 thr=300
+   452.0 STATUS touch s/e=20689/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=104
+   452.0 ZTRK t=46511 n=88 min=0 max=23 over=0 pen=0 thr=300
+   454.0 STATUS touch s/e=20777/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=104
+   454.0 ZTRK t=46714 n=88 min=0 max=20 over=0 pen=0 thr=300
+   456.1 STATUS touch s/e=20865/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=105
+   456.1 ZTRK t=46919 n=88 min=0 max=66 over=0 pen=0 thr=300
+   458.2 STATUS touch s/e=20963/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=105
+   458.2 ZTRK t=47133 n=98 min=0 max=23 over=0 pen=0 thr=300
+   460.3 STATUS touch s/e=21058/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=106
+   460.3 ZTRK t=47337 n=89 min=0 max=23 over=0 pen=0 thr=300
+   462.3 STATUS touch s/e=21140/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=106
+   462.3 ZTRK t=47541 n=88 min=0 max=37 over=0 pen=0 thr=300
+   464.4 STATUS touch s/e=21227/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=106
+   464.4 ZTRK t=47745 n=87 min=0 max=43 over=0 pen=0 thr=300
+   466.4 STATUS touch s/e=21323/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=107
+   466.4 ZTRK t=47948 n=90 min=0 max=47 over=0 pen=0 thr=300
+   468.4 STATUS touch s/e=21413/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=107
+   468.4 ZTRK t=48152 n=90 min=0 max=43 over=0 pen=0 thr=300
+   470.5 STATUS touch s/e=21496/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=108
+   470.5 ZTRK t=48354 n=89 min=0 max=30 over=0 pen=0 thr=300
+   472.5 STATUS touch s/e=21590/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=108
+   472.5 ZTRK t=48559 n=88 min=0 max=115 over=0 pen=0 thr=300
+   474.5 STATUS touch s/e=21674/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=109
+   474.5 ZTRK t=48762 n=90 min=0 max=30 over=0 pen=0 thr=300
+   476.6 STATUS touch s/e=21769/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=109
+   476.6 ZTRK t=48965 n=89 min=0 max=25 over=0 pen=0 thr=300
+   478.6 STATUS touch s/e=21852/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=110
+   478.6 ZTRK t=49168 n=89 min=0 max=21 over=0 pen=0 thr=300
+   480.6 STATUS touch s/e=21945/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=110
+   480.6 ZTRK t=49370 n=87 min=0 max=53 over=0 pen=0 thr=300
+   482.7 STATUS touch s/e=22025/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=110
+   482.7 ZTRK t=49574 n=86 min=0 max=95 over=0 pen=0 thr=300
+   484.7 STATUS touch s/e=22114/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=111
+   484.7 ZTRK t=49776 n=90 min=0 max=43 over=0 pen=0 thr=300
+   486.8 STATUS touch s/e=22203/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=111
+   486.8 ZTRK t=49982 n=88 min=0 max=59 over=0 pen=0 thr=300
+   488.8 STATUS touch s/e=22292/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=112
+   488.8 ZTRK t=50186 n=89 min=0 max=54 over=0 pen=0 thr=300
+   490.8 STATUS touch s/e=22382/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=112
+   490.8 ZTRK t=50390 n=90 min=0 max=99 over=0 pen=0 thr=300
+   492.9 STATUS touch s/e=22476/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=113
+   492.9 ZTRK t=50596 n=88 min=0 max=38 over=0 pen=0 thr=300
+   494.9 STATUS touch s/e=22566/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=113
+   494.9 ZTRK t=50798 n=90 min=0 max=73 over=0 pen=0 thr=300
+   496.9 STATUS touch s/e=22648/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=114
+   496.9 ZTRK t=51001 n=88 min=0 max=55 over=0 pen=0 thr=300
+   499.0 STATUS touch s/e=22738/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=114
+   499.0 ZTRK t=51206 n=90 min=0 max=66 over=0 pen=0 thr=300
+   501.1 STATUS touch s/e=22828/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=115
+   501.1 ZTRK t=51412 n=90 min=0 max=66 over=0 pen=0 thr=300
+   503.1 STATUS touch s/e=22917/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=115
+   503.1 ZTRK t=51616 n=89 min=0 max=65 over=0 pen=0 thr=300
+   505.2 STATUS touch s/e=23004/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=115
+   505.2 ZTRK t=51819 n=87 min=0 max=20 over=0 pen=0 thr=300
+   507.2 STATUS touch s/e=23098/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=116
+   507.2 ZTRK t=52022 n=88 min=0 max=47 over=0 pen=0 thr=300
+   509.2 STATUS touch s/e=23180/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=116
+   509.2 ZTRK t=52226 n=88 min=0 max=66 over=0 pen=0 thr=300
+   511.3 STATUS touch s/e=23270/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=117
+   511.3 ZTRK t=52429 n=90 min=0 max=49 over=0 pen=0 thr=300
+   513.3 STATUS touch s/e=23359/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=117
+   513.3 ZTRK t=52631 n=90 min=0 max=66 over=0 pen=0 thr=300
+   515.3 STATUS touch s/e=23454/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=118
+   515.3 ZTRK t=52834 n=88 min=0 max=39 over=0 pen=0 thr=300
+   517.4 STATUS touch s/e=23545/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=118
+   517.4 ZTRK t=53046 n=97 min=0 max=109 over=0 pen=0 thr=300
+   519.5 STATUS touch s/e=23641/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=119
+   519.5 ZTRK t=53249 n=90 min=0 max=43 over=0 pen=0 thr=300
+   521.1 STATUS touch s/e=23715/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=119
+   521.1 ZTRK t=53414 n=75 min=0 max=30 over=0 pen=0 thr=300
+   523.6 STATUS touch s/e=23823/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=120
+   523.6 ZTRK t=53664 n=113 min=0 max=63 over=0 pen=0 thr=300
+   525.7 STATUS touch s/e=23911/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=120
+   525.7 ZTRK t=53867 n=88 min=0 max=55 over=0 pen=0 thr=300
+   527.7 STATUS touch s/e=23999/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=120
+   527.7 ZTRK t=54073 n=88 min=0 max=111 over=0 pen=0 thr=300
+   529.8 STATUS touch s/e=24086/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=121
+   529.8 ZTRK t=54277 n=87 min=0 max=47 over=0 pen=0 thr=300
+   531.8 STATUS touch s/e=24175/0 irq=0 z1max=54 z2min=3948 zmax=147 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=121
+   531.8 ZTRK t=54481 n=89 min=0 max=67 over=0 pen=0 thr=300
+   533.8 STATUS touch s/e=24263/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=122
+   533.8 ZTRK t=54683 n=88 min=0 max=151 over=0 pen=0 thr=300
+   535.9 STATUS touch s/e=24359/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=122
+   535.9 ZTRK t=54889 n=90 min=0 max=67 over=0 pen=0 thr=300
+   538.0 STATUS touch s/e=24442/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=123
+   538.0 ZTRK t=55095 n=89 min=0 max=47 over=0 pen=0 thr=300
+   540.0 STATUS touch s/e=24531/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=123
+   540.0 ZTRK t=55298 n=89 min=0 max=62 over=0 pen=0 thr=300
+   542.0 STATUS touch s/e=24619/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=124
+   542.0 ZTRK t=55503 n=88 min=0 max=48 over=0 pen=0 thr=300
+   543.7 STATUS touch s/e=24698/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=124
+   543.7 ZTRK t=55671 n=74 min=0 max=81 over=0 pen=0 thr=300
+   546.2 STATUS touch s/e=24805/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=124
+   546.2 ZTRK t=55920 n=113 min=0 max=39 over=0 pen=0 thr=300
+   548.0 STATUS touch s/e=24891/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=125
+   548.0 ZTRK t=56100 n=80 min=0 max=54 over=0 pen=0 thr=300
+   550.3 STATUS touch s/e=24986/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=125
+   550.3 ZTRK t=56324 n=101 min=0 max=63 over=0 pen=0 thr=300
+   552.3 STATUS touch s/e=25082/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=126
+   552.3 ZTRK t=56526 n=89 min=0 max=67 over=0 pen=0 thr=300
+   554.3 STATUS touch s/e=25173/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=126
+   554.3 ZTRK t=56726 n=91 min=0 max=44 over=0 pen=0 thr=300
+   556.3 STATUS touch s/e=25256/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=127
+   556.3 ZTRK t=56929 n=89 min=0 max=23 over=0 pen=0 thr=300
+   558.4 STATUS touch s/e=25345/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=127
+   558.4 ZTRK t=57132 n=90 min=0 max=39 over=0 pen=0 thr=300
+   560.4 STATUS touch s/e=25435/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=128
+   560.4 ZTRK t=57336 n=90 min=0 max=35 over=0 pen=0 thr=300
+   562.5 STATUS touch s/e=25533/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=128
+   562.5 ZTRK t=57541 n=91 min=0 max=23 over=0 pen=0 thr=300
+   564.5 STATUS touch s/e=25615/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=129
+   564.5 ZTRK t=57744 n=89 min=0 max=35 over=0 pen=0 thr=300
+   566.5 STATUS touch s/e=25704/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=129
+   566.5 ZTRK t=57948 n=88 min=0 max=51 over=0 pen=0 thr=300
+   568.6 STATUS touch s/e=25793/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=129
+   568.6 ZTRK t=58151 n=89 min=0 max=89 over=0 pen=0 thr=300
+   570.6 STATUS touch s/e=25883/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=130
+   570.6 ZTRK t=58356 n=91 min=0 max=23 over=0 pen=0 thr=300
+   572.7 STATUS touch s/e=25972/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=130
+   572.7 ZTRK t=58560 n=88 min=0 max=51 over=0 pen=0 thr=300
+   574.7 STATUS touch s/e=26060/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=131
+   574.7 ZTRK t=58763 n=88 min=0 max=32 over=0 pen=0 thr=300
+   576.7 STATUS touch s/e=26149/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=131
+   576.7 ZTRK t=58966 n=89 min=0 max=26 over=0 pen=0 thr=300
+   578.8 STATUS touch s/e=26237/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=132
+   578.8 ZTRK t=59169 n=89 min=0 max=30 over=0 pen=0 thr=300
+   580.8 STATUS touch s/e=26332/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=132
+   580.8 ZTRK t=59374 n=88 min=0 max=49 over=0 pen=0 thr=300
+   582.8 STATUS touch s/e=26414/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=133
+   582.8 ZTRK t=59577 n=89 min=0 max=37 over=0 pen=0 thr=300
+   584.9 STATUS touch s/e=26503/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=133
+   584.9 ZTRK t=59783 n=89 min=0 max=73 over=0 pen=0 thr=300
+   587.1 STATUS touch s/e=26607/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=133
+   587.1 ZTRK t=59995 n=97 min=0 max=51 over=0 pen=0 thr=300
+   589.1 STATUS touch s/e=26689/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=134
+   589.1 ZTRK t=60198 n=88 min=0 max=43 over=0 pen=0 thr=300
+   591.1 STATUS touch s/e=26777/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=134
+   591.1 ZTRK t=60403 n=88 min=0 max=23 over=0 pen=0 thr=300
+   593.2 STATUS touch s/e=26867/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=135
+   593.2 ZTRK t=60607 n=90 min=0 max=63 over=0 pen=0 thr=300
+   595.2 STATUS touch s/e=26955/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=135
+   595.2 ZTRK t=60811 n=88 min=0 max=22 over=0 pen=0 thr=300
+   597.3 STATUS touch s/e=27044/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=136
+   597.3 ZTRK t=61016 n=89 min=0 max=59 over=0 pen=0 thr=300
+   599.3 STATUS touch s/e=27135/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=136
+   599.3 ZTRK t=61222 n=91 min=0 max=51 over=0 pen=0 thr=300
+   601.5 STATUS touch s/e=27230/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=137
+   601.5 ZTRK t=61425 n=89 min=0 max=35 over=0 pen=0 thr=300
+   603.4 STATUS touch s/e=27313/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=137
+   603.4 ZTRK t=61629 n=89 min=0 max=34 over=0 pen=0 thr=300
+   605.4 STATUS touch s/e=27403/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=138
+   605.4 ZTRK t=61833 n=90 min=0 max=67 over=0 pen=0 thr=300
+   607.6 STATUS touch s/e=27500/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=138
+   607.6 ZTRK t=62038 n=91 min=0 max=67 over=0 pen=0 thr=300
+   609.7 STATUS touch s/e=27589/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=138
+   609.7 ZTRK t=62241 n=89 min=0 max=39 over=0 pen=0 thr=300
+   611.6 STATUS touch s/e=27670/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=139
+   611.6 ZTRK t=62443 n=87 min=0 max=50 over=0 pen=0 thr=300
+   613.6 STATUS touch s/e=27765/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=139
+   613.6 ZTRK t=62646 n=89 min=0 max=63 over=0 pen=0 thr=300
+   615.6 STATUS touch s/e=27847/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=140
+   615.6 ZTRK t=62849 n=88 min=0 max=51 over=0 pen=0 thr=300
+   617.6 STATUS touch s/e=27936/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=140
+   617.6 ZTRK t=63052 n=89 min=0 max=107 over=0 pen=0 thr=300
+   619.7 STATUS touch s/e=28023/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=141
+   619.7 ZTRK t=63258 n=87 min=0 max=34 over=0 pen=0 thr=300
+   621.8 STATUS touch s/e=28112/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=141
+   621.8 ZTRK t=63462 n=89 min=0 max=23 over=0 pen=0 thr=300
+   623.8 STATUS touch s/e=28201/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=142
+   623.8 ZTRK t=63666 n=89 min=0 max=43 over=0 pen=0 thr=300
+   626.0 STATUS touch s/e=28296/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=142
+   626.0 ZTRK t=63872 n=89 min=0 max=51 over=0 pen=0 thr=300
+   627.9 STATUS touch s/e=28377/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=142
+   627.9 ZTRK t=64076 n=87 min=0 max=46 over=0 pen=0 thr=300
+   629.8 STATUS touch s/e=28465/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=143
+   629.8 ZTRK t=64268 n=84 min=0 max=38 over=0 pen=0 thr=300
+   632.1 STATUS touch s/e=28563/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=143
+   632.1 ZTRK t=64489 n=102 min=0 max=51 over=0 pen=0 thr=300
+   634.1 STATUS touch s/e=28651/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=144
+   634.1 ZTRK t=64691 n=88 min=0 max=39 over=0 pen=0 thr=300
+   636.1 STATUS touch s/e=28745/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=144
+   636.1 ZTRK t=64896 n=88 min=0 max=59 over=0 pen=0 thr=300
+   638.3 STATUS touch s/e=28835/0 irq=0 z1max=54 z2min=3944 zmax=151 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=145
+   638.3 ZTRK t=65100 n=90 min=0 max=57 over=0 pen=0 thr=300
+   640.2 STATUS touch s/e=28917/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=145
+   640.2 ZTRK t=65304 n=89 min=0 max=157 over=0 pen=0 thr=300
+   642.3 STATUS touch s/e=29005/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=146
+   642.3 ZTRK t=65510 n=88 min=0 max=65 over=0 pen=0 thr=300
+   644.3 STATUS touch s/e=29096/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=146
+   644.3 ZTRK t=65717 n=91 min=0 max=23 over=0 pen=0 thr=300
+   646.4 STATUS touch s/e=29185/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=147
+   646.4 ZTRK t=65920 n=89 min=0 max=39 over=0 pen=0 thr=300
+   648.4 STATUS touch s/e=29275/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=147
+   648.4 ZTRK t=66122 n=89 min=0 max=23 over=0 pen=0 thr=300
+   650.5 STATUS touch s/e=29371/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=147
+   650.5 ZTRK t=66326 n=90 min=0 max=39 over=0 pen=0 thr=300
+   652.5 STATUS touch s/e=29454/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=148
+   652.5 ZTRK t=66531 n=90 min=0 max=35 over=0 pen=0 thr=300
+   654.6 STATUS touch s/e=29543/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=148
+   654.6 ZTRK t=66736 n=88 min=0 max=43 over=0 pen=0 thr=300
+   656.6 STATUS touch s/e=29631/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=149
+   656.6 ZTRK t=66938 n=88 min=0 max=54 over=0 pen=0 thr=300
+   658.6 STATUS touch s/e=29719/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=149
+   658.6 ZTRK t=67143 n=88 min=0 max=35 over=0 pen=0 thr=300
+   660.6 STATUS touch s/e=29808/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=150
+   660.6 ZTRK t=67345 n=89 min=0 max=63 over=0 pen=0 thr=300
+   662.7 STATUS touch s/e=29904/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=150
+   662.7 ZTRK t=67549 n=90 min=0 max=43 over=0 pen=0 thr=300
+   664.7 STATUS touch s/e=29984/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=151
+   664.7 ZTRK t=67752 n=86 min=0 max=66 over=0 pen=0 thr=300
+   666.7 STATUS touch s/e=30073/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=151
+   666.7 ZTRK t=67954 n=89 min=0 max=41 over=0 pen=0 thr=300
+   668.8 STATUS touch s/e=30168/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=151
+   668.8 ZTRK t=68158 n=89 min=0 max=22 over=0 pen=0 thr=300
+   670.8 STATUS touch s/e=30250/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=152
+   670.8 ZTRK t=68360 n=88 min=0 max=59 over=0 pen=0 thr=300
+   672.9 STATUS touch s/e=30339/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=152
+   672.9 ZTRK t=68565 n=89 min=0 max=42 over=0 pen=0 thr=300
+   674.9 STATUS touch s/e=30428/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=153
+   674.9 ZTRK t=68769 n=89 min=0 max=63 over=0 pen=0 thr=300
+   676.7 STATUS touch s/e=30508/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=153
+   676.7 ZTRK t=68943 n=80 min=0 max=59 over=0 pen=0 thr=300
+   678.9 STATUS touch s/e=30606/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=154
+   678.9 ZTRK t=69170 n=98 min=0 max=43 over=0 pen=0 thr=300
+   680.9 STATUS touch s/e=30694/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=154
+   680.9 ZTRK t=69373 n=88 min=0 max=47 over=0 pen=0 thr=300
+   683.0 STATUS touch s/e=30782/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=155
+   683.0 ZTRK t=69576 n=88 min=0 max=35 over=0 pen=0 thr=300
+   685.1 STATUS touch s/e=30871/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=155
+   685.1 ZTRK t=69783 n=89 min=0 max=39 over=0 pen=0 thr=300
+   687.1 STATUS touch s/e=30959/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=155
+   687.1 ZTRK t=69987 n=89 min=0 max=23 over=0 pen=0 thr=300
+   689.1 STATUS touch s/e=31050/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=156
+   689.1 ZTRK t=70191 n=91 min=0 max=67 over=0 pen=0 thr=300
+   691.2 STATUS touch s/e=31139/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=156
+   691.2 ZTRK t=70397 n=88 min=0 max=21 over=0 pen=0 thr=300
+   693.3 STATUS touch s/e=31235/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=157
+   693.3 ZTRK t=70601 n=90 min=0 max=46 over=0 pen=0 thr=300
+   695.3 STATUS touch s/e=31318/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=157
+   695.3 ZTRK t=70804 n=90 min=0 max=105 over=0 pen=0 thr=300
+   697.3 STATUS touch s/e=31407/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=158
+   697.3 ZTRK t=71008 n=88 min=0 max=59 over=0 pen=0 thr=300
+   699.4 STATUS touch s/e=31496/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=158
+   699.4 ZTRK t=71212 n=89 min=0 max=51 over=0 pen=0 thr=300
+   701.4 STATUS touch s/e=31585/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=159
+   701.4 ZTRK t=71415 n=90 min=0 max=35 over=0 pen=0 thr=300
+   703.5 STATUS touch s/e=31673/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=159
+   703.5 ZTRK t=71622 n=87 min=0 max=34 over=0 pen=0 thr=300
+   705.5 STATUS touch s/e=31769/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=160
+   705.5 ZTRK t=71825 n=90 min=0 max=55 over=0 pen=0 thr=300
+   707.5 STATUS touch s/e=31850/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=160
+   707.5 ZTRK t=72027 n=87 min=0 max=23 over=0 pen=0 thr=300
+   709.6 STATUS touch s/e=31936/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=160
+   709.6 ZTRK t=72231 n=86 min=0 max=81 over=0 pen=0 thr=300
+   711.6 STATUS touch s/e=32030/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=161
+   711.6 ZTRK t=72434 n=88 min=0 max=66 over=0 pen=0 thr=300
+   713.5 STATUS touch s/e=32110/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=161
+   713.5 ZTRK t=72620 n=81 min=0 max=35 over=0 pen=0 thr=300
+   715.7 STATUS touch s/e=32207/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=162
+   715.7 ZTRK t=72838 n=102 min=0 max=50 over=0 pen=0 thr=300
+   717.7 STATUS touch s/e=32294/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=162
+   717.7 ZTRK t=73039 n=87 min=0 max=35 over=0 pen=0 thr=300
+   719.7 STATUS touch s/e=32381/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=163
+   719.7 ZTRK t=73239 n=87 min=0 max=43 over=0 pen=0 thr=300
+   721.7 STATUS touch s/e=32468/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=163
+   721.7 ZTRK t=73441 n=87 min=0 max=39 over=0 pen=0 thr=300
+   723.7 STATUS touch s/e=32555/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=164
+   723.7 ZTRK t=73644 n=87 min=0 max=55 over=0 pen=0 thr=300
+   725.8 STATUS touch s/e=32642/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=164
+   725.8 ZTRK t=73848 n=87 min=0 max=31 over=0 pen=0 thr=300
+   727.8 STATUS touch s/e=32730/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=164
+   727.8 ZTRK t=74052 n=88 min=0 max=47 over=0 pen=0 thr=300
+   729.9 STATUS touch s/e=32823/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=165
+   729.9 ZTRK t=74258 n=87 min=0 max=23 over=0 pen=0 thr=300
+   731.9 STATUS touch s/e=32916/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=165
+   731.9 ZTRK t=74464 n=93 min=0 max=27 over=0 pen=0 thr=300
+   734.0 STATUS touch s/e=32997/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=166
+   734.0 ZTRK t=74664 n=87 min=0 max=48 over=0 pen=0 thr=300
+   736.0 STATUS touch s/e=33084/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=166
+   736.0 ZTRK t=74867 n=88 min=0 max=46 over=0 pen=0 thr=300
+   738.0 STATUS touch s/e=33173/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=167
+   738.0 ZTRK t=75067 n=88 min=0 max=51 over=0 pen=0 thr=300
+   740.0 STATUS touch s/e=33261/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=167
+   740.0 ZTRK t=75268 n=89 min=0 max=73 over=0 pen=0 thr=300
+   742.0 STATUS touch s/e=33351/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=168
+   742.0 ZTRK t=75472 n=90 min=0 max=23 over=0 pen=0 thr=300
+   744.1 STATUS touch s/e=33442/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=168
+   744.1 ZTRK t=75677 n=90 min=0 max=20 over=0 pen=0 thr=300
+   746.1 STATUS touch s/e=33538/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=168
+   746.1 ZTRK t=75883 n=96 min=0 max=50 over=0 pen=0 thr=300
+   748.2 STATUS touch s/e=33624/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=169
+   748.2 ZTRK t=76083 n=86 min=0 max=63 over=0 pen=0 thr=300
+   750.1 STATUS touch s/e=33711/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=169
+   750.1 ZTRK t=76283 n=88 min=0 max=89 over=0 pen=0 thr=300
+   752.2 STATUS touch s/e=33799/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=170
+   752.2 ZTRK t=76484 n=87 min=0 max=39 over=0 pen=0 thr=300
+   754.2 STATUS touch s/e=33887/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=170
+   754.2 ZTRK t=76690 n=89 min=0 max=61 over=0 pen=0 thr=300
+   756.3 STATUS touch s/e=33976/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=171
+   756.3 ZTRK t=76892 n=88 min=0 max=89 over=0 pen=0 thr=300
+   758.3 STATUS touch s/e=34065/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=171
+   758.3 ZTRK t=77095 n=89 min=0 max=43 over=0 pen=0 thr=300
+   760.3 STATUS touch s/e=34152/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=172
+   760.3 ZTRK t=77299 n=87 min=0 max=23 over=0 pen=0 thr=300
+   762.4 STATUS touch s/e=34239/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=172
+   762.4 ZTRK t=77502 n=88 min=0 max=35 over=0 pen=0 thr=300
+   764.4 STATUS touch s/e=34328/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=172
+   764.4 ZTRK t=77705 n=88 min=0 max=22 over=0 pen=0 thr=300
+   766.5 STATUS touch s/e=34416/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=173
+   766.5 ZTRK t=77909 n=88 min=0 max=43 over=0 pen=0 thr=300
+   768.5 STATUS touch s/e=34505/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=173
+   768.5 ZTRK t=78113 n=89 min=0 max=63 over=0 pen=0 thr=300
+   770.6 STATUS touch s/e=34598/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=174
+   770.6 ZTRK t=78322 n=93 min=0 max=59 over=0 pen=0 thr=300
+   772.6 STATUS touch s/e=34684/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=174
+   772.6 ZTRK t=78523 n=87 min=0 max=62 over=0 pen=0 thr=300
+   774.6 STATUS touch s/e=34772/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=175
+   774.6 ZTRK t=78724 n=87 min=0 max=62 over=0 pen=0 thr=300
+   776.7 STATUS touch s/e=34859/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=175
+   776.7 ZTRK t=78928 n=87 min=0 max=39 over=0 pen=0 thr=300
+   778.7 STATUS touch s/e=34947/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=176
+   778.7 ZTRK t=79132 n=89 min=0 max=27 over=0 pen=0 thr=300
+   780.8 STATUS touch s/e=35038/0 irq=0 z1max=54 z2min=3938 zmax=157 rx=4294967295-0 ry=4294967295-0 first=0,0 last=0,0->0,0 wdt f/s=176
+   780.8 ZTRK t=79338 n=91 min=0 max=67 over=0 pen=0 thr=300

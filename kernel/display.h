@@ -159,4 +159,15 @@ void display_resync(void);
  * The first byte of an ILI9341 read is always a dummy. See display.c. */
 void display_panel_read(uint8_t cmd, uint8_t *out, uint32_t n);
 
+/* The same read with an internal pull on MISO, which is what separates "the
+ * panel's SDO is not populated" from "something holds the line low". A weak
+ * pull loses to a driver and wins on a floating net, so a result that FOLLOWS
+ * the pull proves nothing is connected. See display.c for the strapping note --
+ * GPIO12 is MTDI and the pull is applied for microseconds only. */
+#define DISPLAY_PULL_NONE 0
+#define DISPLAY_PULL_UP   1
+#define DISPLAY_PULL_DOWN 2
+
+void display_panel_read_pull(uint8_t cmd, uint8_t *out, uint32_t n, int pull);
+
 #endif /* NATOS_DISPLAY_H */
