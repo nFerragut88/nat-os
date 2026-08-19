@@ -1,7 +1,7 @@
 # UM-NATOS-034 — The Second Receiver
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 2.7 · 2026-08-19 · Status: **Memory-mapped state verified equivalent; the remaining difference is not memory-mapped** — §22 fixes a real 9.5 dB TX-power defect that is not the cause; §24 verifies the descriptor layout; §25 finds the last candidate was never in the archive this report named, transcribes it in 251 bytes with no new blob, and eliminates it too
+Revision 2.8 · 2026-08-19 · Status: **The analog bus is visible** — §27 captures 5,095 regi2c transactions of the PHY's RF calibration; the comparison needs nat-os's APP CPU started — §22 fixes a real 9.5 dB TX-power defect that is not the cause; §24 verifies the descriptor layout; §25 finds the last candidate was never in the archive this report named, transcribes it in 251 bytes with no new blob, and eliminates it too
 
 ---
 
@@ -1996,3 +1996,155 @@ Every negative in this report has been consistent with two possibilities —
 "transmits nothing" and "transmits something unreceivable" — and §24.2 narrowed
 that only as far as an ESP32 receiver can see. A spectrum analyser or an
 RTL-SDR answers it in one look, and costs less than another session.
+
+---
+
+## 27. Watching the analog bus
+
+**Added revision 2.8, 2026-08-19.** §26 ended by proposing this and calling it a
+different kind of evidence. It is, and it works.
+
+### 27.1 Finding the host
+
+§26's argument: the analog front end is not memory-mapped, but the I²C host that
+reaches it is ordinary hardware, so the traffic can be watched even though the
+destinations cannot.
+
+`ANA_CONFIG_REG 0x6000E044` is the only address ESP-IDF publishes, and `soc.h`
+has no `DR_REG_*_BASE` covering `0x3FF4Exxx` at all — the block is undocumented.
+So rather than assume, the `i2cprobe` command performs a real transaction and
+reports which words moved:
+
+```
+rom_i2c_readReg(0x66, 4, 0) returned 0x00000018
+0x3ff4e010  0x01c60566 -> 0x00180066
+```
+
+One word. Decoded against the call:
+
+| bits | field | value |
+|---|---|---|
+| 7:0 | block | `0x66` = `I2C_BBPLL` |
+| 15:8 | register | `0x00` |
+| 23:16 | **data** | `0x18` — exactly what the call returned |
+
+The *before* value is what confirms it beyond doubt: `0x01C60566` is block
+`0x66`, register `0x05`, data `0xC6`. Register 5 is `I2C_BBPLL_OC_DCUR` and
+`kernel/clock.c` writes it `(3<<6)|6 = 0xC6`. **The word still held this
+kernel's own last PLL write.**
+
+### 27.2 The instrument, and the mistake inside it
+
+A change-recording capture on core 1: it appends only when the word differs, so
+coverage is bounded by the number of transactions rather than by elapsed time.
+That matters because `register_chipv7_phy` runs for 55 ms and §18's fixed-rate
+tracer holds 3.9 ms.
+
+The first run captured **78 transactions, every one to block `0x66`** — the
+BBPLL, the CPU clock, the single analog block with nothing to do with the radio.
+
+The instrument was pointed at the one word that could not contain the answer.
+That is §26's mistake — bound the search to the PHY, then look everywhere else —
+repeated at a smaller scale, four hours later, by the same process.
+
+nat-os's `phyi2c` settled it, by snapshotting the whole host block either side of
+`phyinit_run()`:
+
+```
+0x3ff4e000  00000000 -> 00170063   blk=63
+0x3ff4e004  00000000 -> 00000562   blk=62
+0x3ff4e008  00000000 -> 0147026b   blk=6b
+0x3ff4e00c  00000000 -> 01800168   blk=68
+0x3ff4e010  01c60566 -> 00c60566   blk=66   <- the one being watched
+```
+
+Five words, five different analog blocks. ESP-IDF publishes headers for exactly
+two of these — BBPLL and APLL. **`0x62`, `0x63`, `0x68`, `0x6B` are the
+undocumented RF blocks**, and the capture was watching none of them.
+
+### 27.3 The result
+
+Widened to all five words. `docs/data/i2c-trace-idf-phyinit.json`:
+
+**5,095 transactions across eight analog blocks, over 55.4 ms.**
+
+| block | transactions | |
+|---|---|---|
+| `0x62` | 3007 | undocumented RF |
+| `0x63` | 861 | undocumented RF |
+| `0x64` | 707 | undocumented RF |
+| `0x6b` | 241 | undocumented RF |
+| `0x67` | 157 | undocumented RF |
+| `0x66` | **56** | BBPLL — the only block the first capture saw |
+| `0x6a` | 45 | undocumented RF |
+| `0x68` | 21 | undocumented RF |
+
+**Fifty-six of five thousand and ninety-five.** The first capture saw 1.1% of the
+traffic, and the 98.9% it missed is the entire radio.
+
+The opening of the sequence, in order:
+
+```
+   idx      us   blk reg data
+     0     0.0   6a  02  68
+     2     6.0   6a  00  26
+     6    94.5   62  00  00
+     7    95.7   62  00  30
+     8   101.2   62  01  30
+     9   102.5   62  01  80
+    10   106.3   62  02  08
+    11   110.0   62  03  08
+    19   142.7   63  01  f3
+    21   143.5   6b  03  a8
+    27   154.1   6b  04  07
+    31   161.4   62  0a  b0
+```
+
+This is the ESP32's RF calibration writing to its analog front end. Nothing in
+this project has ever seen it, and as far as this author knows it is not
+published anywhere.
+
+### 27.4 Stated limits
+
+- **The trace is a lower bound.** Five words is ~140 cycles, about 0.6 µs at
+  240 MHz, against transactions observed ~1 µs apart. Some are missed. It records
+  what happened *at least*, never *at most*.
+- **Duplicate suppression.** Two identical consecutive transactions to the same
+  word collapse to one. Visible in the excerpt above — `6a 02 68` at index 0 and
+  1 are two separate captures of the same value from different words, whereas a
+  genuine repeat would vanish.
+- **Only the five block words are watched.** `phyi2c` showed other words in the
+  host block move too (`0x3FF4E02C`, `40`, `44`, `50`, `54`), one of which
+  carried block `0x64`. So the word-to-block mapping is not one-to-one and the
+  capture may still be partial.
+
+### 27.5 What is now needed, and what it costs
+
+The reference sequence exists. The comparison does not, because **nat-os is
+single-core**: `register_chipv7_phy` runs synchronously and there is no second
+core to sample from while it does.
+
+That is the APP CPU work §19.5 already priced: unstall through
+`DPORT_APPCPU_CTRL_A..D` and point it at a capture loop in IRAM that touches
+nothing else. Bounded, well-understood, and not free.
+
+With it, the two sequences can be diffed directly — and both boards call the same
+blob with arguments already verified identical (§22), so **any difference at all
+in 5,095 transactions is the answer**, and no difference at all is a negative
+strong enough to close the RF hypothesis for good.
+
+For the first time in this investigation the next step produces a decisive
+result in either direction.
+
+### 27.6 A note kept from §25.5
+
+That section observed that this report's measured findings hold up while its
+asides do not. §27 is the third instance in one session of the same specific
+error: narrow the search correctly, then aim the instrument somewhere else. §26
+did it with the PHY blocks, §27.2 did it with the host word, and both were caught
+only by widening on a hunch rather than by design.
+
+The pattern is worth naming because it is not carelessness — each aim was
+*plausible*. The defence is not to be more careful; it is to make the instrument
+cover the whole of the region the argument names, and to treat a narrow aim as a
+claim that needs its own justification.

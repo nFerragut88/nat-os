@@ -99,6 +99,10 @@ static void dump_all(void)
      * Extents chosen from the addresses coex_bt_high_prio itself writes --
      * 0x3FF5C080, 0x3FF5D040, 0x3FF710D0, 0x3FF71300 -- widened to cover the
      * blocks they sit in. */
+    /* The regi2c HOST block -- one word per analog block, so the RF front end's
+     * programming is visible here even though the analog registers themselves
+     * are not addressable. UM-NATOS-034 §27. */
+    dump_range("i2c",   0x3FF4E000u, 64u);
     dump_range("bb0",   0x3FF5C000u, 512u);
     dump_range("bb1",   0x3FF5D000u, 512u);
     dump_range("phy",   0x3FF71000u, 1024u);
@@ -155,7 +159,15 @@ static void dump_all(void)
  * question three months of single-board tests could not.
  */
 #define TRACE_WORDS  16u            /* 64 bytes per window                    */
+#if REF_TRACE_SWEEP
 #define TRACE_SNAPS  2048u          /* ~3.9 ms of coverage -- see below       */
+#else
+/* The sweep is off, so this 128 KB buffer is dead weight -- and it overflowed
+ * dram0_0_seg by 47,960 bytes once the regi2c capture wanted its own. Kept at a
+ * token size so the tracer still compiles and can be switched back on by
+ * flipping REF_TRACE_SWEEP alone. */
+#define TRACE_SNAPS  8u
+#endif
 
 /* MEASURED, not estimated. The comment above originally predicted ~0.55 us per
  * sample from 8 cycles per word. The first run reported 1.90 us: a read from
@@ -286,6 +298,117 @@ static void traced_tx(uint32_t base, int do_tx)
     trace_dump(do_tx);
 }
 
+/* ==== regi2c transaction capture ==========================================
+ *
+ * UM-NATOS-034 §26 established that every memory-mapped register in the MAC,
+ * PHY and baseband is equivalent between a stack that transmits and one that
+ * does not. So whatever differs is not addressable, and the candidate is the
+ * analog front end -- programmed over an internal I2C bus, not mapped anywhere.
+ *
+ * Those analog registers cannot be read. The HOST that reaches them can:
+ * `i2cprobe` located it at 0x3FF4E010, one 32-bit word carrying a whole
+ * transaction --
+ *
+ *     bits  7:0   block     (0x66 = I2C_BBPLL, others for the RF blocks)
+ *     bits 15:8   register
+ *     bits 23:16  data
+ *     bit  24+    control / busy
+ *
+ * -- confirmed because the word still held kernel/clock.c's last BBPLL write,
+ * block 0x66 register 5 data 0xC6, which is exactly OC_DCUR = (3<<6)|6.
+ *
+ * ---- why this is not the §18 tracer ---------------------------------------
+ *
+ * That one samples a window into a fixed buffer: 2,048 samples at 1.9 us is
+ * 3.9 ms of coverage. register_chipv7_phy runs for far longer than that, so a
+ * fixed-rate sampler would capture a fraction of the sequence and no amount of
+ * post-processing would say which fraction.
+ *
+ * This records CHANGES instead. Core 1 spins on the one word and appends only
+ * when it differs from the last value, so coverage is bounded by the number of
+ * distinct transactions rather than by elapsed time -- 8,192 of them, across
+ * however long the PHY takes.
+ *
+ * Stated limit: two identical consecutive transactions collapse to one. The
+ * same value written twice in a row is invisible. That is a real blind spot and
+ * it is symmetric across both boards, which is the argument §18 rests on.
+ */
+#define I2C_HOST_REG  0x3FF4E000u
+#define I2CCAP_MAX    8192u
+
+static uint32_t g_i2c_val[I2CCAP_MAX];
+static uint32_t g_i2c_ts[I2CCAP_MAX];
+static volatile uint32_t g_i2c_n;
+static volatile int      g_i2c_run;
+
+/* FIVE words, not one.
+ *
+ * The first version watched 0x3FF4E010 alone -- the word `i2cprobe` happened to
+ * find -- and captured 78 transactions, every one to block 0x66. That is the
+ * BBPLL, the CPU clock, the single analog block with nothing to do with the
+ * radio. nat-os's `phyi2c` then showed the host has ONE WORD PER BLOCK, and
+ * that PHY init drives five of them:
+ *
+ *     0x3FF4E000  block 0x63 }
+ *     0x3FF4E004  block 0x62 }  undocumented RF blocks -- the ones that matter
+ *     0x3FF4E008  block 0x6B }
+ *     0x3FF4E00C  block 0x68 }
+ *     0x3FF4E010  block 0x66    BBPLL, the one previously watched
+ *
+ * Rate: five words is ~140 cycles, ~0.6 us at 240 MHz, against transactions
+ * observed ~1 us apart. Marginal. Some will be missed and the trace is a lower
+ * bound on what happens, not a complete record -- which is stated here rather
+ * than discovered later.
+ */
+#define I2CCAP_WORDS 5u
+
+static IRAM_ATTR void i2c_capture_task(void *arg)
+{
+    (void)arg;
+    volatile uint32_t *reg = (volatile uint32_t *)I2C_HOST_REG;
+    uint32_t last[I2CCAP_WORDS];
+
+    for (uint32_t w = 0; w < I2CCAP_WORDS; w++) {
+        last[w] = reg[w];
+    }
+    while (!g_i2c_run) {
+        vTaskDelay(1);
+    }
+    /* No vTaskDelay, no printf, no calls. A scheduler tick here is a hole. */
+    while (g_i2c_run) {
+        for (uint32_t w = 0; w < I2CCAP_WORDS; w++) {
+            uint32_t v = reg[w];
+            if (v != last[w]) {
+                if (g_i2c_n < I2CCAP_MAX) {
+                    g_i2c_val[g_i2c_n] = v;
+                    g_i2c_ts[g_i2c_n]  = ccount();
+                    g_i2c_n++;
+                }
+                last[w] = v;
+            }
+        }
+    }
+    vTaskDelete(NULL);
+}
+
+static void i2c_capture_dump(const char *tag)
+{
+    printf("I2CCAP tag=%s n=%u\n", tag, (unsigned)g_i2c_n);
+    uint32_t t0 = g_i2c_n ? g_i2c_ts[0] : 0;
+    for (uint32_t i = 0; i < g_i2c_n; i++) {
+        /* index, cycles since the first transaction, raw word, then the
+         * decoded block / register / data. */
+        printf("I2C %u %u %08x %02x %02x %02x\n",
+               (unsigned)i,
+               (unsigned)(g_i2c_ts[i] - t0),
+               (unsigned)g_i2c_val[i],
+               (unsigned)(g_i2c_val[i] & 0xFFu),
+               (unsigned)((g_i2c_val[i] >> 8) & 0xFFu),
+               (unsigned)((g_i2c_val[i] >> 16) & 0xFFu));
+    }
+    printf("I2CCAPEND\n");
+}
+
 /* ==== link test: does each board hear the other? ==========================
  *
  * UM-NATOS-034 §5 established that a second board 30 cm away hears a real
@@ -378,6 +501,16 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
+    /* Core 1, armed and spinning, BEFORE the WiFi stack exists.
+     * register_chipv7_phy runs inside esp_wifi_init/esp_wifi_start, so arming
+     * afterwards would capture nothing of the analog bring-up -- the whole
+     * point of this instrument. */
+    xTaskCreatePinnedToCore(i2c_capture_task, "i2ccap", 4096, NULL,
+                            configMAX_PRIORITIES - 1, NULL, 1);
+    vTaskDelay(pdMS_TO_TICKS(100));
+    g_i2c_run = 1;
+    vTaskDelay(pdMS_TO_TICKS(50));
+
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
@@ -442,6 +575,11 @@ void app_main(void)
     uint8_t mac[6];
     ESP_ERROR_CHECK(esp_wifi_get_mac(REF_LINK_AP ? WIFI_IF_AP : WIFI_IF_STA, mac));
     memcpy(&probe_req[10], mac, 6);          /* addr2: this chip */
+
+    /* Stop and dump before anything else prints, so the trace is contiguous. */
+    g_i2c_run = 0;
+    vTaskDelay(pdMS_TO_TICKS(50));
+    i2c_capture_dump("phy_init");
 
     printf("REF-RAW mode=promiscuous channel=%d mac=%02x:%02x:%02x:%02x:%02x:%02x\n",
            REF_CHANNEL, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);

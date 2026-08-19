@@ -2104,6 +2104,164 @@ static void execute(char *line)
         uart_put_hex(wifimac_txpwr_get());
         uart_puts("\n");
     }
+    else if (str_eq(line, "phyi2c")) {
+        /* Does register_chipv7_phy touch the regi2c host at all?
+         *
+         * UM-NATOS-034 §27. The capture on the reference board watched one word
+         * -- 0x3FF4E010, the one `i2cprobe` found -- and saw 78 transactions,
+         * every single one to block 0x66, the BBPLL. That is ESP-IDF's own CPU
+         * clock code, not the radio.
+         *
+         * Which leaves two readings, and they point in opposite directions:
+         *
+         *   (a) the PHY does not use regi2c for the RF front end at all, and
+         *       programs it through the memory-mapped PHY/baseband blocks --
+         *       which §26 already diffed and found equivalent; or
+         *   (b) it does, through a host word this instrument was not watching.
+         *
+         * A transaction register holds its last transaction. So a snapshot of
+         * the whole host block either side of PHY init answers it: if any word
+         * other than 0x3FF4E010 moves, reading (b) is live and the capture must
+         * be widened. If none does, reading (a) stands and the analog path is
+         * not reached this way.
+         *
+         * Cheap, decisive, and it does not need the sampling rate that a
+         * continuous capture across 64 words would fail to sustain -- 64 words
+         * is ~7.5 us per pass and the observed transactions are ~1 us apart.
+         */
+        enum { NW = 64 };
+        static uint32_t pre[NW], post[NW];
+        const uint32_t BASE = 0x3FF4E000u;
+
+        for (uint32_t i = 0; i < NW; i++) {
+            pre[i] = *(volatile uint32_t *)(BASE + i * 4u);
+        }
+
+        int rc = phyinit_run();
+
+        for (uint32_t i = 0; i < NW; i++) {
+            post[i] = *(volatile uint32_t *)(BASE + i * 4u);
+        }
+
+        uart_puts("   phyinit_run returned ");
+        uart_put_dec((unsigned int)rc);
+        uart_puts("\n   regi2c host block 0x3FF4E000, 64 words:\n");
+
+        uint32_t moved = 0;
+        for (uint32_t i = 0; i < NW; i++) {
+            if (pre[i] != post[i]) {
+                uart_puts("   0x");
+                uart_put_hex(BASE + i * 4u);
+                uart_puts("  ");
+                uart_put_hex(pre[i]);
+                uart_puts(" -> ");
+                uart_put_hex(post[i]);
+                uart_puts("   blk=");
+                uart_put_hex(post[i] & 0xFFu);
+                uart_puts(" reg=");
+                uart_put_hex((post[i] >> 8) & 0xFFu);
+                uart_puts(" data=");
+                uart_put_hex((post[i] >> 16) & 0xFFu);
+                uart_puts("\n");
+                moved++;
+            }
+        }
+        if (!moved) {
+            uart_puts("   NOTHING moved. register_chipv7_phy does not reach the\n");
+            uart_puts("   analog blocks through this host -- so the RF path is\n");
+            uart_puts("   configured somewhere §26 already compared.\n");
+        } else {
+            uart_puts("   ");
+            uart_put_dec(moved);
+            uart_puts(" word(s) moved\n");
+        }
+    }
+    else if (str_eq(line, "i2cprobe")) {
+        /* Find the regi2c HOST registers, by doing a transaction and seeing
+         * what moved.
+         *
+         * ---- why ------------------------------------------------------------
+         *
+         * UM-NATOS-034 §26 established that the entire memory-mapped state of
+         * the MAC, PHY and baseband is equivalent between a stack that
+         * transmits and one that does not -- 2,048 PHY registers, one
+         * difference, matched, no change. So whatever differs is not in the
+         * register space, and the obvious candidate is the analog front end,
+         * which is not memory-mapped at all. It is reached over an internal
+         * I2C bus through rom_i2c_writeReg, the same mechanism kernel/clock.c
+         * uses for the BBPLL because no register path exists.
+         *
+         * Those analog registers cannot be dumped. But the I2C HOST that
+         * reaches them is ordinary memory-mapped hardware, so the traffic can
+         * be watched even though the destinations cannot.
+         *
+         * ---- why this is a search and not a constant --------------------------
+         *
+         * `ANA_CONFIG_REG 0x6000E044` is the only address ESP-IDF publishes,
+         * and there is no `DR_REG_*_BASE` anywhere in soc.h covering
+         * 0x3FF4Exxx -- the block is undocumented. Rather than assume the alias
+         * arithmetic and the extent, this does a real transaction and reports
+         * which words changed.
+         *
+         * rom_i2c_readReg, not writeReg: a read still drives the host through a
+         * full transaction, and cannot disturb a PLL this kernel is running on.
+         *
+         * Usage: i2cprobe [hex base]   default 0x3FF4E000, 256 words
+         */
+        enum { NW = 256 };
+        static uint32_t before[NW], after[NW];
+
+        int bok = 0;
+        uint32_t base = parse_hex(arg, &bok);
+        if (!bok) {
+            base = 0x3FF4E000u;
+        }
+
+        for (uint32_t i = 0; i < NW; i++) {
+            before[i] = *(volatile uint32_t *)(base + i * 4u);
+        }
+
+        /* I2C_BBPLL block 0x66, host id 4, register 0 -- the same block
+         * clock.c programs, so it is known to exist and known to answer. */
+        uint32_t val = rom_call3(0x40004148u, 0x66u, 4u, 0u);
+
+        for (uint32_t i = 0; i < NW; i++) {
+            after[i] = *(volatile uint32_t *)(base + i * 4u);
+        }
+
+        uart_puts("   rom_i2c_readReg(0x66,4,0) returned ");
+        uart_put_hex(val);
+        uart_puts("\n   scanning ");
+        uart_put_hex(base);
+        uart_puts(" for ");
+        uart_put_dec(NW);
+        uart_puts(" words\n");
+
+        uint32_t moved = 0;
+        for (uint32_t i = 0; i < NW; i++) {
+            if (before[i] != after[i]) {
+                uart_puts("   0x");
+                uart_put_hex(base + i * 4u);
+                uart_puts("  ");
+                uart_put_hex(before[i]);
+                uart_puts(" -> ");
+                uart_put_hex(after[i]);
+                uart_puts("\n");
+                moved++;
+            }
+        }
+        if (!moved) {
+            uart_puts("   nothing moved in this range.\n");
+            uart_puts("   Either the host is elsewhere, or its registers are\n");
+            uart_puts("   write-only/self-clearing and a before/after snapshot\n");
+            uart_puts("   cannot see them -- which is the same blind spot\n");
+            uart_puts("   UM-NATOS-034 §18 was built to close.\n");
+        } else {
+            uart_puts("   ");
+            uart_put_dec(moved);
+            uart_puts(" words moved\n");
+        }
+    }
     else if (str_eq(line, "coexprio")) {
         /* coex_bt_high_prio(), reimplemented from librtc.a's bt_bb.o.
          *
@@ -2351,6 +2509,8 @@ static void execute(char *line)
         regdump_range("mac",   0x3FF73000u, 1280u);
         /* The PHY and baseband blocks -- see UM-NATOS-034 §26. Ranges must
          * match tools/idf_ref exactly or reg_diff.py cannot pair them. */
+        /* regi2c host block -- see UM-NATOS-034 §27. */
+        regdump_range("i2c",   0x3FF4E000u, 64u);
         regdump_range("bb0",   0x3FF5C000u, 512u);
         regdump_range("bb1",   0x3FF5D000u, 512u);
         regdump_range("phy",   0x3FF71000u, 1024u);
