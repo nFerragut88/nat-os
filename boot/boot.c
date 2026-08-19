@@ -78,6 +78,28 @@ typedef struct __attribute__((packed)) {
 #define DROM_HIGH       0x3F800000u
 #define MMU_PAGE_SIZE   0x10000u
 
+/* Flash-mapped EXECUTABLE code -- what an ESP32 application calls IROM.
+ *
+ * The window is 0x400D0000..0x40400000, which soc/ext_mem_defs.h names
+ * IRAM0_CACHE. It is NOT IROM0_CACHE at 0x40800000; that is a different window
+ * with a different entry range, and assuming otherwise was a wrong first guess
+ * worth recording.
+ *
+ * The entry OFFSET is the part that differs from DROM. From
+ * hal/esp32/mmu_ll.h, mmu_ll_get_entry_id():
+ *
+ *     DROM0_CACHE  -> offset   0
+ *     IRAM0_CACHE  -> offset  64
+ *     IRAM1_CACHE  -> offset 128
+ *     IROM0_CACHE  -> offset 192
+ *
+ * with the same >> 16 shift and the same 0x3FFFFF mask in every case. Getting
+ * the offset wrong writes a valid-looking entry for somebody else's window and
+ * the CPU fetches whatever happens to be mapped there. */
+#define IROM_LOW        0x400D0000u
+#define IROM_HIGH       0x40400000u
+#define MMU_IROM_OFFSET 64u
+
 /* Anything at or above this is on the instruction bus. Data below it (DRAM at
  * 0x3FFBxxxx, DROM at 0x3F4xxxxx) is byte-accessible; instruction memory is
  * not, which is the distinction copy_to_iram() exists for. */
@@ -91,6 +113,7 @@ typedef struct __attribute__((packed)) {
 #define PRO_CACHE_FLUSH_ENA        (1u << 4)
 #define PRO_CACHE_FLUSH_DONE       (1u << 5)
 #define PRO_CACHE_MASK_DROM0       (1u << 4)
+/* Cleared alongside DROM0 once code is fetched from flash too. */
 #define PRO_CACHE_MASK_IRAM0       (1u << 0)
 
 #define REG(a) (*(volatile uint32_t *)(a))
@@ -132,7 +155,7 @@ static void cache_enable_drom(void)
 {
     /* Clear the DROM0 mask bit: on this part the MASK bits DISABLE a window,
      * so clearing is what makes the region cacheable. */
-    REG(DPORT_PRO_CACHE_CTRL1_REG) &= ~PRO_CACHE_MASK_DROM0;
+    REG(DPORT_PRO_CACHE_CTRL1_REG) &= ~(PRO_CACHE_MASK_DROM0 | PRO_CACHE_MASK_IRAM0);
 
     /* Flush, wait for the hardware to say it finished, then release. A flush
      * that is started and not waited for is the same shape of mistake as a
@@ -147,14 +170,22 @@ static void cache_enable_drom(void)
 }
 
 /* Map `len` bytes of flash at `flash_off` to appear at `vaddr`. */
-static void mmu_map(uint32_t vaddr, uint32_t flash_off, uint32_t len)
+/* `entry_offset` selects which window's block of MMU entries to write: 0 for
+ * DROM, 64 for the IRAM0 cache window that holds flash-executable code. The
+ * arithmetic within a block is identical, which is why one function serves
+ * both -- but the offset is not optional. Writing a DROM index for an IROM
+ * address produces a perfectly valid entry pointing the wrong window at the
+ * right flash page, and the CPU then executes whatever was already mapped
+ * where the code should have been. */
+static void mmu_map(uint32_t vaddr, uint32_t flash_off, uint32_t len,
+                    uint32_t entry_offset)
 {
     uint32_t page_v = vaddr & ~(MMU_PAGE_SIZE - 1u);
     uint32_t page_f = flash_off & ~(MMU_PAGE_SIZE - 1u);
     uint32_t end    = vaddr + len;
 
     while (page_v < end) {
-        uint32_t entry = (page_v & MMU_VADDR_MASK) >> 16;
+        uint32_t entry = entry_offset + ((page_v & MMU_VADDR_MASK) >> 16);
         MMU_TABLE[entry] = page_f >> 16;
         page_v += MMU_PAGE_SIZE;
         page_f += MMU_PAGE_SIZE;
@@ -280,9 +311,18 @@ void boot_main(void)
              * driving one flash chip is a corruption that would look like a
              * random bad byte somewhere in the kernel. It goes on once, after
              * the loop, when nothing else will touch SPI1 again. */
-            uart_puts("  -> mmu\n");
+            uart_puts("  -> mmu drom\n");
             cache_disable();
-            mmu_map(seg.load_addr, off, seg.data_len);
+            mmu_map(seg.load_addr, off, seg.data_len, 0u);
+        } else if (seg.load_addr >= IROM_LOW && seg.load_addr < IROM_HIGH) {
+            /* Flash-executable code. Same treatment as DROM, different window
+             * and therefore a different block of MMU entries. Checked BEFORE
+             * the instruction-bus case below, which would otherwise see an
+             * address above 0x40000000 and copy it into RAM -- defeating the
+             * point entirely and overwriting whatever was already there. */
+            uart_puts("  -> mmu irom\n");
+            cache_disable();
+            mmu_map(seg.load_addr, off, seg.data_len, MMU_IROM_OFFSET);
         } else if (seg.load_addr >= IBUS_LOW) {
             /* Instruction bus: word stores only, via the bounce buffer. */
             uart_puts("  -> copy (iram)\n");

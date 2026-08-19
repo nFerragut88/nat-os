@@ -260,8 +260,19 @@ win_call_vendor:
  * generalising, because the register moves are the whole body and a shared
  * version would be longer than both.
  */
+/* .align 4 is REQUIRED, not tidiness. call0 encodes its target as an offset in
+ * units of four bytes, so a misaligned entry point cannot be reached by a direct
+ * call and the linker rejects it with "dangerous relocation: call0: misaligned
+ * call target".
+ *
+ * These two were the only globals in this file without it. It stayed latent
+ * because the surrounding layout happened to land them on 4-byte boundaries;
+ * moving shell.c into flash changed the layout and the link failed immediately.
+ * A latent alignment bug is exactly the kind that surfaces when something
+ * unrelated moves. */
     .global rom_call4
     .type rom_call4, @function
+    .align 4
 rom_call4:
     addi    a1, a1, -32
     s32i    a0,  a1, 0
@@ -286,6 +297,7 @@ rom_call4:
 
     .global rom_call3
     .type rom_call3, @function
+    .align 4
 rom_call3:
     addi    a1, a1, -32
     s32i    a0,  a1, 0

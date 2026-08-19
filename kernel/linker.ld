@@ -33,6 +33,22 @@ MEMORY
    * 32 bytes in makes the virtual address agree with the flash offset, which is
    * the congruence esptool and the bootloader both assume. */
   drom (r)   : ORIGIN = 0x3F400020, LENGTH = 0x400000 - 0x20
+
+  /* Flash mapped EXECUTABLE through the instruction cache.
+   *
+   * The window is 0x400D0000..0x40400000 -- what ESP-IDF's headers call
+   * IRAM0_CACHE, and what an ESP32 application means by "IROM". It is NOT
+   * IROM0_CACHE (0x40800000), which is a different window with a different set
+   * of MMU entries; that distinction cost a wrong first guess.
+   *
+   * The flash MMU indexes it at entry offset 64, where drom uses offset 0
+   * (soc/hal/esp32/mmu_ll.h, mmu_ll_get_entry_id). boot/boot.c knows both.
+   *
+   * Why this exists: iram above is 128 KB and that is the ceiling on ALL code
+   * this kernel will ever run, forever. .rodata has been mapped from flash for
+   * milestones; instructions never were, for no reason beyond nobody needing
+   * it. See docs/next_moves/07-irom.md. */
+  irom (rx)  : ORIGIN = 0x400D0000, LENGTH = 0x330000
 }
 
 ENTRY(_start)
@@ -95,6 +111,51 @@ SECTIONS
 
     . = _vecbase + 0x400;
   } > iram
+
+  /* Code that runs from flash.
+   *
+   * Placed BEFORE .text deliberately: the linker assigns each input section
+   * exactly once, in the order the output sections appear, so .text's wildcard
+   * would claim these objects if it came first.
+   *
+   * ---- what may go here, and what may never ---------------------------------
+   *
+   * Executing from flash stalls on a cache miss, and reads nothing at all while
+   * the cache is disabled. So anything reachable in either of those conditions
+   * has to stay in iram:
+   *
+   *   vectors.S, panic.c    the fault path, which must work when nothing else does
+   *   flash.c, store.c      called WITH THE CACHE OFF -- code in flash could not
+   *                         read itself
+   *   task.c                the scheduler switch
+   *   window.S              window-overflow handlers, reached from any vendor call
+   *   appcpu.c              core 1 runs with no cache enabled at all
+   *
+   * Getting that wrong hangs inside a fault handler with no output, which is
+   * the worst failure this kernel can produce. The acceptance test is therefore
+   * not "it boots" but "`fault` still prints a panic report".
+   *
+   * ---- literals travel WITH the code ---------------------------------------
+   *
+   * `.literal` is selected alongside `.text` for each object. -mtext-section-
+   * literals keeps a function's literal pool beside it, and `l32r` reaches
+   * backwards only 256 KB from the PC -- so the pool must move when the code
+   * does. The note on .flash.rodata below is about the opposite case and still
+   * holds: literals must never be left behind in iram while their code moves.
+   */
+  .flash.text : ALIGN(4)
+  {
+    _flash_text_start = .;
+
+    /* shell.c first, and alone to begin with: 26,754 bytes, the largest object
+     * in the image, on no timing-critical path, and reachable only when a human
+     * types. If this placement is wrong the board stops taking commands, which
+     * is loud and harmless. */
+    *shell.c.o(.literal .literal.* .text .text.*)
+
+    . = ALIGN(4);
+    _flash_text_end = .;
+  } > irom
 
   .text : ALIGN(4)
   {
