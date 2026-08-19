@@ -1,7 +1,7 @@
 # UM-NATOS-034 — The Second Receiver
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.5 · 2026-08-19 · Status: **Negative result** — §13 replaces guessing with a method, and finds a real bug with it
+Revision 1.6 · 2026-08-19 · Status: **Negative result** — §13 finds a real bug by differential; §14 finds the limit of the technique
 
 ---
 
@@ -665,4 +665,59 @@ Transmit still does not work. What changed is the *method*:
 
 `tools/idf_ref` and `tools/serial/reg_diff.py` make that repeatable. Anyone
 picking this up starts from a list, not a theory.
+
+---
+
+## 14. The limit of the differential, found by exceeding it
+
+§13.4 left about ninety candidates. One at a time is right for three and is an
+afternoon for ninety, so the next move was to apply them all: if transmit
+started, bisect; if nothing changed, the answer is not in this register set at
+all — which is worth more than ninety individual negatives.
+
+Fifty MAC registers were written to the reference's values. **The board stopped
+responding.** It recovered completely on reset — apps running, `corrupt=0`,
+nothing permanent — but the run produced no measurement.
+
+### 14.1 Why that is the useful result
+
+The obvious reading is "be more careful." The correct reading is that **the
+premise was wrong**.
+
+The two firmwares are not in the same configuration and were never going to be:
+
+| | reference | nat-os |
+|---|---|---|
+| mode | SoftAP, full stack | promiscuous receive, minimal |
+| beaconing | via the vendor's own scheduler | via a hand-written register poke |
+| queues, rate control, timers | all initialised by the stack | mostly untouched |
+
+So a great many of those 342 differences are **legitimate configuration
+differences**, not defects. They say "these two radios are doing different
+jobs", which is true and not a bug. Copying them wholesale writes the settings
+of a fully-configured AP into a minimally-configured sniffer, and the crash is
+the honest consequence.
+
+**A differential is a pointer at candidates, not a set of values to copy.** The
+MAC address in §13.2 was a genuine find precisely because zero is not a
+legitimate configuration of anything — it is wrong in any mode. That is the
+shape of difference worth acting on, and most of the ninety do not have it.
+
+### 14.2 What would make the next differential sharper
+
+Match the reference to nat-os instead of matching nat-os to the reference. An
+ESP-IDF build in **promiscuous/sniffer mode that transmits a raw frame** —
+`esp_wifi_80211_tx()` — is doing very nearly what nat-os does, and the diff
+against it would be small enough that every remaining difference is suspicious
+rather than merely different.
+
+That is a change to `tools/idf_ref`, not to nat-os, and it is the obvious next
+step for whoever continues.
+
+### 14.3 Standing rule earned
+
+**A difference is not a defect until you know the two sides were doing the same
+job.** This report spent its first eleven sections comparing a transmitter
+against a receiver and being careful about it; §13 compared two transmitters in
+different modes and briefly forgot to be.
 

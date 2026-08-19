@@ -58,6 +58,33 @@ static int str_eq(const char *a, const char *b)
 /* Parses a non-negative decimal. Returns -1 on anything else, so a typo is
  * rejected rather than silently read as zero — which would make "kill oops"
  * kill application 0. */
+/* Full 32-bit hex, for register addresses and values. parse_int is decimal
+ * and caps at 9999, which is right for slot numbers and useless for these.
+ * Returns 0 on a malformed string and sets *ok, because 0 is a legitimate
+ * register value and cannot double as the error. */
+static uint32_t parse_hex(const char *s, int *ok)
+{
+    uint32_t v = 0;
+    int n = 0;
+    *ok = 0;
+    if (s[0] == (char)48 && (s[1] == (char)120 || s[1] == (char)88)) {
+        s += 2;                       /* skip an 0x prefix */
+    }
+    while (*s) {
+        uint32_t d;
+        if      (*s >= (char)48 && *s <= (char)57)  { d = (uint32_t)(*s - 48); }
+        else if (*s >= (char)97 && *s <= (char)102) { d = (uint32_t)(*s - 97) + 10u; }
+        else if (*s >= (char)65 && *s <= (char)70)  { d = (uint32_t)(*s - 65) + 10u; }
+        else { return 0; }
+        v = (v << 4) | d;
+        if (++n > 8) { return 0; }
+        s++;
+    }
+    if (!n) { return 0; }
+    *ok = 1;
+    return v;
+}
+
 static int parse_int(const char *s)
 {
     if (!*s) {
@@ -2097,6 +2124,46 @@ static void execute(char *line)
         regdump_range("mac",   0x3FF73000u, 1280u);
         uart_puts("REGEND\n");
         console_unlock();
+    }
+    else if (str_eq(line, "wifireg")) {
+        /* Read or write one register, by address.
+         *
+         *   wifireg <addr>          read
+         *   wifireg <addr> <value>  write, then read back
+         *
+         * The differential in UM-NATOS-034 §13 produced a shortlist of about
+         * ninety addresses where the working stack holds something and this
+         * one holds zero. Hardcoding each as its own command and reflashing
+         * between them would take an afternoon; this sweeps the list from the
+         * prompt, one register at a time, which is the same discipline for a
+         * fraction of the cost.
+         *
+         * Deliberately unguarded as to WHICH address. It is a diagnostic on a
+         * board that reboots in three seconds, and refusing addresses would
+         * mean guessing in advance which ones matter -- which is the thing the
+         * differential exists to stop doing. */
+        char *ca = arg;
+        char *cv = split(ca);
+        int aok = 0, vok = 0;
+        uint32_t addr = parse_hex(ca, &aok);
+        if (!aok) {
+            uart_puts("   usage: wifireg <hex addr> [hex value]\n");
+        } else if (*cv) {
+            uint32_t val = parse_hex(cv, &vok);
+            if (!vok) {
+                uart_puts("   value must be hex\n");
+            } else {
+                uart_puts("   "); uart_put_hex(addr);
+                uart_puts(" was "); uart_put_hex(*(volatile uint32_t *)addr);
+                *(volatile uint32_t *)addr = val;
+                uart_puts(" now "); uart_put_hex(*(volatile uint32_t *)addr);
+                uart_puts("\n");
+            }
+        } else {
+            uart_puts("   "); uart_put_hex(addr);
+            uart_puts(" = "); uart_put_hex(*(volatile uint32_t *)addr);
+            uart_puts("\n");
+        }
     }
     else if (str_eq(line, "machw")) {
         /* Program the MAC hardware with this chip's own address.
