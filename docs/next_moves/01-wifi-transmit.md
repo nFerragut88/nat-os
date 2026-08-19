@@ -128,6 +128,27 @@
 > the SX1262 gives with no blob at all. §17 and `docs/blob-free.md` both already
 > argue which way that goes.
 
+> **UPDATE 2026-08-19 (last) — the enumerable search is exhausted. UM-NATOS-034 §25.**
+> `coex_bt_high_prio` is NOT in `libcoexist.a`. It is in
+> `esp_phy/lib/esp32/librtc.a`, object `bt_bb.o`, and it is 251 bytes of pure
+> register read-modify-write. **No third vendor archive was ever needed** — it
+> was transcribed into the `coexprio` shell command.
+>
+> Three of its eight addresses are WiFi MAC transmit-block registers
+> (`0x3FF73D30/D38/D40`), so it was genuinely relevant despite the name. The
+> writes apply, they persist across `macinit`, and they were tested in both
+> orderings including ESP-IDF's. **Still nothing radiates.**
+>
+> Everything enumerable is now checked: PHY arguments, clock ungate,
+> `phy_update_wifi_mac_time`, `coex_bt_high_prio`, the `lldesc` descriptor
+> layout, and the OS adapter table. The MAC executes the same transmit sequence
+> as a working stack and a proven receiver hears nothing, including malformed
+> frames.
+>
+> **There is no next item on this list.** Reopening it would need a different
+> KIND of evidence — an SDR to see whether any RF energy appears at all, or a
+> full trace of ESP-IDF's PHY register writes from reset. Not another candidate.
+
 **Size:** large. **Risk:** real — may cost the working receive path.
 **Blocked on:** willingness to accept a link change.
 

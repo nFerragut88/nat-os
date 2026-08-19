@@ -1,7 +1,7 @@
 # UM-NATOS-034 — The Second Receiver
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 2.5 · 2026-08-19 · Status: **Search exhausted within the blobs this project has** — §22 fixes a real 9.5 dB TX-power defect that is not the cause; §23 eliminates the last free candidate by reading it; §24 checks the Open-MAC community findings, clears the descriptor layout, and closes an FCS blind spot in §21
+Revision 2.6 · 2026-08-19 · Status: **Enumerable search exhausted** — §22 fixes a real 9.5 dB TX-power defect that is not the cause; §24 verifies the descriptor layout; §25 finds the last candidate was never in the archive this report named, transcribes it in 251 bytes with no new blob, and eliminates it too
 
 ---
 
@@ -1756,3 +1756,121 @@ detectors that agreed with a hypothesis by being broken; this is the mirror
 image — one unverified reading promoted into the record as a known fault, where
 it would have cost the next session a day. A number seen once is an observation.
 It becomes a defect when it reproduces.
+
+---
+
+## 25. `coex_bt_high_prio` — no third blob was needed, and it is not the cause
+
+**Added revision 2.6, 2026-08-19.**
+
+§22.5 named this as the last bounded candidate and said it "lives in
+`libcoexist.a`, which this project does not have", framing the next step as a
+decision about adding a third vendor archive.
+
+**That was wrong, and it was asserted rather than checked.**
+
+### 25.1 It is not in `libcoexist.a`
+
+`libcoexist.a` contains `coex_bt_request` and `coex_bt_release` and no
+`coex_bt_high_prio` at all. The symbol is defined in
+`esp_phy/lib/esp32/librtc.a`, object `bt_bb.o`:
+
+```
+librtc.a        180K   0000003c T coex_bt_high_prio
+librftest.a     1.2M   U
+libbttestmode.a 1.4M   U
+libnet80211.a   1.4M   U
+libpp.a         576K   none
+libphy.a        840K   none
+```
+
+Three archives merely reference it. One defines it, and it is not the one this
+report named.
+
+### 25.2 It did not need linking. It needed transcribing.
+
+251 bytes, and every instruction is a load, a mask, and a store. No calls, no
+loops, no branches, no data structures. Its literal pool is eight peripheral
+addresses in the `0x60000000` alias, which on ESP32 mirrors `0x3FF40000`:
+
+| literal | actual | block |
+|---|---|---|
+| `0x3FF5C080` | — | BT baseband |
+| `0x600310D0` | `0x3FF710D0` | BT/PHY |
+| `0x60031300` | `0x3FF71300` | BT/PHY |
+| `0x60033D30` | **`0x3FF73D30`** | **WiFi MAC** |
+| `0x60033D38` | **`0x3FF73D38`** | **WiFi MAC** |
+| `0x60033D40` | **`0x3FF73D40`** | **WiFi MAC** |
+| `0x600041C4` | `0x3FF441C4` | GPIO |
+| `0x3FF5D040` | — | BT baseband |
+
+**Three of the eight are WiFi MAC registers in the transmit block** — the same
+block as this kernel's `0x3FF73D1C`/`0x3FF73D20` transmit config and the status
+registers traced in §19–§20. A function named for Bluetooth coexistence
+configures the region this investigation has spent four sessions inside. Which
+is exactly why it was worth transcribing rather than dismissing by its name.
+
+Reimplemented as the `coexprio` shell command, order preserved exactly as
+disassembled.
+
+### 25.3 It applies, it persists, and it changes nothing
+
+```
+before: D=0x00003202  E=0x0c800000  F=0x00000000
+after : D=0x01403203  E=0x0c80000a  F=0x00000010
+```
+
+The writes take. And re-reading after `macinit` shows the values unchanged —
+`before` equals `after` on the second invocation — so the MAC bring-up does not
+clobber them.
+
+Tested in both orderings, because order has mattered in this project before:
+
+| sequence | result |
+|---|---|
+| `phyinit` → `macinit` → `chan` → `macrx` → **`coexprio`** | not heard |
+| `phyinit` → **`coexprio`** → `macinit` → `chan` → `macrx` (ESP-IDF's order) | not heard |
+
+Receiver 30 cm away with the FCS-fail filter open, hearing 1,400+ frames from
+two dozen other transmitters throughout. nat-os's MAC address appears zero
+times. `txstat` reports `hardware=382 completions reaped=295 chain acks=75`,
+unchanged.
+
+### 25.4 What this settles
+
+**No third vendor archive was ever required.** The decision §22.5 framed as
+strategic — add `libcoexist.a` to a project whose direction is removing blobs —
+turned out not to exist. The function was transcribable, and transcribing it
+cost less than the paragraph arguing about whether to link it.
+
+**And the last bounded candidate is eliminated.** Every item on §23.1's list has
+now been checked:
+
+| candidate | status |
+|---|---|
+| the three PHY arguments | exhausted (§22); one real 9.5 dB defect found and fixed |
+| clock ungate `0x3c9` | identical |
+| `phy_update_wifi_mac_time` | no-op on this path (§23) |
+| `coex_bt_high_prio` | **applied, persists, changes nothing (§25)** |
+| `ebuf`/`lldesc` descriptor layout | verified bit-for-bit correct (§24.1) |
+| OS adapter table | complete, `0x3F ALL PASS` (§24.6) |
+
+The MAC executes the same transmit sequence as a working stack (§20). A proven
+receiver hears nothing, including malformed frames (§21, §24.2). Every argument,
+every adjacent call, and every data structure has been checked against the
+reference and matches.
+
+Whatever is missing is not in a list this project can enumerate any more.
+
+### 25.5 A note on the two wrong assertions
+
+§22.5 stated the symbol's location as fact without looking, and that error
+would have led to adding an unnecessary vendor binary — the precise thing the
+project's direction is against. §24.5 recorded a one-off `ositest` reading as a
+standing defect.
+
+Both were written in summary sections, at the end of long sessions, about things
+adjacent to the work rather than in it. The measured findings in this report have
+held up; the asides have not. That is worth knowing about how this record is
+produced: **the confidence of a sentence in a report should track how it was
+arrived at, and in this document that has not always been true.**

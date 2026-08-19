@@ -2104,6 +2104,83 @@ static void execute(char *line)
         uart_put_hex(wifimac_txpwr_get());
         uart_puts("\n");
     }
+    else if (str_eq(line, "coexprio")) {
+        /* coex_bt_high_prio(), reimplemented from librtc.a's bt_bb.o.
+         *
+         * ---- why this exists ----------------------------------------------
+         *
+         * UM-NATOS-034 §22.5 left one candidate: ESP-IDF calls
+         * coex_bt_high_prio() unconditionally on ESP32, immediately after PHY
+         * init, and nat-os never did. §22.5 also asserted it lived in
+         * libcoexist.a and would therefore need a third vendor archive.
+         *
+         * That assertion was wrong. The symbol is not in libcoexist.a at all --
+         * it is defined in esp_phy/lib/esp32/librtc.a, object bt_bb.o, and it
+         * is 251 bytes of pure register read-modify-write with no calls and no
+         * loops. So it does not need linking. It needs transcribing.
+         *
+         * ---- the addresses -------------------------------------------------
+         *
+         * Its literal pool holds peripheral addresses in the 0x60000000 alias.
+         * On ESP32 the peripheral bus at 0x3FF40000 is mirrored at 0x60000000,
+         * so 0x60031300 is 0x3FF71300 and so on. Translated:
+         *
+         *   0x3FF5C080   BT baseband
+         *   0x3FF710D0   BT/PHY block
+         *   0x3FF71300   BT/PHY block
+         *   0x3FF73D30 } WiFi MAC -- the SAME block as this kernel's transmit
+         *   0x3FF73D38 } config (0x3FF73D1C / 0x3FF73D20) and the status
+         *   0x3FF73D40 } registers traced in UM-NATOS-034 §19-§20
+         *   0x3FF441C4   GPIO
+         *   0x3FF5D040   BT baseband
+         *
+         * Three of the eight are WiFi MAC transmit-block registers. A function
+         * named for Bluetooth coexistence turns out to configure the very block
+         * this investigation has been staring at, which is why it was worth
+         * transcribing rather than dismissing by its name.
+         *
+         * Order preserved exactly as disassembled. Every step is a read, a
+         * mask, and a write back.
+         */
+        volatile uint32_t *A = (volatile uint32_t *)0x3FF5C080u;
+        volatile uint32_t *B = (volatile uint32_t *)0x3FF710D0u;
+        volatile uint32_t *C = (volatile uint32_t *)0x3FF71300u;
+        volatile uint32_t *D = (volatile uint32_t *)0x3FF73D30u;
+        volatile uint32_t *E = (volatile uint32_t *)0x3FF73D38u;
+        volatile uint32_t *F = (volatile uint32_t *)0x3FF73D40u;
+        volatile uint32_t *G = (volatile uint32_t *)0x3FF441C4u;
+        volatile uint32_t *H = (volatile uint32_t *)0x3FF5D040u;
+
+        uart_puts("   before: D=");
+        uart_put_hex(*D);
+        uart_puts(" E=");
+        uart_put_hex(*E);
+        uart_puts(" F=");
+        uart_put_hex(*F);
+        uart_puts("\n");
+
+        *A = *A & 0xFFFFFF3Fu;                       /* clear bits 6,7        */
+        *B = *B & 0xFFFFFF0Fu;                       /* clear bits 4..7       */
+        *C = *C & 0xFFFFFF0Fu;                       /* clear bits 4..7       */
+        *D = *D | 1u;                                /* set bit 0             */
+        *D = (*D & 0xF0FFFFFFu) | 0x01000000u;       /* field 27:24 := 1      */
+        *D = (*D & 0xFF0FFFFFu) | 0x00400000u;       /* field 23:20 := 4      */
+        *E = (*E & 0x0000FFFFu) | 0x0C800000u;       /* high half := 0x0C80   */
+        *E = (*E & 0xFFFF0000u) | 10u;               /* low half  := 10       */
+        *F = (*F & 0xFFFFFFC7u) | 16u;               /* field 5:3 := 2        */
+        *G = *G | 64u;                               /* set bit 6             */
+        *B = *B | 1u;                                /* set bit 0             */
+        *C = *C | 1u;                                /* set bit 0             */
+        *H = *H & 0x7FFFFFFFu;                       /* clear bit 31          */
+
+        uart_puts("   after : D=");
+        uart_put_hex(*D);
+        uart_puts(" E=");
+        uart_put_hex(*E);
+        uart_puts(" F=");
+        uart_put_hex(*F);
+        uart_puts("\n   coex_bt_high_prio sequence applied\n");
+    }
     else if (str_eq(line, "txwatch")) {
         /* Ask the MAC, rather than ourselves, whether a frame went out.
          *
