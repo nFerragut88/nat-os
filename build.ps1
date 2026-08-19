@@ -102,7 +102,12 @@ $blobFiles = @("phyinit.c", "wifimac.c", "wifi_osi_impl.c")
 
 foreach ($src in (Get-ChildItem "$root\kernel" -Include *.c,*.S -Recurse)) {
     if ((-not $WiFi) -and ($blobFiles -contains $src.Name)) { continue }
-    $obj = Join-Path $build ($src.BaseName + ".o")
+    # Full name, not BaseName. A kernel with both appcpu.c and appcpu.S would
+    # otherwise compile both to appcpu.o, the second silently overwriting the
+    # first, and the only symptom is an undefined-reference at link time for
+    # symbols whose source file is plainly sitting in the tree. Cost one build
+    # to diagnose.
+    $obj = Join-Path $build ($src.Name + ".o")
     Write-Host ("  {0}" -f $src.Name)
     & $gcc @cflags -c $src.FullName -o $obj
     if ($LASTEXITCODE -ne 0) { throw "compile failed: $($src.Name)" }

@@ -1,7 +1,7 @@
 # UM-NATOS-034 — The Second Receiver
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 2.8 · 2026-08-19 · Status: **The analog bus is visible** — §27 captures 5,095 regi2c transactions of the PHY's RF calibration; the comparison needs nat-os's APP CPU started — §22 fixes a real 9.5 dB TX-power defect that is not the cause; §24 verifies the descriptor layout; §25 finds the last candidate was never in the archive this report named, transcribes it in 251 bytes with no new blob, and eliminates it too
+Revision 2.9 · 2026-08-19 · Status: **Every comparable layer measured and matching** — §28 starts nat-os's APP CPU, captures its analog programming, and finds all eight blocks present with comparable traffic; what remains needs an SDR — §22 fixes a real 9.5 dB TX-power defect that is not the cause; §24 verifies the descriptor layout; §25 finds the last candidate was never in the archive this report named, transcribes it in 251 bytes with no new blob, and eliminates it too
 
 ---
 
@@ -2148,3 +2148,129 @@ The pattern is worth naming because it is not carelessness — each aim was
 *plausible*. The defence is not to be more careful; it is to make the instrument
 cover the whole of the region the argument names, and to treat a narrow aim as a
 claim that needs its own justification.
+
+---
+
+## 28. Both analog traces, and a signal that was not one
+
+**Added revision 2.9, 2026-08-19.** §27 captured the reference board's analog
+programming and said the comparison needed nat-os's APP CPU started. It is
+started, and the comparison exists.
+
+### 28.1 Core 1, as an instrument
+
+`kernel/appcpu.S` and `kernel/appcpu.c`. nat-os remains a single-core kernel;
+core 1 gets no scheduler, no interrupts, no heap and no locks. It reads five
+peripheral words into an array and stops.
+
+The whole class of multicore bug is avoided by construction rather than by
+locking: core 1 writes only its own capture arrays, core 0 reads them and writes
+only the arm flag, and internal SRAM on the ESP32 is not cached so there is no
+coherency question. If core 1 wedges, core 0 is unaffected — they share no
+control flow.
+
+It worked first attempt:
+
+```
+core 1 released from stall and reset
+alive word : 0xc0dea11e   CORE 1 REACHED C
+spins      : 3838661      and it is EXECUTING
+```
+
+and `mem`, `stacks` and every task were unchanged afterwards.
+
+**One build defect found on the way.** `build.ps1` named object files by
+`BaseName`, so `appcpu.c` and `appcpu.S` both compiled to `appcpu.o` and the
+second silently overwrote the first. The only symptom is an undefined-reference
+at link time for symbols whose source file is plainly present. Now named by full
+filename.
+
+### 28.2 The comparison
+
+| block | ESP-IDF | nat-os | ratio |
+|---|---|---|---|
+| `0x62` | 3007 | 2287 | 0.76 |
+| `0x63` | 861 | 857 | 1.00 |
+| `0x64` | 707 | 635 | 0.90 |
+| `0x66` | 56 | 16 | 0.29 |
+| `0x67` | 157 | 54 | 0.34 |
+| `0x68` | 21 | 12 | 0.57 |
+| `0x6a` | 45 | 36 | 0.80 |
+| `0x6b` | 241 | 179 | 0.74 |
+
+**No block is programmed by one side and not the other.** Volumes are broadly
+comparable, in a band from 0.29 to 1.00. `0x66` is the BBPLL and is *expected*
+to differ — that is `kernel/clock.c`'s PLL bring-up against ESP-IDF's, and §22
+already established both arrive at 80 MHz.
+
+nat-os's PHY takes 220.7 ms against the reference's 55.4 ms, consistent with a
+80 MHz core doing the same work as a 240 MHz one.
+
+So the analog programming is equivalent too, as far as this instrument can see.
+
+### 28.3 The signal that was not one, and how close it came
+
+The first nat-os capture reported **4,099 transactions taken and only 3,454
+parseable** — 645 lines corrupted. Against that data the table above read very
+differently:
+
+```
+0x6b   241 -> 8     ratio 0.03
+0x67   157 -> 15    ratio 0.10
+0x6a    45 -> 7     ratio 0.16
+```
+
+Three blocks at a tenth or a thirtieth of the reference. And there was an
+argument ready for why sampling could not explain it: nat-os's PHY runs 4×
+longer while its sampler is only 2.9× slower, so it should catch a *larger*
+fraction, not a smaller one. That reasoning is sound, and it was pointing at
+noise.
+
+A clean re-capture — 4,076 taken, 4,076 parsed — put those same blocks at 0.74,
+0.34 and 0.80. **The dramatic shortfall was entirely an artefact of the lossy
+capture.**
+
+Worse, and worth recording precisely: a fix was written for the loss (hold
+`console_lock` across the dump, as `regdump` already does) and **it failed to
+apply** — the edit's second assertion threw before the file was written. The
+clean run happened with the unchanged binary. So the interleaving diagnosis is
+*plausible and unverified*, and the clean data cannot be credited to it.
+
+The lock is now in place because the hazard is real. It is commented as
+precautionary rather than as a fix, because that is what it is.
+
+### 28.4 Where this leaves the investigation
+
+Every layer that can be compared has been, and matches:
+
+| layer | verdict |
+|---|---|
+| MAC transmit state machine | same sequence (§20) |
+| MAC / PHY / baseband registers | 2,048 registers, one difference, matched (§26) |
+| `register_chipv7_phy` arguments | identical after fixing a 9.5 dB TX-power defect (§22) |
+| TX descriptor layout | bit-for-bit `lldesc_t` (§24.1) |
+| OS adapter table | complete (§24.6) |
+| **analog programming over regi2c** | **all eight blocks, comparable volumes (§28)** |
+
+And a proven receiver 30 cm away, configured to report frames that fail their
+checksum, hears nothing (§21, §24.2).
+
+There is no longer a layer in this system that has been argued about but not
+measured. That is worth something on its own, and it is not the same as knowing
+the answer.
+
+### 28.5 What would actually decide it now
+
+**An SDR.** Every instrument in this report is an ESP32 looking at an ESP32.
+Not one of them can answer the question the whole investigation rests on —
+*does any RF energy leave this board at all* — and each negative has been
+consistent with both "transmits nothing" and "transmits something no ESP32 can
+receive".
+
+A ~£25 receiver answers it in one look. If energy appears, the fault is in
+modulation or framing and everything above becomes searchable again. If none
+does, the fault is in the transmit chain past the point any register or
+transaction reveals, and that is where this stops being a software problem.
+
+Recommending it is not a retreat. It is the first instrument proposed here that
+is not a variation on the one that has now returned six negatives.

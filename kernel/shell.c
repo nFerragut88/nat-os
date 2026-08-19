@@ -2104,6 +2104,107 @@ static void execute(char *line)
         uart_put_hex(wifimac_txpwr_get());
         uart_puts("\n");
     }
+    else if (str_eq(line, "phycap")) {
+        /* Capture the PHY's analog programming, with core 1 watching.
+         *
+         * UM-NATOS-034 §27 captured 5,095 regi2c transactions on the reference
+         * board and could not capture nat-os's, because register_chipv7_phy()
+         * is synchronous and a single-core kernel has nobody left to sample.
+         * appcpu.c starts core 1 for exactly this and nothing else.
+         *
+         * Output format is byte-identical to tools/idf_ref's, so one parser
+         * reads both.
+         *
+         * ---- the rate difference, stated before the result ------------------
+         *
+         * The reference runs at 240 MHz, nat-os at 80. Five words is ~140
+         * cycles either way, so the sampling period is ~0.6 us there and
+         * ~1.75 us here, against transactions observed ~1 us apart. **nat-os
+         * will miss more than the reference does.**
+         *
+         * So a transaction-for-transaction diff is not available and is not
+         * what this is for. What survives the rate difference is which analog
+         * BLOCKS get programmed at all, and roughly how much traffic each
+         * receives -- and if the reference programs a block nat-os never
+         * touches, no sampling rate hides that.
+         */
+        if (appcpu_start() == 0) {
+            uart_puts("   core 1 started\n");
+            for (volatile uint32_t d = 0; d < 400000u; d++) {
+            }
+        }
+        if (appcpu_alive() != 0xC0DEA11Eu) {
+            uart_puts("   core 1 did not arrive; refusing to report a capture\n");
+            uart_puts("   that nothing was taking.\n");
+        } else {
+            appcpu_arm(1);
+            int rc = phyinit_run();
+            appcpu_arm(0);
+
+            uint32_t n = appcpu_cap_count();
+            /* console_lock across the dump, for the reason regdump gives: the
+             * reporter emits two kilobytes every 200 ms and this dump runs for
+             * minutes.
+             *
+             * PRECAUTIONARY, not a proven fix. One capture came back 4,099
+             * taken and 3,454 parseable; the next came back 4,076 and 4,076
+             * with this code NOT yet applied. So interleaving is a plausible
+             * explanation for the first and is not a demonstrated one, and the
+             * lock is here because the hazard is real rather than because it
+             * was shown to be the cause. */
+            console_lock();
+            uart_puts("   phyinit_run returned ");
+            uart_put_dec((unsigned int)rc);
+            uart_puts("\n");
+            uart_puts("I2CCAP tag=natos n=");
+            uart_put_dec(n);
+            uart_puts("\n");
+            uint32_t t0 = n ? appcpu_cap_ts(0) : 0u;
+            for (uint32_t i = 0; i < n; i++) {
+                uint32_t v = appcpu_cap_val(i);
+                uart_puts("I2C ");
+                uart_put_dec(i);
+                uart_puts(" ");
+                uart_put_dec(appcpu_cap_ts(i) - t0);
+                uart_puts(" ");
+                uart_put_hex(v);
+                uart_puts(" ");
+                uart_put_hex(v & 0xFFu);
+                uart_puts(" ");
+                uart_put_hex((v >> 8) & 0xFFu);
+                uart_puts(" ");
+                uart_put_hex((v >> 16) & 0xFFu);
+                uart_puts("\n");
+            }
+            uart_puts("I2CCAPEND\n");
+            console_unlock();
+        }
+    }
+    else if (str_eq(line, "appcpu")) {
+        /* Step one: is core 1 alive at all?
+         *
+         * Deliberately separate from the capture. Starting a second core on a
+         * kernel that has never had one is the risky half; sampling a
+         * peripheral word is the easy half. Proving the first works before
+         * building on it means a failure has one candidate cause instead of
+         * two. */
+        int rc = appcpu_start();
+        uart_puts(rc == 1 ? "   core 1 was already running\n"
+                          : "   core 1 released from stall and reset\n");
+        for (volatile uint32_t d = 0; d < 400000u; d++) {
+        }
+        uint32_t a = appcpu_alive();
+        uart_puts("   alive word : ");
+        uart_put_hex(a);
+        uart_puts(a == 0xC0DEA11Eu ? "   CORE 1 REACHED C\n" : "   no arrival\n");
+        uint32_t s1 = appcpu_spins();
+        for (volatile uint32_t d = 0; d < 400000u; d++) {
+        }
+        uint32_t s2 = appcpu_spins();
+        uart_puts("   spins      : ");
+        uart_put_dec(s2 - s1);
+        uart_puts(s2 > s1 ? "   and it is EXECUTING\n" : "   not advancing\n");
+    }
     else if (str_eq(line, "phyi2c")) {
         /* Does register_chipv7_phy touch the regi2c host at all?
          *
