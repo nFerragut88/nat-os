@@ -11,3 +11,7 @@ __pycache__/
 *~
 Thumbs.db
 desktop.ini
+
+# working files from serial captures
+/ztrack*.log
+/fb-*.png
