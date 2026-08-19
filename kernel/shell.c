@@ -30,6 +30,7 @@
 #include "xtensa.h"
 #include "vmarg.h"
 #include "gpio.h"      /* GPIO_REG, for spidump */
+#include "spi3.h"
 #include "device.h"
 #include "term.h"
 
@@ -1612,6 +1613,82 @@ static void execute(char *line)
         uart_puts(" rejects=");
         uart_put_dec(vmarg_rejects());
         uart_puts(vmarg_rejects() ? "\n" : "  <- ZERO REJECTS, the test is inert\n");
+    }
+    else if (str_eq(line, "spi3")) {
+        /* Bring up SPI3, with no radio attached and nothing wired.
+         *
+         * Phase 0 of the Ark idea is "two boards, an SX1262, one packet", and
+         * the temptation is to write the radio driver first and find out
+         * everything at once. That is how M2 cost nine build cycles: bring up
+         * four uncertain things together and a black screen tells you nothing
+         * about which one is wrong.
+         *
+         * So the peripheral goes first, alone, and it is verified without a
+         * radio at all. The GPIO matrix can tie a peripheral input to a
+         * constant, which gives two tests that drive no pin:
+         *
+         *   MISO tied high -> every byte back must be 0xFF
+         *   MISO tied low  -> every byte back must be 0x00
+         *
+         * BOTH have to pass. Either alone is worthless: a driver that never
+         * reads anything returns a constant and would sail through whichever
+         * test happened to expect that constant. This is the "one counter that
+         * must be non-zero beside one that must be zero" shape, applied to a
+         * bus.
+         *
+         * The pattern sent is 5A A5 00 FF 12 34 56 78, chosen so that a driver
+         * handing back its own transmit buffer fails both halves rather than
+         * accidentally matching.
+         *
+         *   spi3            the two constant tests
+         *   spi3 loop [pin] additionally loop MOSI back into MISO on one pad
+         *
+         * The loopback is the first test that proves a bit actually left the
+         * chip. It needs a pin it is safe to drive; 27 is broken out on this
+         * board and claimed by nothing in the kernel. */
+        spi3_init();
+
+        int hi = spi3_selftest_const(1);
+        int lo = spi3_selftest_const(0);
+
+        uart_puts("   MISO tied high -> ");
+        uart_puts(hi ? "0xFF as expected  PASS\n" : "WRONG  FAIL\n");
+        uart_puts("   MISO tied low  -> ");
+        uart_puts(lo ? "0x00 as expected  PASS\n" : "WRONG  FAIL\n");
+
+        if (hi && lo) {
+            uart_puts("   peripheral, clock gate, W registers and capture path\n"
+                      "   all live. Nothing has left the chip yet.\n");
+        } else {
+            uart_puts("   SPI3 is not reading. Everything below is meaningless\n"
+                      "   until this passes.\n");
+        }
+
+        if (str_eq(arg, "loop") || (*arg && !str_eq(arg, "loop"))) {
+            char *cpin = arg;
+            if (str_eq(cpin, "loop")) {
+                cpin = split(cpin);
+            }
+            int pin = *cpin ? parse_int(cpin) : 27;
+            if (pin < 0) {
+                uart_puts("   usage: spi3 loop [pin]\n");
+            } else {
+                int ok = spi3_selftest_loopback((uint8_t)pin);
+                uart_puts("   loopback on GPIO");
+                uart_put_dec((unsigned int)pin);
+                uart_puts(ok ? " -> pattern returned intact  PASS\n"
+                             : " -> pattern did NOT return  FAIL\n");
+                if (ok) {
+                    uart_puts("   a byte left the chip and came back. The bus works.\n");
+                }
+            }
+        }
+
+        uart_puts("   transfers=");
+        uart_put_dec(spi3_transfers());
+        uart_puts(" timeouts=");
+        uart_put_dec(spi3_timeouts());
+        uart_puts("\n");
     }
     else if (str_eq(line, "spidump")) {
         /* Read the SPI2 configuration back off the chip.
