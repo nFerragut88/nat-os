@@ -779,7 +779,7 @@ same job.
 Fixed, both slots now written. Receive unaffected. **Transmit unchanged:**
 `frames addressed to us=0`, three times, with an active peer 30 cm away.
 
-### 15.4 The handoff
+### 15.4 The handoff, and what has since been struck off it
 
 Nineteen registers, each with an address and a value, where a working
 transmitter holds something and this one holds nothing:
@@ -804,4 +804,47 @@ the PHY block the dump does not reach, or in a ROM call neither side exposes.
 
 `tools/idf_ref`, `reg_diff.py` and `wifireg` make any future attempt cheap. The
 next person should start from §15.4 and should not start from a theory.
+
+---
+
+## 16. The 0x3FF73Cxx block, eliminated
+
+`0x3FF73C40` was singled out in §15.4 as the one pointer-shaped value nobody had
+chased: `01e839e0` in a working transmitter, zero here.
+
+Written, and it held — reading back `0x01e839e0`, so the write was real and not
+silently rejected. Receive unaffected at 359 frames. **Transmit unchanged:**
+`frames addressed to us=0`, three times, active peer 30 cm away.
+
+Then the rest of the block, since `0x3FF73C40`–`C78` reads like one functional
+unit and a bisect was available if it worked:
+
+| register | was | set to |
+|---|---|---|
+| `3ff73c44` | `078482bf` | `0404001f` |
+| `3ff73c54` | `00000000` | `00000404` |
+| `3ff73c5c` | `0fff0fff` | `ffff0fff` |
+| `3ff73c6c` | `a5000c24` | `a5802d24` |
+| `3ff73c78` | `00000000` | `00000003` |
+
+Receive fine at 950 frames. Transmit still silent. **The block is eliminated.**
+
+### 16.1 One register refused the write
+
+`0x3FF73C68` was written with `00000000` and read back `40110011`. It is
+hardware-driven or read-only, which is worth knowing: a difference at a register
+software cannot set is not a difference software failed to set. At least one
+entry on the §15.4 list was never actionable, and there may be others — a check
+worth running before anyone spends time on the remainder.
+
+### 16.2 The count
+
+Across this report: the framing hypothesis, CCA, EDCA, `lmacInit`, `lmacInitAc`,
+the power domain, the MAC address (twice, two different slots), the DMA pointer
+pairs, and now the whole `0x3FF73Cxx` block. Every one cheap, every one
+eliminating something, none radiating.
+
+That is the evidence for §15.4's conclusion rather than an argument against it:
+**there is still no sign the answer is in the register set.** The next person
+should read §15.4 before poking anything, and should probably not poke anything.
 
