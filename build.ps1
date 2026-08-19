@@ -13,7 +13,15 @@ param(
     [switch]$Flash,
     [switch]$Monitor,
     [string]$Port = "COM5",
-    [string]$Vendor            # bootloader/partition source; defaults to vendor/
+    [string]$Vendor,           # bootloader/partition source; defaults to vendor/
+
+    # Which board this image is for. Selects a pin map and a set of fitted
+    # peripherals from kernel/board_<name>.h.
+    #
+    #   cyd      ESP32-2432S028R, the display board everything was measured on
+    #   lora32   an ESP32 + SX1262 relay node -- PIN MAP NOT YET VERIFIED
+    [ValidateSet("cyd", "lora32")]
+    [string]$Board = "cyd"
 )
 
 $ErrorActionPreference = "Stop"
@@ -54,8 +62,11 @@ $cflags = @(
     # which, inside memcpy itself, is silent infinite recursion. See kstring.c.
     "-fno-tree-loop-distribute-patterns",
     "-Os", "-Wall", "-Wextra", "-std=c11",
-    "-I", "$root\kernel"
+    "-I", "$root\kernel",
+    "-DBOARD_$($Board.ToUpper())"
 )
+
+Write-Host "== board: $Board ==" -ForegroundColor Cyan
 
 # Bytecode is assembled on the host: the VM on the device is a pure interpreter
 # and carries no assembler. Generated headers are build products, not sources.

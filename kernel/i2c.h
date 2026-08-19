@@ -45,9 +45,10 @@
 #define NATOS_I2C_H
 
 #include <stdint.h>
+#include "board.h"
 
-#define I2C_PIN_SDA  22u
-#define I2C_PIN_SCL  27u
+#define I2C_PIN_SDA  BOARD_I2C_SDA
+#define I2C_PIN_SCL  BOARD_I2C_SCL
 
 void i2c_init(void);
 

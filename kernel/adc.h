@@ -37,8 +37,9 @@
 #define NATOS_ADC_H
 
 #include <stdint.h>
+#include "board.h"
 
-#define ADC1_CH_LDR   6u        /* GPIO34, if the board is what it is said to be */
+#define ADC1_CH_LDR   BOARD_LDR_ADC_CH   /* GPIO34 on the CYD */
 #define ADC_INVALID   0xFFFFFFFFu
 
 /* Attenuation, which sets the input range. 11 dB is the widest the part offers

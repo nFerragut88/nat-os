@@ -1,16 +1,20 @@
 /* nat-os — ILI9341 driver. See display.h for the pin map and the reasoning. */
 
 #include "display.h"
+#include "board.h"
 #include "gpio.h"
 #include "mutex.h"
 #include "task.h"
 #include "xtensa.h"
 
-#define PIN_MOSI 13u
-#define PIN_SCLK 14u
-#define PIN_CS   15u
-#define PIN_DC    2u
-#define PIN_BL   21u
+/* Pin numbers come from board.h. The local names stay so the driver body reads
+ * the same as it always did -- only their source moved. */
+#define PIN_MISO BOARD_TFT_MISO
+#define PIN_MOSI BOARD_TFT_MOSI
+#define PIN_SCLK BOARD_TFT_SCLK
+#define PIN_CS   BOARD_TFT_CS
+#define PIN_DC   BOARD_TFT_DC
+#define PIN_BL   BOARD_TFT_BL
 
 /* Derived in UM-NATOS-008 §5.2 from the measured tick rate. Only used for the
  * panel's reset and sleep-out delays, where being wrong by a factor of three
@@ -490,8 +494,8 @@ static void spi2_init(void)
     GPIO_REG(DPORT_PERIP_CLK_EN) |= DPORT_SPI2_BIT;
     GPIO_REG(DPORT_PERIP_RST_EN) &= ~DPORT_SPI2_BIT;
 
-    GPIO_REG(IO_MUX_GPIO14) = IO_MUX_HSPI_FUNC;   /* SCLK */
-    GPIO_REG(IO_MUX_GPIO13) = IO_MUX_HSPI_FUNC;   /* MOSI */
+    GPIO_REG(gpio_io_mux(PIN_SCLK)) = IO_MUX_HSPI_FUNC;   /* SCLK */
+    GPIO_REG(gpio_io_mux(PIN_MOSI)) = IO_MUX_HSPI_FUNC;   /* MOSI */
 
     GPIO_REG(SPI2_SLAVE) = 0;                     /* master                   */
     GPIO_REG(SPI2_PIN)   = 0x7u;                  /* peripheral drives no CS  */
@@ -639,7 +643,7 @@ void display_panel_read_pull(uint8_t cmd, uint8_t *out, uint32_t n, int pull)
     }
 
     GPIO_REG(SPI2_CLOCK)    = SPI2_CLKDIV_READ;
-    GPIO_REG(IO_MUX_GPIO12) = pad;
+    GPIO_REG(gpio_io_mux(PIN_MISO)) = pad;
 
     /* Command phase: D/CX low, write only. */
     gpio_clear(PIN_DC);
@@ -673,7 +677,7 @@ void display_panel_read_pull(uint8_t cmd, uint8_t *out, uint32_t n, int pull)
 
     /* Restore the pad BEFORE anything else can go wrong, and unconditionally.
      * This clears any pull applied above; see the strapping note. */
-    GPIO_REG(IO_MUX_GPIO12) = IO_MUX_HSPI_IN_FUNC;
+    GPIO_REG(gpio_io_mux(PIN_MISO)) = IO_MUX_HSPI_IN_FUNC;
 
     GPIO_REG(SPI2_USER)  = saved_user;
     GPIO_REG(SPI2_CLOCK) = saved_clk;
@@ -834,14 +838,14 @@ int display_init(void)
 {
     mutex_init(&g_lock);
 
-    gpio_out_init(PIN_MOSI, IO_MUX_GPIO13);
-    gpio_out_init(PIN_SCLK, IO_MUX_GPIO14);
+    gpio_out_init(PIN_MOSI);
+    gpio_out_init(PIN_SCLK);
 #if DISPLAY_USE_SPI2
     spi2_init();                        /* re-routes SCLK and MOSI to HSPI */
 #endif
-    gpio_out_init(PIN_CS,   IO_MUX_GPIO15);
-    gpio_out_init(PIN_DC,   IO_MUX_GPIO2);
-    gpio_out_init(PIN_BL,   IO_MUX_GPIO21);
+    gpio_out_init(PIN_CS);
+    gpio_out_init(PIN_DC);
+    gpio_out_init(PIN_BL);
 
     gpio_set(PIN_CS);                   /* idle high */
     gpio_clear(PIN_SCLK);               /* mode 0 idles low */

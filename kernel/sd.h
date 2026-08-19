@@ -37,11 +37,12 @@
 #define NATOS_SD_H
 
 #include <stdint.h>
+#include "board.h"
 
-#define SD_PIN_CS    5u
-#define SD_PIN_SCK  18u
-#define SD_PIN_MISO 19u
-#define SD_PIN_MOSI 23u
+#define SD_PIN_CS   BOARD_SD_CS
+#define SD_PIN_SCK  BOARD_SD_SCK
+#define SD_PIN_MISO BOARD_SD_MISO
+#define SD_PIN_MOSI BOARD_SD_MOSI
 
 #define SD_BLOCK_SIZE 512u
 

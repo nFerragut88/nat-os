@@ -64,7 +64,7 @@ void audio_click(void);
 
 /* Bit-bangs a full-swing square wave on any pin, for finding the one the
  * board's SPEAK connector is actually wired to. See audio.c. */
-void audio_square(uint32_t pin, uint32_t mux, uint32_t hz, uint32_t ms);
+void audio_square(uint32_t pin, uint32_t hz, uint32_t ms);
 void audio_find_speaker(void);
 
 /* Proves the square-wave generator works, using a pin the board can measure.
@@ -73,7 +73,7 @@ void audio_probe_square(void);
 
 /* A long, warbling, 3 kHz square wave on one pin — built to be findable by ear
  * rather than merely present. See audio.c. */
-void audio_hold(uint32_t pin, uint32_t mux, uint32_t seconds);
+void audio_hold(uint32_t pin, uint32_t seconds);
 
 void audio_dump(void);          /* LEDC state, including its clock gate */
 

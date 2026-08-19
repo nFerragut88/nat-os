@@ -8,8 +8,6 @@
  * io_mux_reg.h rather than recalled — FUN_PU is BIT(8), FUN_IE is BIT(9), and
  * an afternoon went into learning that this file's kind of constant is not
  * something to remember (UM-NATOS-023 §5.1, UM-NATOS-024 §4). */
-#define IO_MUX_GPIO22   0x3FF49080u
-#define IO_MUX_GPIO27   0x3FF4902Cu
 #define FUN_PU          (1u << 8)
 #define FUN_IE          (1u << 9)
 #define MCU_SEL_GPIO    (2u << 12)
@@ -75,7 +73,7 @@ static int scl_release_and_wait(void)
     return I2C_ETIMEOUT;
 }
 
-static void pad_init(uint32_t pin, uint32_t mux_reg)
+static void pad_init(uint32_t pin)
 {
     /* Output register holds zero permanently; only the enable is toggled. */
     if (pin < 32u) {
@@ -88,13 +86,13 @@ static void pad_init(uint32_t pin, uint32_t mux_reg)
      * incoming data, and for clock stretching. An open-drain pin whose input
      * buffer is off reads a constant zero, which would look like every device
      * ACKing everything. */
-    GPIO_REG(mux_reg) = MCU_SEL_GPIO | FUN_IE | FUN_PU;
+    GPIO_REG(gpio_io_mux(pin)) = MCU_SEL_GPIO | FUN_IE | FUN_PU;
 }
 
 void i2c_init(void)
 {
-    pad_init(I2C_PIN_SDA, IO_MUX_GPIO22);
-    pad_init(I2C_PIN_SCL, IO_MUX_GPIO27);
+    pad_init(I2C_PIN_SDA);
+    pad_init(I2C_PIN_SCL);
     line_release(I2C_PIN_SDA);
     line_release(I2C_PIN_SCL);
     half_bit();

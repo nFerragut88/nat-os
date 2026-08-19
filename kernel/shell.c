@@ -31,6 +31,7 @@
 #include "vmarg.h"
 #include "gpio.h"      /* GPIO_REG, for spidump */
 #include "spi3.h"
+#include "board.h"
 #include "device.h"
 #include "term.h"
 
@@ -429,16 +430,15 @@ static void execute(char *line)
     else if (str_eq(line, "audio")) { audio_dump(); }
     else if (str_eq(line, "spkhold")) {
         int pin = parse_int(arg);
-        uint32_t mux = 0x3FF49028u;             /* gpio26 */
-        if (pin == 25) { mux = 0x3FF49024u; }
-        else if (pin == 4) { mux = 0x3FF49048u; }
-        else if (pin == 16) { mux = 0x3FF4904Cu; }
-        else if (pin == 17) { mux = 0x3FF49050u; }
-        else if (pin != 26) { pin = 26; }
+        /* This used to carry its own pin-to-IO_MUX chain -- a THIRD copy of the
+         * same table, after audio.c's and the per-driver constants. All gone;
+         * gpio_io_mux() derives it, and a pin it does not know is refused
+         * rather than silently turned into GPIO26. */
+        if (pin < 0 || !gpio_io_mux((uint32_t)pin)) { pin = 26; }
         uart_puts("   warbling on gpio ");
         uart_put_dec((unsigned int)pin);
         uart_puts(" for 15 s - put the speaker to your ear\n");
-        audio_hold((uint32_t)pin, mux, 15u);
+        audio_hold((uint32_t)pin, 15u);
         uart_puts("   done\n");
     }
     else if (str_eq(line, "beep")) {
@@ -1665,13 +1665,33 @@ static void execute(char *line)
         }
 
         if (str_eq(arg, "loop") || (*arg && !str_eq(arg, "loop"))) {
+            /* Split BEFORE comparing. `arg` is the whole tail, so for
+             * "spi3 loop 27" it is "loop 27" -- comparing that against
+             * "loop" fails, cpin never advanced, and parse_int() got a
+             * word instead of a number. The guard below then never ran
+             * and the usage line printed instead, which looked like the
+             * pin had been rejected when it had merely been misread. */
             char *cpin = arg;
+            char *rest = split(cpin);
             if (str_eq(cpin, "loop")) {
-                cpin = split(cpin);
+                cpin = rest;
             }
-            int pin = *cpin ? parse_int(cpin) : 27;
-            if (pin < 0) {
+            int pin = *cpin ? parse_int(cpin) : (int)BOARD_SPARE_PIN;
+            if (pin < 0 || pin > 39) {
                 uart_puts("   usage: spi3 loop [pin]\n");
+            } else if (board_pin_claimed((uint32_t)pin)) {
+                /* Refuse rather than drive it. This defaulted to 27,
+                 * which is I2C SCL on this board -- the loopback left
+                 * SCL driven by the SPI peripheral, `i2c` then reported
+                 * "bus is NOT sane", and it looked exactly like a
+                 * regression from the board refactor landing in the
+                 * same hour. The board header knows what is spoken
+                 * for, so ask it instead of picking and finding out. */
+                uart_puts("   GPIO");
+                uart_put_dec((unsigned int)pin);
+                uart_puts(" is claimed by this board (");
+                uart_puts(board_pin_owner((uint32_t)pin));
+                uart_puts("). Driving it would break that.\n");
             } else {
                 int ok = spi3_selftest_loopback((uint8_t)pin);
                 uart_puts("   loopback on GPIO");

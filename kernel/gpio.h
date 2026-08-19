@@ -117,12 +117,77 @@
 
 #define GPIO_REG(a) (*(volatile uint32_t *)(a))
 
+/* ---- pin to IO_MUX register ---------------------------------------------
+ *
+ * The IO_MUX registers are NOT ordered by pin number. GPIO25 is at +0x24 and
+ * GPIO26 at +0x28, but GPIO18 is at +0x70 and GPIO36 at +0x04. There is no
+ * arithmetic that gets you from one to the other, which is why every driver in
+ * this kernel used to carry the address as a second argument beside the pin.
+ *
+ * That pairing was a latent bug waiting for a board change. `gpio_out_init(pin,
+ * mux)` has no way to notice that the two arguments describe different pins, so
+ * moving a pin in a board header and forgetting its address would configure the
+ * WRONG PAD -- and the symptom is a dead signal with every register reporting
+ * exactly what was written to it. This kernel has already lost a day to that
+ * shape of fault twice (UM-NATOS-030, UM-NATOS-033).
+ *
+ * Deriving the address from the pin makes the mistake unexpressable. Every
+ * constant this replaced -- some thirty of them across gpio.h, i2c.c, sd.c,
+ * audio.c and spi3.c -- was cross-checked against this table and all agreed.
+ *
+ * Returns 0 for a pin that does not exist. 28-31 are absent on the ESP32.
+ */
+#define IO_MUX_BASE 0x3FF49000u
+
+static inline uint32_t gpio_io_mux(uint32_t pin)
+{
+    switch (pin) {
+    case 0u: return IO_MUX_BASE + 0x44u;
+    case 1u: return IO_MUX_BASE + 0x88u;
+    case 2u: return IO_MUX_BASE + 0x40u;
+    case 3u: return IO_MUX_BASE + 0x84u;
+    case 4u: return IO_MUX_BASE + 0x48u;
+    case 5u: return IO_MUX_BASE + 0x6Cu;
+    case 6u: return IO_MUX_BASE + 0x60u;
+    case 7u: return IO_MUX_BASE + 0x64u;
+    case 8u: return IO_MUX_BASE + 0x68u;
+    case 9u: return IO_MUX_BASE + 0x54u;
+    case 10u: return IO_MUX_BASE + 0x58u;
+    case 11u: return IO_MUX_BASE + 0x5Cu;
+    case 12u: return IO_MUX_BASE + 0x34u;
+    case 13u: return IO_MUX_BASE + 0x38u;
+    case 14u: return IO_MUX_BASE + 0x30u;
+    case 15u: return IO_MUX_BASE + 0x3Cu;
+    case 16u: return IO_MUX_BASE + 0x4Cu;
+    case 17u: return IO_MUX_BASE + 0x50u;
+    case 18u: return IO_MUX_BASE + 0x70u;
+    case 19u: return IO_MUX_BASE + 0x74u;
+    case 20u: return IO_MUX_BASE + 0x78u;
+    case 21u: return IO_MUX_BASE + 0x7Cu;
+    case 22u: return IO_MUX_BASE + 0x80u;
+    case 23u: return IO_MUX_BASE + 0x8Cu;
+    case 24u: return IO_MUX_BASE + 0x90u;
+    case 25u: return IO_MUX_BASE + 0x24u;
+    case 26u: return IO_MUX_BASE + 0x28u;
+    case 27u: return IO_MUX_BASE + 0x2Cu;
+    case 32u: return IO_MUX_BASE + 0x1Cu;
+    case 33u: return IO_MUX_BASE + 0x20u;
+    case 34u: return IO_MUX_BASE + 0x14u;
+    case 35u: return IO_MUX_BASE + 0x18u;
+    case 36u: return IO_MUX_BASE + 0x04u;
+    case 37u: return IO_MUX_BASE + 0x08u;
+    case 38u: return IO_MUX_BASE + 0x0Cu;
+    case 39u: return IO_MUX_BASE + 0x10u;
+    default: return 0u;          /* refuse rather than compute a plausible one */
+    }
+}
+
 /* Every accessor below picks its bank from the pin number, so a caller never
  * has to know the split exists. */
 
-static inline void gpio_out_init(uint32_t pin, uint32_t io_mux_reg)
+static inline void gpio_out_init(uint32_t pin)
 {
-    GPIO_REG(io_mux_reg)             = IO_MUX_GPIO_FUNC;
+    GPIO_REG(gpio_io_mux(pin))       = IO_MUX_GPIO_FUNC;
     GPIO_REG(GPIO_FUNC_OUT_SEL(pin)) = SIG_GPIO_OUT_IDX;
     if (pin < 32u) {
         GPIO_REG(GPIO_ENABLE_W1TS_REG)  = 1u << pin;
@@ -131,9 +196,9 @@ static inline void gpio_out_init(uint32_t pin, uint32_t io_mux_reg)
     }
 }
 
-static inline void gpio_in_init(uint32_t pin, uint32_t io_mux_reg)
+static inline void gpio_in_init(uint32_t pin)
 {
-    GPIO_REG(io_mux_reg) = IO_MUX_GPIO_IN;
+    GPIO_REG(gpio_io_mux(pin)) = IO_MUX_GPIO_IN;
     if (pin < 32u) {
         GPIO_REG(GPIO_ENABLE_W1TC_REG)  = 1u << pin;
     } else {

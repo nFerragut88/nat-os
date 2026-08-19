@@ -23,10 +23,6 @@
  * Cross-checking against gpio.h confirms the indexing but NOT this entry: GPIO2
  * at 0x40, GPIO12 at 0x34, GPIO14 at 0x30 and GPIO21 at 0x7C are all below the
  * UART pads, so every one of them agreed with the wrong answer. */
-#define IO_MUX_GPIO5   0x3FF4906Cu
-#define IO_MUX_GPIO18  0x3FF49070u
-#define IO_MUX_GPIO19  0x3FF49074u
-#define IO_MUX_GPIO23  0x3FF4908Cu
 
 /* Half a bit period. Cards must accept 400 kHz or slower until initialisation
  * completes, and many refuse to identify at full speed — so the clock is slow
@@ -160,10 +156,10 @@ int sd_init(void)
     g_type    = SD_TYPE_NONE;
     g_half_us = CLK_SLOW_US;
 
-    gpio_out_init(SD_PIN_CS,   IO_MUX_GPIO5);
-    gpio_out_init(SD_PIN_SCK,  IO_MUX_GPIO18);
-    gpio_out_init(SD_PIN_MOSI, IO_MUX_GPIO23);
-    gpio_in_init (SD_PIN_MISO, IO_MUX_GPIO19);
+    gpio_out_init(SD_PIN_CS);
+    gpio_out_init(SD_PIN_SCK);
+    gpio_out_init(SD_PIN_MOSI);
+    gpio_in_init(SD_PIN_MISO);
 
     gpio_set(SD_PIN_CS);
     gpio_clear(SD_PIN_SCK);

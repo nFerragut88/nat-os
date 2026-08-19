@@ -1,6 +1,7 @@
 /* nat-os — tones on GPIO26. See audio.h. */
 
 #include "audio.h"
+#include "board.h"
 #include "timer.h"
 #include "gpio.h"
 #include "xtensa.h"
@@ -54,8 +55,7 @@
 
 #define LEDC_HS_SIG_OUT0    71u         /* GPIO matrix signal index */
 
-#define SPK_PIN         26u
-#define SPK_MUX_REG     0x3FF49028u
+#define SPK_PIN         BOARD_SPK
 
 /* 10-bit period: deep enough that 50% duty is exactly 50%, shallow enough that
  * the divider stays inside 18 bits down to about 80 Hz. */
@@ -115,7 +115,7 @@ void audio_init(void)
     /* Pad to plain GPIO output, then route LEDC channel 0 onto it through the
      * GPIO matrix. Both layers must agree or the pin stays idle — the rule
      * gpio.h opens with, and the one this file broke. */
-    gpio_out_init(SPK_PIN, SPK_MUX_REG);
+    gpio_out_init(SPK_PIN);
     GPIO_REG(GPIO_FUNC_OUT_SEL(SPK_PIN)) = LEDC_HS_SIG_OUT0;
 
     REG(LEDC_CONF_REG) = 1u;            /* high-speed domain runs from APB */
@@ -202,22 +202,16 @@ void audio_click(void)
  * Kept because each answers a question that would otherwise be asked again.
  */
 static const uint32_t SPK_PINS[] = { 26u, 25u, 4u, 16u, 17u, 0u, 22u, 27u };
-static const uint32_t SPK_MUX[]  = {
-    0x3FF49028u,    /* 26 — the speaker on this board                       */
-    0x3FF49024u,    /* 25 — DAC1, and this kernel's touch clock             */
-    0x3FF49048u,    /* 4  — RGB LED red                                     */
-    0x3FF4904Cu,    /* 16 — RGB LED green                                   */
-    0x3FF49050u,    /* 17 — RGB LED blue                                    */
-    0x3FF49044u,    /* 0  — strapping pin, safe to toggle after boot        */
-    0x3FF49080u,    /* 22 — i2c SDA                                         */
-    0x3FF4902Cu,    /* 27 — i2c SCL                                         */
-};
+/* SPK_MUX[] used to sit here: eight IO_MUX addresses hand-matched to the eight
+ * pins above, existing only because there was no way to derive one from the
+ * other. gpio_io_mux() is that way, so the table and every chance of the two
+ * lists drifting apart are both gone. */
 #define SPK_COUNT (sizeof SPK_PINS / sizeof SPK_PINS[0])
 
-void audio_square(uint32_t pin, uint32_t mux, uint32_t hz, uint32_t ms)
+void audio_square(uint32_t pin, uint32_t hz, uint32_t ms)
 {
     release_dac_pad(pin);
-    gpio_out_init(pin, mux);
+    gpio_out_init(pin);
 
     uint32_t half = 40000000u / (hz ? hz : 1000u);
     uint32_t end  = xt_ccount() + ms * 80000u;
@@ -246,7 +240,7 @@ void audio_find_speaker(void)
         uart_puts("     gpio ");
         uart_put_dec(SPK_PINS[i]);
         uart_puts(" ...\n");
-        audio_square(SPK_PINS[i], SPK_MUX[i], 1000u, 900u);
+        audio_square(SPK_PINS[i], 1000u, 900u);
         uint32_t g = xt_ccount() + 40000000u;
         while ((int32_t)(xt_ccount() - g) < 0) {
         }
@@ -259,10 +253,10 @@ void audio_find_speaker(void)
 
 /* Warbling, 3 kHz, and long. A steady tone at the edge of hearing vanishes into
  * the noise floor; an alternating one does not, which is why alarms warble. */
-void audio_hold(uint32_t pin, uint32_t mux, uint32_t seconds)
+void audio_hold(uint32_t pin, uint32_t seconds)
 {
     release_dac_pad(pin);
-    gpio_out_init(pin, mux);
+    gpio_out_init(pin);
 
     uint32_t end  = xt_ccount() + seconds * 80000000u;
     uint32_t hz   = 3000u;
@@ -302,14 +296,14 @@ void audio_hold(uint32_t pin, uint32_t mux, uint32_t seconds)
 void audio_probe_square(void)
 {
     uint32_t before = g_toggles;
-    audio_square(32u, 0x3FF4901Cu, 1000u, 200u);
+    audio_square(32u, 1000u, 200u);
     uint32_t edges = g_toggles - before;
 
     uart_puts("   edges produced = ");
     uart_put_dec(edges);
     uart_puts("  expected ~400\n");
 
-    gpio_out_init(32u, 0x3FF4901Cu);
+    gpio_out_init(32u);
     gpio_set(32u);
     uint32_t hi = adc1_read_avg(4u, 4u);
     gpio_clear(32u);

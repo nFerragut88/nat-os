@@ -1,6 +1,7 @@
 /* nat-os — XPT2046 touchscreen. See touch.h for the pin map and rationale. */
 
 #include "touch.h"
+#include "board.h"
 #include "display.h"
 #include "gpio.h"
 #include "xtensa.h"
@@ -8,11 +9,11 @@
 #include "task.h"
 #include "critical.h"
 
-#define PIN_CLK   25u
-#define PIN_MOSI  32u
-#define PIN_MISO  39u
-#define PIN_CS    33u
-#define PIN_IRQ   36u
+#define PIN_CLK   BOARD_TOUCH_CLK
+#define PIN_MOSI  BOARD_TOUCH_MOSI
+#define PIN_MISO  BOARD_TOUCH_MISO
+#define PIN_CS    BOARD_TOUCH_CS
+#define PIN_IRQ   BOARD_TOUCH_IRQ
 
 /* Control bytes. Bit 7 starts a conversion; bits 6:4 select the channel; bit 3
  * clear selects 12-bit; bit 2 clear selects differential mode, which cancels
@@ -262,11 +263,11 @@ static uint32_t convert(uint8_t cmd)
 
 void touch_init(void)
 {
-    gpio_out_init(PIN_CLK,  IO_MUX_GPIO25);
-    gpio_out_init(PIN_MOSI, IO_MUX_GPIO32);
-    gpio_out_init(PIN_CS,   IO_MUX_GPIO33);
-    gpio_in_init(PIN_MISO,  IO_MUX_GPIO39);
-    gpio_in_init(PIN_IRQ,   IO_MUX_GPIO36);
+    gpio_out_init(PIN_CLK);
+    gpio_out_init(PIN_MOSI);
+    gpio_out_init(PIN_CS);
+    gpio_in_init(PIN_MISO);
+    gpio_in_init(PIN_IRQ);
 
     gpio_set(PIN_CS);           /* idle high */
     gpio_clear(PIN_CLK);        /* mode 0 idles low */
