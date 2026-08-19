@@ -313,6 +313,7 @@ static uint8_t  g_src[SRC_MAX][6];
 static uint32_t g_src_n[SRC_MAX];
 static uint32_t g_src_count;
 static uint32_t g_frames;
+static uint32_t g_bad_fcs;
 
 static void sniff(void *buf, wifi_promiscuous_pkt_type_t type)
 {
@@ -322,6 +323,14 @@ static void sniff(void *buf, wifi_promiscuous_pkt_type_t type)
         return;
     }
     g_frames++;
+    /* rx_state != 0 means the hardware flagged a problem with this frame --
+     * most usefully an FCS failure. Counted separately, because "malformed
+     * transmission" and "no transmission at all" are the two possibilities
+     * UM-NATOS-034 exists to tell apart, and until the FCSFAIL filter below was
+     * opened this receiver could not see the difference. */
+    if (p->rx_ctrl.rx_state != 0) {
+        g_bad_fcs++;
+    }
 
     /* addr2 -- the transmitter. Bytes 10..15 of an 802.11 header. */
     const uint8_t *a2 = p->payload + 10;
@@ -341,8 +350,8 @@ static void sniff(void *buf, wifi_promiscuous_pkt_type_t type)
 
 static void link_report(void)
 {
-    printf("LINK frames=%u sources=%u\n",
-           (unsigned)g_frames, (unsigned)g_src_count);
+    printf("LINK frames=%u sources=%u badfcs=%u\n",
+           (unsigned)g_frames, (unsigned)g_src_count, (unsigned)g_bad_fcs);
     for (uint32_t i = 0; i < g_src_count; i++) {
         printf("LINKSRC %02x:%02x:%02x:%02x:%02x:%02x %u\n",
                g_src[i][0], g_src[i][1], g_src[i][2],
@@ -391,6 +400,30 @@ void app_main(void)
 #endif
 
     ESP_ERROR_CHECK(esp_wifi_set_promiscuous_rx_cb(sniff));
+
+    /* Accept EVERYTHING, including frames that fail their FCS.
+     *
+     * WIFI_PROMIS_FILTER_MASK_FCSFAIL is documented "do not open it in
+     * general", and it is off by default -- so until this line existed, this
+     * receiver silently discarded every frame that arrived corrupt.
+     *
+     * That is not a detail. UM-NATOS-034 §1 states the entire reason the second
+     * receiver was built:
+     *
+     *     An AP that ignores a malformed frame looks exactly like a radio that
+     *     never transmitted.
+     *
+     * A promiscuous receiver with default filtering has that same blindness,
+     * and §21 used one. "nat-os heard 0 times" could therefore have meant
+     * "nat-os radiates nothing" OR "nat-os radiates something malformed" --
+     * completely different faults, in completely different places.
+     *
+     * With this open, the two are distinguishable. */
+    wifi_promiscuous_filter_t filt = { .filter_mask = WIFI_PROMIS_FILTER_MASK_ALL };
+    ESP_ERROR_CHECK(esp_wifi_set_promiscuous_filter(&filt));
+    wifi_promiscuous_filter_t cfilt = { .filter_mask = WIFI_PROMIS_CTRL_FILTER_MASK_ALL };
+    ESP_ERROR_CHECK(esp_wifi_set_promiscuous_ctrl_filter(&cfilt));
+
     ESP_ERROR_CHECK(esp_wifi_set_promiscuous(true));
     ESP_ERROR_CHECK(esp_wifi_set_channel(REF_CHANNEL, WIFI_SECOND_CHAN_NONE));
 

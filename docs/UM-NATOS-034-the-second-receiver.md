@@ -1,7 +1,7 @@
 # UM-NATOS-034 — The Second Receiver
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 2.4 · 2026-08-19 · Status: **Search exhausted within the blobs this project has** — §22 finds and fixes a real 9.5 dB TX-power defect that is not the cause; §23 eliminates the last free candidate by reading it; what remains needs a third vendor archive
+Revision 2.5 · 2026-08-19 · Status: **Search exhausted within the blobs this project has** — §22 fixes a real 9.5 dB TX-power defect that is not the cause; §23 eliminates the last free candidate by reading it; §24 checks the Open-MAC community findings, clears the descriptor layout, and closes an FCS blind spot in §21
 
 ---
 
@@ -1594,3 +1594,137 @@ pursue a capability the SX1262 provides with no blob at all.
 That is not a technical dead end — `libcoexist.a` is obtainable. It is a
 decision about what nat-os is, and §17 and `docs/blob-free.md` have both already
 argued which way it goes.
+
+---
+
+## 24. Open-MAC community intelligence, checked
+
+**Added revision 2.5, 2026-08-19.** Findings from the `ESP32-MAC-Reversing`
+community, supplied by the project owner, checked against this codebase.
+
+### 24.1 The `ebuf` / `lldesc` layout — already correct, and now proven
+
+The headline item: Espressif published internal buffer headers in
+`esp-extconn/priv_include/target/esp32/if_ebuf.h`, removing the need for blind
+structure-padding analysis.
+
+This mattered because nat-os's TX descriptor was reconstructed by guesswork, and
+a wrong descriptor would explain **every observation in this investigation** — a
+MAC that runs its full transmit state machine (§20) while nothing demodulable
+reaches the air (§21), because the DMA engine fetched from a garbage pointer.
+
+It is not wrong. Compiled with the target toolchain and read out of `.rodata`,
+one field at a time:
+
+| nat-os field | resulting word | ESP-IDF `LLDESC_*_MASK` |
+|---|---|---|
+| `owner` | `0x80000000` | `OWNER 0x80000000` |
+| `has_data` | `0x40000000` | `EOF 0x40000000` |
+| `_unknown` | `0x3F000000` | `offset:5` + `SOSF 0x20000000` |
+| `length` | `0x00FFF000` | `LENGTH 0x00fff000` |
+| `size` | `0x00000FFF` | bits 0–11 |
+
+`sizeof` 12, `packet` at offset 4, `next` at offset 8 — identical to `lldesc_t`
+on all three. The `__attribute__((packed))` collapses the two `uint16_t`
+bitfields into a single 32-bit word, which is exactly what the hardware expects.
+
+A negative, but a useful one: this was the strongest remaining hypothesis and it
+is now eliminated by measurement rather than left standing as an assumption.
+
+*Method note:* the first pass at this reasoned that `uint16_t length : 12`
+could not begin at bit 12 of a 16-bit storage unit and therefore had to spill,
+making every subsequent field wrong. That reasoning was plausible and false.
+Compiling it settled the question in one command.
+
+### 24.2 What the report made visible: §21 had a blind spot
+
+Not one of the community's findings, but found while chasing them — and it
+undermines a conclusion this report published three sections ago.
+
+`tools/idf_ref` used ESP-IDF promiscuous mode with default filtering.
+`WIFI_PROMIS_FILTER_MASK_FCSFAIL` is documented *"do not open it in general"*
+and is **off by default** — so the receiver in §21 silently discarded every
+frame that arrived corrupt.
+
+That is precisely the ambiguity §1 says this whole line of work exists to
+remove:
+
+> An AP that ignores a malformed frame looks exactly like a radio that never
+> transmitted.
+
+A promiscuous receiver with default filtering has the same blindness. §21's
+"nat-os heard 0 times" was therefore consistent with two entirely different
+faults: nothing radiating, or something malformed radiating.
+
+The filter is now open — `WIFI_PROMIS_FILTER_MASK_ALL` plus
+`WIFI_PROMIS_CTRL_FILTER_MASK_ALL` — and corrupt frames are counted separately
+through `rx_ctrl.rx_state`.
+
+### 24.3 A broken detector, caught — the third this session
+
+The first run with the filter open reported bad-FCS frames rising from 625 to
+832 while nat-os transmitted, and concluded *"something IS radiating and is
+malformed."*
+
+**That was wrong.** Those are cumulative counters read at two different times;
+the second window is simply later. It is the frame-count-delta detector
+`wifi_sweep.py` was retired for, rebuilt from scratch.
+
+Re-run as alternating windows, differencing the counter per window and
+comparing *rates*:
+
+```
+   window        all frames/s   bad-FCS/s
+   silent  1         0.59        0.59
+   transmit1         0.66        0.66
+   silent  2         2.22        1.78
+   transmit2         2.43        1.89
+   silent  3        29.15       24.05
+   transmit3        27.40       22.94
+
+   mean bad-FCS/s  silent=8.81  transmitting=8.50  delta=-0.31
+   spread (pstdev) across all windows = 10.51
+```
+
+The ambient corrupt-frame rate varies by a factor of forty on its own. The
+transmitting mean is *lower* than the silent mean, and both are buried inside
+the spread. **No separation.**
+
+### 24.4 What this leaves
+
+§21's conclusion stands, and is now stronger than when it was written:
+
+> A working receiver 30 cm away, explicitly configured to report frames that
+> fail their checksum, records no rise in corrupt frames while nat-os
+> transmits continuously.
+
+Not merely "nothing demodulable" — **nothing at all, including malformed frames
+the receiver was configured to catch.**
+
+Stated limit: the ambient bad-FCS rate here swings between 0.6/s and 24/s, so a
+very low rate of corrupt transmissions could hide inside it. Six windows
+excludes a signal comparable to ambient, not a weak one.
+
+### 24.5 Community findings not yet used
+
+Recorded so the next session does not re-derive them:
+
+- **Ghidra function discovery** — search for the byte pattern `36 x1 01`, then
+  key `d` then `f`. That is the Xtensa `entry` prologue, and it finds function
+  boundaries Ghidra's auto-analysis misses in the blobs. Applicable if `libpp`
+  is ever disassembled further.
+- **Analyse the `.a` archives, not the linked golden binary** — the archives
+  retain inline strings and compiler annotations that the link discards.
+- **OS adapter table hooking** for ISR-context callbacks. Relevant to a standing
+  nat-os defect: `ositest` reports `osi vtable checks = 0x2e, INCOMPLETE (want
+  0x3F)` — two of six checks fail. nat-os's transmit path writes registers
+  directly and does not go through the table, so this is unlikely to be the
+  transmit fault, but it is a known-incomplete interface.
+- **`PLCP0` = `tx_config`** in the community's naming. nat-os treats these as
+  two registers four bytes apart (`0x3FF73D1C` and `0x3FF73D20`), both writable
+  and both written. Worth settling which convention is right if the register map
+  is revisited.
+- **`HT-SIG` and the gap at `0x3FF74260`/`0x3FF74264`.** nat-os writes PLCP1,
+  PLCP2 and DURATION but nothing between PLCP2 and DURATION. Those two words are
+  HT-only in the community's map and nat-os transmits at non-HT rates, so this
+  is expected — but it has not been confirmed.
