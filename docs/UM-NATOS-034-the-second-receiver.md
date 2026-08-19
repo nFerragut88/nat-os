@@ -1,7 +1,7 @@
 # UM-NATOS-034 — The Second Receiver
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 2.3 · 2026-08-19 · Status: **Bounded, measured, arguments exhausted** — §22 finds nat-os was asking for 10 dBm where ESP-IDF asks for 19.5, fixes it, and it still does not transmit
+Revision 2.4 · 2026-08-19 · Status: **Search exhausted within the blobs this project has** — §22 finds and fixes a real 9.5 dB TX-power defect that is not the cause; §23 eliminates the last free candidate by reading it; what remains needs a third vendor archive
 
 ---
 
@@ -1525,3 +1525,72 @@ archives this project has. It is called unconditionally on ESP32 by every
 working stack.
 
 That is a short list, and it is the last of the bounded ones.
+
+---
+
+## 23. `phy_update_wifi_mac_time` — eliminated by reading it
+
+**Added revision 2.4, 2026-08-19.**
+
+§22.5 left two candidates in the sequence around `register_chipv7_phy`. This is
+the first, and it is eliminated without running anything.
+
+It is not a blob symbol. It is `static inline` in ESP-IDF's own
+`esp_phy/src/phy_init.c`, so the source is simply there to read:
+
+```c
+static inline void phy_update_wifi_mac_time(bool en_clock_stopped, int64_t now)
+{
+    static uint32_t s_common_clock_disable_time = 0;
+
+    if (en_clock_stopped) {
+        s_common_clock_disable_time = (uint32_t)now;
+    } else {
+        if (s_common_clock_disable_time) {
+            uint32_t diff = (uint64_t)now - s_common_clock_disable_time;
+            if (s_wifi_mac_time_update_cb) {
+                s_wifi_mac_time_update_cb(diff);
+            }
+            s_common_clock_disable_time = 0;
+        }
+    }
+}
+```
+
+On the enable path `en_clock_stopped` is `false`, so it takes the `else`. The
+guard is `s_common_clock_disable_time`, a static initialised to zero, **and the
+only assignment to it is from the `en_clock_stopped == true` branch — which is
+reached only from `esp_phy_disable()`.**
+
+nat-os enables the PHY once at boot and never disables it. So on nat-os's path
+that static is permanently zero, the body never executes, and the call is a
+no-op. Were it somehow to execute, it would invoke
+`s_wifi_mac_time_update_cb`, a callback nat-os has never registered. A double
+no-op.
+
+**What it is actually for:** compensating the WiFi MAC's notion of time across a
+clock-disable/enable cycle — light sleep, or an explicit
+`esp_phy_disable()`/`esp_phy_enable()` pair. It exists to close a gap that only
+opens when the radio has been powered down and brought back. nat-os has never
+powered it down, so there is no gap.
+
+Eliminated by proof rather than by experiment, which is the cheaper and the
+stronger of the two. Nothing was implemented, because implementing it would have
+meant writing a function that provably does nothing.
+
+### 23.1 The list is now one item long
+
+| candidate | status |
+|---|---|
+| the three arguments | **exhausted** (§22) — one real defect found, fixed, not the cause |
+| clock ungate `0x3c9` | identical |
+| `phy_update_wifi_mac_time` | **no-op on this path** (§23) |
+| `coex_bt_high_prio()` | called unconditionally on ESP32 by every working stack; lives in `libcoexist.a`, which this project does not have |
+
+Everything bounded and available has been checked. What remains needs a third
+Espressif archive, added to a project whose direction has been removing them, to
+pursue a capability the SX1262 provides with no blob at all.
+
+That is not a technical dead end — `libcoexist.a` is obtainable. It is a
+decision about what nat-os is, and §17 and `docs/blob-free.md` have both already
+argued which way it goes.

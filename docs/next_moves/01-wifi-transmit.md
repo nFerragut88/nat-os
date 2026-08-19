@@ -105,6 +105,29 @@
 > §20.4 states the strategic alternative plainly: the SX1262 has no PHY blob, a
 > published register map, and the hardware is ordered.
 
+> **UPDATE 2026-08-19 (final for this session) — see UM-NATOS-034 §22-§23.**
+> The PHY argument list is exhausted. One real defect found: nat-os's init-data
+> TX-power table held `40,40,40,40,40,40`, the LOW BOUND of ESP-IDF's
+> `LIMIT(CONFIG_ESP_PHY_MAX_TX_POWER*4, 40, 78)` macro copied instead of
+> evaluated -- 10.0 dBm asked for where the reference asks 19.5. Fixed, along
+> with the unset `cal_data->mac`. **Still does not transmit**, which was
+> expected: 10 mW is audible across a room.
+>
+> `phy_update_wifi_mac_time()` is eliminated by reading it -- a `static inline`
+> in ESP-IDF's own source whose guard is only ever set from `esp_phy_disable()`.
+> nat-os never disables the PHY, so it is a no-op on this path. Nothing to
+> implement.
+>
+> **One candidate remains: `coex_bt_high_prio()`**, called unconditionally on
+> ESP32 by every working stack right after PHY init. It is in `libcoexist.a` --
+> a THIRD Espressif archive this project does not have. Not a missed symbol; one
+> that is not there to link.
+>
+> So the remaining step is not technical, it is a decision: add a third vendor
+> binary to a project whose direction has been removing them, for a capability
+> the SX1262 gives with no blob at all. §17 and `docs/blob-free.md` both already
+> argue which way that goes.
+
 **Size:** large. **Risk:** real — may cost the working receive path.
 **Blocked on:** willingness to accept a link change.
 
