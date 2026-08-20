@@ -512,6 +512,42 @@ void app_main(void)
     vTaskDelay(pdMS_TO_TICKS(50));
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+
+    /* ---- reference config dump, for nat-os to diff against ----------------
+     *
+     * nat-os hand-builds this struct because it has no sdkconfig, and
+     * esp_wifi_init_internal rejects it with ESP_ERR_INVALID_ARG. Nineteen
+     * fields remain unbisected and every guess so far has been wrong, so the
+     * cheaper move is to read the answer off a board where the macro expands
+     * against a real configuration.
+     *
+     * Printed as raw words as well as named fields: the named list checks the
+     * VALUES, the raw list also checks the LAYOUT. nat-os's copy of this
+     * struct is hand-transcribed, and the OS adapter table has already been
+     * caught being laid out differently than believed. */
+    printf("REFCFG-BEGIN sizeof=%u\n", (unsigned)sizeof(cfg));
+    {
+        const uint32_t *w = (const uint32_t *)&cfg;
+        for (unsigned i = 0; i < sizeof(cfg) / 4u; i++) {
+            printf("REFCFG-RAW %3u 0x%08x\n", i * 4u, (unsigned)w[i]);
+        }
+    }
+#define RC(f) printf("REFCFG %-24s off=%3u val=%d\n", #f,                      (unsigned)((char *)&cfg.f - (char *)&cfg), (int)cfg.f)
+    RC(static_rx_buf_num);   RC(dynamic_rx_buf_num);  RC(tx_buf_type);
+    RC(static_tx_buf_num);   RC(dynamic_tx_buf_num);  RC(rx_mgmt_buf_type);
+    RC(rx_mgmt_buf_num);     RC(cache_tx_buf_num);    RC(csi_enable);
+    RC(ampdu_rx_enable);     RC(ampdu_tx_enable);     RC(amsdu_tx_enable);
+    RC(nvs_enable);          RC(nano_enable);         RC(rx_ba_win);
+    RC(wifi_task_core_id);   RC(beacon_max_len);      RC(mgmt_sbuf_num);
+    RC(sta_disconnected_pm); RC(espnow_max_encrypt_num);
+#undef RC
+    printf("REFCFG feature_caps       off=%3u val=0x%08x%08x\n",
+           (unsigned)((char *)&cfg.feature_caps - (char *)&cfg),
+           (unsigned)(cfg.feature_caps >> 32), (unsigned)(cfg.feature_caps & 0xFFFFFFFFu));
+    printf("REFCFG magic              off=%3u val=0x%08x\n",
+           (unsigned)((char *)&cfg.magic - (char *)&cfg), (unsigned)cfg.magic);
+    printf("REFCFG-END\n");
+
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
 

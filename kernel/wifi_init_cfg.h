@@ -24,11 +24,19 @@
 
 typedef struct {
     wifi_osi_funcs_t*      osi_funcs;              /**< WiFi OS functions */
-    /* wpa_crypto_funcs_t by VALUE, 30 members x 4 = 120 bytes. Kept as an
-     * opaque block: nat-os supplies no crypto, so only its SIZE matters to
-     * the layout of everything after it. size/version are written by hand
-     * at offsets 0 and 4 -- see wifi_init_cfg.c. */
-    uint8_t                wpa_crypto_funcs[120];
+    /* wpa_crypto_funcs_t by VALUE. **116 bytes, 29 members** -- NOT 120.
+     *
+     * It was 120 here, counted by hand off the header, and that one extra word
+     * shifted every following field by 4 and padded sizeof to 224 instead of
+     * 216. The driver then read `magic` at offset 208, where this struct had
+     * sta_disconnected_pm, saw 0, and returned ESP_ERR_INVALID_ARG -- with no
+     * indication which argument was invalid.
+     *
+     * Only the SIZE matters (nat-os supplies no crypto), which is exactly why
+     * getting it wrong was invisible: every value was right and every one was
+     * in the wrong place. Confirmed against a board running real ESP-IDF,
+     * which prints offsets rather than being asked to agree with a guess. */
+    uint8_t                wpa_crypto_funcs[116];
     int                    static_rx_buf_num;      /**< WiFi static RX buffer number */
     int                    dynamic_rx_buf_num;     /**< WiFi dynamic RX buffer number */
     int                    tx_buf_type;            /**< WiFi TX buffer type */

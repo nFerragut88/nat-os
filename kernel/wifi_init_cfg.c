@@ -92,8 +92,10 @@ const void *wifi_init_cfg(void)
     g_cfg.wifi_task_core_id      = 0;
     g_cfg.beacon_max_len         = 752;
     g_cfg.mgmt_sbuf_num          = 32;
-    g_cfg.feature_caps           = 0;
-    g_cfg.sta_disconnected_pm    = false;
+    /* 0xa1 = WPA3_SAE | GMAC | ENTERPRISE, read off the reference board.
+     * Zero was a guess that the driver would treat "no features" as valid. */
+    g_cfg.feature_caps           = 0xa1u;
+    g_cfg.sta_disconnected_pm    = true;    /* reference value */
     g_cfg.espnow_max_encrypt_num = 7;
 
     /* Last field, and the blob checks it. */

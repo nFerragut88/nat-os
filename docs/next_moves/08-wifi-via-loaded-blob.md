@@ -1380,3 +1380,60 @@ build and a boot, and the 14-call sequence is the control: a config the driver
 accepts should change the sequence, not merely the return code.
 
 **Nothing has been on air.**
+
+### Step 10 — the reference board answers it in one measurement
+
+Nineteen config fields remained unbisected and every hypothesis had been wrong.
+Instead of continuing, `tools/idf_ref` — real ESP-IDF on COM6 — was made to
+print its own `wifi_init_config_t`, offsets and all, and the two were compared.
+
+```
+reference: sizeof=216   static_rx_buf_num off=120   feature_caps off=192   magic off=208
+nat-os:    sizeof=224   static_rx_buf_num off=124   feature_caps off=200   magic off=216
+```
+
+**Not a value — a layout.** Every field from `static_rx_buf_num` onward sat 4
+bytes late, and `sizeof` was 224 against 216.
+
+The cause: `wpa_crypto_funcs` is embedded by value and was reserved as **120
+bytes**, counted by hand off the header. It is **116** — 29 members, not 30.
+One extra word shifted everything after it and added 4 bytes of tail padding.
+
+So the driver read `magic` at offset 208, where nat-os's struct held
+`sta_disconnected_pm` — value 0 — and returned `ESP_ERR_INVALID_ARG` without
+saying which argument. **Every value in the struct was correct and every one
+was in the wrong place.** That is precisely why it was invisible: nothing about
+the values could be wrong, so the values kept getting checked.
+
+Two values were also wrong, and the reference named them without being asked:
+`feature_caps` is `0xa1` (WPA3_SAE | GMAC | ENTERPRISE), not 0; and
+`sta_disconnected_pm` is 1.
+
+### The result
+
+```
+config    216 bytes, magic 0x1f2f3f4f
+init      returned 0x00000101      <- NO_MEM: self-locating again
+osi       11 of 118 adapter entries were called
+```
+
+`INVALID_ARG` -> `NO_MEM` is the important part. The driver stopped rejecting
+the argument and went back to asking for resources, which is an error that
+names its own fix. The sequence grew from 14 calls to 18:
+
+```
+... -> _spin_lock_create -> _recursive_mutex_create -> _malloc_internal(60)
+-> _task_get_max_priority -> _wifi_create_queue -> _free -> _spin_lock_delete -> ...
+```
+
+**`_wifi_create_queue` is the next requirement.**
+
+### The lesson, which the project already had written down
+
+UM-NATOS-034 brought in a second board rather than reasoning about what the
+first should be doing, and §12.2 recorded that reaching for the heavy method
+and letting its constraints rule out the approach was the error. The same shape
+repeated here: a disassembly that could not be trusted, nineteen fields of
+guessing, and a board on the desk that could simply be asked.
+
+**Nothing has been on air.**
