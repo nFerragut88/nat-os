@@ -875,3 +875,52 @@ the dispatch function between the two builds, looking for a register that is
 live across `phy_stack_call` in one and not the other — `phy_stack_call` is
 hand-written assembly that saves `a0` and `a12`-`a15` but rewrites
 `WINDOWSTART` and does not restore it.
+
+### Step-7 hang: liveness analysis across the call — also identical
+
+Rather than eyeball the assembly, the values live across the call were tracked
+in both builds.
+
+**At all three `phy_stack_call` sites**, identical: `a2` live across (the
+return value) and `a14` at one site (callee-saved, which `phy_stack_call`
+preserves). **No ABI violation, no difference between builds.**
+
+**At all four `phyinit_run_at` sites**, the instruction sequence is identical
+once literal-pool offsets and branch targets are normalised away:
+
+```
+l32i a2, a12, 52          ; e->phy_init, correct offset
+call0 <phyinit_run_at>
+or   a12, a2, a2
+```
+
+*(Beware `lsi f5, a7, 28` style lines in the raw dump — objdump losing
+instruction sync and re-syncing at a different offset. nat-os contains no
+floating-point code. They are decode artifacts, not instructions.)*
+
+So: **same instructions, same registers, same liveness, same stack usage —
+only addresses differ.** Together with DRAM and IRAM being byte-identical
+between the builds, every software-visible difference has now been eliminated.
+
+### The one mechanism left standing
+
+The kernel's flash-mapped code sits at `0x400D0000`; the blob's is at
+`0x40300000`. They share one instruction cache. Moving `.flash.text` by ~200
+bytes changes which cache sets the kernel's code occupies, and therefore which
+of the blob's lines get evicted while `register_chipv7_phy` runs.
+
+Cache pressure normally costs *time*, not correctness — but
+`register_chipv7_phy` is **RF calibration**, and calibration loops wait on
+hardware convergence with cycle-counted bounds. A loop that is fetched more
+slowly can miss its window and never converge, which presents as exactly what
+is observed: a spin inside vendor code, no fault, no OS service requested,
+duration unbounded (40 s with the watchdog disarmed).
+
+This also fits the *band*: 22,892 and 23,112 work, 22,908 does not. Aliasing is
+periodic, so a narrow bad window between good ones is the expected shape,
+whereas no monotonic size effect ever appeared.
+
+**Untested.** The cheap probe is to relocate the blob — change `BLOB_IROM_ADDR`
+by one 64 KB page and rebuild — which shifts its cache footprint without
+touching a line of kernel code. If the hang moves to a different `.flash.text`
+band, the mechanism is confirmed.
