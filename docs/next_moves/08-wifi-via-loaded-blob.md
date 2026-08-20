@@ -1919,3 +1919,54 @@ dependency" — and this is the same failure with the instrument being the shell
 itself.
 
 **Nothing has been on air.**
+
+### Step 20 — the re-tests, and everything converging on one blocker
+
+With arguments actually reaching the commands:
+
+**`wifiinit task`** — the gate that never armed now does, and the collision
+reproduces immediately: `IllegalInstruction`. Step 13's finding was real, not
+an artifact. Two windowed contexts still corrupt each other.
+
+**`wifiinit nvs`** — `0x101`, unchanged. `nvs_enable` is now *legitimately*
+eliminated rather than eliminated by a command that never ran. It was moot in
+any case once the config stopped being rejected.
+
+### Where everything now points
+
+Four independent paths all end at the same place:
+
+| path | where it stops |
+|---|---|
+| `esp_wifi_init_internal` | `_task_create_pinned_to_core` — needs a task |
+| `wifiinit task` | task runs, two windowed contexts, `IllegalInstruction` |
+| `esp_wifi_80211_tx` | `ESP_ERR_WIFI_IF` — needs a started driver |
+| `esp_wifi_start` | needs init to have succeeded |
+
+There is exactly **one** blocker, and it is not a missing adapter entry, a
+config field, or a layout error — all of those are now either fixed or
+measured. It is that nat-os cannot host two contexts inside windowed code, and
+a driver that owns a task requires it.
+
+Five attempts at the fix have failed, all of them writing window state inside
+`_handler_level3`. The two best explanations for why have themselves been
+tested and eliminated. What remains is ISA behaviour that needs single-stepping
+to observe.
+
+### Honest summary of the route
+
+Everything that could be established from outside the chip has been:
+
+- the blob loads, maps into three windows, and verifies
+- the PHY initialises under nat-os's own bootloader, from a kernel containing
+  no Espressif code
+- the adapter table is correct, validated by the blob itself
+- driver init runs, allocates, and rolls back cleanly
+- **the transmit path executes and returns a specific, sensible error**
+
+What is left needs either a debug probe, or the acceptance that one windowed
+context at a time is the invariant this kernel holds — in which case a vendor
+driver with its own task is out of reach and `docs/blob-free.md`'s conclusion
+stands on engineering grounds rather than principle.
+
+**Nothing has been on air.**
