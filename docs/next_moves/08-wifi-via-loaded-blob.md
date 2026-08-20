@@ -824,3 +824,54 @@ protect an invariant that a mutex protects better.
 - None of this touches the step-7 hang, which remains unexplained.
 
 **Nothing has been on air.**
+
+### Step-7 hang: a second round of eliminations (symbol-position hypothesis)
+
+Hypothesis tested: *if a symbol belonging to the PHY stack, the OSI adapter, a
+blob entry point, a function-pointer table or a stack object moves by exactly
+`0x10`, that is the correlation.* Good hypothesis — 16 bytes is the gap between
+the working and hanging `.flash.text`, and Xtensa `entry` requires a 16-byte
+aligned stack pointer.
+
+**The failing band is narrow**, which is what made it worth testing:
+
+```
+.flash.text  22,892  works
+             22,908  HANGS
+             23,112  works
+             23,400  works
+```
+
+Both smaller *and* larger builds work. That is not a threshold, it is a band.
+
+**Full symbol diff between the two builds** — 965 symbols compared, 41 moved:
+
+```
+deltas: -240 (0xf0): 18 syms   -204 (0xcc): 17 syms
+        -208 (0xd0):  5 syms   -44  (0x2c):  1 sym
+```
+
+- **No symbol moved by exactly `0x10`.**
+- Everything that moved lives in `.flash.text` or `.flash.rodata`. DRAM and
+  IRAM symbols are **identical** between the builds, so `_phy_stack`, the task
+  stacks, `phy_stack_call`, `phyinit_run_at` and `blob.c` are all at the same
+  addresses in both. Those were already eliminated and stay eliminated.
+- In the named categories there was exactly one hit: **`g_osi`**, the OSI
+  function-pointer table, `0x3f4070f8 -> 0x3f407008` (-240). Same alignment in
+  both (≡8 mod 16).
+
+**`g_osi` tested and eliminated.** Forcing it to 64-byte alignment moves it to
+`0x3f407080` — a third address, differently aligned — and the build **still
+hangs**. Its position is not the trigger.
+
+So the surviving explanation is not a symbol address at all: the only remaining
+difference is the *generated code* for `shell.c`'s dispatch function, whose
+register allocation changes as branches are added to it. The call site itself
+is well formed — `l32i a2, a12, 52` loads `e->phy_init` at the correct offset
+and `call0 phyinit_run_at` follows.
+
+**Still not found.** The next measurement would be a full disassembly diff of
+the dispatch function between the two builds, looking for a register that is
+live across `phy_stack_call` in one and not the other — `phy_stack_call` is
+hand-written assembly that saves `a0` and `a12`-`a15` but rewrites
+`WINDOWSTART` and does not restore it.
