@@ -131,6 +131,16 @@ SECTIONS
    *   window.S              window-overflow handlers, reached from any vendor call
    *   appcpu.c              core 1 runs with no cache enabled at all
    *
+   * And one reason that is NOT "the cache is off", which is easy to miss
+   * because every other entry above is:
+   *
+   *   anything that could be scheduled DURING A FLASH ERASE. While the chip
+   *   is erasing it answers RDSR and little else -- it cannot serve a read,
+   *   cache or no cache. flash.c currently makes this safe by holding a
+   *   critical section across the whole 125 ms erase, so no other task runs
+   *   at all. If that critical section is ever narrowed, this list grows to
+   *   include every task that could run during one. See flash_erase_sector().
+   *
    * Getting that wrong hangs inside a fault handler with no output, which is
    * the worst failure this kernel can produce. The acceptance test is therefore
    * not "it boots" but "`fault` still prints a panic report".

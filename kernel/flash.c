@@ -262,6 +262,42 @@ int flash_erase_sector(uint32_t addr)
     }
     addr &= ~(FLASH_SECTOR - 1u);
 
+    /* ---- READ THIS BEFORE NARROWING THE CRITICAL SECTION -----------------
+     *
+     * This blocks for ~125 ms, measured (next_moves/04). Almost all of it is
+     * flash_wait_ready() spinning on the status register while the chip erases;
+     * the two SPI transactions above it are microseconds. Interrupts are masked
+     * for the whole of it, so nothing else in the system runs.
+     *
+     * The obvious fix is to leave the critical section during the wait, since
+     * polling a status register plainly does not require interrupts off. That
+     * fix is WRONG AS IT STANDS, and the reason is not in this file:
+     *
+     *     While WIP is set, an SPI NOR chip answers RDSR and little else. It
+     *     cannot serve a read. And since UM-NATOS-037, shell.c and kmain.c
+     *     EXECUTE FROM FLASH -- so letting the scheduler run during an erase
+     *     may enter a task whose instructions cannot be fetched.
+     *
+     * So this critical section is doing two jobs, and only one of them is
+     * obvious. It stops preemption, and by stopping preemption it stops
+     * flash-resident code from running while the chip is busy. Narrowing it
+     * without addressing the second job produces a hang whose cause is three
+     * files away from the change.
+     *
+     * Three ways out, none of them free, listed so the next person does not
+     * have to re-derive them:
+     *
+     *   1. Every task that could run during an erase becomes IRAM-resident.
+     *      Correct, and a much larger constraint than it sounds -- it means
+     *      auditing the whole task set, not just adding an attribute.
+     *   2. Erase-suspend, if this chip supports it. Flash id 0x00684016. Not
+     *      investigated, and chip-dependent, so it is a question rather than a
+     *      plan.
+     *   3. Do not erase while timing matters. Free, requires nothing here, and
+     *      is the recommendation in next_moves/04 -- but it needs a caller
+     *      willing to be told when it may write, which does not exist yet.
+     *
+     * Until one of those is done, 125 ms is the cost and it is a known one. */
     uint32_t crit = crit_enter();
     int rc = spi1_xfer(CMD_WREN, 0, 0, 0, 0, 0, 0);
     if (rc == 0) {
