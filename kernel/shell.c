@@ -8,6 +8,7 @@
 #include "panic.h"
 #include "blob.h"
 #include "wifi_osi_table.h"
+#include "wifi_init_cfg.h"
 #include "console.h"
 #include "app.h"
 #include "heap.h"
@@ -704,6 +705,54 @@ static void execute(char *line)
                                   : "   REJECTED - the blob did not like the table\n");
                 uart_puts("   run 'osiused' to see what it called.\n");
             }
+        }
+    }
+    else if (str_eq(line, "wifiinit")) {
+        /* next_moves/08. esp_wifi_init_internal() -- the step that installs
+         * the OS adapter table.
+         *
+         * The table is delivered through cfg->osi_funcs, NOT by
+         * wifi_osi_funcs_register(), which validates one but does not install
+         * it. That is why transmit kept faulting on a null pointer at offset
+         * 0x54 with a perfectly good table already registered.
+         *
+         * This is also the first call that should make the instrumented stubs
+         * fire. Run 'osiused' afterwards: whatever it names is what actually
+         * needs a real body, and whatever it does not name is work nobody has
+         * to do. */
+        const struct blob_entry *e = blob_map();
+        if (!e) {
+            uart_puts("   no valid image\n");
+        } else if (blob_init(e) != 0) {
+            uart_puts("   loader refused\n");
+        } else {
+            int prc = phyinit_run_at(e->phy_init);
+            uart_puts("   phyinit   rc=");
+            uart_put_dec((unsigned int)(prc < 0 ? -prc : prc));
+            uart_puts("\n   config    ");
+            uart_put_dec(wifi_init_cfg_size());
+            uart_puts(" bytes, magic 0x1f2f3f4f, osi_funcs -> ");
+            uart_put_hex((uint32_t)wifi_osi_table());
+            uart_puts("\n   calling esp_wifi_init_internal at ");
+            uart_put_hex(e->wifi_init);
+            uart_puts("\n");
+
+            uint32_t r = phy_stack_call(e->wifi_init,
+                                        (uint32_t)wifi_init_cfg(), 0u, 0u, 0u);
+            uart_puts("   init      returned ");
+            uart_put_hex(r);
+            uart_puts(r == 0u ? "  (ESP_OK)\n" : "  (an esp_err_t, not OK)\n");
+
+            uint32_t used = 0;
+            for (uint32_t i = 0; i < wifi_osi_entries(); i++) {
+                if (wifi_osi_calls(i)) { used++; }
+            }
+            uart_puts("   osi       ");
+            uart_put_dec(used);
+            uart_puts(" of ");
+            uart_put_dec(wifi_osi_entries());
+            uart_puts(" adapter entries were called\n");
+            uart_puts("   run 'osiused' for the list, in call order.\n");
         }
     }
     else if (str_eq(line, "dramtest")) {

@@ -543,3 +543,79 @@ the first thing that will exercise it — `osiused` should stop being empty and
 start naming the entries that need real bodies.
 
 **Nothing has been on air.**
+
+---
+
+## Step 7 — the init config is built; PHY init regresses when it is linked
+
+`kernel/wifi_init_cfg.{c,h}` builds the `wifi_init_config_t` that carries the
+OS adapter table into the blob, and `wifiinit` calls
+`esp_wifi_init_internal()`. The struct is **copied verbatim** from `esp_wifi.h`
+for the same reason `wifi_osi_table.c` is generated — `feature_caps` is a
+`uint64_t` and forces padding that is easy to get wrong by hand, and neither
+side can detect a layout that is subtly off.
+
+`wpa_crypto_funcs_t` is embedded **by value**: 30 members, 120 bytes. It is
+kept as an opaque block with only `size` and `version` written, because nat-os
+supplies no crypto and only its size affects the layout of what follows.
+
+Config values are deliberately minimal — `nvs_enable = 0` (nat-os has no NVS at
+all), AMPDU rx/tx off, CSI off, `feature_caps = 0`. Buffer counts are left at
+ESP-IDF's defaults, because they decide how much the driver allocates through
+`_malloc` and starving it produces failures that look like something else.
+
+### The regression, and its exact boundary
+
+**`register_chipv7_phy` hangs** — genuinely, not slowly: 40 s with the watchdog
+disarmed and no return. It worked in the immediately preceding commit.
+
+Bisected:
+
+| tree state | `blobphy` |
+|---|---|
+| HEAD (step 6) | works — `rc=0`, `phystack 1296 of 6144` |
+| + `wifi_init_cfg.{c,h}`, nothing referencing them | works |
+| + the `wifiinit` command that references them | **hangs** |
+
+The middle row is the informative one: with `--gc-sections`, an unreferenced
+`wifi_init_cfg.o` is dropped entirely, so the hang needs the object *linked*,
+not merely present.
+
+### Ruled out, by measurement rather than argument
+
+**It is not where `.bss` lands.** Linking the config moves `_phy_stack` from
+`0x3ffbc640` to `0x3ffbc720`. Adding an unrelated 224-byte `.bss` array to
+`blob.c` moves it to **exactly `0x3ffbc720`** — and PHY init still works. Same
+address, same alignment, different outcome.
+
+*(The first run of that probe reported "still works" while the probe had
+silently failed to be inserted and `_phy_stack` had not moved at all. Checking
+that the address actually changed is what made the result mean anything.)*
+
+**It is not the watchdog.** The 3 s hang detector does fire — `phy_stack_call`
+masks interrupts, so no task switches happen and any blob call over three
+seconds is reset regardless of whether it is stuck. That is worth knowing on
+its own for driver bring-up. But with the watchdog disarmed the call still
+never returns.
+
+**It is not stack depth.** The last working measurement was 1296 of 6144 bytes.
+
+### Where it stops
+
+`<prime>`, `<clk>`, `<mac>` and `<call>` all print; `<returned>` never does.
+So it is inside `register_chipv7_phy`, reached through `phy_stack_call`, with
+no fault raised — a spin, not a crash.
+
+The kernel is unaffected: 11/11 boot self-tests pass and everything except the
+blob PHY path behaves normally.
+
+### Next
+
+The unexplained part is small and well-bounded: linking one object changes
+whether a vendor function returns. Candidates nobody has excluded are the
+`.flash.text` growth in `shell.c` (which is IROM-mapped, so its size interacts
+with the MMU work this route added) and the IRAM segment layout, which gained a
+segment across the same boundary. Both are cheap to test by padding one without
+the other — the same probe technique that ruled out `.bss`.
+
+**Nothing has been on air.**
