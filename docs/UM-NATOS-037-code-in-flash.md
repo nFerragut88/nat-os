@@ -220,6 +220,34 @@ the default build instead of 19.
 
 ---
 
+## 7.1 One thing this made harder, recorded because it does not announce itself
+
+Moving code into flash added a constraint nobody was looking for.
+
+While an SPI NOR chip is erasing it answers RDSR and little else — it cannot
+serve a read, cache or no cache. Before this report that did not matter: all code
+was in IRAM, so a task scheduled during an erase could still execute. Now
+`shell.c` and `kmain.c` cannot.
+
+`flash.c` makes this safe today, by accident of a choice made for another
+reason: it holds a critical section across the entire 125 ms erase (measured,
+`next_moves/04`), so no other task runs at all. **That critical section is now
+doing two jobs and only one of them is written on it** — it stops preemption,
+and by stopping preemption it stops flash-resident code from running while the
+chip is busy.
+
+Anyone narrowing it — which looks obviously correct, since polling a status
+register plainly does not require interrupts off — will produce a hang whose
+cause is three files from the change. The argument and the three ways out are
+recorded at `flash_erase_sector()`, and the reason is now in `linker.ld`'s
+placement rules, flagged as **not** a cache-off reason because every other entry
+in that list is.
+
+§5 answers "what may move". This is the other question — **what does moving make
+harder** — and it is the one that stays quiet.
+
+---
+
 ## 8. Rules earned
 
 **A latent bug surfaces when something unrelated moves.** `rom_call3` had been

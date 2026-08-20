@@ -175,9 +175,17 @@ bearing half of the answer.
 - **Why the tail is 16-63 with `TASK_AGE_TICKS = 30`.** Ageing should produce a
   pile-up near 30, not a spread from 16. Not chased; it is a fairness question,
   not a latency one, and 18.5% of waits being long is the actionable fact.
-- **Whether the erase can be shortened or made preemptible.** A 4 KB sector
-  erase is a flash-chip property, but writing less often, or to a smaller
-  region, is a design choice nobody has costed.
+- **Whether the erase can be made preemptible — and a trap if you try.**
+  Narrowing the critical section looks right; the 125 ms is a status-register
+  poll, not a hardware requirement to hold interrupts off. **It is not safe as
+  things stand.** An SPI NOR chip cannot serve a read while erasing, and since
+  UM-NATOS-037 `shell.c` and `kmain.c` execute from flash — so letting the
+  scheduler run during an erase may enter a task whose instructions cannot be
+  fetched. The critical section is doing two jobs and only one is obvious. The
+  argument and three ways out are written at `flash_erase_sector()` in
+  `kernel/flash.c`, where someone attempting the fix will be standing.
+  Writing less often, or to SD instead, is a design choice nobody has costed
+  and needs no kernel work.
 - **`timer_late_count()` undercounts.** It answers "did we miss deadlines" but
   not "by how much". Worth fixing before anything depends on it.
 
