@@ -163,6 +163,21 @@ uint16_t g_osi_calls[OSI_N];
 uint8_t  g_osi_order[OSI_N];
 uint8_t  g_osi_seq;
 
+/* Bridges into nat-os's call0 side. The blob calls us windowed; the kernel's
+ * heap, mutexes and scheduler are call0, so every real body hands off through
+ * these. See window.S. */
+extern uint32_t w2c_call0f(uint32_t fn);
+extern uint32_t w2c_call1(uint32_t fn, uint32_t a);
+extern uint32_t w2c_call2(uint32_t fn, uint32_t a, uint32_t b);
+extern void osi_impl_sem_create(void);   /* address only -- see w2c_call2 */
+extern void osi_impl_sem_delete(void);
+extern void osi_impl_sem_take(void);
+extern void osi_impl_sem_give(void);
+extern void osi_impl_malloc(void);
+extern void osi_impl_calloc(void);
+extern void osi_impl_free(void);
+extern void task_current(void);
+
 static void osi_hit(uint32_t i)
 {
     if (i >= OSI_N) { return; }
@@ -210,23 +225,36 @@ static bool osi_s_is_from_isr(void)
 static void * osi_s_spin_lock_create(void)
 {
     osi_hit(8u);
-    return 0;
+    /* The blob only needs an opaque non-NULL handle: it passes this back
+     * to _wifi_int_disable/_wifi_int_restore, which mask interrupts
+     * globally rather than per-lock. One word is enough to be a handle,
+     * and allocating it keeps delete symmetric. */
+    return (void *)w2c_call1((uint32_t)&osi_impl_malloc, 4u);
 }
 
 static void osi_s_spin_lock_delete(void *lock)
 {
     osi_hit(9u);
+    (void)w2c_call1((uint32_t)&osi_impl_free, (uint32_t)lock);
 }
 
 static uint32_t osi_s_wifi_int_disable(void *wifi_int_mux)
 {
     osi_hit(10u);
-    return 0;
+    /* Interrupts off, returning the previous level. Done inline rather
+     * than through a bridge, exactly as phy_host.c does -- a bridge here
+     * would itself be interruptible. */
+    (void)wifi_int_mux;
+    uint32_t ps;
+    __asm__ volatile ("rsil %0, 3" : "=r"(ps));
+    return ps;
 }
 
 static void osi_s_wifi_int_restore(void *wifi_int_mux, uint32_t tmp)
 {
     osi_hit(11u);
+    (void)wifi_int_mux;
+    __asm__ volatile ("wsr.ps %0; rsync" :: "r"(tmp));
 }
 
 static void osi_s_task_yield_from_isr(void)
@@ -266,30 +294,34 @@ static void * osi_s_wifi_thread_semphr_get(void)
 static void * osi_s_mutex_create(void)
 {
     osi_hit(18u);
-    return 0;
+    return (void *)w2c_call2((uint32_t)&osi_impl_sem_create, 1u, 1u);
 }
 
 static void * osi_s_recursive_mutex_create(void)
 {
     osi_hit(19u);
-    return 0;
+    /* nat-os's mutex is recursive already -- [6b] verifies depth. A
+     * binary semaphore stands in, which is what the older table did. */
+    return (void *)w2c_call2((uint32_t)&osi_impl_sem_create, 1u, 1u);
 }
 
 static void osi_s_mutex_delete(void *mutex)
 {
     osi_hit(20u);
+    (void)w2c_call1((uint32_t)&osi_impl_sem_delete, (uint32_t)mutex);
 }
 
 static int32_t osi_s_mutex_lock(void *mutex)
 {
     osi_hit(21u);
-    return 0;
+    return (int32_t)w2c_call2((uint32_t)&osi_impl_sem_take,
+                              (uint32_t)mutex, 0xFFFFFFFFu);
 }
 
 static int32_t osi_s_mutex_unlock(void *mutex)
 {
     osi_hit(22u);
-    return 0;
+    return (int32_t)w2c_call1((uint32_t)&osi_impl_sem_give, (uint32_t)mutex);
 }
 
 static void * osi_s_queue_create(uint32_t queue_len, uint32_t item_size)
@@ -399,7 +431,9 @@ static int32_t osi_s_task_ms_to_tick(uint32_t ms)
 static void * osi_s_task_get_current_task(void)
 {
     osi_hit(41u);
-    return 0;
+    /* nat-os task ids are small ints; the blob only ever compares this
+     * handle for equality, so the id+1 doubles as a non-NULL handle. */
+    return (void *)(w2c_call0f((uint32_t)&task_current) + 1u);
 }
 
 static int32_t osi_s_task_get_max_priority(void)
@@ -411,12 +445,13 @@ static int32_t osi_s_task_get_max_priority(void)
 static void * osi_s_malloc(size_t size)
 {
     osi_hit(43u);
-    return 0;
+    return (void *)w2c_call1((uint32_t)&osi_impl_malloc, (uint32_t)size);
 }
 
 static void osi_s_free(void *p)
 {
     osi_hit(44u);
+    (void)w2c_call1((uint32_t)&osi_impl_free, (uint32_t)p);
 }
 
 static int32_t osi_s_event_post(const char* event_base, int32_t event_id, void* event_data, size_t event_data_size, uint32_t ticks_to_wait)
@@ -643,7 +678,7 @@ static uint32_t osi_s_log_timestamp(void)
 static void * osi_s_malloc_internal(size_t size)
 {
     osi_hit(85u);
-    return 0;
+    return (void *)w2c_call1((uint32_t)&osi_impl_malloc, (uint32_t)size);
 }
 
 static void * osi_s_realloc_internal(void *ptr, size_t size)
@@ -655,13 +690,14 @@ static void * osi_s_realloc_internal(void *ptr, size_t size)
 static void * osi_s_calloc_internal(size_t n, size_t size)
 {
     osi_hit(87u);
-    return 0;
+    return (void *)w2c_call2((uint32_t)&osi_impl_calloc,
+                             (uint32_t)n, (uint32_t)size);
 }
 
 static void * osi_s_zalloc_internal(size_t size)
 {
     osi_hit(88u);
-    return 0;
+    return (void *)w2c_call2((uint32_t)&osi_impl_calloc, 1u, (uint32_t)size);
 }
 
 static void * osi_s_wifi_malloc(size_t size)

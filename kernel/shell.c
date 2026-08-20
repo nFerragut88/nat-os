@@ -731,8 +731,20 @@ static void execute(char *line)
             uart_put_dec((unsigned int)(prc < 0 ? -prc : prc));
             uart_puts("\n   config    ");
             uart_put_dec(wifi_init_cfg_size());
-            uart_puts(" bytes, magic 0x1f2f3f4f, osi_funcs -> ");
-            uart_put_hex((uint32_t)wifi_osi_table());
+            uart_puts(" bytes, magic 0x1f2f3f4f\n   osi_funcs -> ");
+            /* What the config ACTUALLY carries, not what a helper returns.
+             * The old print showed wifi_osi_table() regardless of what was
+             * handed over, which is how a stale reading survives a change. */
+            {
+                extern char g_wifi_osi_funcs;
+                const uint32_t *cfg = (const uint32_t *)wifi_init_cfg();
+                uart_put_hex(cfg[0]);
+                uart_puts("   (counting table ");
+                uart_put_hex((uint32_t)wifi_osi_table());
+                uart_puts(", real table ");
+                uart_put_hex((uint32_t)&g_wifi_osi_funcs);
+                uart_puts(")");
+            }
             uart_puts("\n   calling esp_wifi_init_internal at ");
             uart_put_hex(e->wifi_init);
             uart_puts("\n");
@@ -746,6 +758,14 @@ static void execute(char *line)
             uint32_t used = 0;
             for (uint32_t i = 0; i < wifi_osi_entries(); i++) {
                 if (wifi_osi_calls(i)) { used++; }
+            }
+            {
+                extern uint32_t g_osi_last, g_osi_hits;
+                uart_puts("   real osi forwarded calls: ");
+                uart_put_dec(g_osi_hits);
+                uart_puts("   last impl at ");
+                uart_put_hex(g_osi_last);
+                uart_puts("\n");
             }
             uart_puts("   osi       ");
             uart_put_dec(used);

@@ -1124,3 +1124,84 @@ windowed stub into nat-os's call0 mutex code — which is exactly what
 next requirement.
 
 **Nothing has been on air.**
+
+### Step 8b — the in-tree OS adapter table is STALE, and the blob caught it
+
+`vendor/windowed/wifi_osi.c` already held a 118-entry windowed table whose
+bodies forward into nat-os. Handing that one over instead looked like the
+obvious de-duplication. It fails:
+
+```
+init      returned 0x00000102   (ESP_ERR_INVALID_ARG)
+real osi forwarded calls: 0
+```
+
+**Zero forwarded calls** — rejected before anything ran. Comparing its member
+order against the current IDF header:
+
+```
+index  54:  in-tree=_phy_common_clock_enable    IDF=_phy_update_country_info
+index  55:  in-tree=_phy_common_clock_disable   IDF=_read_mac
+... 63 positions differ
+```
+
+Both are 118 entries, so nothing about the size gives it away. It was generated
+against an older header and every field from index 54 on is read from the wrong
+offset.
+
+Both files' own comments warn about exactly this — *"one member out of position
+is a call to the wrong function with the wrong arguments, and nothing in the
+system would diagnose it."* Something did diagnose it: **the blob**, by
+checking `_magic` at the offset it expects and finding it wrong.
+
+So `wifi_osi_stubs.c` is not a duplicate. It is the correct table, generated
+from the header actually shipped with these binaries, and the in-tree one must
+be regenerated or deleted before it misleads someone.
+
+### Eight entries implemented; the driver walks further each time
+
+Each run names its next requirement, and the loop is fast:
+
+| run | result | what it asked for |
+|---|---|---|
+| 1 | `NO_MEM` | `_recursive_mutex_create` |
+| 2 | `NO_MEM` | `_task_get_current_task`, `_calloc_internal` |
+| 3 | `NO_MEM` | `_spin_lock_create` |
+| 4 | **`INVALID_ARG`** | — resources satisfied |
+
+Implemented, all forwarding through `w2c_callN` into nat-os's call0 side:
+
+- **mutex group** — `_recursive_mutex_create`, `_mutex_create`, `_mutex_delete`,
+  `_mutex_lock`, `_mutex_unlock`, onto `osi_impl_sem_*`
+- **memory** — `_malloc`, `_malloc_internal`, `_calloc_internal`,
+  `_zalloc_internal`, `_free`, onto `osi_impl_malloc/calloc/free`
+- **`_task_get_current_task`** — nat-os ids are small ints and the blob only
+  compares the handle for equality, so `id + 1` serves as a non-NULL handle
+- **spin locks** — an opaque one-word handle; the blob hands it back to
+  `_wifi_int_disable`/`_wifi_int_restore`, which mask globally rather than
+  per-lock
+- **`_wifi_int_disable`/`_wifi_int_restore`** — inline `rsil`/`wsr.ps`, not a
+  bridge, since a bridge here would itself be interruptible (`phy_host.c` does
+  the same)
+
+Call order now:
+
+```
+_recursive_mutex_create x2   _task_get_current_task x4   _mutex_lock x2
+_calloc_internal x1          _mutex_unlock x2            _spin_lock_create x1
+_spin_lock_delete x1         _free x1
+```
+
+The create/delete pairing shows it allocating, failing validation, and unwinding
+cleanly.
+
+### Next
+
+`ESP_ERR_INVALID_ARG` with a table the blob accepts means the **config** is now
+the problem, not the adapter. The AMPDU group was already set to IDF defaults
+and did not change it; `_version`/`_magic` are correct on both sides. The field
+needs finding rather than guessing — the driver validates `wifi_init_config_t`
+early, so disassembling the comparisons in the first 100 instructions of
+`esp_wifi_init_internal` will name it directly.
+
+**Nothing has been on air.**

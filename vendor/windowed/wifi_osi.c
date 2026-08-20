@@ -84,10 +84,21 @@ extern void osi_impl_delay(void);
 extern void osi_impl_current_task(void);
 extern void osi_impl_time_us_lo(void);
 
-#define FWD0(f)          w2c_call0f((uint32_t)&f)
-#define FWD1(f,a)        w2c_call1((uint32_t)&f,(uint32_t)(a))
-#define FWD2(f,a,b)      w2c_call2((uint32_t)&f,(uint32_t)(a),(uint32_t)(b))
-#define FWD3(f,a,b,c)    w2c_call3((uint32_t)&f,(uint32_t)(a),(uint32_t)(b),(uint32_t)(c))
+/* Instrumentation, for the price of four macros.
+ *
+ * Every forwarded entry goes through one of these, so recording the ADDRESS of
+ * the call0 implementation here gives "what did the driver last ask for"
+ * without touching 118 bodies. The address maps back to a symbol with nm.
+ *
+ * Not static: kernel-side call0 code reads them as data. */
+uint32_t g_osi_last;      /* address of the last osi_impl_* forwarded to */
+uint32_t g_osi_hits;      /* how many forwarded calls have happened      */
+
+#define OSI_NOTE(f)      (g_osi_last = (uint32_t)&f, g_osi_hits++)
+#define FWD0(f)          (OSI_NOTE(f), w2c_call0f((uint32_t)&f))
+#define FWD1(f,a)        (OSI_NOTE(f), w2c_call1((uint32_t)&f,(uint32_t)(a)))
+#define FWD2(f,a,b)      (OSI_NOTE(f), w2c_call2((uint32_t)&f,(uint32_t)(a),(uint32_t)(b)))
+#define FWD3(f,a,b,c)    (OSI_NOTE(f), w2c_call3((uint32_t)&f,(uint32_t)(a),(uint32_t)(b),(uint32_t)(c)))
 
 typedef struct {
     int32_t _version;

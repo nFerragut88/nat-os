@@ -101,7 +101,11 @@ $objs = @()
 # phyinit.c is NOT here any more: since the blob carries its own libphy, its
 # bring-up sequence is needed by the blob-free build too. It references no
 # Espressif symbol unless BOARD_HAS_WIFI is set.
-$blobFiles = @("wifimac.c", "wifi_osi_impl.c")
+# wifi_osi_impl.c left the list for the same reason phyinit.c did: the
+# windowed OS adapter table in vendor/windowed/wifi_osi.c forwards into it,
+# and that table is now handed to the loaded blob from a build that links no
+# Espressif code. It includes only kernel headers.
+$blobFiles = @("wifimac.c")
 
 foreach ($src in (Get-ChildItem "$root\kernel" -Include *.c,*.S -Recurse)) {
     if ((-not $WiFi) -and ($blobFiles -contains $src.Name)) { continue }
