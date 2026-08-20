@@ -848,6 +848,42 @@ static void execute(char *line)
                   ? "   PASS - clamps above CRIT_LEVEL, leaves the rest alone\n"
                   : "   FAIL - the clamp does not behave as documented\n");
     }
+    else if (str_eq(line, "argtest")) {
+        /* Does phy_stack_call actually deliver its arguments?
+         *
+         * next_moves/08 step 9 turns on this, and it cannot be settled with a
+         * vendor function whose validation is being inferred -- that is how
+         * "accepted, version and magic matched" got invented.
+         *
+         * crc32_le is in ROM at a fixed address, windowed, PURE, and its
+         * result depends on every argument. rom_call3 is the control: it is a
+         * bridge already known to work, so if both fail the fault is
+         * elsewhere, and if only phy_stack_call fails it is the bridge. */
+        static const char m1[] = "nat-os";
+        static const char m2[] = "nat-os-xyz";
+
+        uint32_t a1 = rom_call3(ESP_ROM_CRC32_LE, 0u, (uint32_t)m1, 6u);
+        uint32_t b1 = phy_stack_call(ESP_ROM_CRC32_LE, 0u, (uint32_t)m1, 6u, 0u);
+        uint32_t a2 = rom_call3(ESP_ROM_CRC32_LE, 0u, (uint32_t)m2, 10u);
+        uint32_t b2 = phy_stack_call(ESP_ROM_CRC32_LE, 0u, (uint32_t)m2, 10u, 0u);
+
+        uart_puts("   rom_call3       6B=");
+        uart_put_hex(a1);
+        uart_puts("  10B=");
+        uart_put_hex(a2);
+        uart_puts("\n   phy_stack_call  6B=");
+        uart_put_hex(b1);
+        uart_puts("  10B=");
+        uart_put_hex(b2);
+        uart_puts("\n");
+        uart_puts((a1 != a2) ? "   rom_call3      : args distinguish inputs\n"
+                             : "   rom_call3      : SAME for both -- args lost\n");
+        uart_puts((b1 != b2) ? "   phy_stack_call : args distinguish inputs\n"
+                             : "   phy_stack_call : SAME for both -- ARGS LOST\n");
+        uart_puts((a1 == b1 && a2 == b2)
+                  ? "   both bridges agree\n"
+                  : "   BRIDGES DISAGREE - one of them is wrong\n");
+    }
     else if (str_eq(line, "dramtest")) {
         /* Is the blob DRAM reservation actually usable memory?
          *

@@ -1272,3 +1272,49 @@ sane one. If both behave identically, the fault is in the call path and every
 result in this section that depended on an argument is void.
 
 **Nothing has been on air.**
+
+### Step 9b — argument passing is CLEARED, by a function that cannot be argued with
+
+`argtest` calls ROM `crc32_le` — fixed address, windowed, **pure**, result
+depends on every argument — through both bridges, with two different inputs,
+and against values computed on the host:
+
+```
+rom_call3       6B=0xd8cf24e2  10B=0xe08b3d62
+phy_stack_call  6B=0xd8cf24e2  10B=0xe08b3d62
+
+host zlib.crc32("nat-os")     = 0xd8cf24e2
+host zlib.crc32("nat-os-xyz") = 0xe08b3d62
+```
+
+Exact match on both, both bridges agree, and the two inputs produce different
+answers. **`phy_stack_call` delivers its arguments.** `rom_call3` is the
+control — a bridge already known good — so a shared fault would have shown as
+both failing.
+
+This is the opposite of the `wifi_osi_funcs_register` test, and deliberately
+so. That one asked a vendor function whose validation had to be *inferred*, and
+the inference was wrong. This one asks a function whose correct answer is
+computable off-device, so a wrong result could not have been explained away.
+
+**What this rules out:** the bridge. Every result in this section that depended
+on an argument arriving is therefore still standing, including the eight
+adapter implementations and PHY init.
+
+**What remains unexplained:** `esp_wifi_init_internal` behaves identically for
+a NULL config and a real one — same `0x102`, same eight adapter calls — while
+its second instruction is `bnez.n a2` and its only `0x102` site returns before
+registering anything. Those three facts cannot all be true as stated, and the
+argument now cannot be the loose one.
+
+The remaining suspect is the disassembly itself. objdump has been caught losing
+sync inside this blob twice, emitting `lsi f4` for code containing no floating
+point. If the decode is wrong about where instructions begin, it is wrong about
+which branch guards what, and the "only one 0x102 site" claim goes with it.
+
+**Next:** stop reading the listing and watch the function instead. `_set_intr`
+proved a stub can be given a body that records; the same trick works here —
+give one early adapter entry a body that reports its arguments, and the driver
+will say how far it got and with what, without any disassembly being trusted.
+
+**Nothing has been on air.**
