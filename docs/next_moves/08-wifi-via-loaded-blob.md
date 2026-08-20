@@ -1489,3 +1489,56 @@ and the real invariant is **one context inside windowed code at a time** — a
 mutex, not a masked interrupt. That change is now on the critical path.
 
 **Nothing has been on air.**
+
+### Step 12 — exclusion by mutex instead of by masked interrupts
+
+`blob_call()` enters the blob holding a mutex, with the scheduler still
+running. `phy_stack_call`'s masking is now conditional on `g_phy_call_mask`
+rather than removed — the smallest change that could work, because duplicating
+sixty lines of window-manipulating assembly to get one variant would have been
+a worse risk than the bug being fixed.
+
+PS is saved either way, so the restore is correct in both modes: when the mask
+is skipped the saved PS equals the current one and writing it back is a no-op.
+
+**What the masking was protecting, and why a mutex is the better answer:**
+
+1. **Window state.** The concern was a context switch landing while windowed
+   frames were live. That was **measured and does not hold** — `wintorture`,
+   6/6, with the switch counter as control. A call0 task cannot disturb them:
+   the handler saves and restores the sixteen registers at the current
+   `WINDOWBASE` and never moves it, and call0 code never rotates the window, so
+   a windowed task's caller frames sit where no other task can reach. The real
+   hazard is **two contexts inside windowed code at once** — exclusion, not
+   preemption.
+
+2. **The private stack.** `_phy_stack` is one shared 6 KB buffer. Two contexts
+   in `phy_stack_call` would corrupt each other whatever the window did. This
+   reason survives the measurement and is on its own sufficient to need a lock.
+
+`register_chipv7_phy` keeps the masked path: it is self-contained calibration
+that asks the OS for nothing, so freezing the scheduler around it costs nothing
+and changing it would be change for its own sake.
+
+**Live and uncontended:**
+
+```
+blob_call: 1 entries, contended 0  (scheduler stayed live)
+init       returned 0x00000101      (unchanged -- as expected)
+```
+
+The outcome is deliberately unchanged. `_task_create_pinned_to_core` is still a
+stub, so nothing blocks yet and nothing *could* have improved. This is
+infrastructure landing ahead of the requirement, verified only to the extent
+that it does not break what already worked: 11/11 boot self-tests, `blobphy`
+`rc=0`, `wintorture` correct.
+
+**Contention is counted, not assumed.** There is one caller today, so
+`contended` must stay 0. If it moves, something has started entering the blob
+from a second context and the reasoning above needs re-reading.
+
+**Not covered:** an interrupt handler cannot take a mutex. If a WiFi ISR ever
+calls into the blob this is insufficient. Nothing does today, and `_set_intr`
+clamps and counts, so that day is visible rather than silent.
+
+**Nothing has been on air.**

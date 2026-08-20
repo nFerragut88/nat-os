@@ -7,6 +7,7 @@
 #include "shell.h"
 #include "panic.h"
 #include "blob.h"
+#include "blobcall.h"
 #include "wifi_osi_table.h"
 #include "wifi_init_cfg.h"
 #include "console.h"
@@ -671,6 +672,11 @@ static void execute(char *line)
                 uart_puts("\n");
                 shown++;
             }
+            uart_puts("   blob_call: ");
+            uart_put_dec(blob_call_count());
+            uart_puts(" entries, contended ");
+            uart_put_dec(blob_call_contended());
+            uart_puts("  (scheduler stayed live)\n");
             uart_puts("   intr clamped to CRIT_LEVEL: ");
             uart_put_dec(wifi_osi_intr_clamped());
             uart_puts("   (must be 0)\n");
@@ -785,9 +791,13 @@ static void execute(char *line)
              * a config rejection with a one-field cause. */
             int want_null = str_eq(line, "wifiinit null");
             if (str_eq(line, "wifiinit nvs")) { wifi_init_cfg_nvs(1); }
-            uint32_t r = phy_stack_call(e->wifi_init,
-                                        want_null ? 0u : (uint32_t)wifi_init_cfg(),
-                                        0u, 0u, 0u);
+            /* blob_call, not phy_stack_call: the driver has reached
+             * _task_create_pinned_to_core, and a task created inside a masked
+             * call can never run. Exclusion moves to a mutex; the scheduler
+             * keeps running. */
+            uint32_t r = blob_call(e->wifi_init,
+                                   want_null ? 0u : (uint32_t)wifi_init_cfg(),
+                                   0u, 0u, 0u);
             uart_puts("   init      returned ");
             uart_put_hex(r);
             uart_puts(r == 0u ? "  (ESP_OK)\n" : "  (an esp_err_t, not OK)\n");

@@ -505,8 +505,34 @@ phy_stack_call:
      * this mask: spill the window and save WINDOWBASE/WINDOWSTART, but only
      * when WINDOWSTART shows more than one live frame -- which in a call0
      * kernel means only during a blob excursion. See next_moves/08. */
-    rsil    a9, 3
+    /* CONDITIONAL now, not unconditional.
+     *
+     * PS is saved either way, so the restore below is correct in both cases:
+     * if the mask was skipped, the saved PS equals the current one and writing
+     * it back is a no-op.
+     *
+     * g_phy_call_mask = 1 keeps the original behaviour, which register_chipv7_phy
+     * still wants -- it is a self-contained calibration routine that asks the
+     * OS for nothing, and freezing the scheduler around it costs nothing.
+     *
+     * g_phy_call_mask = 0 lets the scheduler keep running, which is required
+     * for anything that BLOCKS: a task created inside a masked call can never
+     * run, and a _semphr_take waiting on it can never return. Safety then rests
+     * on a mutex instead -- see blob_call() -- because the invariant that
+     * actually matters is ONE CONTEXT INSIDE WINDOWED CODE AT A TIME, not
+     * "no preemption". wintorture measured that distinction: 6/6 correct with
+     * live windowed frames across real context switches.
+     *
+     * The private stack is the second reason for the mutex. _phy_stack is a
+     * single shared buffer, so two contexts here would corrupt each other
+     * regardless of window state. */
+    rsr.ps  a9
     s32i    a9,  a1, 24
+    movi    a8, g_phy_call_mask
+    l32i    a8, a8, 0
+    beqz    a8, .Lphy_no_mask
+    rsil    a9, 3
+.Lphy_no_mask:
 
     /* Declare exactly one live frame: this one.
      *
@@ -573,3 +599,11 @@ phy_stack_call:
 _phy_stack:
     .space 6144
 _phy_stack_top:
+
+/* Whether phy_stack_call masks interrupts. Default 1: the historical
+ * behaviour, correct for calls that never ask the OS for anything. */
+    .section .data
+    .align 4
+    .global g_phy_call_mask
+g_phy_call_mask:
+    .word 1
