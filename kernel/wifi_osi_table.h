@@ -158,4 +158,15 @@ uint16_t    wifi_osi_calls(uint32_t i);
 uint8_t     wifi_osi_order(uint32_t i);
 const char *wifi_osi_name(uint32_t i);
 
+/* How many times _set_intr was asked for a priority above CRIT_LEVEL and had
+ * to clamp it.
+ *
+ * MUST be zero. The blob's *iram code lives in flash, and flash placement is
+ * only safe for interrupts that flash_erase_sector's critical section actually
+ * masks. A non-zero count means the driver wants an interrupt that would fire
+ * mid-erase and fetch from a chip that cannot answer -- at which point the
+ * 53.7 KB fourth window (measured: fits in 86.4 KB of free IRAM) stops being
+ * optional. See UM-NATOS-038 7.2. */
+uint32_t wifi_osi_intr_clamped(void);
+
 #endif

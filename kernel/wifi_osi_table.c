@@ -14,8 +14,10 @@
 extern const wifi_osi_funcs_t g_osi;
 extern uint16_t g_osi_calls[OSI_N];
 extern uint8_t  g_osi_order[OSI_N];
+extern uint32_t g_osi_intr_clamped;
 
 const void *wifi_osi_table(void)       { return &g_osi; }
+uint32_t    wifi_osi_intr_clamped(void){ return g_osi_intr_clamped; }
 uint32_t    wifi_osi_entries(void)     { return OSI_N; }
 uint16_t    wifi_osi_calls(uint32_t i) { return (i < OSI_N) ? g_osi_calls[i] : 0u; }
 uint8_t     wifi_osi_order(uint32_t i) { return (i < OSI_N) ? g_osi_order[i] : 0u; }

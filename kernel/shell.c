@@ -671,6 +671,9 @@ static void execute(char *line)
                 uart_puts("\n");
                 shown++;
             }
+            uart_puts("   intr clamped to CRIT_LEVEL: ");
+            uart_put_dec(wifi_osi_intr_clamped());
+            uart_puts("   (must be 0)\n");
             if (!shown) { uart_puts("     none -- nothing has called in yet\n"); }
             else {
                 uart_puts("   ");
@@ -772,8 +775,52 @@ static void execute(char *line)
             uart_puts(" of ");
             uart_put_dec(wifi_osi_entries());
             uart_puts(" adapter entries were called\n");
+            {
+                uint32_t cl = wifi_osi_intr_clamped();
+                uart_puts("   intr clamped to CRIT_LEVEL: ");
+                uart_put_dec(cl);
+                uart_puts(cl ? "  *** the blob wants an interrupt that would\n"
+                               "       fire mid-erase; see UM-NATOS-038 7.2\n"
+                             : "  (must stay zero)\n");
+            }
             uart_puts("   run 'osiused' for the list, in call order.\n");
         }
+    }
+    else if (str_eq(line, "osiclamp")) {
+        /* Exercise the interrupt-priority clamp.
+         *
+         * The counter reads 0 today only because _set_intr has never been
+         * reached -- init fails before interrupt setup. A tripwire nobody has
+         * seen trip is untested code, and this project has a standing rule
+         * about mechanisms with no exerciser.
+         *
+         * _set_intr is entry 2 of the table, so byte offset 8. It is WINDOWED,
+         * so the call goes out through rom_call4 -- the call0 -> windowed
+         * bridge for a four-argument function -- not called directly. */
+        const uint32_t *tbl = (const uint32_t *)wifi_osi_table();
+        uint32_t fn = tbl[2];
+        uint32_t before = wifi_osi_intr_clamped();
+
+        uart_puts("   asking _set_intr at ");
+        uart_put_hex(fn);
+        uart_puts(" for priority 7 (above CRIT_LEVEL 3)\n");
+        (void)rom_call4(fn, 0u, 0u, 0u, 7u);
+        uint32_t hi = wifi_osi_intr_clamped();
+
+        uart_puts("   then for priority 2 (at or below, must NOT clamp)\n");
+        (void)rom_call4(fn, 0u, 0u, 0u, 2u);
+        uint32_t lo = wifi_osi_intr_clamped();
+
+        uart_puts("   clamped count: ");
+        uart_put_dec(before);
+        uart_puts(" -> ");
+        uart_put_dec(hi);
+        uart_puts(" -> ");
+        uart_put_dec(lo);
+        uart_puts("\n");
+        uart_puts(((hi == before + 1u) && (lo == hi))
+                  ? "   PASS - clamps above CRIT_LEVEL, leaves the rest alone\n"
+                  : "   FAIL - the clamp does not behave as documented\n");
     }
     else if (str_eq(line, "dramtest")) {
         /* Is the blob DRAM reservation actually usable memory?

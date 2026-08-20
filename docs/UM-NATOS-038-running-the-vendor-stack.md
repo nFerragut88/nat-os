@@ -256,6 +256,21 @@ exit would also return zero.
   free IRAM, so it **does** fit. Not spent, because masking already covers it.
   If a WiFi ISR ever genuinely needs to run above `CRIT_LEVEL`, the clamp
   counter is what will say so, and the window is the answer.
+
+  The counter is **exercised, not merely present** — `osiclamp` calls
+  `_set_intr` through `rom_call4` (it is windowed) asking for priority 7, then
+  for 2:
+
+  ```
+  clamped count: 0 -> 1 -> 1
+  PASS - clamps above CRIT_LEVEL, leaves the rest alone
+  ```
+
+  The second half is the control. Without it, a clamp that fired on *every*
+  call would also show a rising count and read as working. And the counter's
+  reading of 0 during `wifiinit` means only that `_set_intr` has not been
+  reached yet — init fails before interrupt setup — not that the clamp has been
+  shown to be unnecessary.
 - **Blocking OS calls cannot work yet.** `phy_stack_call` masks interrupts for
   the duration, so `osi_impl_sem_take` blocking on a contended semaphore would
   block forever with the scheduler frozen. Every call so far has been
