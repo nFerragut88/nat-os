@@ -87,6 +87,52 @@ matched nothing. The figure only became trustworthy after checking that the ELF
 existed and that `esp_wifi_80211_tx` was in it at a real address. A count of
 absent errors is not a result.
 
+## Step 3 — the pre-link, done 2026-08-20
+
+`build_blob.ps1` produces `build/net80211.bin`, the file that goes on the SD
+card. It is linked ONCE at build time to fixed addresses, so the kernel needs
+no runtime linker: no relocation, no symbol resolution, no ELF loader.
+Installing becomes read-file, write-flash, map, call.
+
+```
+  net80211.bin  549240 bytes (52.4% of the 1 MB reservation)
+  magic         0x3230384e  N802 OK
+  header size   549240
+  tx entry      0x40302b9c
+```
+
+| | value | |
+|---|---|---|
+| `blob_entry` | `0x40300000` | exactly `BLOB_IROM_ADDR`, so the kernel finds it without parsing |
+| `esp_wifi_80211_tx` | `0x40302b9c` | |
+| image | 549,240 B | 52% of the flash reservation |
+| `.data` + `.bss` | 20,720 B | 63% of the 32 KB DRAM reservation |
+
+### The image describes itself
+
+`blob_entry.c` puts a table at offset 0 carrying the magic, the version, and
+**the addresses the loader needs** — where to copy `.data` from and to, and what
+range to zero for `.bss`. The MMU maps instructions; it does not populate
+writable memory, so those two steps are the loader's job and the blob is the
+thing that knows the numbers.
+
+`.data`'s initialisers are the last 3,588 bytes of the image, ending exactly at
+`image_size`. `build_blob.ps1` checks the file length against the header the
+file itself carries and refuses to emit a mismatch, because an objcopy section
+list that is subtly wrong would make the loader copy `.data` out of garbage.
+
+### The DRAM reservation is not free
+
+The flash and IROM carve-outs cost nothing real — the kernel uses 21 KB of a
+2.3 MB window. The DRAM one costs heap **one-for-one**, because the heap is
+whatever lies between `_bss_end` and the stack:
+
+```
+free heap  122,064  ->  88,784 B      (-33,280, exactly the reservation)
+```
+
+Verified on hardware, 11/11 boot self-tests still passing.
+
 ## Licensing
 
 The archives are Espressif's and are **not** redistributed here. They are read

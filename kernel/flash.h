@@ -75,6 +75,18 @@
 #define BLOB_IROM_ADDR   0x40300000u
 #define BLOB_IROM_SIZE   0x100000u
 
+/* The blob's writable memory. The MMU maps instructions; it does not populate
+ * RAM, so .data must be COPIED here from inside the mapped image and .bss
+ * zeroed, both at install time. The blob's own entry table carries the
+ * addresses -- see vendor/net80211/blob_entry.c.
+ *
+ * This comes out of the kernel's dram one-for-one, and therefore out of the
+ * heap, which is sized as whatever is left between _bss_end and the stack.
+ * Measured need is 20,720 B (3,588 data + 16,600 bss); 32 KB leaves 36%
+ * headroom for the event and scan paths that are still stubbed. */
+#define BLOB_DRAM_ADDR   0x3FFD4000u
+#define BLOB_DRAM_SIZE   0x8000u
+
 /* All three return 0 on success. Each masks interrupts for its duration; an
  * erase takes tens of milliseconds and will visibly delay the scheduler, so
  * they are not for calling from a hot path. */

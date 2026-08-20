@@ -18,7 +18,12 @@ MEMORY
   iram (rwx) : ORIGIN = 0x40080000, LENGTH = 0x20000   /* 128 KB */
 
   /* Internal SRAM2 — data RAM, below the ROM's reserved region. */
-  dram (rw)  : ORIGIN = 0x3FFB0000, LENGTH = 0x2C200   /* ~176 KB */
+  /* Shortened from 0x2C200 to reserve the top 32 KB for the vendor blob's
+   * .data and .bss (kernel/flash.h, BLOB_DRAM_ADDR). Unlike the irom carve-out
+   * this one is NOT free: the heap is whatever is left between _bss_end and
+   * the stack, so this costs ~33 KB of heap directly. That is the price of the
+   * blob having writable state, and the MMU cannot help with it. */
+  dram (rw)  : ORIGIN = 0x3FFB0000, LENGTH = 0x24000   /* 144 KB */
 
   /* Flash mapped read-only through the data cache.
    *
@@ -286,3 +291,6 @@ SECTIONS
  * mapped over live kernel code. 0x40300000 is BLOB_IROM_ADDR in flash.h. */
 ASSERT(ORIGIN(irom) + LENGTH(irom) == 0x40300000,
        "kernel irom must end exactly where the blob region begins (flash.h BLOB_IROM_ADDR)")
+
+ASSERT(ORIGIN(dram) + LENGTH(dram) == 0x3FFD4000,
+       "kernel dram must end exactly where the blob data region begins (flash.h BLOB_DRAM_ADDR)")

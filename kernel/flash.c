@@ -20,6 +20,10 @@ _Static_assert(BLOB_FLASH_ADDR + BLOB_FLASH_SIZE <= 0x400000u,
                "blob region runs past the end of a 4 MB flash");
 _Static_assert(BLOB_IROM_ADDR + BLOB_IROM_SIZE <= 0x40400000u,
                "blob window runs past the top of IRAM0_CACHE");
+_Static_assert((BLOB_DRAM_ADDR % 4u) == 0u,
+               "blob dram base must be word aligned");
+_Static_assert(BLOB_DRAM_ADDR + BLOB_DRAM_SIZE <= 0x3FFE0000u,
+               "blob dram region runs into the ROM's reserved area");
 #include "critical.h"
 #include "xtensa.h"
 
