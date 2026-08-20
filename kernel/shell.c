@@ -8,6 +8,8 @@
 #include "panic.h"
 #include "blob.h"
 #include "blobcall.h"
+extern uint32_t wincollide_runs(void);
+extern uint32_t wincollide_bad(void);
 #include "wifi_osi_table.h"
 #include "wifi_init_cfg.h"
 #include "console.h"
@@ -915,6 +917,66 @@ static void execute(char *line)
         uart_puts((a1 == b1 && a2 == b2)
                   ? "   both bridges agree\n"
                   : "   BRIDGES DISAGREE - one of them is wrong\n");
+    }
+    else if (str_eq(line, "wincollide")) {
+        /* TWO tasks inside windowed code at once. Built to FAIL.
+         *
+         * wintorture proved a single windowed task survives preemption by
+         * call0 tasks -- 6/6, switch counter as control. Step 13 then panicked
+         * with two windowed contexts, but that was one observation inside a
+         * WiFi bring-up, with a blob, a driver and a mutex all in frame.
+         *
+         * This isolates the claim: two nat-os tasks, both calling the same
+         * windowed function, nothing else involved. If the hazard is real this
+         * must produce wrong checksums or a panic. If it PASSES, the step-13
+         * diagnosis is wrong and the scheduler work is not justified.
+         *
+         * A concurrency test that passes first time usually is not testing
+         * anything, so this is expected to fail and is worth nothing until it
+         * does. */
+        extern unsigned int vendor_torture(unsigned int, unsigned int);
+        static volatile uint32_t bad, runs, live;
+        static const uint32_t WANT = 8u * 7u * (1u+2u+3u+4u+5u+6u+7u+8u) / 8u * 0u; /* computed below */
+        (void)WANT;
+
+        /* expected checksum, same derivation as wintorture */
+        uint32_t want = 0;
+        for (uint32_t d = 1; d <= 8u; d++) {
+            for (uint32_t i = 0; i < 6u; i++) { want += (d * 7u) + i; }
+        }
+
+        static uint32_t g_want;
+        g_want = want;
+        bad = 0; runs = 0; live = 0;
+
+        /* Both entries are call0 (kernel tasks) and reach the windowed
+         * function through rom_call3, which does NOT mask interrupts -- so
+         * both can genuinely be inside windowed code at the same time. */
+        static volatile uint32_t *pbad = &bad, *pruns = &runs, *plive = &live;
+        (void)pbad; (void)pruns; (void)plive;
+
+        uart_puts("   spawning two tasks, both entering windowed code\n");
+        uart_puts("   expected checksum ");
+        uart_put_dec(g_want);
+        uart_puts("\n");
+
+        extern void wincollide_entry(void);
+        int t1 = task_create("wcol-a", wincollide_entry);
+        int t2 = task_create("wcol-b", wincollide_entry);
+        if (t1 < 0 || t2 < 0) {
+            uart_puts("   could not create both tasks\n");
+        } else {
+            for (uint32_t i = 0; i < 40u; i++) { task_sleep(10u); }
+            uart_puts("   runs=");
+            uart_put_dec(wincollide_runs());
+            uart_puts("  wrong=");
+            uart_put_dec(wincollide_bad());
+            uart_puts("\n");
+            uart_puts(wincollide_bad()
+                      ? "   FAILED as expected - two windowed contexts corrupt each other\n"
+                      : "   no corruption seen; either the hazard is elsewhere or the\n"
+                        "   two tasks never overlapped inside the window\n");
+        }
     }
     else if (str_eq(line, "dramtest")) {
         /* Is the blob DRAM reservation actually usable memory?
