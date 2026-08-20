@@ -1,7 +1,13 @@
 # 08 — WiFi transmit by linking the vendor path, with the blob supplied at runtime
 
 **Size:** large. **Risk:** low technically, high to the project's direction.
-**Blocked on:** [07](07-irom.md). It does not fit in IRAM.
+**Blocked on:** nothing. [07](07-irom.md) shipped, and the size objection below
+is measured to be gone.
+
+> **STEP 1 DONE, 2026-08-20.** The vendor transmit path **links** against a
+> nat-os-shaped host with **10 shims**, not the large adapter surface this file
+> predicted. See "Measured" at the end. Linking is not transmitting -- read the
+> caveat there before treating this as nearly working.
 
 *This is the route that would actually work. Read §"What it costs" before
 starting it.*
@@ -106,3 +112,77 @@ this route was costed. Costing it has not changed it.
 - UM-NATOS-034 §31 — the transmit-path correction that motivates this
 - `docs/blob-free.md` — why function and independence are different purchases
 - [07](07-irom.md) — the prerequisite
+
+---
+
+## Measured, 2026-08-20 — step 1 is done and the numbers moved a lot
+
+### The size objection is gone
+
+| | then | now |
+|---|---|---|
+| where vendor code can live | 19,239 B free IRAM | **3.3 MB IROM window** (07) |
+| `libnet80211.a` `.text` | 196,269 B "larger than IRAM" | 234,616 B, irrelevant against IROM |
+
+### The dependency surface is 10 symbols, not 66
+
+The "66 undefined symbols" figure counted one object's references without
+asking which resolve internally — the same mistake `vendor/phy/README.md`
+avoided for `libphy.a`. Repeating that methodology:
+
+```
+libnet80211.a   defined internally 1189   referenced-undef 719
+                TRUE EXTERNAL      206
+after libpp + libcore + ROM + already-vendored blobs      32
+after phy_host.o + librtc.a + libcoexist.a + newlib-nano  10
+```
+
+The residual ten:
+
+| symbol | what it is |
+|---|---|
+| `free`, `puts`, `strtok` | libc; nat-os has equivalents |
+| `hexstr2bin` | ten lines |
+| `net80211_printf`, `mesh_printf` | route to UART or discard |
+| `WIFI_EVENT`, `esp_event_handler_register` / `_unregister`, `esp_mesh_send_event_internal` | the event system — **the only genuinely new surface** |
+
+### The link closes
+
+`vendor/net80211/` holds the probe that proves it: `probe.c` references
+`esp_wifi_80211_tx`, `net80211_host.c` supplies the ten, `probe.ld` gives a
+memory layout.
+
+```
+link exit=0            0 undefined references
+400d2b90 T esp_wifi_80211_tx
+   text     data      bss
+ 545480     4113    16664
+```
+
+Reproduce with the command in this directory's README. Note `.text` is 545 KB
+because the closure drags `libpp`, `libcore`, `libmesh`, `librtc`, `libcoexist`
+and `libphy` — **not** net80211's 234 KB alone. nat-os already links two of
+those, so the marginal cost is smaller than 545 KB but has not been separated
+out. 16,664 B of `.bss` is the DRAM cost, against ~122 KB of free heap.
+
+### The caveat that matters more than any number above
+
+**Linking is not transmitting, and stubs that link are not stubs that work.**
+
+The event stubs accept a registration and never deliver a callback. That is
+plausibly enough for a blind `esp_wifi_80211_tx()`, which is a direct call — and
+it is definitely **not** enough for scan, association or receive, all of which
+are event-driven. The real scope of 08 is that difference, and it is invisible
+in a symbol count. A previous run of this same measurement reported "0 undefined
+references" when the link had actually failed for an unrelated reason and the
+grep matched nothing; the number was only trustworthy after checking the ELF
+existed and contained the symbol.
+
+### Next, in order
+
+1. **Reserve a flash partition** and a fixed pre-link address in `linker.ld`.
+   Nothing else can be designed until the address is chosen.
+2. Pre-link the closure to that address at build time — no runtime relocation.
+3. SD-delivery and the flash install step (§"Delivering the blob from SD").
+4. Call it, on air, and check the MT7921 sees a frame. Until step 4, none of
+   the above is evidence about radiating.
