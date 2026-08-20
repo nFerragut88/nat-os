@@ -67,7 +67,8 @@ extern uint32_t phy_host_log_len;
  * while phy_stack_prime() dutifully prepared the 6 KB one nothing used, and
  * the window-overflow spill faulted below a stack pointer that was not a
  * stack. Declaring what the code already does is the whole fix. */
-uint32_t phy_stack_call(uint32_t fn, uint32_t a, uint32_t b, uint32_t c);
+uint32_t phy_stack_call(uint32_t fn, uint32_t a, uint32_t b,
+                        uint32_t c, uint32_t d);
 
 /* Fills the PHY stack with a pattern, and reports how much of it has since
  * been touched. The point is to settle a question rather than argue it: when a

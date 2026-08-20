@@ -434,7 +434,8 @@ win_call_bridge:                    /* call0 -> windowed -> call0, round trip */
  * exactly this with _panic_stack, for the same reason: the stack you are on may
  * be the thing that is wrong.
  *
- *   uint32_t phy_stack_call(uint32_t fn, uint32_t a, uint32_t b, uint32_t c);
+ *   uint32_t phy_stack_call(uint32_t fn, uint32_t a, uint32_t b,
+ *                           uint32_t c, uint32_t d);
  *
  * Saves the caller's stack pointer INTO the new stack rather than a register,
  * because call8 destroys a12..a15 and there is nowhere else that survives.
@@ -521,6 +522,12 @@ phy_stack_call:
     mov     a10, a3
     mov     a11, a4
     mov     a12, a5
+    /* Fourth argument. a6 is untouched by everything above -- the prologue
+     * only uses a8..a11 -- and a13 is already saved and restored with the
+     * other callee-saved registers, so this costs one instruction and nothing
+     * else. Callees taking fewer arguments simply ignore it.
+     * esp_wifi_80211_tx(ifx, buffer, len, seq) is what needs it. */
+    mov     a13, a6
     callx8  a2
     mov     a2,  a10
 

@@ -142,9 +142,10 @@ int phyinit_run_at(uint32_t fn)
      * shell task that faulted inside phy_enter_critical's ENTRY, spilling
      * below a stack pointer that was not a stack. */
     g_phy_result = phy_stack_call(fn,
-                             (uint32_t)g_phy_init_data,
-                             (uint32_t)g_phy_cal_data,
-                             PHY_RF_CAL_FULL);
+                                  (uint32_t)g_phy_init_data,
+                                  (uint32_t)g_phy_cal_data,
+                                  PHY_RF_CAL_FULL,
+                                  0u);
     return (int)g_phy_result;
 }
 

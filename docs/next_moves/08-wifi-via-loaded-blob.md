@@ -366,7 +366,53 @@ this is the blob's copy, at different addresses, with `.data` and `.bss`
 freshly loaded. Whether the gate can now be lifted is a separate question and
 has not been tested — but the failure it describes did not happen here.
 
-**Next:** `esp_wifi_80211_tx`. Expect it to need more than a live PHY — it is
-reached through `libpp` and the OS adapter table, and the event stubs in
-`net80211_host.c` accept registrations and never call back. Nothing has been
-on air.
+### Transmit: attempted, and it fails exactly where predicted
+
+`blobtx` builds a 56-byte beacon (SSID `NATOS-BLB`, channel 6), initialises the
+blob's PHY, and hands the frame to `esp_wifi_80211_tx`:
+
+```
+phyinit   rc=0
+frame     56 bytes, beacon, ssid NATOS-BLB, channel 6
+calling esp_wifi_80211_tx at 0x40302bac
+*** KERNEL PANIC ***  exccause 28 (LoadProhibited)
+epc      0x40302a36    excvaddr 0x00000054
+```
+
+Disassembled, it is unambiguous:
+
+```
+l32r   a4, ...          ; g_wifi_global_lock
+l32i.n a7, a6, 0        ; a7 = obj->table   -> NULL
+l32i   a7, a7, 84       ; FAULT: [0 + 0x54]
+callx8 a7               ; indirect call through that table
+```
+
+A vtable dispatch through a **null function table**. Nothing populated it,
+because `esp_wifi_80211_tx` is the *last* step of a driver that was never
+brought up. A live PHY is necessary and nowhere near sufficient — which is what
+this file predicted at the top, and now has a fault address to prove.
+
+### The remaining sequence, named
+
+The blob exports every entry point needed:
+
+| symbol | address |
+|---|---|
+| `wifi_osi_funcs_register` | `0x4030ded4` |
+| `esp_wifi_init_internal` | `0x4030e14c` |
+| `esp_wifi_start` | `0x4030e404` |
+| `esp_wifi_80211_tx` | `0x40302bac` |
+
+So the order is **register the OS adapter table → init → start → transmit**, and
+`kernel/wifi_osi_impl.c` already exists for the first of those (it reports
+`0x3F ALL PASS`, which UM-NATOS-034 §24.6 correctly calls a floor rather than a
+guarantee).
+
+That is the real remaining scope of 08, and it is a phase rather than a step:
+the OS adapter is where a protocol stack asks for timers, queues, events and
+tasks, and `net80211_host.c`'s event stubs currently accept a registration and
+never deliver a callback. Association and scan need those to actually work;
+a bare `esp_wifi_80211_tx` may not.
+
+**Nothing has been on air.**

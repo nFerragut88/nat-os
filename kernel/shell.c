@@ -578,6 +578,75 @@ static void execute(char *line)
             uart_puts("   IT RETURNED. that is not evidence the radio works.\n");
         }
     }
+    else if (str_eq(line, "blobtx")) {
+        /* next_moves/08 step 5: actually transmit through the vendor path.
+         *
+         * Maps and loads the blob, initialises ITS PHY, then hands a beacon
+         * frame to esp_wifi_80211_tx.
+         *
+         * Expected to fail, and the failure is the information. esp_wifi_
+         * 80211_tx is reached through libpp and the OS adapter table, and it
+         * normally runs after esp_wifi_init()/esp_wifi_start() have built
+         * queues, timers and an interface. None of that has happened here, and
+         * net80211_host.c's event stubs accept registrations and never call
+         * back. A live PHY is necessary and is nowhere near sufficient.
+         *
+         * The frame is a beacon with a distinctive SSID so that if anything
+         * does reach the air, a laptop scan can name it rather than leaving us
+         * to argue about RF plots. */
+        static uint8_t frame[64];
+        uint8_t mac[6];
+        efuse_factory_mac(mac);
+
+        uint32_t n = 0;
+        frame[n++] = 0x80; frame[n++] = 0x00;          /* beacon            */
+        frame[n++] = 0x00; frame[n++] = 0x00;          /* duration          */
+        for (int i = 0; i < 6; i++) { frame[n++] = 0xFF; }   /* addr1 bcast */
+        for (int i = 0; i < 6; i++) { frame[n++] = mac[i]; } /* addr2 = us  */
+        for (int i = 0; i < 6; i++) { frame[n++] = mac[i]; } /* addr3 bssid */
+        frame[n++] = 0x00; frame[n++] = 0x00;          /* seq/frag          */
+        for (int i = 0; i < 8; i++) { frame[n++] = 0x00; }   /* timestamp   */
+        frame[n++] = 0x64; frame[n++] = 0x00;          /* interval 100 TU   */
+        frame[n++] = 0x01; frame[n++] = 0x00;          /* capability: ESS   */
+        frame[n++] = 0x00; frame[n++] = 0x09;          /* SSID IE, 9 bytes  */
+        frame[n++] = 'N'; frame[n++] = 'A'; frame[n++] = 'T';
+        frame[n++] = 'O'; frame[n++] = 'S'; frame[n++] = '-';
+        frame[n++] = 'B'; frame[n++] = 'L'; frame[n++] = 'B';
+        frame[n++] = 0x01; frame[n++] = 0x04;          /* rates IE          */
+        frame[n++] = 0x82; frame[n++] = 0x84;
+        frame[n++] = 0x8B; frame[n++] = 0x96;
+        frame[n++] = 0x03; frame[n++] = 0x01; frame[n++] = 0x06; /* DS ch 6 */
+
+        const struct blob_entry *e = blob_map();
+        if (!e) {
+            uart_puts("   no valid image\n");
+        } else if (blob_init(e) != 0) {
+            uart_puts("   loader refused\n");
+        } else {
+            int prc = phyinit_run_at(e->phy_init);
+            uart_puts("   phyinit   rc=");
+            uart_put_dec((unsigned int)(prc < 0 ? -prc : prc));
+            uart_puts(prc == 0 ? " (or already done this boot)\n" : "\n");
+
+            uart_puts("   frame     ");
+            uart_put_dec(n);
+            uart_puts(" bytes, beacon, ssid NATOS-BLB, channel 6\n");
+            uart_puts("   calling esp_wifi_80211_tx at ");
+            uart_put_hex(e->wifi_80211_tx);
+            uart_puts("\n");
+
+            uint32_t r = phy_stack_call(e->wifi_80211_tx, 0u,
+                                        (uint32_t)frame, n, 0u);
+            uart_puts("   tx        returned 0x");
+            uart_put_hex(r);
+            uart_puts("\n   phystack  ");
+            uart_put_dec(phy_stack_used());
+            uart_puts(" of ");
+            uart_put_dec(phy_stack_size());
+            uart_puts(" bytes used\n");
+            uart_puts("   RETURNING IS NOT RADIATING. scan for NATOS-BLB.\n");
+        }
+    }
     else if (str_eq(line, "dramtest")) {
         /* Is the blob DRAM reservation actually usable memory?
          *
