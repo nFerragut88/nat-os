@@ -105,6 +105,11 @@ typedef struct __attribute__((packed)) {
  * not, which is the distinction copy_to_iram() exists for. */
 #define IBUS_LOW        0x40000000u
 
+/* Below this is not a load address this loader recognises. Internal DRAM
+ * starts at 0x3FFAE000; the DROM window at 0x3F400000 is handled before this
+ * is consulted. Anything under it is esptool padding -- see the segment loop. */
+#define DRAM_LOW        0x3F400000u
+
 /* Cache control. Writing MMU entries with the cache enabled is undefined, so
  * the cache goes down, the table is written, and it comes back up. */
 #define DPORT_PRO_CACHE_CTRL_REG   0x3FF00040u
@@ -299,7 +304,25 @@ void boot_main(void)
         uart_puts(" len ");
         put_hex(seg.data_len);
 
-        if (seg.load_addr >= DROM_LOW && seg.load_addr < DROM_HIGH) {
+        if (seg.load_addr < DRAM_LOW) {
+            /* A PADDING segment, and skipping it is not optional.
+             *
+             * esptool inserts these to make a flash-mapped segment's data land
+             * congruent with its virtual address -- `ImageSegment(0, ...)`, load
+             * address zero, however many bytes the alignment needs. Espressif's
+             * bootloader skips them; this one did not, and copied 4,832 bytes to
+             * address 0 and reset in a loop.
+             *
+             * It appeared the moment kmain.c joined shell.c in flash and the
+             * IROM segment grew past an alignment boundary. Nothing about the
+             * IROM support was wrong -- the image simply grew a kind of segment
+             * this loader had never been shown.
+             *
+             * Written as "below DRAM" rather than "== 0" so that any future
+             * address this loader does not understand is refused loudly instead
+             * of being written somewhere. */
+            uart_puts("  -> padding, skipped\n");
+        } else if (seg.load_addr >= DROM_LOW && seg.load_addr < DROM_HIGH) {
             /* Flash-mapped: the bytes stay where they are and the address
              * space is pointed at them. Copying would need 27 KB of RAM this
              * board would rather keep.

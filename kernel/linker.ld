@@ -153,6 +153,21 @@ SECTIONS
      * is loud and harmless. */
     *shell.c.o(.literal .literal.* .text .text.*)
 
+    /* kmain.c: 13,057 bytes of boot banner, self-tests and task entry points.
+     *
+     * Checked rather than assumed. Its 16 symbols are `kmain`, the task entry
+     * functions, and helpers -- no ISR context, and `nm` confirms that nothing
+     * which must stay in iram (panic, flash, store, task, vectors, window,
+     * appcpu, timer, intr) references any of them.
+     *
+     * The subtle case is the idle task: if the cache were disabled during a
+     * flash write and the scheduler then entered a flash-resident task, it
+     * would fault. It cannot. flash.c does not disable the cache -- it drives
+     * SPI1 directly and wraps every operation in crit_enter/crit_exit, so no
+     * other code runs at all for the duration, and its own rodata is pinned to
+     * DRAM by .dram.rodata below. */
+    *kmain.c.o(.literal .literal.* .text .text.*)
+
     . = ALIGN(4);
     _flash_text_end = .;
   } > irom
