@@ -1597,3 +1597,57 @@ work, but the default path no longer takes the board down.
   expensive path runs only for the few switches that interrupt blob code.
 
 **Nothing has been on air.**
+
+### Step 14 — first attempt at window-aware switching. Failed, reverted.
+
+**Recorded because the approach looked right and is not.**
+
+The plan was the standard idiom: on switching away from a task with more than
+one live frame, force the frames out to their own stacks, then let the incoming
+task rotate freely.
+
+- Direct register-file save was **ruled out first**: `rotw` rotates *every*
+  register including whichever one holds the frame pointer, so there is no
+  register left to address memory with. Parking it in `EXCSAVE_3` and
+  re-reading it works for one group and then loses the group it clobbers.
+- The ESP32 ROM exports **no** window-spill helper — checked, only
+  `xthal_memcpy`, `xthal_get_ccount` and friends.
+- So: `win_spill_all`, six nested `CALL12`s (72 registers against a 64-register
+  file), letting `_WindowOverflow*` write each oldest frame to the stack
+  pointer recorded in it. Invoked from `_handler_level3` after `PS.EXCM` is
+  cleared, via `win_spill_if_needed()` which checks `ws & (ws - 1)` so ordinary
+  call0 switches pay a read and a branch.
+
+It compiled, and the kernel booted 11/11. Then:
+
+```
+wintorture 60  ->  *** KERNEL PANIC *** IllegalInstruction, epc 0x4008b6d8
+```
+
+**It broke the case that already worked** — a *single* windowed task, which had
+been 6/6 before. Reverted; `wintorture` correct again immediately.
+
+### What that says
+
+The failure is in the mechanism, not the goal. Calling a windowed routine out
+of the level-3 handler means rotating the window in the middle of a context
+switch, while `a1` is the frame under construction and the handler's own state
+lives in registers the spill chain is about to walk over. The spill also
+services overflows through handlers that assume ordinary task context.
+
+Untried alternatives, in the order worth trying:
+
+1. **Spill in task context, not handler context.** A task about to enter blob
+   code could ensure it is the only one with live frames, or spill on the way
+   *out* of `phy_stack_call` rather than at the switch. Nothing then runs
+   inside the interrupt handler.
+2. **Give each windowed context its own window region** by never letting two
+   exist — the "blob server" task from step 12's discussion, whose limits are
+   already written down.
+3. **Save the register file after all**, using two special registers rather
+   than one so the pointer survives rotation.
+
+`wincollide` remains the test, and it still fails, which is the correct state
+for a bug that is not fixed.
+
+**Nothing has been on air.**
