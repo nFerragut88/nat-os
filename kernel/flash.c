@@ -288,14 +288,29 @@ int flash_erase_sector(uint32_t addr)
      * have to re-derive them:
      *
      *   1. Every task that could run during an erase becomes IRAM-resident.
-     *      Correct, and a much larger constraint than it sounds -- it means
-     *      auditing the whole task set, not just adding an attribute.
-     *   2. Erase-suspend, if this chip supports it. Flash id 0x00684016. Not
-     *      investigated, and chip-dependent, so it is a question rather than a
-     *      plan.
-     *   3. Do not erase while timing matters. Free, requires nothing here, and
-     *      is the recommendation in next_moves/04 -- but it needs a caller
-     *      willing to be told when it may write, which does not exist yet.
+     *      Correct, and much larger than it sounds. You do not choose which
+     *      task the scheduler picks, so "might run" means all of them -- and
+     *      kmain.c, which is in flash since UM-NATOS-037, holds EVERY task's
+     *      entry function. Today this means moving kmain.c back, undoing half
+     *      of that report. Splitting it is possible but requires proving every
+     *      reachable path stays in RAM, which is an audit and not an attribute.
+     *
+     *   2. Erase-suspend. RULED OUT, not merely uninvestigated. The cache
+     *      fetches in hardware and there is no software hook on a miss, so
+     *      suspend only helps if the flash CONTROLLER issues it automatically.
+     *      Espressif built exactly that -- SOC_SPI_MEM_SUPPORT_AUTO_SUSPEND --
+     *      and shipped it on the C2, C3, C6, H2, S2 and S3. The original ESP32
+     *      is the one part that does not have it.
+     *
+     *   3. Do not erase while timing matters. Free, needs nothing in this file,
+     *      and is the recommendation in next_moves/04 and /10. The work is
+     *      elsewhere: store_save() currently fires blindly from the render loop
+     *      every 256 frames and asks nobody whether now is a good moment. It
+     *      needs a caller willing to be told when it may write.
+     *
+     * 2 is gone and 1 costs the IROM headroom UM-NATOS-037 just bought, to
+     * solve a problem that only exists during a LoRa receive window. 3 is the
+     * answer.
      *
      * Until one of those is done, 125 ms is the cost and it is a known one. */
     uint32_t crit = crit_enter();

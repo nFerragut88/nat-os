@@ -128,8 +128,19 @@ status-register poll, not a hardware requirement. It is not currently safe:
 > during an erase may enter a task whose instructions cannot be fetched.
 
 The critical section is doing two jobs and only one is obvious. The full
-argument and the three ways out are at `flash_erase_sector()` in
-`kernel/flash.c`, written where someone attempting the fix will be standing.
+argument is at `flash_erase_sector()` in `kernel/flash.c`, written where someone
+attempting the fix will be standing. In short, of the three ways out:
+
+1. **Make every task IRAM-resident.** You do not choose which task the scheduler
+   picks, so "might run" means all of them — and `kmain.c`, in flash since
+   UM-NATOS-037, holds *every* task's entry function. This means undoing half of
+   that report to buy back 125 ms.
+2. **Erase-suspend — ruled out.** The cache fetches in hardware with no software
+   hook on a miss, so it only helps if the flash controller suspends
+   automatically. Espressif shipped that as `SOC_SPI_MEM_SUPPORT_AUTO_SUSPEND`
+   on the C2, C3, C6, H2, S2 and S3. **The original ESP32 is the part that does
+   not have it.**
+3. **Do not erase while timing matters.** Free, and the answer.
 
 ### Decide the write policy before the duty cycle
 
