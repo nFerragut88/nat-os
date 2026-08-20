@@ -48,7 +48,12 @@ MEMORY
    * this kernel will ever run, forever. .rodata has been mapped from flash for
    * milestones; instructions never were, for no reason beyond nobody needing
    * it. See docs/next_moves/07-irom.md. */
-  irom (rx)  : ORIGIN = 0x400D0000, LENGTH = 0x330000
+  /* Shortened from 0x330000 to reserve the top 1 MB of this window for the
+   * pre-linked vendor 802.11 blob (kernel/flash.h, BLOB_IROM_ADDR). The kernel
+   * uses ~21 KB of the 2.3 MB that remains, so this costs nothing real -- but
+   * it has to be carved out HERE, or the kernel's own code is free to be placed
+   * at addresses the blob will later be mapped over. */
+  irom (rx)  : ORIGIN = 0x400D0000, LENGTH = 0x230000
 }
 
 ENTRY(_start)
@@ -275,3 +280,9 @@ SECTIONS
   /* Keep the toolchain from complaining about unplaced debug sections. */
   /DISCARD/ : { *(.eh_frame) *(.comment) }
 }
+
+/* Keeps the two halves of the reservation from drifting apart. If someone
+ * lengthens irom, this fails at link time instead of at the moment the blob is
+ * mapped over live kernel code. 0x40300000 is BLOB_IROM_ADDR in flash.h. */
+ASSERT(ORIGIN(irom) + LENGTH(irom) == 0x40300000,
+       "kernel irom must end exactly where the blob region begins (flash.h BLOB_IROM_ADDR)")

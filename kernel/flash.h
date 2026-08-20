@@ -47,6 +47,34 @@
 #define FLASH_SECTOR     4096u
 #define FLASH_DATA_ADDR  0x200000u      /* 2 MB in; clear of everything */
 
+/* ---- reserved region for the pre-linked vendor 802.11 blob ---------------
+ *
+ * next_moves/08. Nothing writes here yet; the reservation exists so that the
+ * address is decided ONCE, before a loader, an installer or a linker script
+ * hard-codes a different guess.
+ *
+ * The flash side and the virtual side are both 64 KB aligned because the flash
+ * MMU maps 64 KB pages (boot/boot.c, MMU_PAGE_SIZE) -- a request for, say,
+ * 700 KB is not expressible and would silently become 704.
+ *
+ * The offset matters more than the size. 0x200000 was proposed first and is
+ * exactly FLASH_DATA_ADDR: installing there would have destroyed the
+ * persistence record and the message sector on the first write. 0x220000
+ * clears MSG_ADDR (0x201000 + one sector) by 120 KB.
+ *
+ *   flash   0x220000 .. 0x320000     1 MB, ends 896 KB below the 4 MB top
+ *   vaddr 0x40300000 .. 0x40400000   the top of the IRAM0_CACHE window
+ *   mmu entries 112 .. 127           64 + (0x300000 >> 16), 16 pages
+ *
+ * 1 MB against a measured 545 KB closure is deliberate headroom, not waste:
+ * that figure is transmit-only with stubbed events, and scan or association
+ * pull more of net80211 in. Flash here is not scarce -- 1.8 MB above the
+ * message sector is otherwise unused. */
+#define BLOB_FLASH_ADDR  0x220000u
+#define BLOB_FLASH_SIZE  0x100000u
+#define BLOB_IROM_ADDR   0x40300000u
+#define BLOB_IROM_SIZE   0x100000u
+
 /* All three return 0 on success. Each masks interrupts for its duration; an
  * erase takes tens of milliseconds and will visibly delay the scheduler, so
  * they are not for calling from a hot path. */

@@ -1,6 +1,25 @@
 /* nat-os — SPI flash read/erase/write. See flash.h for the cache argument. */
 
 #include "flash.h"
+
+/* The blob reservation is a set of addresses that must agree with each other,
+ * with the store's sector, and with the MMU's page size. Checked here rather
+ * than trusted, because the first proposal collided with FLASH_DATA_ADDR and
+ * nothing in the build would have said so. */
+_Static_assert((BLOB_FLASH_ADDR % 0x10000u) == 0u,
+               "blob flash offset must be 64 KB aligned -- the MMU maps 64 KB pages");
+_Static_assert((BLOB_FLASH_SIZE % 0x10000u) == 0u,
+               "blob region size must be a whole number of 64 KB MMU pages");
+_Static_assert((BLOB_IROM_ADDR % 0x10000u) == 0u,
+               "blob virtual base must be 64 KB aligned");
+_Static_assert(BLOB_IROM_SIZE == BLOB_FLASH_SIZE,
+               "the mapped window and the flash region must be the same size");
+_Static_assert(BLOB_FLASH_ADDR >= FLASH_DATA_ADDR + (2u * FLASH_SECTOR),
+               "blob region overlaps the store record or the message sector");
+_Static_assert(BLOB_FLASH_ADDR + BLOB_FLASH_SIZE <= 0x400000u,
+               "blob region runs past the end of a 4 MB flash");
+_Static_assert(BLOB_IROM_ADDR + BLOB_IROM_SIZE <= 0x40400000u,
+               "blob window runs past the top of IRAM0_CACHE");
 #include "critical.h"
 #include "xtensa.h"
 
