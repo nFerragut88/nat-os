@@ -2067,3 +2067,55 @@ the system tolerates. It is a real cost and it is bounded and measurable.
   caught
 
 **Nothing has been on air.**
+
+### Step 23 — the pin, tested. It works, and it cannot be enough.
+
+**Tested now the board is back. No regression:** boot 11/11, `wintorture`
+correct, `blob` LOAD VERIFIED, `blobphy` `rc=0`, `wifiinit` `NO_MEM`,
+`blobtx force` `ESP_ERR_WIFI_IF`.
+
+**First run wedged**, exactly as predicted: init pinned the caller, created the
+blob's task, waited for it, and the pin prevented the task it was waiting for
+from ever running. The watchdog, being fed at the decline, could not catch it.
+
+Two fixes followed. `_queue_recv` got the same spill-unpin-release treatment as
+`_semphr_take` — a blocking wait must release the pin or it deadlocks against
+the thing it is waiting for. And the pin is now **bounded**: after ~2 s of
+consecutive declines the watchdog stops being fed, so a blob call that is not
+making progress is caught rather than running forever. The pin still holds past
+the bound, because switching away would corrupt the window either way.
+
+**Second run does not wedge — it collides again**, `IllegalInstruction` in
+`w2c_call2`.
+
+### Why this is a structural answer rather than another bug
+
+The tension is exact and does not depend on implementation quality:
+
+- To stop involuntary preemption corrupting the window, the running context
+  must be **pinned**.
+- To let the driver's own task run — which init waits for — the pin must be
+  **released**.
+- The moment it is released, two contexts are inside windowed code, which is
+  the original problem.
+
+Spilling narrows it but cannot close it: a context can spill every frame except
+the one it is currently executing in, and that last frame is exactly what
+another context's rotation lands on.
+
+So the pin removes *involuntary* preemption cleanly, and the driver's design
+requires *voluntary* concurrency. **A vendor driver that owns a task cannot be
+hosted without per-task `WINDOWBASE`/`WINDOWSTART`** — the thing five attempts
+at `_handler_level3` failed to deliver.
+
+That is a real conclusion, reached by testing rather than by giving up, and it
+is worth more than another attempt: it says the remaining work is *specifically*
+window-aware context switching, not a cleverer way to avoid it.
+
+### Kept
+
+No regression, and both mechanisms are correct within their scope — the pin for
+involuntary preemption, the bound for the wedge it would otherwise permit. Both
+are prerequisites for any eventual fix rather than alternatives to it.
+
+**Nothing has been on air.**

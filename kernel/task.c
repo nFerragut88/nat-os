@@ -125,10 +125,16 @@ void task_wait_hist_reset(void)
     g_max_wait = 0u;
 }
 static uint32_t g_age_rescues;
+
+/* Consecutive scheduler decisions spent pinned inside blob code. ~2 s at
+ * 100 Hz; register_chipv7_phy, the longest known blob call, is well under. */
+#define BLOB_PIN_MAX_TICKS 200u
+static uint32_t g_blob_pin_ticks;
 static uint32_t g_sleep_clamped;
 
 uint32_t task_max_wait(void)    { return g_max_wait; }
 uint32_t task_age_rescues(void)  { return g_age_rescues; }
+uint32_t task_blob_pin_ticks(void) { return g_blob_pin_ticks; }
 uint32_t task_sleep_clamped(void) { return g_sleep_clamped; }
 
 /* Wakes any sleeping task whose deadline has passed. Called from the scheduler,
@@ -436,7 +442,24 @@ uint32_t task_schedule(uint32_t current_sp)
      * reset a blob call that is working. */
     if (blob_pinned_task() >= 0 && blob_pinned_task() == g_current) {
         next = g_current;
-        watchdog_feed();
+
+        /* BOUNDED. Feeding the watchdog at the decline is what stops the hang
+         * detector resetting a blob call that is working -- and it is also
+         * what would let a wedged one run forever, which is exactly what
+         * happened the first time this was tried: init pinned the caller,
+         * created the blob's task, waited for it, and the pin prevented the
+         * task it was waiting for from ever running.
+         *
+         * So the feeding stops after a bound. Past it the pin still holds --
+         * switching away would corrupt the window either way -- but the
+         * watchdog is left alone and the hang detector does its job. A blob
+         * call that has not blocked or returned in this long is not making
+         * progress. */
+        if (++g_blob_pin_ticks < BLOB_PIN_MAX_TICKS) {
+            watchdog_feed();
+        }
+    } else {
+        g_blob_pin_ticks = 0;
     }
 
     watchdog_liveness(next != g_current);

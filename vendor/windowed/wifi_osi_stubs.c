@@ -201,6 +201,7 @@ extern void blob_task_create(void);
 extern void blob_lock(void);
 extern void blob_unlock(void);
 extern void win_spill_all(void);   /* windowed; callable directly from here */
+extern void osi_impl_queue_recv(void);
 
 static void osi_hit(uint32_t i)
 {
@@ -445,7 +446,19 @@ static int32_t osi_s_queue_send_to_front(void *queue, void *item, uint32_t block
 static int32_t osi_s_queue_recv(void *queue, void *item, uint32_t block_time_tick)
 {
     osi_hit(29u);
-    return 0;
+    /* Same shape as _semphr_take: try without blocking, and only if that
+     * fails spill the window, unpin and release so another context -- notably
+     * the blob's own task -- can run while we wait. Without this the pinned
+     * caller waits for a task the pin itself is preventing from running. */
+    if (w2c_call3((uint32_t)&osi_impl_queue_recv, (uint32_t)queue, (uint32_t)item, 0u)) {
+        return 1;
+    }
+    win_spill_all();
+    (void)w2c_call0f((uint32_t)&blob_unlock);
+    int32_t r = (int32_t)w2c_call3((uint32_t)&osi_impl_queue_recv, (uint32_t)queue,
+                                   (uint32_t)item, (uint32_t)block_time_tick);
+    (void)w2c_call0f((uint32_t)&blob_lock);
+    return r;
 }
 
 static uint32_t osi_s_queue_msg_waiting(void *queue)
