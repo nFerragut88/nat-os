@@ -53,6 +53,8 @@ worst possible. Before touching the scheduler:
    polling, flash saves happening.
 3. **The flash save is the suspect.** `store_save()` erases a sector with
    interrupts masked — tens of milliseconds where nothing else runs at all.
+   *(Prediction kept for the record. It was the right suspect and the wrong
+   magnitude: measured at **125 ms**. See the section at the end.)*
    That alone may dominate the tail.
 
 Get the number first. It may be that the honest fix is "do not erase flash
