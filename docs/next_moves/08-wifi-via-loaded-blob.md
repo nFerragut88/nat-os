@@ -1846,3 +1846,76 @@ Tree at the step-16 checkpoint, verified: boot 11/11, `wintorture` correct,
 `blobphy` `rc=0`, `wifiinit` `NO_MEM`. `wincollide` still fails, correctly.
 
 **Nothing has been on air.**
+
+---
+
+## Step 19 — a shell bug invalidated four experiments. Corrections, and a real advance.
+
+`split()` truncates the command line **in place** at the first space and returns
+the remainder as `arg`. Every two-word command added during this work tested
+`str_eq(line, "wifiinit null")` — and `line` is `"wifiinit"`. **None of them
+ever matched.** Each silently ran the default path.
+
+Six commands were affected: `wifiinit null`, `wifiinit nvs`, `wifiinit task`,
+`osi null`, `blob map`, `blobtx force`. All now test `arg`.
+
+### What has to be withdrawn, and what is reinstated
+
+**Step 9's conclusion was wrong.** Re-run properly:
+
+```
+wifiinit        rc=0x101 (NO_MEM)        15 of 118 entries
+wifiinit null   rc=0x102 (INVALID_ARG)    0 of 118 entries
+```
+
+That is **exactly** what the disassembly said — NULL config, `bnez.n a2`,
+`movi a2, 0x102`, return before registering anything, hence zero adapter calls.
+The listing was right the whole time. "objdump is misleading about this
+function" was a conclusion drawn from a command that never ran.
+
+**Step 9b's withdrawal was also wrong.** `wifi_osi_funcs_register(NULL)`
+returns **`0x102`** — it does validate. The original step-6 reading, that the
+blob accepted the table, was correct and is reinstated. Which also restores
+step 8b: the blob really did detect the stale in-tree table.
+
+**Step 8's `nvs_enable` elimination never happened** — the override was never
+applied. That field is untested, not eliminated.
+
+**Step 13's task-creation gate never armed.** `wifiinit task` could not enable
+it, so the collision has not been re-observed since the gate was added.
+
+### The advance
+
+With the adapter table installed directly into the blob's own `g_osi_funcs_p`
+(after `blob_init`, since `.data` is copied over anything written before it):
+
+```
+forced g_osi_funcs_p = 0x3f40761c
+calling esp_wifi_80211_tx at 0x4031acb8
+tx        returned 0x00003004
+phystack  1296 of 6144 bytes used
+```
+
+**`esp_wifi_80211_tx` executed and returned** rather than dereferencing null.
+`0x3004` is `ESP_ERR_WIFI_IF` — *"WiFi interface error"*. It ran its frame
+sanity check, took the global lock through our adapter, and rejected the call
+for a specific, sensible reason: there is no configured interface, because the
+driver was never started.
+
+That is the transmit path running for the first time.
+
+### The lesson
+
+Four experiments produced confident conclusions from commands that never
+executed, and two of those conclusions were used to overturn *correct* earlier
+findings. The tell was available throughout — `blobtx force` printed no
+"forced" line, and I read the absence as the poke being ineffective rather than
+the branch never being taken.
+
+**A negative result from a command whose execution was never confirmed is not a
+negative result.** The project already had the rule one level up — "a
+successful measurement is not evidence if the measurement and the fault share a
+dependency" — and this is the same failure with the instrument being the shell
+itself.
+
+**Nothing has been on air.**

@@ -636,6 +636,22 @@ static void execute(char *line)
             uart_puts("   frame     ");
             uart_put_dec(n);
             uart_puts(" bytes, beacon, ssid NATOS-BLB, channel 6\n");
+            /* `blobtx force` installs the OS adapter table directly into the
+             * blob's own g_osi_funcs_p (0x3ffd4e08) rather than waiting for
+             * esp_wifi_init_internal to do it.
+             *
+             * AFTER blob_init, not before: blob_init copies .data over the
+             * blob's DRAM, so an earlier poke is simply overwritten -- which
+             * is what the first attempt did.
+             *
+             * The question it asks is narrow: is the adapter table all that
+             * transmit needs, or does it need the rest of a started driver? */
+            if (str_eq(arg, "force")) {
+                *(volatile uint32_t *)0x3ffd4e08u = (uint32_t)wifi_osi_table();
+                uart_puts("   forced g_osi_funcs_p = ");
+                uart_put_hex((uint32_t)wifi_osi_table());
+                uart_puts("\n");
+            }
             uart_puts("   calling esp_wifi_80211_tx at ");
             uart_put_hex(e->wifi_80211_tx);
             uart_puts("\n");
@@ -652,7 +668,7 @@ static void execute(char *line)
             uart_puts("   RETURNING IS NOT RADIATING. scan for NATOS-BLB.\n");
         }
     }
-    else if (str_eq(line, "osi") || str_eq(line, "osi null") || str_eq(line, "osiused")) {
+    else if (str_eq(line, "osi") || str_eq(line, "osiused")) {
         /* next_moves/08. Hand the OS adapter table to the blob, then report
          * which of its entries the driver actually reaches.
          *
@@ -716,7 +732,7 @@ static void execute(char *line)
                  * and a NULL one, and would move the fault from the config to
                  * phy_stack_call. */
                 uint32_t r = phy_stack_call(e->osi_register,
-                                            str_eq(line, "osi null") ? 0u
+                                            str_eq(arg, "null") ? 0u
                                                 : (uint32_t)wifi_osi_table(),
                                             0u, 0u, 0u);
                 uart_puts("   osi_reg   returned ");
@@ -734,7 +750,7 @@ static void execute(char *line)
             }
         }
     }
-    else if (str_eq(line, "wifiinit") || str_eq(line, "wifiinit null") || str_eq(line, "wifiinit nvs") || str_eq(line, "wifiinit task")) {
+    else if (str_eq(line, "wifiinit")) {
         /* next_moves/08. esp_wifi_init_internal() -- the step that installs
          * the OS adapter table.
          *
@@ -791,12 +807,12 @@ static void execute(char *line)
              * should not reach for a key/value store that does not exist. If
              * the driver validates it rather than merely honouring it, that is
              * a config rejection with a one-field cause. */
-            int want_null = str_eq(line, "wifiinit null");
+            int want_null = str_eq(arg, "null");
             /* `wifiinit task` opts into blob task creation, which currently
              * panics -- two contexts in windowed code. Kept reachable because
              * it is the reproducer for the next piece of work. */
-            blob_task_enable(str_eq(line, "wifiinit task"));
-            if (str_eq(line, "wifiinit nvs")) { wifi_init_cfg_nvs(1); }
+            blob_task_enable(str_eq(arg, "task"));
+            if (str_eq(arg, "nvs")) { wifi_init_cfg_nvs(1); }
             /* blob_call, not phy_stack_call: the driver has reached
              * _task_create_pinned_to_core, and a task created inside a masked
              * call can never run. Exclusion moves to a mutex; the scheduler
@@ -1013,7 +1029,7 @@ static void execute(char *line)
             uart_puts("   all 1 KB steps stored and verified\n");
         }
     }
-    else if (str_eq(line, "blob") || str_eq(line, "blob map")) {
+    else if (str_eq(line, "blob")) {
         /* next_moves/08 step 4. Maps the vendor image, validates it, and runs
          * the loader half -- .data copy and .bss zero.
          *
@@ -1052,7 +1068,7 @@ static void execute(char *line)
             /* `blob map` stops here: MMU programmed and image validated, but
              * nothing written. Separating the two is what tells a bad map
              * apart from a bad load. */
-            if (str_eq(line, "blob map")) {
+            if (str_eq(arg, "map")) {
                 uart_puts("   mapped and validated; loader NOT run\n");
                 return;
             }
