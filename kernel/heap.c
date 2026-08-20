@@ -86,6 +86,35 @@ void *heap_alloc(uint32_t bytes)
         return 0;               /* a zero-size allocation has no useful answer */
     }
 
+    /* Refuse anything larger than the heap could ever hold, BEFORE align_up.
+     *
+     * NA-002. align_up() is (v + 7) & ~7 and wraps: align_up(0xFFFFFFFF) is 0.
+     * With want == 0 the search below finds the first free block -- `b->size <
+     * 0` is never true unsigned -- splits it, and returns a valid non-NULL
+     * pointer to a few bytes for a caller that believes it holds 4 GB. The
+     * invariant "alloc(n) => a region of at least n bytes, or failure" was
+     * broken in the quietest possible way: by succeeding.
+     *
+     * Comparing against g_total closes it without any overflow reasoning of its
+     * own: g_total is the heap's size, so anything larger cannot be served, and
+     * a value that passes this check cannot wrap the addition that follows.
+     * It also makes the existing self-test -- heap_alloc(heap_total() + 1) --
+     * an exact boundary test rather than an approximate one.
+     *
+     * Counted as a failure like any other so heap_fail_count() stays honest.
+     *
+     * Not currently reachable: every caller passes a compile-time constant from
+     * the launch table. It becomes reachable the moment a size is computed at
+     * run time -- a bundle length arriving over the radio, for instance, which
+     * is exactly next_moves/10. Fixed now because that is cheaper than fixing
+     * it then. */
+    if (bytes > g_total) {
+        uint32_t c = crit_enter();
+        g_fail++;
+        crit_exit(c);
+        return 0;
+    }
+
     uint32_t want = align_up(bytes);
 
     /* The free list is walked and rewritten here, and a tick landing mid-split

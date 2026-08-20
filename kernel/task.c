@@ -124,9 +124,11 @@ void task_wait_hist_reset(void)
     g_max_wait = 0u;
 }
 static uint32_t g_age_rescues;
+static uint32_t g_sleep_clamped;
 
 uint32_t task_max_wait(void)    { return g_max_wait; }
-uint32_t task_age_rescues(void) { return g_age_rescues; }
+uint32_t task_age_rescues(void)  { return g_age_rescues; }
+uint32_t task_sleep_clamped(void) { return g_sleep_clamped; }
 
 /* Wakes any sleeping task whose deadline has passed. Called from the scheduler,
  * which runs every tick, so a sleep resolves to one tick. */
@@ -678,6 +680,30 @@ void task_sleep(uint32_t ticks)
      * arrived" must not be confused with "task_wake released me deliberately" —
      * without the flag, this loop would put the task straight back to sleep and
      * turn every early wake into a full-length one. */
+    /* NA-001. Clamp, and say so.
+     *
+     * Every deadline comparison in this kernel is the wrap-safe
+     * (int32_t)(now - deadline) >= 0, which is correct and is why tick wrap
+     * works -- but it only spans half the range. deadline = now + 0xFFFFFFFF is
+     * now - 1, so the very first test reads (int32_t)(1) >= 0 and the function
+     * returns WITHOUT SLEEPING. A caller asking to sleep forever got no sleep
+     * at all, which is the opposite of what it asked for.
+     *
+     * Clamped rather than refused, which is a deliberate departure from this
+     * project's rule 6. Rule 6 is about transfers, where a silent shortening
+     * loses data. Here the caller's intent for any absurd value is "a very long
+     * time", and TASK_SLEEP_MAX is 248 days at 100 Hz -- longer than this board
+     * will run. Refusing would also mean changing a void signature that has 19
+     * call sites, for no gain.
+     *
+     * But a clamp that hides a caller's arithmetic bug is still a lie, so it is
+     * counted. task_sleep_clamped() should be zero forever; if it is not,
+     * somebody computed a sleep that overflowed. */
+    if (ticks > TASK_SLEEP_MAX) {
+        g_sleep_clamped++;
+        ticks = TASK_SLEEP_MAX;
+    }
+
     uint32_t deadline = timer_ticks() + ticks;
 
     uint32_t crit = crit_enter();

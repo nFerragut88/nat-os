@@ -215,6 +215,16 @@ void task_unboost(int id);
 /* Blocks the caller until `ticks` scheduler ticks have elapsed. Unlike a yield
  * loop this leaves the task unrunnable in the meantime, so lower-priority work
  * actually gets the CPU. */
+/* The longest sleep this kernel can express: 2^31-1 ticks, about 248 days at
+ * 100 Hz. Deadlines are compared wrap-safely as (int32_t)(now - deadline) >= 0,
+ * which spans half the 32-bit range and no more. A request above this is
+ * clamped to it and counted by task_sleep_clamped() -- see NA-001 in task.c. */
+#define TASK_SLEEP_MAX 0x7FFFFFFFu
+
 void task_sleep(uint32_t ticks);
+
+/* Times a sleep request exceeded TASK_SLEEP_MAX and was clamped. Should be zero
+ * forever; anything else means a caller's arithmetic overflowed. */
+uint32_t task_sleep_clamped(void);
 
 #endif /* NATOS_TASK_H */

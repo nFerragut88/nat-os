@@ -607,6 +607,21 @@ static void m3_selftest(void)
     int oom_ok = (huge == 0) && (heap_fail_count() == fails_before + 1u) &&
                  (heap_check() == 0) && (heap_free_bytes() == base_free);
 
+    /* NA-002: a size that wraps align_up() must fail like any other.
+     *
+     * Before the guard in heap.c this SUCCEEDED -- align_up(0xFFFFFFFF) is 0,
+     * the search matched the first free block, and the caller got a valid
+     * pointer to a few bytes while believing it held 4 GB. Tested here rather
+     * than once by hand, because a bug that fails by succeeding is exactly the
+     * kind that comes back. Two values: the boundary and the extreme. */
+    uint32_t ovf_before = heap_fail_count();
+    void *ovf1 = heap_alloc(0xFFFFFFFFu);
+    void *ovf2 = heap_alloc(0xFFFFFFF9u);   /* first value that still wraps */
+    int ovf_ok = (ovf1 == 0) && (ovf2 == 0) &&
+                 (heap_fail_count() == ovf_before + 2u) &&
+                 (heap_check() == 0) && (heap_free_bytes() == base_free);
+    oom_ok = oom_ok && ovf_ok;
+
     /* A refused free must not corrupt the list either. Both a wild pointer and
      * a double free are counted rather than acted on. */
     uint32_t bad_before = heap_bad_free_count();
@@ -620,7 +635,9 @@ static void m3_selftest(void)
 
     uart_puts("  [3] oom safe : ");
     uart_puts((oom_ok && guard_ok) ? "PASS" : "FAIL");
-    uart_puts("  oversize=NULL fails=");
+    uart_puts("  oversize=NULL overflow=");
+    uart_puts(ovf_ok ? "NULL" : "LEAKED");
+    uart_puts(" fails=");
     uart_put_dec(heap_fail_count());
     uart_puts(" bad_frees=");
     uart_put_dec(heap_bad_free_count());
