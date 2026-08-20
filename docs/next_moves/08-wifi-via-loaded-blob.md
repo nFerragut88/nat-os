@@ -1542,3 +1542,58 @@ calls into the blob this is insufficient. Nothing does today, and `_set_intr`
 clamps and counts, so that day is visible rather than silent.
 
 **Nothing has been on air.**
+
+### Step 13 — the task gets created, runs, and collides. Measured.
+
+`_task_create_pinned_to_core` is implemented: the blob passes a function *and*
+a parameter while `task_create()` takes a name and a void entry, so each
+request gets a slot and a trampoline. The trampoline finds its slot by task id
+and **waits** if it has to — the created task can be scheduled before
+`task_create()` has returned the id to store, because the scheduler is live
+now, which is the entire point of `blob_call()`.
+
+It worked. The task was created, ran, entered blob code, and blocked on a
+semaphore. Then:
+
+```
+*** KERNEL PANIC ***
+exccause : 0  (IllegalInstruction)
+epc      : 0x4008b4fb   ->  inside osi_s_semphr_take
+```
+
+`osi_s_semphr_take` is **windowed**. At that moment two contexts were executing
+windowed code at once — the new WiFi task via `rom_call3`, and the shell still
+inside `phy_stack_call`. The window rotated under a second context and the
+frames collided.
+
+**This is the hazard predicted in step 12, arriving as a fault rather than an
+argument**, and it is the case `blob_call()`'s mutex cannot cover: the WiFi task
+cannot hold that mutex, because by design it holds it forever.
+
+So the earlier conclusion refines once more:
+
+- preemption of windowed code by **call0** tasks is safe (`wintorture`, 6/6)
+- **one context** in windowed code is safe with a mutex (step 12)
+- **two contexts** in windowed code is not, and a driver task makes that
+  unavoidable
+
+### Now gated, not reverted
+
+`wifiinit task` opts in; plain `wifiinit` refuses task creation, reports
+`NO_MEM`, and unwinds cleanly — scheduler still running afterwards. The
+reproducer stays reachable because it is the test case for the next piece of
+work, but the default path no longer takes the board down.
+
+### Two requirements recorded on the way past
+
+- **The blob wants a 6,656-byte task stack.** nat-os gives every task
+  `TASK_STACK_WORDS` = 2 KB. Refusals are counted rather than truncated,
+  because a stack quietly one third the requested size fails much later and
+  somewhere else.
+- **Window-aware context switching is now on the critical path**, not deferred:
+  spill the window and save `WINDOWBASE`/`WINDOWSTART` when switching away from
+  a task with more than one live frame. The lazy check described earlier still
+  applies — a call0 kernel's steady state is exactly one frame, so the
+  expensive path runs only for the few switches that interrupt blob code.
+
+**Nothing has been on air.**

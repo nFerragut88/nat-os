@@ -732,7 +732,7 @@ static void execute(char *line)
             }
         }
     }
-    else if (str_eq(line, "wifiinit") || str_eq(line, "wifiinit null") || str_eq(line, "wifiinit nvs")) {
+    else if (str_eq(line, "wifiinit") || str_eq(line, "wifiinit null") || str_eq(line, "wifiinit nvs") || str_eq(line, "wifiinit task")) {
         /* next_moves/08. esp_wifi_init_internal() -- the step that installs
          * the OS adapter table.
          *
@@ -790,6 +790,10 @@ static void execute(char *line)
              * the driver validates it rather than merely honouring it, that is
              * a config rejection with a one-field cause. */
             int want_null = str_eq(line, "wifiinit null");
+            /* `wifiinit task` opts into blob task creation, which currently
+             * panics -- two contexts in windowed code. Kept reachable because
+             * it is the reproducer for the next piece of work. */
+            blob_task_enable(str_eq(line, "wifiinit task"));
             if (str_eq(line, "wifiinit nvs")) { wifi_init_cfg_nvs(1); }
             /* blob_call, not phy_stack_call: the driver has reached
              * _task_create_pinned_to_core, and a task created inside a masked

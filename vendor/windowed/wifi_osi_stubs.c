@@ -197,6 +197,7 @@ extern void osi_impl_free(void);
 extern void task_current(void);
 extern void osi_impl_queue_create(void);
 extern void osi_impl_queue_delete(void);
+extern void blob_task_create(void);
 
 static void osi_hit(uint32_t i)
 {
@@ -459,7 +460,22 @@ static uint32_t osi_s_event_group_wait_bits(void *event, uint32_t bits_to_wait_f
 static int32_t osi_s_task_create_pinned_to_core(void *task_func, const char *name, uint32_t stack_depth, void *param, uint32_t prio, void *task_handle, uint32_t core_id)
 {
     osi_hit(36u);
-    return 0;
+    /* Record the requested stack, then hand off. The w2c bridges carry at
+     * most three arguments and this has seven, so the request travels as a
+     * struct on this (windowed) stack -- same address space, so the call0 side
+     * can read it directly. */
+    g_osi_trace_arg[g_osi_trace_n ? g_osi_trace_n - 1u : 0u] = stack_depth;
+    (void)core_id;
+
+    struct { uint32_t fn, arg, prio, handle, stack_bytes; } req;
+    req.fn          = (uint32_t)task_func;
+    req.arg         = (uint32_t)param;
+    req.prio        = prio;
+    req.handle      = (uint32_t)task_handle;
+    req.stack_bytes = stack_depth;
+
+    return (int32_t)w2c_call2((uint32_t)&blob_task_create,
+                              (uint32_t)&req, (uint32_t)name);
 }
 
 static int32_t osi_s_task_create(void *task_func, const char *name, uint32_t stack_depth, void *param, uint32_t prio, void *task_handle)

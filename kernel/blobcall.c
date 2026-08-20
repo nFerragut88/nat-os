@@ -45,6 +45,7 @@
 #include "mutex.h"
 #include "window.h"
 #include "critical.h"
+#include "task.h"
 
 extern uint32_t g_phy_call_mask;     /* window.S */
 
@@ -90,3 +91,113 @@ uint32_t blob_call(uint32_t fn, uint32_t a, uint32_t b, uint32_t c, uint32_t d)
 
 uint32_t blob_call_count(void)     { return g_calls; }
 uint32_t blob_call_contended(void) { return g_contended; }
+
+/* ---- tasks the blob asks us to create ---------------------------------
+ *
+ * The blob hands over a function AND a parameter; task_create() takes a name
+ * and a void entry. So each request gets a slot and a trampoline, and the
+ * trampoline calls the real function once it can work out which slot is its
+ * own.
+ *
+ * The lookup is by task id and it waits, because the created task may be
+ * scheduled before task_create() has returned the id to store -- the scheduler
+ * is live now, which is the entire point of blob_call(). Sleeping rather than
+ * spinning keeps the race harmless.
+ */
+#define BLOB_TASK_MAX 4
+
+struct blob_task {
+    int      used;
+    int      id;            /* nat-os task id, -1 until known */
+    uint32_t fn;            /* windowed entry in the blob     */
+    uint32_t arg;
+    uint32_t want_stack;    /* what the blob asked for, in bytes */
+};
+static struct blob_task g_bt[BLOB_TASK_MAX];
+static uint32_t g_bt_short;     /* times the request exceeded a nat-os stack */
+
+/* Task creation is OPT-IN, and the reason is architectural rather than a bug.
+ *
+ * A created blob task runs blob code -- windowed -- on its own schedule, while
+ * the caller is still inside blob code through phy_stack_call. That is TWO
+ * CONTEXTS INSIDE WINDOWED CODE AT ONCE, which is the one case blob_call()'s
+ * mutex cannot cover: the WiFi task cannot hold that mutex, because it holds
+ * it forever by design.
+ *
+ * Measured, not predicted: enabling this panics with IllegalInstruction inside
+ * osi_s_semphr_take -- a windowed function -- as soon as the new task blocks.
+ * The window rotated under a second context and the frames collided.
+ *
+ * The fix is window-aware context switching: spill the window and save
+ * WINDOWBASE/WINDOWSTART when switching away from a task with more than one
+ * live frame. See next_moves/08. Until then this stays off, so the default
+ * path fails cleanly instead of taking the board down. */
+static int g_bt_enabled;
+void blob_task_enable(int on) { g_bt_enabled = on; }
+
+static void blob_task_entry(void)
+{
+    int me = task_current();
+    int slot = -1;
+    while (slot < 0) {
+        for (int i = 0; i < BLOB_TASK_MAX; i++) {
+            if (g_bt[i].used && g_bt[i].id == me) { slot = i; break; }
+        }
+        if (slot < 0) { task_sleep(1u); }
+    }
+    /* call0 -> windowed, one argument. rom_call3 passes three; the callee
+     * takes one and ignores the rest. */
+    (void)rom_call3(g_bt[slot].fn, g_bt[slot].arg, 0u, 0u);
+}
+
+/* Called from the windowed adapter stub. Arguments arrive in a small struct
+ * because the w2c bridges carry at most three. */
+struct blob_task_req { uint32_t fn, arg, prio, handle, stack_bytes; };
+
+int blob_task_create(void *reqp, const char *name);
+int blob_task_create(void *reqp, const char *name)
+{
+    struct blob_task_req *r = (struct blob_task_req *)reqp;
+
+    if (!g_bt_enabled) {
+        g_bt_short++;          /* counted so the refusal is visible */
+        return 0;              /* pdFAIL -- driver reports NO_MEM and unwinds */
+    }
+
+    /* Record what was ASKED for. nat-os stacks are a fixed TASK_STACK_WORDS,
+     * so a blob task wanting more is a real constraint rather than a detail --
+     * and one that would present as a stack-guard panic much later. */
+    if (r->stack_bytes > (uint32_t)(TASK_STACK_WORDS * 4)) { g_bt_short++; }
+
+    uint32_t crit = crit_enter();
+    int slot = -1;
+    for (int i = 0; i < BLOB_TASK_MAX; i++) {
+        if (!g_bt[i].used) { slot = i; break; }
+    }
+    if (slot < 0) { crit_exit(crit); return 0; }        /* pdFAIL */
+    g_bt[slot].used = 1;
+    g_bt[slot].id   = -1;
+    g_bt[slot].fn   = r->fn;
+    g_bt[slot].arg  = r->arg;
+    g_bt[slot].want_stack = r->stack_bytes;
+    crit_exit(crit);
+
+    int id = task_create(name ? name : "blob", blob_task_entry);
+    if (id < 0) {
+        g_bt[slot].used = 0;
+        return 0;                                        /* pdFAIL */
+    }
+    g_bt[slot].id = id;                                  /* trampoline unblocks */
+
+    if (r->handle) { *(uint32_t *)r->handle = (uint32_t)(id + 1); }
+    return 1;                                            /* pdPASS */
+}
+
+uint32_t blob_task_count(void)
+{
+    uint32_t n = 0;
+    for (int i = 0; i < BLOB_TASK_MAX; i++) { if (g_bt[i].used) { n++; } }
+    return n;
+}
+uint32_t blob_task_stack_short(void) { return g_bt_short; }
+uint32_t blob_task_want_stack(void)  { return g_bt[0].want_stack; }

@@ -16,4 +16,11 @@ void     blob_call_init(void);
 uint32_t blob_call_count(void);
 uint32_t blob_call_contended(void);   /* must stay 0 with a single caller */
 
+/* Off by default: a blob task runs windowed code concurrently with a caller
+ * that is also inside windowed code, and that collides. See blobcall.c. */
+void     blob_task_enable(int on);
+uint32_t blob_task_count(void);
+uint32_t blob_task_stack_short(void);  /* requests larger than a nat-os stack */
+uint32_t blob_task_want_stack(void);
+
 #endif
