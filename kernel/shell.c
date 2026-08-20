@@ -791,7 +791,6 @@ static void execute(char *line)
         }
     }
     else if (str_eq(line, "blob") || str_eq(line, "blob map")) {
-        uart_puts("      [shell:pre-map]\n");
         /* next_moves/08 step 4. Maps the vendor image, validates it, and runs
          * the loader half -- .data copy and .bss zero.
          *
@@ -800,7 +799,6 @@ static void execute(char *line)
          * the board dies with no report. Every number below is readable before
          * anything is executed. */
         const struct blob_entry *e = blob_map();
-        uart_puts("      [shell:post-map]\n");
         if (!e) {
             uart_puts("   no valid image at ");
             uart_put_hex(BLOB_FLASH_ADDR);
@@ -1109,7 +1107,6 @@ static void execute(char *line)
         uart_puts(got == (uint32_t)d ? "  CORRECT" : "  WRONG");
         uart_puts("\n");
     }
-#if 0
     else if (str_eq(line, "wintorture")) {
         /* Does a context switch corrupt live windowed frames?
          *
@@ -1152,7 +1149,6 @@ static void execute(char *line)
         uart_put_dec(want);
         uart_puts(got == want ? "  CORRECT\n" : "  WRONG - frames were corrupted\n");
     }
-#endif
     else if (str_eq(line, "vendorcall")) {
         int d = parse_int(arg);
         if (d < 0) { d = 20; }
