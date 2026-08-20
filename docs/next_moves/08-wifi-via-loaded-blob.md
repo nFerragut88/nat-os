@@ -1651,3 +1651,54 @@ Untried alternatives, in the order worth trying:
 for a bug that is not fixed.
 
 **Nothing has been on air.**
+
+### Step 15 — second attempt, also reverted. But the diagnosis is now complete.
+
+Step 14 failed because the spill ran inside the interrupt handler. The obvious
+next thought was that spilling was not even the missing piece: **`WINDOWBASE`
+is never saved.** For call0 tasks that never mattered — nothing rotates, so
+every task sees the same base. A task inside vendor code does rotate, and
+resuming it at whatever base the intervening task left behind makes its `RETW`
+unwind to a window position its frames are not at.
+
+That was implemented — `WINDOWBASE` into the frame's spare word at offset 84,
+restored before the registers with the frame address parked in `EXCSAVE_3`
+across the rotation, and `WINDOWSTART` narrowed to one live frame.
+
+**It broke `wintorture` too**, and that failure is the informative one:
+
+Narrowing `WINDOWSTART` to a single frame declares every older frame dead. That
+is only safe if those frames are **already in memory**. With a single windowed
+task nothing has spilled them, so the declaration throws them away and the
+`RETW` reloads whatever happens to be on the stack.
+
+### So the complete fix needs all three, in order
+
+1. **Spill** the live frames to their own stacks — they must be in memory before
+   anything else is safe.
+2. **Save and restore `WINDOWBASE`** per task — otherwise the frames are in
+   memory but the task resumes looking for them at the wrong rotation.
+3. **Narrow `WINDOWSTART`** to one live frame — only valid *after* step 1, and
+   what makes the reload happen through `_WindowUnderflow*`.
+
+Step 14 did 1 (in the wrong place) without 2 or 3. Step 15 did 2 and 3 without
+1. Neither could have worked, and each failure eliminated its own hypothesis.
+
+The remaining question is only **where** step 1 can safely run. Not the level-3
+handler — step 14 established that. The candidate is task context: spill on
+*entry* to windowed code, so a task about to rotate first pushes out whatever
+the previously-running task left live. That runs on a normal stack, outside any
+handler, and is the same place `phy_stack_call` already narrows `WINDOWSTART`
+without spilling first — which is itself a latent version of this bug.
+
+### Status
+
+Both attempts reverted; the tree is clean and verified: boot 11/11,
+`wintorture` correct, `blobphy` `rc=0`, `wifiinit` `NO_MEM`. `wincollide` still
+fails, which remains correct for an unfixed bug.
+
+**Two failed attempts at the same subsystem in one sitting is a signal.** The
+diagnosis above is worth more than a third attempt made tired; the next one
+should start from it rather than from scratch.
+
+**Nothing has been on air.**
