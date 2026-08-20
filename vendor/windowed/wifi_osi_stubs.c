@@ -162,6 +162,7 @@ typedef struct {
 uint16_t g_osi_calls[OSI_N];
 uint8_t  g_osi_order[OSI_N];
 uint8_t  g_osi_seq;
+uint32_t g_osi_intr_clamped;   /* interrupts asked for above CRIT_LEVEL */
 
 /* Bridges into nat-os's call0 side. The blob calls us windowed; the kernel's
  * heap, mutexes and scheduler are call0, so every real body hands off through
@@ -194,6 +195,31 @@ static bool osi_s_env_is_chip(void)
 static void osi_s_set_intr(int32_t cpu_no, uint32_t intr_source, uint32_t intr_num, int32_t intr_prio)
 {
     osi_hit(2u);
+    /* CLAMP THE PRIORITY, and this is load-bearing rather than tidy.
+     *
+     * The blob's *iram sections -- 53.7 KB of .wifi0iram, .iram1, .phyiram and
+     * friends -- are in FLASH here, not RAM. ESP-IDF keeps them in RAM because
+     * it leaves interrupts ENABLED during flash writes, so its WiFi ISRs must
+     * stay executable with the cache off.
+     *
+     * nat-os made the opposite trade: flash_erase_sector() holds crit_enter()
+     * across the whole erase, so nothing at level <= CRIT_LEVEL runs and
+     * nothing fetches. Flash placement is therefore safe -- but ONLY for
+     * interrupts the critical section actually masks.
+     *
+     * An interrupt allocated above CRIT_LEVEL would fire mid-erase and fetch
+     * from a flash chip that cannot answer. Clamping here closes that, and
+     * costs a WiFi ISR up to 125 ms of delay during an erase -- which is the
+     * next_moves/04 problem, already answered by write policy rather than by
+     * scheduler or placement changes.
+     *
+     * The alternative is a fourth window: 53.7 KB of real IRAM against 86.4 KB
+     * free, so it does fit. Not spent, because masking already covers it. */
+    if (intr_prio > 3) {            /* CRIT_LEVEL */
+        g_osi_intr_clamped++;
+        intr_prio = 3;
+    }
+    (void)cpu_no; (void)intr_source; (void)intr_num; (void)intr_prio;
 }
 
 static void osi_s_clear_intr(uint32_t intr_source, uint32_t intr_num)

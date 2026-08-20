@@ -239,10 +239,23 @@ exit would also return zero.
   sequence and liveness across the call were all identical. It could not be
   instrumented: any probe changed the layout it was observing. §5.7 may or may
   not have been its cause.
-- **The `*iram` sections are in flash.** Espressif keeps them in RAM so they
-  remain executable while the cache is off. nat-os masks interrupts for the
-  whole erase, so a delayed ISR is not a faulting one — but `CRIT_LEVEL` is 3,
-  and an interrupt allocated above it would fetch mid-erase. Untested.
+- **The `*iram` sections are in flash — measured, and closed by clamping.**
+  53.7 KB of `.wifi0iram`, `.iram1`, `.phyiram` and friends live in the code
+  window rather than RAM. Espressif keeps them in RAM because it leaves
+  interrupts **enabled** during flash writes; nat-os made the opposite trade and
+  masks to `CRIT_LEVEL` across the whole erase, so nothing at or below that
+  level runs and nothing fetches.
+
+  The hole was an interrupt allocated **above** `CRIT_LEVEL`. `_set_intr` now
+  clamps to it and counts every time it has to, so a driver asking for a
+  higher-priority interrupt is visible rather than silently unsafe. The cost is
+  up to 125 ms of ISR delay during an erase — the `next_moves/04` problem,
+  already answered by write policy.
+
+  A fourth window was measured as the alternative: 53.7 KB against 86.4 KB of
+  free IRAM, so it **does** fit. Not spent, because masking already covers it.
+  If a WiFi ISR ever genuinely needs to run above `CRIT_LEVEL`, the clamp
+  counter is what will say so, and the window is the answer.
 - **Blocking OS calls cannot work yet.** `phy_stack_call` masks interrupts for
   the duration, so `osi_impl_sem_take` blocking on a contended semaphore would
   block forever with the scheduler frozen. Every call so far has been
