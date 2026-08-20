@@ -2018,3 +2018,52 @@ switch. Five attempts there have failed and the two best explanations are
 eliminated. That needs single-stepping.
 
 **Nothing has been on air.**
+
+### Step 22 — pin the task instead of teaching the scheduler about windows
+
+**IMPLEMENTED, COMPILES, NOT TESTED** — the board was disconnected from USB
+when this was written. Treat every claim below as a design, not a result.
+
+The idea: rather than preserve a windowed frame set across a context switch,
+make the situation not arise. While a task is executing windowed vendor code,
+`task_schedule()` **declines to switch away from it**.
+
+This is not the old masked-interrupt model, and the difference is the whole
+point. Interrupts stay **enabled** — the tick fires, ISRs run, time advances.
+Only the *switch* is withheld, which is the narrow thing that actually breaks.
+
+It composes with what was already there, and together they cover both halves:
+
+| case | handled by |
+|---|---|
+| involuntary preemption mid-blob-code | the pin — the scheduler will not switch |
+| voluntary blocking inside blob code | spill + unpin + release (step 21) |
+
+The second is what makes the first bounded. A pinned task monopolises the CPU
+only while it is *making progress*; the instant it blocks, the adapter spills
+its window, clears the pin and drops the lock, and the scheduler is free again.
+
+The watchdog is fed explicitly at the decline. It is normally fed by evidence
+of a task switch, and this is the one case where not switching is correct
+rather than a symptom — without that, the hang detector would reset a blob call
+that is working.
+
+### What it costs, if it works
+
+Scheduling latency for the length of a blob call that never blocks.
+`register_chipv7_phy` is the worst known case at well under a second, and
+`next_moves/04` already measured a 125 ms flash erase as a larger stall that
+the system tolerates. It is a real cost and it is bounded and measurable.
+
+### What has to be checked before believing any of it
+
+- boot self-tests, `wintorture`, `blob`, `blobphy`, `wifiinit`, `blobtx force`
+  — none re-run since step 21, let alone since this
+- **`wifiinit task`**, which is the actual question
+- that `blob_pinned_task()` is cleared on every exit path, including the one
+  where `esp_wifi_init_internal` fails and unwinds
+- that a pinned task which never blocks and never returns cannot wedge the
+  system permanently — the watchdog is fed at the decline, so it would not be
+  caught
+
+**Nothing has been on air.**

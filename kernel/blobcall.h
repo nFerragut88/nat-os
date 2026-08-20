@@ -18,6 +18,12 @@ uint32_t blob_call_contended(void);   /* must stay 0 with a single caller */
 
 /* Off by default: a blob task runs windowed code concurrently with a caller
  * that is also inside windowed code, and that collides. See blobcall.c. */
+/* -1, or the task the scheduler must not switch away from because it is
+ * inside windowed vendor code. See task.c. */
+int      blob_pinned_task(void);
+void     blob_pin(void);
+void     blob_unpin(void);
+
 void     blob_lock(void);
 void     blob_unlock(void);
 void     blob_task_enable(int on);

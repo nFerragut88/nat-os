@@ -17,6 +17,7 @@
 #include "uart.h"
 #include "critical.h"
 #include "watchdog.h"
+#include "blobcall.h"
 #include "panic.h"
 #include "xtensa.h"
 
@@ -410,6 +411,32 @@ uint32_t task_schedule(uint32_t current_sp)
         } else {
             g_tasks[i].waiting++;
         }
+    }
+
+    /* A task inside the blob's windowed code is NOT preemptible.
+     *
+     * nat-os cannot preserve a windowed frame set across a context switch, and
+     * five attempts to teach it how have failed (next_moves/08 steps 14-18).
+     * The cheaper guarantee is to make the situation not arise: while a task is
+     * executing windowed vendor code, decline to switch away from it.
+     *
+     * This is NOT the old masked-interrupt model. Interrupts stay enabled --
+     * the tick fires, ISRs run, the timer keeps time. Only the SWITCH is
+     * withheld, which is the narrow thing that actually breaks.
+     *
+     * It is bounded because it ends the moment the task blocks: the adapter's
+     * blocking entries spill their window and clear this first, precisely when
+     * it becomes safe to switch away. So the CPU is monopolised for the length
+     * of a blob call that is making progress, and released the instant one
+     * stops.
+     *
+     * The watchdog is fed deliberately here. It is normally fed by evidence of
+     * a task switch, and this is the one case where declining to switch is
+     * correct rather than a symptom -- without this the hang detector would
+     * reset a blob call that is working. */
+    if (blob_pinned_task() >= 0 && blob_pinned_task() == g_current) {
+        next = g_current;
+        watchdog_feed();
     }
 
     watchdog_liveness(next != g_current);

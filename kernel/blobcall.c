@@ -81,7 +81,9 @@ uint32_t blob_call(uint32_t fn, uint32_t a, uint32_t b, uint32_t c, uint32_t d)
     /* Scheduler stays alive for the duration. The mutex is what keeps a
      * second context out; interrupts no longer have to be. */
     g_phy_call_mask = 0u;
+    blob_pin();                      /* not preemptible from here */
     uint32_t r = phy_stack_call(fn, a, b, c, d);
+    blob_unpin();
     g_phy_call_mask = 1u;
 
     g_calls++;
@@ -96,8 +98,19 @@ uint32_t blob_call(uint32_t fn, uint32_t a, uint32_t b, uint32_t c, uint32_t d)
  *
  * That is the whole idea: rather than teach the scheduler about windows, make
  * a blocked windowed task stop looking like one. */
-void blob_lock(void)   { blob_call_init(); mutex_lock(&g_blob_mutex); }
-void blob_unlock(void) { mutex_unlock(&g_blob_mutex); }
+/* Which task is currently executing windowed vendor code, or -1.
+ *
+ * task_schedule() refuses to switch away from it. Set on entry, cleared on
+ * exit and around any voluntary block -- the two moments at which switching
+ * away is safe, because the window is either not in use or has been spilled. */
+static volatile int g_pinned = -1;
+
+int  blob_pinned_task(void)  { return g_pinned; }
+void blob_pin(void)          { g_pinned = task_current(); }
+void blob_unpin(void)        { g_pinned = -1; }
+
+void blob_lock(void)   { blob_call_init(); mutex_lock(&g_blob_mutex); blob_pin(); }
+void blob_unlock(void) { blob_unpin(); mutex_unlock(&g_blob_mutex); }
 
 uint32_t blob_call_count(void)     { return g_calls; }
 uint32_t blob_call_contended(void) { return g_contended; }
