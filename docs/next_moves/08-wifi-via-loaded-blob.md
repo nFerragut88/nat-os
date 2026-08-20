@@ -1742,3 +1742,62 @@ picking one and hoping. Recorded rather than written, because it belongs on top
 of a verified base and this one has just been established.
 
 **Nothing has been on air.**
+
+### Step 17 — third failure, and the pattern is the finding
+
+The generation-counter design from step 16 was implemented exactly as
+specified: `WINDOWBASE`, `WINDOWSTART` and the generation into the frame's
+three spare words; on resume, restore `WINDOWBASE` with the frame address
+riding in `EXCSAVE_3`, then compare generations and either restore the saved
+mask or narrow to one live frame.
+
+`wintorture` panicked again.
+
+### Three attempts, one common factor
+
+| | what it changed | result |
+|---|---|---|
+| step 14 | spill **inside the handler** | `wintorture` broke |
+| step 15 | `WINDOWBASE` + narrow, **in the handler** | `wintorture` broke |
+| step 17 | all three parts, **in the handler** | `wintorture` broke |
+| step 16 | spill **in task context** | nothing broke |
+
+Every attempt that writes window state **from inside `_handler_level3`** breaks
+the single-task case. The one attempt that stayed out of the handler did not.
+That is no longer three unlucky bugs; it is the same wall three times, and the
+next attempt should treat "the level-3 handler cannot safely manipulate the
+register window" as an established property rather than something to work
+around more cleverly.
+
+A plausible reason, recorded as hypothesis not conclusion: the handler runs
+with `PS.EXCM` cleared so that C can be called, which means window exceptions
+are **enabled** while it is mid-switch. Writing `WINDOWBASE` or `WINDOWSTART`
+there can make the very next `l32i` off `a1` take an underflow into a handler
+that assumes ordinary task context. That would explain why the failure is
+immediate and why placement, not logic, decides it.
+
+### What this leaves
+
+The route that has not failed is doing everything in **task context**:
+
+- spill on entry to windowed code — **done and verified** (step 16, in the tree)
+- the remaining two parts would have to happen there too, which means a task
+  entering windowed code fixes up its own window state rather than the
+  scheduler doing it on everyone's behalf
+
+Whether that is expressible at all is an open question. If it is not, the
+honest answer may be that **one windowed context at a time** is the invariant
+nat-os can actually hold, which `blob_call()` already enforces — and that a
+driver needing its own concurrent task is simply outside what a call0 kernel
+can host without a much larger change.
+
+That would be a real answer, and it is worth reaching deliberately rather than
+after a fourth attempt.
+
+### Status
+
+Reverted to the step-16 checkpoint and fully verified: boot 11/11,
+`wintorture` correct, `blobphy` `rc=0`, `blob` LOAD VERIFIED, `wifiinit`
+`NO_MEM`. `wincollide` still fails, correctly.
+
+**Nothing has been on air.**
