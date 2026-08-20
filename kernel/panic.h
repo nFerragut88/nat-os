@@ -15,4 +15,8 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps);
  * not be available. */
 void kernel_panic_msg(const char *why, unsigned int detail);
 
+/* Set to 1 to make the NEXT panic fault on purpose inside its own handler, so
+ * the re-entry guard is exercised rather than merely present. See `nestfault`. */
+extern volatile int g_panic_nest_test;
+
 #endif /* NATOS_PANIC_H */

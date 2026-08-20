@@ -20,8 +20,66 @@
 #include "store.h"
 #include "display.h"
 #include "flash.h"
+#include "critical.h"
+#include "xtensa.h"
 
 static int g_record_rc = -99;
+
+/* NA-007. How many times the panic path has been entered.
+ *
+ * The handler does the two least reliable things in the kernel, in order: it
+ * writes flash, then it drives a display peripheral this file's own comment
+ * describes as "a peripheral whose state nobody has verified" -- all while the
+ * system is by definition in an unknown state. A fault in either is not a
+ * remote possibility, it is the expected failure.
+ *
+ * Without a guard, that second fault re-enters through the vector, which resets
+ * a1 to _panic_stack_top and calls straight back in. It does not overflow -- it
+ * does something quieter and worse. store_record_fault() runs again and
+ * OVERWRITES the record of the original fault with the one the panic handler
+ * caused. On a board with no serial cable attached, that record is the only
+ * evidence that survives to the next boot, so the effect is to replace the
+ * cause with its own consequence and report it confidently. */
+static int g_panic_depth;
+
+/* Set by the shell's `nestfault`. See halt_forever(). */
+volatile int g_panic_nest_test;
+
+/* Second entry. Deliberately does nothing that could fault a third time: no
+ * flash, no display, no scheduler -- one string and a spin. */
+static void panic_nested(void)
+{
+    uart_puts("\n\n*** PANIC DURING PANIC ***\n");
+    uart_puts("  a fault occurred inside the panic handler.\n");
+    uart_puts("  the FIRST fault's record is preserved and was not overwritten;\n");
+    uart_puts("  the next boot will report that one. this one is not saved.\n");
+    watchdog_disarm();
+    for (;;) {
+    }
+}
+
+/* Shared prologue for both entry points.
+ *
+ * NA-008. Masks interrupts, which the handler never did. Both callers today are
+ * safe by accident rather than by construction: kernel_panic() arrives through a
+ * vector that has already raised PS.INTLEVEL, and task.c's stack-guard call sits
+ * inside task_schedule(), which runs from the tick ISR. kernel_panic_msg() is a
+ * general-purpose entry point in a public header whose contract says nothing
+ * about interrupt context.
+ *
+ * Called from an ordinary task with interrupts on, the old code would print
+ * "halted", disarm the watchdog, and then spin -- with the tick still firing, so
+ * the scheduler would switch away and every other task would carry on running,
+ * unrecoverably, behind a screen claiming the kernel had stopped. Masking here
+ * makes "does not return" true for every caller rather than for the two that
+ * happen to exist. */
+static void panic_prologue(void)
+{
+    xt_set_intlevel(CRIT_LEVEL);
+    if (++g_panic_depth > 1) {
+        panic_nested();             /* never returns */
+    }
+}
 
 /* What to put on the panel, filled in by whichever entry point ran. Statics
  * rather than parameters because halt_forever() is shared and the two entry
@@ -129,6 +187,18 @@ static void halt_forever(void)
 
     uart_puts("\n  halted. reset the board to continue.\n");
 
+    /* NA-007 exerciser. A guard with no way to trigger it is untested code, and
+     * this project has a long record of those reporting success. Faults on
+     * purpose HERE -- after the record is safely written -- so the guard has to
+     * catch it, and the original record has to survive to the next boot, which
+     * is the property actually being claimed. */
+    if (g_panic_nest_test) {
+        g_panic_nest_test = 0;
+        uart_puts("  nest test: faulting on purpose inside the panic handler\n");
+        *(volatile uint32_t *)0x00000000 = 1u;
+        uart_puts("  nest test: THE STORE DID NOT FAULT - test is inconclusive\n");
+    }
+
     /* Report how many bytes the panel actually took.
      *
      * Nobody can query a halted board, and "the screen looks wrong" and "the
@@ -148,6 +218,8 @@ static void halt_forever(void)
 
 void kernel_panic_msg(const char *why, unsigned int detail)
 {
+    panic_prologue();
+
 #if FLASH_ENABLE
     /* Written BEFORE anything is printed. A handler that reports first and
      * records second loses the record if it dies while reporting, and that is
@@ -192,6 +264,8 @@ static const char *cause_name(unsigned int cause)
 
 void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
 {
+    panic_prologue();
+
 #if FLASH_ENABLE
     /* Recorded first, for the reason given in kernel_panic_msg(). */
     g_record_rc = store_record_fault(STORE_FAULT_EXCEPTION, exccause, epc);

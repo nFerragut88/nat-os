@@ -5,6 +5,7 @@
  */
 
 #include "shell.h"
+#include "panic.h"
 #include "console.h"
 #include "app.h"
 #include "heap.h"
@@ -538,6 +539,21 @@ static void execute(char *line)
          * interaction stays theoretical. */
         uart_puts("   executing an illegal instruction\n");
         __asm__ volatile ("ill");
+    }
+    else if (str_eq(line, "nestfault")) {
+        /* NA-007. Panics, then faults inside the panic handler.
+         *
+         * Two things must be true afterwards, and the second is the one that
+         * matters: the guard must announce PANIC DURING PANIC rather than
+         * looping, and the next boot must report THIS panic -- the guard
+         * message -- not the StoreProhibited the handler caused. If the next
+         * boot blames address zero, the record was overwritten and the guard
+         * did not do its job. */
+        uart_puts("   panicking, then faulting inside the handler\n");
+        uart_puts("   after the reset, check that the reported fault is the\n");
+        uart_puts("   guard below and NOT a StoreProhibited at 0x00000000\n");
+        g_panic_nest_test = 1;
+        kernel_panic_msg("nestfault: re-entry guard exerciser", 0x5eed);
     }
     else if (str_eq(line, "smash")) {
         uart_puts("   clobbering this task's guard word; the next switch should panic\n");

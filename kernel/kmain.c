@@ -1807,7 +1807,18 @@ void kmain(void)
     if (store_fault_kind() != STORE_FAULT_NONE) {
         uart_puts("  LAST FAULT   : ");
         if (store_fault_kind() == STORE_FAULT_GUARD) {
-            uart_puts("stack guard overwritten, task ");
+            /* NA-009. This said "stack guard overwritten, task N".
+             *
+             * STORE_FAULT_GUARD is written by kernel_panic_msg() for EVERY
+             * kernel-detected failure, not just the stack-guard one -- the
+             * "task table full" panic in must_create() lands here too, and was
+             * reported on the next boot as a broken stack guard in task 0.
+             * The record carries the kind and the detail but not the `why`
+             * string, so the reason cannot be recovered after a reboot.
+             *
+             * Naming what is actually known is the fix. Guessing the most
+             * common cause is what made this evidence worse than silence. */
+            uart_puts("kernel-detected failure, detail ");
             uart_put_dec(store_fault_detail());
         } else {
             uart_puts("exception, exccause ");

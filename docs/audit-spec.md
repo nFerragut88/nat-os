@@ -13,8 +13,8 @@ landed in `store.h` hours before it was written.
 
 ## Findings so far
 
-Six. NA-001 to NA-004 came from spot-checking; NA-005 and NA-006 from the full
-`AUDIT scheduler` pass. All FIXED — the audit's own `AUDIT_ONLY` rule was
+Nine. NA-001 to NA-004 came from spot-checking; NA-005 and NA-006 from
+`AUDIT scheduler`; NA-007 to NA-009 from `AUDIT PANIC`. All FIXED — the audit's own `AUDIT_ONLY` rule was
 suspended deliberately, by the owner, after the first four were reported.
 
 | ID | class | pri | where | state |
@@ -25,6 +25,100 @@ suspended deliberately, by the owner, after the first four were reported.
 | NA-004 | UNVERIFIED_ASSUMPTION | P3 | `vmarg.c` `vmarg_items()` | fixed: guard + regression test |
 | NA-005 | CONFIRMED_BUG | P2 (dormant) | `task.c` / `touch.c` lost wakeup | fixed: `task_sleep_armed()` + `waketest` |
 | NA-006 | UNVERIFIED_ASSUMPTION | P1 (latent) | `task.h` `TASK_AGE_MAX` | fixed: `_Static_assert` |
+| NA-007 | CONFIRMED_BUG | P1 | `panic.c` no re-entry guard | fixed: depth guard + `nestfault` |
+| NA-008 | LIKELY_BUG | P2 (latent) | `panic.c` `halt_forever()` | fixed: masks interrupts |
+| NA-009 | CONFIRMED_BUG | P3 | `kmain.c` fault report | fixed: reports what is known |
+
+## AUDIT PANIC — run 2026-08-20, AUDIT_ONLY suspended by the owner
+
+All six CHECK items covered. Two passed on inspection and were already reasoned
+about in the source:
+
+- **Flash operation from fault context.** `store_record_fault()` writes flash
+  from the handler, including possibly mid-erase if that is what faulted.
+  `flash_wait_ready()` polls WIP with a bounded timeout, so re-entry costs a
+  wait rather than corruption.
+- **Placement.** `panic.o`'s code *and* its `.rodata` are pinned to IRAM by
+  `linker.ld`, so the handler does not need the cache to report that the cache
+  is what died. Deliberate, and documented at the linker script.
+
+### NA-007 — a fault inside the panic handler destroyed the evidence
+
+`_handler_panic` sets `a1 = _panic_stack_top` unconditionally, so a second fault
+re-enters cleanly rather than overflowing. It does something quieter and worse:
+`store_record_fault()` runs again and **overwrites the record of the original
+fault with the one the panic handler itself caused.**
+
+That record is the only evidence that survives to the next boot on a board with
+no serial cable attached. The effect is to replace the cause with its own
+consequence, and report it confidently.
+
+This is not a remote possibility. The handler does the two least reliable things
+in the kernel, in order — write flash, then drive a display peripheral this
+file's own comment calls *"a peripheral whose state nobody has verified"* — while
+the system is by definition in an unknown state.
+
+**Fixed** with a depth guard. Second entry does nothing that could fault a third
+time: no flash, no display, no scheduler, one string and a spin.
+
+**Verified on hardware** — `nestfault` panics and then faults on purpose inside
+the handler, after the record is safely written:
+
+```
+  recorded : yes, the next boot will report this
+  nest test: faulting on purpose inside the panic handler
+*** PANIC DURING PANIC ***
+  the FIRST fault's record is preserved and was not overwritten;
+--- next boot ---
+LAST FAULT   : kernel-detected failure, detail 24301      <- 0x5eed, the original
+```
+
+**The first run of this test proved nothing, and said PASS.** The block that
+injects the fault had silently failed to be inserted, so no second fault ever
+occurred and the record survived for the most boring possible reason. The next
+boot still showed the expected value. Only checking the raw output — and noticing
+that `PANIC DURING PANIC` never printed — separated "the guard worked" from "the
+guard was never reached". The exerciser now prints an explicit
+`THE STORE DID NOT FAULT - test is inconclusive` line if the injected store ever
+stops faulting, so that failure cannot recur silently.
+
+### NA-008 — the panic handler never masked interrupts
+
+`halt_forever()` spins in `for (;;) {}` at whatever interrupt level it inherited.
+Both callers today are safe **by accident, not by construction**: `kernel_panic()`
+arrives through a vector that has already raised `PS.INTLEVEL`, and `task.c`'s
+stack-guard call sits inside `task_schedule()`, which runs from the tick ISR.
+
+But `kernel_panic_msg()` is a general-purpose entry point in a public header
+whose contract documents a `.rodata` placement requirement and says nothing about
+interrupt context. Called from an ordinary task, the old code would print
+`halted`, **disarm the watchdog**, and then spin with the tick still firing — so
+the scheduler would switch away and every other task would carry on running,
+unrecoverably, behind a screen claiming the kernel had stopped.
+
+**Fixed** by masking at `CRIT_LEVEL` in a shared prologue, making "does not
+return" true for every caller rather than for the two that happen to exist.
+
+### NA-009 — the surviving record named the wrong category
+
+`kernel_panic_msg()` writes `STORE_FAULT_GUARD` for **every** kernel-detected
+failure, but the enum comment and `kmain.c`'s decoder both describe that kind
+specifically as a broken stack guard with `detail = task id`. So the "task table
+full" panic in `must_create()` would be reported on the next boot as
+`stack guard overwritten, task 0`.
+
+The `why` string is not persisted, so the real reason cannot be recovered after
+the reboot. Guessing the most common cause is what made this evidence worse than
+silence. **Fixed** by reporting what is actually known — `kernel-detected
+failure, detail N` — rather than restructuring the record, which the audit's
+`DO_NOT_REFACTOR` rule puts out of scope.
+
+### Left open
+
+- **The `why` string does not survive a reboot.** Fixing it properly means room
+  in the record for a reason code or a short string. Worth doing before anything
+  ships without a serial cable attached, which is the whole premise of the
+  device.
 
 ## AUDIT scheduler — run 2026-08-20, AUDIT_ONLY suspended by the owner
 

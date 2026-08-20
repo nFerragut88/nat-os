@@ -63,7 +63,12 @@ typedef struct {
 typedef enum {
     STORE_FAULT_NONE      = 0,
     STORE_FAULT_EXCEPTION = 1,   /* hardware exception; detail = exccause */
-    STORE_FAULT_GUARD     = 2    /* stack guard broken; detail = task id  */
+    /* Any kernel-detected failure routed through kernel_panic_msg() -- the
+     * broken stack guard, but also "task table full" and anything added later.
+     * `detail` means whatever that call site passed, so it is a task id only
+     * for the stack-guard caller. The `why` string is NOT persisted, so the
+     * specific reason cannot be recovered after the reboot (NA-009). */
+    STORE_FAULT_GUARD     = 2
 } store_fault_t;
 
 /* Called from the panic path, immediately before halting. Writes the record
