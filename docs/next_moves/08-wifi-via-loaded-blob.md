@@ -504,21 +504,42 @@ With the table registered, `esp_wifi_80211_tx` still faults identically —
 `LoadProhibited`, `excvaddr 0x00000054` — and **`osiused` reports zero entries
 called.**
 
-Step 5 identified that null pointer as the OS adapter table, because offset
-`0x54` is exactly `_mutex_lock`. **That identification does not survive this
-measurement.** If it were the registered table, filling it would have changed
-something; instead the driver does not reach a single table entry. Whatever
-holds that pointer is per-interface state that only `esp_wifi_init_internal`
-builds, and the `_mutex_lock` offset was a coincidence read too confidently.
+### Resolved: the table was never the problem, the global was
 
-The empty trace is itself the useful result: it says the fault happens *before*
-any OS service is requested, so no amount of OSI implementation will move it.
+The fault is inside `ieee80211_raw_frame_sanity_check` — which
+`esp_wifi_80211_tx` calls first, before doing anything else:
 
-### Next
+```
+l32i.n a7, a6, 0      ; a7 = g_wifi_osi_funcs      <- NULL
+l32i.n a10, a4, 0     ; a10 = g_wifi_global_lock   (the argument)
+l32i   a7, a7, 84     ; a7 = table->_mutex_lock    <- FAULT
+callx8 a7             ; _mutex_lock(g_wifi_global_lock)
+```
 
-`esp_wifi_init_internal(&cfg)`, which needs a real `wifi_init_config_t` — a
-substantial struct, and the first thing here that will actually exercise the
-table. Expect `osiused` to become interesting at that point, and expect it to
-name the entries that need real bodies.
+So offset `0x54` **is** `_mutex_lock`, exactly as step 5 said. What is null is
+not the table — it is the *global pointer to* the table.
+
+And `esp_wifi.h` says why:
+
+```c
+#define WIFI_INIT_CONFIG_DEFAULT() {     .osi_funcs = &g_wifi_osi_funcs,     ...
+```
+
+**The table is delivered through `wifi_init_config_t`, not by the registration
+call.** ESP-IDF's own path does not rely on `wifi_osi_funcs_register` to
+install it; `esp_wifi_init_internal(&cfg)` copies `cfg->osi_funcs` into the
+global that the sanity check dereferences.
+
+Both observations were correct and the inference between them was not.
+Registering validated the table and returned 0; it simply is not the mechanism
+that installs it. The reasoning error is worth keeping: a measurement that
+disproves the *mechanism* was read as disproving the *identification*.
+
+### Next, and now precisely
+
+Build a `wifi_init_config_t` with `.osi_funcs = wifi_osi_table()` and call
+`esp_wifi_init_internal(&cfg)`. That is what makes the table live, and it is
+the first thing that will exercise it — `osiused` should stop being empty and
+start naming the entries that need real bodies.
 
 **Nothing has been on air.**
