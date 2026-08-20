@@ -133,7 +133,15 @@ int phyinit_run_at(uint32_t fn)
     }
 
     g_phy_attempted = 1;
-    g_phy_result = rom_call3(fn,
+    /* phy_stack_call, NOT rom_call3.
+     *
+     * rom_call3 runs the callee on the caller's stack. phy_stack_prime() above
+     * prepares a private 6 KB stack precisely because the PHY needs one, and
+     * calling through rom_call3 meant that stack was primed, measured, and
+     * never used -- the PHY ran on whichever task called in. From the 2 KB
+     * shell task that faulted inside phy_enter_critical's ENTRY, spilling
+     * below a stack pointer that was not a stack. */
+    g_phy_result = phy_stack_call(fn,
                              (uint32_t)g_phy_init_data,
                              (uint32_t)g_phy_cal_data,
                              PHY_RF_CAL_FULL);

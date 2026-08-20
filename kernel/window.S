@@ -434,7 +434,7 @@ win_call_bridge:                    /* call0 -> windowed -> call0, round trip */
  * exactly this with _panic_stack, for the same reason: the stack you are on may
  * be the thing that is wrong.
  *
- *   uint32_t phy_stack_call(uint32_t fn, uint32_t a, uint32_t b);
+ *   uint32_t phy_stack_call(uint32_t fn, uint32_t a, uint32_t b, uint32_t c);
  *
  * Saves the caller's stack pointer INTO the new stack rather than a register,
  * because call8 destroys a12..a15 and there is nowhere else that survives.

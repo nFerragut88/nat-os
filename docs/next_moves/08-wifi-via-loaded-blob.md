@@ -339,6 +339,34 @@ three — so `phyinit.c` calls `rom_call3` and the PHY never receives the stack
 That inconsistency predates this work and is visible in `phyinit.c` today: it
 primes a stack the call it then makes does not use.
 
-**Next:** a three-argument bridge that switches to the PHY stack, then retry.
-Until the PHY initialises, `esp_wifi_80211_tx` is not worth calling — and
-nothing here has been on air.
+**Fixed, and no new assembly was needed.** `phy_stack_call`'s body has always
+moved `a3`, `a4` and `a5` into `a10`, `a11` and `a12` — it passes **three**
+arguments. Only the prototype in `window.h` said two, which is why
+`phyinit.c` could not use it for a three-argument function and reached for
+`rom_call3`. Declaring what the code already did is the entire fix.
+
+### The blob's PHY initialises
+
+```
+blob loaded. calling its register_chipv7_phy at 0x4035e110
+phyinit   rc=0  result=0x00000000
+phystack  1296 of 6144 bytes used
+IT RETURNED. that is not evidence the radio works.
+```
+
+The stack figure is the load-bearing number. A return code of 0 would also be
+produced by an early exit; 1296 bytes of nested frames is evidence that a
+substantial amount of vendor code actually ran.
+
+**This is under nat-os's own bootloader, from a kernel containing no Espressif
+code.** UM-NATOS-036 gated `-WiFi` to Espressif's second stage precisely
+because `register_chipv7_phy` panicked with StoreProhibited in
+`phy_enter_critical` under ours. That gate covers the copy the kernel *links*;
+this is the blob's copy, at different addresses, with `.data` and `.bss`
+freshly loaded. Whether the gate can now be lifted is a separate question and
+has not been tested — but the failure it describes did not happen here.
+
+**Next:** `esp_wifi_80211_tx`. Expect it to need more than a live PHY — it is
+reached through `libpp` and the OS adapter table, and the event stubs in
+`net80211_host.c` accept registrations and never call back. Nothing has been
+on air.

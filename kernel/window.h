@@ -58,7 +58,16 @@ extern uint32_t phy_host_log_len;
  * than a 2 KB nat-os task stack allows, and the overflow shows up as a
  * StoreProhibited inside the window spill rather than as anything resembling a
  * stack problem. See the note in window.S. */
-uint32_t phy_stack_call(uint32_t fn, uint32_t a, uint32_t b);
+/* THREE arguments, not two.
+ *
+ * The body has always moved a3, a4 and a5 into a10, a11 and a12 -- it passes
+ * three. This prototype declared two, so register_chipv7_phy (which takes
+ * three) could not use it and phyinit.c reached for rom_call3 instead. That
+ * runs the callee on the CALLER's stack, so the PHY ran on a 2 KB task stack
+ * while phy_stack_prime() dutifully prepared the 6 KB one nothing used, and
+ * the window-overflow spill faulted below a stack pointer that was not a
+ * stack. Declaring what the code already does is the whole fix. */
+uint32_t phy_stack_call(uint32_t fn, uint32_t a, uint32_t b, uint32_t c);
 
 /* Fills the PHY stack with a pattern, and reports how much of it has since
  * been touched. The point is to settle a question rather than argue it: when a
