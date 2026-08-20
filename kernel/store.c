@@ -74,6 +74,39 @@ int store_save(void)
     return rc;
 }
 
+/* ---- deciding when to spend the 125 ms ----------------------------------
+ *
+ * See store.h. The decision belongs to whoever knows what the machine is busy
+ * with, which is not this file.
+ */
+static store_may_save_fn g_may_save;
+static uint32_t          g_defer_run;      /* consecutive refusals            */
+static uint32_t          g_deferrals;      /* cumulative, for telemetry       */
+static uint32_t          g_forced;         /* went ahead despite a refusal    */
+
+void store_set_may_save(store_may_save_fn fn) { g_may_save = fn; }
+uint32_t store_deferrals(void)               { return g_deferrals; }
+uint32_t store_forced(void)                  { return g_forced; }
+
+int store_save_if_allowed(void)
+{
+    if (!g_dirty) {
+        return 0;               /* nothing to write; not a deferral */
+    }
+    if (g_may_save && !g_may_save()) {
+        g_deferrals++;
+        if (++g_defer_run < STORE_DEFER_MAX) {
+            return 1;
+        }
+        /* Bound reached. Losing the record at the next power cut is worse than
+         * whatever the predicate was protecting, so this goes ahead and says
+         * so through store_forced(). */
+        g_forced++;
+    }
+    g_defer_run = 0;
+    return store_save();
+}
+
 /* ---- persistent slots ---------------------------------------------------
  *
  * Banked by caller. See store.h for why they are not shared, and why a write

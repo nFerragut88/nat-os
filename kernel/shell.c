@@ -12,6 +12,7 @@
 #include "critical.h"
 #include "timer.h"
 #include "task.h"
+#include "store.h"
 #include "sd.h"
 #include "touch.h"
 #include "calib.h"
@@ -44,6 +45,11 @@ static const shell_program_t *g_progs;
 static int      g_prog_count;
 static char     g_line[LINE_MAX];
 static uint32_t g_len;
+
+/* Always refuses. Used only by `storetest` to drive the deferral bound to its
+ * limit -- the case the bound exists for, and the one that cannot be produced
+ * on demand by anything real. */
+static int storetest_refuse(void) { return 0; }
 
 static int str_eq(const char *a, const char *b)
 {
@@ -538,6 +544,74 @@ static void execute(char *line)
         task_smash_guard();
         for (;;) {
         }
+    }
+    else if (str_eq(line, "storetest")) {
+        /* Exercise the save-deferral bound, because a mechanism with no
+         * exerciser is untested code and this project has a long record of
+         * those reporting success.
+         *
+         * Registers a predicate that ALWAYS refuses -- the worst case the
+         * bound exists for, a radio that never goes idle or a predicate with a
+         * bug -- then calls the periodic path enough times to cross
+         * STORE_DEFER_MAX and watches what happens.
+         *
+         * What must be true:
+         *   - the first STORE_DEFER_MAX-1 calls return 1 (deferred)
+         *   - call STORE_DEFER_MAX returns 0 and store_forced() rises
+         *   - the record is actually written, not merely reported as written
+         *
+         * The last point is why store_dirty() is checked at the end rather
+         * than trusting the return code. */
+        /* Something must be pending or the periodic path short-circuits. */
+        store_slot_set(STORE_KERNEL_BANK, 0u, timer_ticks());
+        uart_puts("   dirty before: ");
+        uart_put_dec((unsigned int)store_dirty());
+        uart_puts("\n");
+
+        uint32_t d0 = store_deferrals(), f0 = store_forced();
+        store_set_may_save(storetest_refuse);
+
+        uint32_t deferred = 0, wrote = 0, err = 0;
+        int first_write_at = -1;
+        for (uint32_t i = 0; i < STORE_DEFER_MAX + 2u; i++) {
+            int rc = store_save_if_allowed();
+            if (rc == 1) {
+                deferred++;
+            } else if (rc == 0) {
+                wrote++;
+                if (first_write_at < 0) {
+                    first_write_at = (int)i;
+                }
+                /* A write clears dirty, so make it dirty again or every later
+                 * call short-circuits and the test stops testing anything. */
+                store_slot_set(STORE_KERNEL_BANK, 0u, timer_ticks() + i);
+            } else {
+                err++;
+            }
+        }
+        store_set_may_save(0);          /* always allow again */
+
+        uart_puts("   calls ");
+        uart_put_dec(STORE_DEFER_MAX + 2u);
+        uart_puts(": deferred=");
+        uart_put_dec(deferred);
+        uart_puts(" wrote=");
+        uart_put_dec(wrote);
+        uart_puts(" errors=");
+        uart_put_dec(err);
+        uart_puts("\n   first write at call ");
+        uart_put_dec((unsigned int)first_write_at);
+        uart_puts("  (expected ");
+        uart_put_dec(STORE_DEFER_MAX - 1u);
+        uart_puts(")\n   deferrals +");
+        uart_put_dec(store_deferrals() - d0);
+        uart_puts("   forced +");
+        uart_put_dec(store_forced() - f0);
+        uart_puts("\n");
+        uart_puts((first_write_at == (int)(STORE_DEFER_MAX - 1u)
+                   && (store_forced() - f0) > 0u && err == 0u)
+                  ? "   PASS - refused until the bound, then forced through\n"
+                  : "   FAIL - the bound did not behave as documented\n");
     }
     else if (str_eq(line, "jitter")) {
         /* next_moves/04, step one: get the number before touching anything.

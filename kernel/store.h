@@ -85,8 +85,59 @@ void store_get_calibration(uint32_t *xmin, uint32_t *xmax,
  * behave identically. */
 int  store_load(void);
 
-/* Erases the sector and writes the record back. Returns 0 on success. */
+/* Erases the sector and writes the record back. Returns 0 on success.
+ *
+ * UNCONDITIONAL, and costs 125 ms with interrupts masked -- measured, see
+ * next_moves/04. Correct for boot, shutdown, and anything a human asked for.
+ * The periodic path should use store_save_if_allowed() instead. */
 int  store_save(void);
+
+/* ---- deciding WHEN to spend 125 ms --------------------------------------
+ *
+ * next_moves/04 measured store_save() at 125 ms with interrupts masked, and
+ * next_moves/10 records what that costs a relay node: a LoRa receive window is
+ * shorter than the erase, so a node that writes a bundle down as it arrives
+ * does not receive the next packet. Not late -- at all.
+ *
+ * The two other ways out are closed. A scheduler change cannot preempt a masked
+ * interrupt, and erase-suspend needs a controller the original ESP32 does not
+ * have (kernel/flash.c has the evidence). What is left is not erasing at a bad
+ * moment, which is a decision this layer cannot make and the radio can.
+ *
+ * So the decision moves up. Whoever knows whether now is a bad time registers a
+ * predicate; the periodic save asks before spending the time. Nothing in
+ * flash.c changes.
+ */
+typedef int (*store_may_save_fn)(void);
+
+/* Register the predicate, or NULL to always allow. Non-zero return means "now
+ * is fine". */
+void store_set_may_save(store_may_save_fn fn);
+
+/* The periodic save. Asks the predicate first.
+ *
+ *   0  written
+ *   1  deferred, still dirty, will be retried
+ *  -1  error from the write itself
+ *
+ * ---- and it will not defer forever ---------------------------------------
+ *
+ * A predicate that never says yes -- a busy radio, or a bug -- would mean the
+ * record is never written and everything since the last save is lost at the
+ * next power cut. That is a worse outcome than a dropped packet, and the whole
+ * point of this store is surviving power loss.
+ *
+ * So a deferral is bounded. After STORE_DEFER_MAX consecutive refusals the save
+ * happens anyway, and store_forced() counts how often that has been necessary.
+ * A rising forced count means the predicate is wrong or the system never idles,
+ * and either way it is something to look at rather than something to trust. */
+#define STORE_DEFER_MAX 32u
+int  store_save_if_allowed(void);
+
+/* Telemetry for the above. deferrals is cumulative; forced is the subset that
+ * hit STORE_DEFER_MAX and went ahead regardless. */
+uint32_t store_deferrals(void);
+uint32_t store_forced(void);
 
 /* Persistent slots. `bank` is the calling application's id, or
  * STORE_KERNEL_BANK for the kernel and the shell. Both return 0 on a bad bank

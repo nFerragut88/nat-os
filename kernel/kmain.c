@@ -1329,7 +1329,11 @@ static void task_display(void)
 #if FLASH_ENABLE
         if ((frame % STORE_EVERY_FRAMES) == 0u) {
             store_set_frames(store_frames() + STORE_EVERY_FRAMES);
-            store_save();
+            /* Asks before spending 125 ms with interrupts masked. Nothing
+             * registers a predicate yet, so today this is store_save() with an
+             * extra branch -- the point is that the call site is now the right
+             * shape for when the radio can answer. See store.h. */
+            store_save_if_allowed();
         }
 #endif
 
