@@ -1801,3 +1801,48 @@ Reverted to the step-16 checkpoint and fully verified: boot 11/11,
 `NO_MEM`. `wincollide` still fails, correctly.
 
 **Nothing has been on air.**
+
+### Step 18 — two more hypotheses eliminated; the ABI is exonerated
+
+Step 17 concluded with a hypothesis: the handler runs with `PS.EXCM` cleared,
+so window exceptions are live while the window state is deliberately
+inconsistent. **Tested — that is not sufficient.** Setting `PS.EXCM` across the
+restore still panicked.
+
+Second hypothesis, more specific: the `WINDOWSTART` bit for the current
+`WINDOWBASE` must be set or the processor state is illegal, so writing
+`WINDOWBASE` first is invalid regardless of exception masking — suppressing an
+exception does not make a state legal. Widening `WINDOWSTART` to cover both the
+old and new base, moving `WINDOWBASE`, then narrowing keeps every intermediate
+state legal. **Also tested, also panics.**
+
+### Five attempts. What is now known rather than suspected
+
+- **This is not an ABI problem.** The hardware spills correctly on overflow, to
+  the stack pointer recorded in each frame. `-mabi=call0` does not have to be
+  revisited, and saying otherwise in step 17 overstated it.
+- **Spilling in task context works and is in the tree** (step 16, verified).
+- **Restoring window state inside `_handler_level3` has failed five times**, on
+  five different formulations, and the two most principled explanations for why
+  have both been tested and eliminated.
+
+What is left is ISA-level detail that cannot be settled from outside: whether
+`WSR.WINDOWBASE` in this context needs a specific pipeline interlock, whether
+`_WindowUnderflow*` can be reached at all with the frame mid-restore, and what
+the processor actually does on the instruction after the write. Answering that
+needs single-stepping, which means a debug probe — and UM-NATOS-034 §12.2's
+warning applies in reverse here: the heavy instrument was wrong for a config
+diff, and it is the right one for this.
+
+### The honest position
+
+`blob_call()` already enforces **one windowed context at a time**, and that
+works. A driver task needing a second concurrent one is the thing nat-os cannot
+currently host. Whether that is a hard limit or five bad implementations is
+genuinely open — the evidence says the mechanism exists and my use of it is
+wrong, not that it is impossible.
+
+Tree at the step-16 checkpoint, verified: boot 11/11, `wintorture` correct,
+`blobphy` `rc=0`, `wifiinit` `NO_MEM`. `wincollide` still fails, correctly.
+
+**Nothing has been on air.**
