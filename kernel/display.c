@@ -590,6 +590,9 @@ uint32_t display_dport_reg(void)     { return g_spi2_dport; }
 #define IO_MUX_FUN_PD (1u << 7)
 #define IO_MUX_FUN_PU (1u << 8)
 
+static uint32_t g_panel_pad_readback;
+uint32_t display_panel_pad(void) { return g_panel_pad_readback; }
+
 void display_panel_read(uint8_t cmd, uint8_t *out, uint32_t n)
 {
     display_panel_read_pull(cmd, out, n, DISPLAY_PULL_NONE);
@@ -644,6 +647,19 @@ void display_panel_read_pull(uint8_t cmd, uint8_t *out, uint32_t n, int pull)
 
     GPIO_REG(SPI2_CLOCK)    = SPI2_CLKDIV_READ;
     GPIO_REG(gpio_io_mux(PIN_MISO)) = pad;
+
+    /* Read the pad register back and keep it.
+     *
+     * Without this, the three passes of `panelpull` are only ASSUMED to be
+     * three different configurations. If the pull bits never landed, all three
+     * would be identical by construction and the command would report
+     * "zero regardless of pull -- something holds the line low" from an
+     * experiment that never varied anything.
+     *
+     * That is the failure this project keeps finding in its own instruments,
+     * so the pad value is reported alongside the bytes and the reader can see
+     * FUN_PU and FUN_PD actually differ. */
+    g_panel_pad_readback = GPIO_REG(gpio_io_mux(PIN_MISO));
 
     /* Command phase: D/CX low, write only. */
     gpio_clear(PIN_DC);

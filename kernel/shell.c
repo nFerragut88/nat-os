@@ -1013,6 +1013,14 @@ static void execute(char *line)
             display_panel_read_pull(0xD3u, got[w], 8u, WAYS[w].pull);
             uart_puts("   0xD3 pull=");
             uart_puts(WAYS[w].name);
+            /* The IO_MUX value the pad ACTUALLY held, read back from the
+             * register. Without it these three passes are only assumed to be
+             * three different configurations -- and if the pull bits never
+             * landed, all three would be identical by construction and the
+             * verdict below would be drawn from an experiment whose variable
+             * never varied. FUN_PU is bit 8, FUN_PD bit 7. */
+            uart_puts(" pad=");
+            uart_put_hex(display_panel_pad());
             uart_puts(" ->");
             for (int i = 0; i < 8; i++) {
                 uart_puts(" ");

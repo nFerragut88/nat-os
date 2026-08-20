@@ -108,15 +108,15 @@ Each has its own file. Roughly in order of value, but they are independent.
 | ~~[02](02-vm-events-and-frames.md)~~ | ~~VM entry points~~ — **done**, UM-NATOS-031 rev 1.1 | — | — |
 | ~~[03](03-permissions.md)~~ | ~~Per-application device permissions~~ — **done**, UM-NATOS-032 | — | — |
 | [04](04-scheduler-timing.md) | A real-time path for control loops | medium | nothing needs it *yet* |
-| [05](05-open-unknowns.md) | Two unexplained behaviours | small | nothing |
+| ~~[05](05-open-unknowns.md)~~ | ~~Two unexplained behaviours~~ — **answered**: MISO is held low by GPIO12's strapping resistor; phantom touches mitigated and not reproducing | — | — |
 | ~~[07](07-irom.md)~~ | ~~A flash-executable region~~ — **done**, UM-NATOS-037 | — | — |
 | [08](08-wifi-via-loaded-blob.md) | WiFi transmit via the vendor path, blob supplied at runtime | large | 07 |
 | [09](09-lora-one-link.md) | **LoRa Phase 0: one link** — what the project is for | medium | hardware arriving |
 | [10](10-lora-bundle.md) | LoRa Phase 1: one bundle that survives a power cut | large | 09 |
 | ~~[06](06-documentation-debt.md)~~ | ~~Claims that have gone stale~~ — **done**, all five items | — | — |
 
-02, 03, 06 and 07 are done. **01 is closed** — see below. What is left is 04,
-05 and 08.
+02, 03, 05, 06 and 07 are done. **01 is closed** — see below. What is left is 04
+and 08, plus 09 and 10 when the radio lands.
 
 **01 closed as a negative, 2026-08-19.** Both boards beaconing 30 cm apart on
 the same channel; a MediaTek laptop adapter sees the ESP-IDF control and does
@@ -150,8 +150,12 @@ Phase 1.
 **When the hardware lands, do [09](09-lora-one-link.md).** It is the only route
 where "working" and "ours" are the same outcome.
 
-**If you want the cheap one meanwhile:** [05](05-open-unknowns.md), most of
-which turned out to be already done.
+**05 answered, 2026-08-19.** `panelpull` had never been run. Run, with a pad
+readback added first so the instrument could prove its own variable varied: the
+pull-up is applied and MISO still reads zero, so "SDO not populated" is wrong
+and something holds GPIO12 low. GPIO12 is MTDI, the strapping pin whose being
+high at reset stops the board booting — the resistor that makes the board boot
+is the one that makes the panel unreadable. Closed for software purposes.
 
 **If you want the cheap one:** [05](05-open-unknowns.md). Two unexplained
 behaviours, and one of them — phantom touches that once *launched a program* —

@@ -170,4 +170,10 @@ void display_panel_read(uint8_t cmd, uint8_t *out, uint32_t n);
 
 void display_panel_read_pull(uint8_t cmd, uint8_t *out, uint32_t n, int pull);
 
+/* The IO_MUX value PIN_MISO actually held during the last panel read, read back
+ * from the register rather than assumed. `panelpull` prints it so that its three
+ * passes can be seen to be three different configurations -- an instrument whose
+ * variable never varied would otherwise report a confident wrong answer. */
+uint32_t display_panel_pad(void);
+
 #endif /* NATOS_DISPLAY_H */
