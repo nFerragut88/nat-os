@@ -26,6 +26,7 @@
  * stale line means executing whatever used to be there. */
 #define DPORT_PRO_CACHE_CTRL_REG  ((volatile uint32_t *)0x3FF00040u)
 #define DPORT_PRO_CACHE_CTRL1_REG ((volatile uint32_t *)0x3FF00044u)
+#define CACHE_ENABLE      (1u << 3)
 #define CACHE_FLUSH_ENA   (1u << 4)
 #define CACHE_FLUSH_DONE  (1u << 5)
 
@@ -55,6 +56,27 @@ const struct blob_entry *blob_map(void)
 {
     uint32_t crit = crit_enter();
 
+    /* DISABLE THE CACHE BEFORE TOUCHING THE MMU TABLE.
+     *
+     * This used to write the entries with the cache live and flush afterwards,
+     * which is backwards. Espressif's own spi_flash_mmap does
+     * Cache_Read_Disable -> write entries -> flush -> Cache_Read_Enable, and
+     * boot/boot.c gets the same order for free because at boot the cache is
+     * still off when it maps: it writes entries first and enables afterwards.
+     *
+     * Changing the translation of an address the cache may be filling from is
+     * exactly the kind of defect that shows up rarely and depends on what
+     * happens to be resident -- which is the shape of the step-7 hang. Whether
+     * it IS that hang is unproven and probably unprovable directly, because
+     * this fix changes the layout the hang depends on. It is corrected here on
+     * its own merits.
+     *
+     * Safe to run with the cache off because everything reachable from here --
+     * this file, uart.c, critical.h -- is IRAM-resident. The cache is back on
+     * before returning to shell.c, which is not. */
+    uint32_t ctrl = *DPORT_PRO_CACHE_CTRL_REG;
+    *DPORT_PRO_CACHE_CTRL_REG = ctrl & ~CACHE_ENABLE;
+
     /* Code, through the INSTRUCTION cache. */
     uint32_t vaddr = BLOB_IROM_ADDR;
     uint32_t foff  = BLOB_FLASH_ADDR;
@@ -80,6 +102,7 @@ const struct blob_entry *blob_map(void)
         foff  += MMU_PAGE_SIZE;
     }
     cache_flush();
+    *DPORT_PRO_CACHE_CTRL_REG = ctrl;      /* restore, re-enabling the cache */
     crit_exit(crit);
 
     const struct blob_entry *e = (const struct blob_entry *)BLOB_IROM_ADDR;

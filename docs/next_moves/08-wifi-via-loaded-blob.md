@@ -1027,3 +1027,37 @@ Not solved. Bounded to a narrow band of kernel layouts, reachable through
 `blob_map()` with no PHY involved, deterministic within a build, and
 unobservable by any means that alters the build. Known-good state restored and
 verified.
+
+### A real defect found while hunting: the MMU was reprogrammed with the cache live
+
+`blob_map()` wrote the flash MMU entries **with the cache enabled** and flushed
+afterwards. That is backwards.
+
+- Espressif's `spi_flash_mmap` does `Cache_Read_Disable` -> write entries ->
+  flush -> `Cache_Read_Enable`.
+- `boot/boot.c` gets the same order **for free**: at boot the cache is still
+  off, so it writes entries first and enables afterwards. That is why the
+  bootloader path has always been reliable and this one was not.
+
+Changing the translation of an address the cache may be filling from is a
+textbook way to produce a fault that appears rarely and depends on what happens
+to be resident — which is the shape of the step-7 hang exactly: layout
+sensitive, deterministic per build, reachable from `blob_map()` with no PHY
+involved, and unaffected by moving the blob's own code.
+
+**Fixed**: cache disabled around the MMU writes, restored before returning.
+Safe to run with the cache off because everything reachable from there —
+`blob.c`, `uart.c`, `critical.h` — is IRAM-resident, and the cache is back on
+before returning to `shell.c`, which is not.
+
+**Whether this IS the step-7 hang is unproven, and probably not directly
+provable.** A clean A/B would need the failing build with only this one line
+changed — but the fix itself alters the layout the hang depends on, which is
+the same observer effect documented above. It is corrected on its own merits:
+it was wrong against Espressif's documented sequence regardless of the hang.
+
+Note this was found by checking a hand-written register sequence against the
+verified one two files away — the habit this project already records after
+"several long debugging sessions traced to a single misremembered bit
+position". The bit *definitions* were right; the *order* was not, and a
+register read-back would have shown nothing wrong either way.
