@@ -6,6 +6,7 @@
 
 #include "shell.h"
 #include "panic.h"
+#include "blob.h"
 #include "console.h"
 #include "app.h"
 #include "heap.h"
@@ -539,6 +540,119 @@ static void execute(char *line)
          * interaction stays theoretical. */
         uart_puts("   executing an illegal instruction\n");
         __asm__ volatile ("ill");
+    }
+    else if (str_eq(line, "dramtest")) {
+        /* Is the blob DRAM reservation actually usable memory?
+         *
+         * It was reserved from a region the kernel had never touched: the heap
+         * ends at 0x3ffd3000 and the boot stack at 0x3ffd4000, so everything
+         * above that was declared usable by linker.ld and never once written.
+         * "linker.ld says it is dram" is not evidence that it is RAM.
+         *
+         * Walks up in 1 KB steps, writing and reading back a pattern derived
+         * from the address, reporting the LAST address that worked. If the
+         * board resets partway, the last printed address is the answer. */
+        uart_puts("   probing ");
+        uart_put_hex(BLOB_DRAM_ADDR);
+        uart_puts(" .. ");
+        uart_put_hex(BLOB_DRAM_ADDR + BLOB_DRAM_SIZE);
+        uart_puts("\n");
+        uint32_t ok_to = 0, bad = 0;
+        for (uint32_t a = BLOB_DRAM_ADDR; a < BLOB_DRAM_ADDR + BLOB_DRAM_SIZE; a += 1024u) {
+            volatile uint32_t *p = (volatile uint32_t *)a;
+            uint32_t want = a ^ 0xA5A5A5A5u;
+            *p = want;
+            if (*p != want) { bad = a; break; }
+            ok_to = a;
+        }
+        uart_puts("   highest address that stored and read back: ");
+        uart_put_hex(ok_to);
+        uart_puts("\n");
+        if (bad) {
+            uart_puts("   FIRST BAD: ");
+            uart_put_hex(bad);
+            uart_puts("  -- the reservation is not all RAM\n");
+        } else {
+            uart_puts("   all 1 KB steps stored and verified\n");
+        }
+    }
+    else if (str_eq(line, "blob") || str_eq(line, "blob map")) {
+        /* next_moves/08 step 4. Maps the vendor image, validates it, and runs
+         * the loader half -- .data copy and .bss zero.
+         *
+         * Does NOT call into it. Mapping and calling are separate on purpose:
+         * if the map is wrong, a call jumps into whatever bytes are there and
+         * the board dies with no report. Every number below is readable before
+         * anything is executed. */
+        const struct blob_entry *e = blob_map();
+        if (!e) {
+            uart_puts("   no valid image at ");
+            uart_put_hex(BLOB_FLASH_ADDR);
+            uart_puts("\n   flash one with: vendor/net80211/build_blob.ps1 -Flash\n");
+            uart_puts("   (an erased region reads 0xFF, which is why this is a\n");
+            uart_puts("    clean negative rather than a crash)\n");
+        } else {
+            uart_puts("   magic     N802  version ");
+            uart_put_dec(e->version);
+            uart_puts("\n   image     ");
+            uart_put_dec(e->image_size);
+            uart_puts(" bytes  of ");
+            uart_put_dec(BLOB_FLASH_SIZE);
+            uart_puts(" reserved\n   .data     ");
+            uart_put_dec(e->data_size);
+            uart_puts(" B from ");
+            uart_put_hex(e->data_lma);
+            uart_puts(" to ");
+            uart_put_hex(e->data_vma);
+            uart_puts("\n   .bss      ");
+            uart_put_dec(e->bss_end - e->bss_start);
+            uart_puts(" B at ");
+            uart_put_hex(e->bss_start);
+            uart_puts("\n   tx entry  ");
+            uart_put_hex(e->wifi_80211_tx);
+            uart_puts("\n");
+
+            /* `blob map` stops here: MMU programmed and image validated, but
+             * nothing written. Separating the two is what tells a bad map
+             * apart from a bad load. */
+            if (str_eq(line, "blob map")) {
+                uart_puts("   mapped and validated; loader NOT run\n");
+                return;
+            }
+            int rc = blob_init(e);
+            uart_puts("   loader    rc=");
+            uart_put_dec((unsigned int)(rc < 0 ? -rc : rc));
+            uart_puts(rc == 0 ? " (.data copied, .bss zeroed)\n"
+                              : " REFUSED - a range was outside the reservation\n");
+            if (rc == 0) {
+                /* Verify the WHOLE load, not one word. A copy loop that
+                 * returns is not evidence it copied anything useful, and a
+                 * single matching word would also match if the loop had run
+                 * exactly once. */
+                uint32_t bad_d = 0, bad_b = 0;
+                const volatile uint32_t *im = (const volatile uint32_t *)e->data_lma;
+                const volatile uint32_t *dv = (const volatile uint32_t *)e->data_vma;
+                for (uint32_t i = 0; i < e->data_size / 4u; i++) {
+                    if (dv[i] != im[i]) { bad_d++; }
+                }
+                const volatile uint32_t *bz = (const volatile uint32_t *)e->bss_start;
+                for (uint32_t i = 0; i < (e->bss_end - e->bss_start) / 4u; i++) {
+                    if (bz[i] != 0u) { bad_b++; }
+                }
+                uart_puts("   verify    .data ");
+                uart_put_dec(e->data_size / 4u);
+                uart_puts(" words, ");
+                uart_put_dec(bad_d);
+                uart_puts(" mismatched;  .bss ");
+                uart_put_dec((e->bss_end - e->bss_start) / 4u);
+                uart_puts(" words, ");
+                uart_put_dec(bad_b);
+                uart_puts(" non-zero\n");
+                uart_puts((bad_d == 0u && bad_b == 0u)
+                          ? "   LOAD VERIFIED\n" : "   LOAD IS WRONG\n");
+            }
+            uart_puts("   NOT CALLED. mapping is not running.\n");
+        }
     }
     else if (str_eq(line, "nestfault")) {
         /* NA-007. Panics, then faults inside the panic handler.

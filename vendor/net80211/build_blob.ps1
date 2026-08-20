@@ -10,6 +10,8 @@
 #   powershell -File vendor/net80211/build_blob.ps1
 
 param(
+    [switch]$Flash,
+    [string]$Port = "COM5",
     [string]$Out = "",
     [string]$Idf = "$env:USERPROFILE\.platformio\packages\framework-espidf",
     [string]$Toolchain = "$env:USERPROFILE\.platformio\packages\toolchain-xtensa-esp32\bin"
@@ -89,4 +91,27 @@ if ($hdrSz -ne $fs)        { throw "image is $fs bytes but its header says $hdrS
 if ($fs -gt 0x100000)      { throw "image exceeds BLOB_FLASH_SIZE" }
 
 Write-Host ""
-Write-Host "  OK. Copy to SD as /net80211.bin; nothing installs it yet."
+Write-Host "  OK. Install with -Flash (esptool -> 0x220000), then run 'blob' on the board."
+Write-Host "  There is no filesystem, so SD delivery would need a FAT reader or raw LBAs."
+
+# Development install path. esptool writes the image to BLOB_FLASH_ADDR
+# exactly as it writes the kernel -- no SD, no serial protocol, no filesystem.
+# Delivery from SD or over serial is a convenience for a board with no computer
+# attached and is a separate decision; it is not a prerequisite for finding out
+# whether the blob runs.
+if ($Flash) {
+    # The exact path build.ps1 uses. A -Recurse search finds three copies of
+    # esptool.py and two of them cannot import their own package.
+    $esptool = Get-ChildItem (Join-Path $env:USERPROFILE ".platformio/packages/tool-esptoolpy/esptool.py") `
+               -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $esptool) { throw "esptool.py not found in tool-esptoolpy" }
+    $esptool = $esptool.FullName
+    $py = Join-Path $env:USERPROFILE ".platformio\penv\Scripts\python.exe"
+    if (-not (Test-Path $py)) { $py = "python" }
+
+    Write-Host ""
+    Write-Host "== writing $bin to 0x220000 on $Port ==" -ForegroundColor Cyan
+    & $py $esptool --chip esp32 --port $Port --baud 460800 write_flash -z 0x220000 $bin
+    if ($LASTEXITCODE -ne 0) { throw "flash failed" }
+    Write-Host "  installed. run `"blob`" on the board." -ForegroundColor Green
+}

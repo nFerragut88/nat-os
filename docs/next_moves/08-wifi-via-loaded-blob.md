@@ -186,3 +186,74 @@ existed and contained the symbol.
 3. SD-delivery and the flash install step (§"Delivering the blob from SD").
 4. Call it, on air, and check the MT7921 sees a frame. Until step 4, none of
    the above is evidence about radiating.
+
+---
+
+## Step 4 — the loader, 2026-08-20. Mapped, loaded, verified. NOT called.
+
+`kernel/blob.c` maps the region and runs the loader half. `blob` on the shell:
+
+```
+magic     N802  version 1
+image     549240 bytes  of 1048576 reserved
+.data     3588 B from 0x40385374 to 0x3ffd4000
+.bss      16600 B at 0x3ffd5018
+tx entry  0x40302b9c
+loader    rc=0 (.data copied, .bss zeroed)
+verify    .data 897 words, 0 mismatched;  .bss 4150 words, 0 non-zero
+LOAD VERIFIED
+NOT CALLED. mapping is not running.
+```
+
+Every value matches the pre-link. The MMU mapping, the cache flush, the `.data`
+copy out of flash-mapped memory and the `.bss` zero all work, and the whole
+range is verified rather than one word — a copy loop that returns is not
+evidence it copied anything, and a single matching word would also match if the
+loop had run exactly once.
+
+**Mapping and calling are deliberately separate.** `blob map` stops after
+validation. If a map is wrong, a call jumps into whatever bytes are there and
+the board dies with nothing to read; every number above is obtainable before
+anything executes.
+
+### Two things this cost, both worth recording
+
+**The byte copy faulted, and it was the same bug as this morning.** `data_lma`
+points into the flash-mapped *instruction* region, which serves 32-bit aligned
+accesses and nothing else. A byte loop over it raised `LoadStoreError` at
+`0x4008187f`. `boot.c` hit the same class today from the other direction —
+storing bytes *into* IRAM — and needed a DRAM bounce buffer. The rule worth
+carrying: **if either end of a copy is instruction memory, it is a word copy**,
+and the addresses and sizes get checked rather than assumed.
+
+**The DRAM reservation had never been touched by anything.** The heap ends at
+`0x3ffd3000` and the boot stack at `0x3ffd4000`, so the 32 KB reserved above it
+was declared usable by `linker.ld` and had never once been written in the life
+of the project. "The linker script says it is dram" is not evidence that it is
+RAM. `dramtest` walks it in 1 KB steps and verifies store/read-back; it passes
+across the whole reservation.
+
+### Unexplained: two resets that stopped happening
+
+Between the byte-copy fix and the working loader, two builds reset with
+`TG0WDT_SYS_RESET` partway through the `.bss` zero. The current build does not,
+across nine consecutive trials with the load fully verified and the scheduler
+healthy afterwards.
+
+**That is not the same as understanding it.** The only change between the last
+failing build and the first passing one was adding an unrelated shell command,
+which is a layout shift — the signature of something that moved rather than
+something that was fixed. Both failing runs also followed a boot that had ended
+in a kernel panic, so a stale watchdog or store state is a candidate nobody has
+ruled in or out.
+
+Recorded here because a fault that disappears when an unrelated thing moves is
+this project's own definition of a latent bug, and the next person to see a
+watchdog reset around this path should start here rather than from scratch.
+
+### Next
+
+Calling it. That needs `phy_stack_call` or an equivalent bridge — the blob is
+windowed and the kernel is call0 — and PHY init must have run first, since
+`esp_wifi_80211_tx` reaches the hardware through `libpp` and `libphy`. Nothing
+on air until then.
