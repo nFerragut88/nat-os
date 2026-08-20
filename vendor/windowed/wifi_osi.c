@@ -1,3 +1,23 @@
+/* ****************************************************************
+ * STALE. DO NOT HAND THIS TABLE TO THE BLOB.
+ *
+ * The member ORDER diverges from the current ESP-IDF header from index 54
+ * onward -- 63 positions differ. It still has _phy_common_clock_enable and
+ * _disable where the header now has _phy_update_country_info and _read_mac.
+ * Both are 118 entries, so the size gives nothing away.
+ *
+ * Measured: esp_wifi_init_internal rejects it with ESP_ERR_INVALID_ARG and
+ * ZERO forwarded calls, because _magic lands at the wrong offset. The blob
+ * detects it; nothing in this tree would.
+ *
+ * The CORRECT table is vendor/windowed/wifi_osi_stubs.c, generated from the
+ * header actually shipped with these binaries.
+ *
+ * Kept only because the BODIES are useful reference -- roughly fifty entries
+ * already mapped onto osi_impl_* through the FWD macros. Harvest bodies from
+ * here; take the layout from the generated file. See UM-NATOS-038 5.6.
+ * **************************************************************** */
+
 /* nat-os - the WiFi OS Interface table. Compiled -mabi=windowed.
  *
  * libpp.a reaches its host through exactly one symbol, g_osi_funcs_p, pointing

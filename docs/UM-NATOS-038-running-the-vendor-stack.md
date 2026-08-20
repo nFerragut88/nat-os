@@ -1,7 +1,7 @@
 # UM-NATOS-038 — Running the Vendor Stack from Flash
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.1 · 2026-08-20 · Status: **Partial. Driver init runs and asks for resources; nothing on air.**
+Revision 1.2 · 2026-08-20 · Status: **Blocked on one kernel limitation. Transmit path runs; nothing on air.**
 
 ---
 
@@ -304,10 +304,12 @@ exit would also return zero.
   reading of 0 during `wifiinit` means only that `_set_intr` has not been
   reached yet — init fails before interrupt setup — not that the clamp has been
   shown to be unnecessary.
-- **Blocking OS calls cannot work yet.** `phy_stack_call` masks interrupts for
-  the duration, so `osi_impl_sem_take` blocking on a contended semaphore would
-  block forever with the scheduler frozen. Every call so far has been
-  uncontended.
+- **Blocking OS calls** were fixed after this was written: `blob_call()` enters
+  the blob holding a mutex instead of masking interrupts, so the scheduler
+  keeps running. See §10.
+
+- **One blocker remains, and it is a kernel limitation rather than missing
+  work.** See §10.
 
 ---
 
@@ -349,3 +351,59 @@ defect instead.
 - [UM-NATOS-034](UM-NATOS-034-the-second-receiver.md) §31 — the transmit-path correction that motivated this route
 - `docs/next_moves/08-wifi-via-loaded-blob.md` — the running log, including the failed hunts
 - `docs/blob-free.md` — why function and independence are different purchases
+
+---
+
+## 10. Where it stopped, and why (rev 1.2)
+
+Everything after §7 was established later and changes the picture.
+
+### 10.1 What was finished
+
+- **The config was a layout bug**, not a value — `wpa_crypto_funcs` reserved
+  120 bytes where it is 116, so every field after it sat 4 bytes late and
+  `magic` was read from `sta_disconnected_pm`. Found by asking a board running
+  real ESP-IDF to print its own offsets. §5.8.
+- **Fifteen adapter entries implemented** — mutexes, memory, spin locks,
+  interrupt masking, queues, semaphores, task creation — each one named by the
+  driver on the previous run.
+- **`blob_call()`** enters the blob under a mutex with the scheduler live,
+  replacing the masked-interrupt model, so blob code that blocks can progress.
+- **The transmit path runs.** With the adapter table installed,
+  `esp_wifi_80211_tx` executes its frame sanity check, takes the global lock
+  through nat-os's adapter, and returns `ESP_ERR_WIFI_IF` — a specific,
+  correct refusal, because no interface is configured.
+
+### 10.2 The single blocker
+
+A vendor driver owns a task, and that task runs windowed code concurrently with
+API calls. **nat-os cannot host two contexts inside windowed code at once.**
+`kernel/wincollide.c` reproduces the corruption in two seconds with two
+ordinary tasks and no blob involved.
+
+Four independent paths end there: init needs a task; the task collides;
+transmit needs a started driver; start needs init.
+
+**Five attempts at the fix failed**, all writing window state inside
+`_handler_level3`. Spilling in *task* context works and is in the tree; the
+remaining parts — saving `WINDOWBASE`, narrowing `WINDOWSTART` — break the
+single-task case wherever they are placed in the handler. The two best
+explanations (window exceptions live because `PS.EXCM` is cleared; illegal
+intermediate window state) were both tested and eliminated.
+
+This is **not** an ABI problem. The hardware spills correctly to each frame's
+recorded stack pointer. What is left is ISA behaviour that needs single-stepping
+to observe, which means a debug probe.
+
+### 10.3 A correction about method
+
+Four experiments in this work produced confident conclusions from shell
+commands that **never executed** — `split()` truncates the line at the first
+space, so every two-word command tested a string that could not match. Two of
+those conclusions were used to overturn *correct* earlier findings, which had
+to be reinstated.
+
+The rule this earns: **a negative result from a command whose execution was
+never confirmed is not a negative result.** The project already had the same
+rule one level up, about instruments sharing a dependency with the fault. Here
+the instrument was the shell.
