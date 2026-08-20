@@ -292,10 +292,28 @@ bare names match nothing) and by dropping `--only-section` entirely. The real
 guard is **`-Wl,--orphan-handling=error`**: the linker now refuses to place a
 section nobody named. It immediately caught `.rodata_wlog_warning.59`.
 
-> **Untested caveat.** These are called `*iram` because ESP-IDF keeps them in
-> RAM so they stay executable while the flash cache is off. Here they are *in
-> flash*. Anything running during a flash write — WiFi interrupt handlers —
-> is a real risk and is unproven.
+> **Caveat, corrected 2026-08-20.** These are called `*iram` because ESP-IDF
+> keeps them in RAM so they stay executable while the flash cache is off —
+> ESP-IDF leaves interrupts **enabled** during flash operations, which is why
+> its WiFi ISRs are `IRAM_ATTR`.
+>
+> **That reasoning does not transfer to nat-os.** `flash_erase_sector()` holds
+> `crit_enter()` across the entire erase, so nothing at level ≤ `CRIT_LEVEL`
+> runs and nothing fetches. Flash placement is safe against the *fault*; the
+> cost is 125 ms of **delay**, which is the `next_moves/04` problem, not a
+> memory-safety one.
+>
+> Two things do remain real. `CRIT_LEVEL` is 3, so an interrupt allocated at
+> level 4–7 is not masked and would fetch mid-erase — the OSI table's
+> `intr_alloc` decides that, so it should be chosen deliberately. And
+> `store_save_if_allowed()`'s deferral is bounded: `STORE_DEFER_MAX` forces the
+> write through after 32 refusals, and `store_record_fault()`, device writes and
+> the boot save bypass the predicate entirely.
+>
+> For 802.11 the delay alone is disqualifying: ACK timeouts are microseconds and
+> beacon intervals ~100 ms, so a 125 ms stall drops the association. Same
+> conclusion `04` and `10` reached for LoRa — no scheduler change preempts a
+> masked interrupt, so the fix is write policy.
 
 ### Bug 2 — `.rodata` was in the instruction window
 

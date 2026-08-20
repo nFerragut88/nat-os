@@ -48,10 +48,17 @@ SECTIONS
    * mistake recurring: the linker now refuses to place a section nobody named
    * rather than quietly putting it somewhere plausible.
    *
-   * CAVEAT, not yet tested: these are called *iram for a reason -- ESP-IDF
-   * keeps them in RAM so they remain executable while the flash cache is off.
-   * Here they are IN flash. Anything that runs during a flash write, which
-   * includes WiFi interrupt handlers, is a real risk and is unproven. */
+   * CAVEAT, corrected. These are called *iram because ESP-IDF keeps them in
+   * RAM so they stay executable while the flash cache is off -- ESP-IDF leaves
+   * interrupts ENABLED during flash operations, which is why its WiFi ISRs are
+   * IRAM_ATTR. That reasoning does NOT transfer: nat-os's
+   * flash_erase_sector() holds crit_enter() across the whole erase, so nothing
+   * at level <= CRIT_LEVEL runs and nothing fetches. Flash placement is
+   * therefore safe against the fault, and the cost is 125 ms of DELAY instead.
+   *
+   * What remains real: CRIT_LEVEL is 3, so an interrupt allocated at level 4-7
+   * is not masked and would fetch mid-erase. Whatever the OSI table's
+   * intr_alloc chooses for the MAC decides this, so choose it deliberately. */
   .text : ALIGN(4)
   {
     *(.literal .literal.* .text .text.*)
