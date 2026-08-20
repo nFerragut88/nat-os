@@ -478,6 +478,26 @@ accepted - version and magic matched
 is the *consumer* confirming the layout, which is better evidence than the
 offset arithmetic that produced it.
 
+> **An aside, from `esp_private/wifi_os_adapter.h`:**
+>
+> ```c
+> #define ESP_WIFI_OS_ADAPTER_VERSION  0x00000008
+> #define ESP_WIFI_OS_ADAPTER_MAGIC    0xDEADBEAF
+> ```
+>
+> `0xDEADBEAF`. Somebody reached for `0xDEADBEEF`, typed `BEAF`, and shipped
+> it — and because it is a magic number checked across an ABI boundary by
+> precompiled binaries, it can never be corrected. Every ESP32 WiFi driver ever
+> built has agreed to the typo.
+>
+> It is also, briefly, a trap. A reader who recognises the constant and
+> "fixes" the spelling gets a table the blob rejects, and the failure is a bare
+> non-zero return from `wifi_osi_funcs_register` with nothing to indicate that
+> one letter is the reason. Copy it wrong, on purpose.
+>
+> A small reminder that vendor blobs are written by people having ordinary
+> days, and that this whole exercise is archaeology as much as engineering.
+
 ### But transmit is unchanged, and that corrects an earlier claim
 
 With the table registered, `esp_wifi_80211_tx` still faults identically —

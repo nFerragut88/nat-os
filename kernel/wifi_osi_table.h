@@ -13,6 +13,9 @@
 #define CONFIG_IDF_TARGET_ESP32 1
 
 #define ESP_WIFI_OS_ADAPTER_VERSION  0x00000008
+/* BEAF, not BEEF. Espressif's typo, frozen into an ABI that precompiled
+ * binaries check, so it can never be corrected. Do not "fix" the spelling:
+ * the blob rejects the table and says nothing about why. */
 #define ESP_WIFI_OS_ADAPTER_MAGIC    0xDEADBEAF
 
 /* Copied verbatim from esp_private/wifi_os_adapter.h so member ORDER is never
