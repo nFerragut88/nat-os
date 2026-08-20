@@ -61,3 +61,50 @@ unsigned int vendor_bridge_probe(unsigned int fn_add, unsigned int depth)
     }
     return acc;
 }
+
+/* ---- preemption torture ------------------------------------------------
+ *
+ * vendor_probe above proves window OVERFLOW handling works: recurse deep
+ * enough to exhaust the physical registers and the checksum still comes back
+ * right. What it cannot prove is anything about PREEMPTION, because it
+ * completes in microseconds and is almost never interrupted.
+ *
+ * The question that matters for the WiFi driver is different: can a context
+ * switch happen while windowed frames are live? nat-os's level-3 handler saves
+ * a0..a15 and NOT WINDOWBASE/WINDOWSTART, and does not spill the window --
+ * which is why phy_stack_call masks interrupts for the whole call.
+ *
+ * So this holds a modest number of live frames (shallow enough to fit a task
+ * stack) and then SPINS at the bottom for a requested number of milliseconds,
+ * guaranteeing many ticks elapse with those frames live. The locals are read
+ * after the spin and after the recursive call, so a switch that mishandles the
+ * register window produces a WRONG CHECKSUM rather than merely not crashing.
+ */
+unsigned int vendor_torture(unsigned int depth, unsigned int spin_ms);
+
+unsigned int vendor_torture(unsigned int depth, unsigned int spin_ms)
+{
+    unsigned int local[6];
+
+    for (unsigned int i = 0; i < 6u; i++) {
+        local[i] = (depth * 7u) + i;
+    }
+
+    if (depth == 0u) {
+        unsigned int t0, now;
+        __asm__ volatile ("rsr.ccount %0" : "=r"(t0));
+        for (;;) {
+            __asm__ volatile ("rsr.ccount %0" : "=r"(now));
+            if ((now - t0) > (spin_ms * 80000u)) { break; }   /* 80 MHz */
+        }
+        return 0u;
+    }
+
+    unsigned int deeper = vendor_torture(depth - 1u, spin_ms);
+
+    unsigned int sum = deeper;
+    for (unsigned int i = 0; i < 6u; i++) {
+        sum += local[i];
+    }
+    return sum;
+}

@@ -1107,6 +1107,48 @@ static void execute(char *line)
         uart_puts(got == (uint32_t)d ? "  CORRECT" : "  WRONG");
         uart_puts("\n");
     }
+    else if (str_eq(line, "wintorture")) {
+        /* Does a context switch corrupt live windowed frames?
+         *
+         * This is the premise behind phy_stack_call masking interrupts, and it
+         * has never actually been tested -- vendor_probe completes in
+         * microseconds and is essentially never preempted.
+         *
+         * vendor_torture holds 8 live windowed frames and spins at the bottom
+         * for N ms, so many ticks elapse with them live. rom_call3 is used
+         * rather than phy_stack_call precisely BECAUSE it leaves interrupts
+         * enabled. The checksum is verified on the way out: a switch that
+         * mishandles the window gives a wrong number, not a crash.
+         *
+         * The switch count is the control. If it does not rise, no preemption
+         * happened and a PASS means nothing. */
+        extern unsigned int vendor_torture(unsigned int, unsigned int);
+        int ms = parse_int(arg);
+        if (ms < 0) { ms = 60; }
+
+        /* depth 8, 6 locals each: 8*(7d + 0..5) summed on unwind. */
+        uint32_t want = 0;
+        for (uint32_t d = 1; d <= 8u; d++) {
+            for (uint32_t i = 0; i < 6u; i++) { want += (d * 7u) + i; }
+        }
+
+        uint32_t s0 = task_switch_count(task_current());
+        uint32_t got = rom_call3((uint32_t)&vendor_torture, 8u, (uint32_t)ms, 0u);
+        uint32_t sw = task_switch_count(task_current()) - s0;
+
+        uart_puts("   spun ");
+        uart_put_dec((unsigned int)ms);
+        uart_puts(" ms with 8 windowed frames live, interrupts ENABLED\n");
+        uart_puts("   switches during the call: ");
+        uart_put_dec(sw);
+        uart_puts(sw ? "  (preemption really happened)\n"
+                     : "  -- NONE, so this proves nothing\n");
+        uart_puts("   checksum ");
+        uart_put_dec(got);
+        uart_puts(" expected ");
+        uart_put_dec(want);
+        uart_puts(got == want ? "  CORRECT\n" : "  WRONG - frames were corrupted\n");
+    }
     else if (str_eq(line, "vendorcall")) {
         int d = parse_int(arg);
         if (d < 0) { d = 20; }

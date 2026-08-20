@@ -762,3 +762,65 @@ them; and single-stepping the first few instructions of `register_chipv7_phy`
 via the APP CPU capture rig (`appcpu.c`) rather than inferring from the outside.
 
 **Nothing has been on air.**
+
+---
+
+## The preemption prerequisite, measured — and it is narrower than stated
+
+`wintorture` holds **8 live windowed frames** and spins at the bottom for N ms
+with **interrupts enabled** (via `rom_call3`, which unlike `phy_stack_call`
+does not mask), then verifies a checksum on the way out. The switch count is
+the control: without it, a PASS could just mean no preemption happened.
+
+```
+spun  60 ms with 8 windowed frames live, interrupts ENABLED
+switches during the call: 1  (preemption really happened)
+checksum 1632 expected 1632  CORRECT
+
+spun 300 ms ... switches during the call: 3 ... CORRECT
+```
+
+**6 of 6 correct.** A context switch across live windowed frames did not
+corrupt them.
+
+### Why it survives, and what the real hazard is
+
+nat-os's level-3 handler saves and restores `a0`-`a15` **at the current
+`WINDOWBASE`**, and never changes `WINDOWBASE` itself. Every other task is
+call0, and call0 code never rotates the window — so it only ever touches the
+sixteen physical registers at that same `WINDOWBASE`, which are exactly the
+ones the handler saved and restored.
+
+A windowed task's *caller* frames live at other window positions. Call0 tasks
+cannot reach them. That is why they survive.
+
+**So the dangerous case is not preemption. It is two tasks inside windowed code
+at once.** If task A rotates `WINDOWBASE` and is preempted, and task B then
+makes its own windowed call, B's rotation walks forward and can overwrite A's
+frames — and B's overflow exceptions would spill registers belonging to A onto
+B's stack. An ISR that called into the blob would do the same.
+
+### What this changes
+
+The masking in `phy_stack_call` looks **over-conservative for the single-caller
+case**. If the real invariant is *"only one context inside windowed code at a
+time"*, it can be enforced with a mutex instead of by disabling preemption —
+and then interrupts stay enabled, the scheduler keeps running, other tasks run,
+and **blocking OSI calls become possible**. That is precisely what
+`esp_wifi_init_internal` needs, and it is far cheaper than making the context
+switch window-aware.
+
+It also explains why the watchdog problem exists at all: masking was chosen to
+protect an invariant that a mutex protects better.
+
+### Explicitly not proven
+
+- **Two tasks concurrently in windowed code has NOT been tested.** The hazard
+  above is reasoned from the architecture, not measured. That test is the next
+  thing to build, and it should be built to FAIL first.
+- Deep recursion is limited by task stack, not by window handling: `wintest 60`
+  panics with `stack guard overwritten, task 5` — the guard working correctly,
+  8 frames being the practical depth on a 2 KB stack.
+- None of this touches the step-7 hang, which remains unexplained.
+
+**Nothing has been on air.**
