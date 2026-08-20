@@ -619,3 +619,75 @@ segment across the same boundary. Both are cheap to test by padding one without
 the other — the same probe technique that ruled out `.bss`.
 
 **Nothing has been on air.**
+
+---
+
+## The prerequisite nobody had identified: preemption inside blob calls
+
+Found while explaining why the watchdog fires. It reframes what "next" is.
+
+### The chain, verified from source
+
+1. nat-os is `-mabi=call0`. Its context switch (`vectors.S`) saves `a0`-`a15`,
+   `SAR` and the LOOP registers — and **not `WINDOWBASE`/`WINDOWSTART`**. It
+   never spills the register window. (Confirmed: neither appears in the file.)
+2. Blob code is **windowed**. While it runs, live frames sit in the physical
+   register file, described by `WINDOWSTART`.
+3. A context switch mid-call would hand another task a register file still
+   marked as holding this call's frames. So `phy_stack_call` masks interrupts
+   for the whole call — its own comment says *"Not for atomicity — to stop a
+   context switch happening while windowed frames are live."*
+4. Masked interrupts mean no tick, so no `task_schedule()`, so no switches.
+5. `watchdog_liveness(next != g_current)` is fed **only** by a task switch.
+
+So the hang detector measures "is the scheduler alive", and `phy_stack_call`
+deliberately stops it. **Any blob call over 3 s is indistinguishable from a
+hung kernel** and gets reset — which is why step 7 had to disarm the watchdog
+before "slow" and "stuck" could be told apart.
+
+`_phy_stack` is the sibling fix in the same function: the private 6 KB stack
+solves *depth*, the interrupt mask solves *window-state coherence*. Both exist
+because a call0 kernel is calling windowed code.
+
+### Why this blocks `esp_wifi_init_internal` specifically
+
+`register_chipv7_phy` never asks the OS for anything. It computes, writes
+registers, and returns — so running it with the scheduler frozen is free.
+
+A protocol stack does the opposite. `esp_wifi_init_internal` calls back through
+the OS adapter table for mutexes, queues, semaphores, timers and task creation,
+and several of those **block**. `_semphr_take(h, block_time)` cannot return
+while the scheduler is frozen; `_task_create` produces a task that never runs.
+
+**The current bridge model cannot work for driver init.** That is structural,
+not a tuning problem, and it is a prerequisite rather than an optimisation.
+
+### The cheap shape of the fix
+
+Spilling on every switch would make every task in the system pay for WiFi and
+would invalidate `next_moves/04`'s fairness measurements. It is not necessary:
+a call0 kernel's steady state is **exactly one live frame**, because call0 code
+never rotates the window. Multiple frames exist only during a blob excursion.
+
+```
+    rsr.windowstart a2       ; exactly one bit set -> today's fast path
+                             ; more than one       -> spill + save WINDOWBASE
+```
+
+Normal switches stay as fast as they are now; the expensive path runs only for
+the few switches that land inside blob code.
+
+This is still the most dangerous code in the kernel to touch — every switch
+goes through it, and UM-NATOS-009 records what a subtle error there looks like.
+But it is bounded, and it is **testable without a radio**: force a preemption
+inside a deliberately long windowed call and check the frames survive.
+
+### Not a verdict on call0
+
+UM-NATOS-003's reasoning still holds for the kernel itself. Calls across the
+ABI boundary were always bridged and still work. What was never accounted for
+is *preemption during* one, and that only matters when blob code needs to
+block — which nothing did until now.
+
+It does sharpen `blob-free.md`'s argument, though. An SX1262 has no windowed
+blob: no bridge, no spill, no frozen scheduler, none of this.

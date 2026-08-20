@@ -490,7 +490,21 @@ phy_stack_call:
      * frames are live. nat-os's level-3 handler saves a0..a15 and nothing else:
      * it does not save WINDOWBASE or WINDOWSTART and does not spill the window.
      * A switch in the middle of blob code therefore leaves another task running
-     * with this one's frames still marked live in the register file. */
+     * with this one's frames still marked live in the register file.
+     *
+     * CONSEQUENCE, and it is a prerequisite for the WiFi driver rather than a
+     * detail. Masking here stops the tick, so no task switches happen, so
+     * watchdog_liveness() is never fed -- any blob call over 3 s is reset as
+     * if the kernel had hung. More seriously, blob code that BLOCKS can never
+     * make progress: esp_wifi_init_internal asks the OS adapter table for
+     * semaphores and tasks, and _semphr_take() cannot return while the
+     * scheduler is frozen. register_chipv7_phy is fine here only because it
+     * asks the OS for nothing.
+     *
+     * The fix is to make the context switch window-aware rather than to widen
+     * this mask: spill the window and save WINDOWBASE/WINDOWSTART, but only
+     * when WINDOWSTART shows more than one live frame -- which in a call0
+     * kernel means only during a blob excursion. See next_moves/08. */
     rsil    a9, 3
     s32i    a9,  a1, 24
 
