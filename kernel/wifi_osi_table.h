@@ -169,4 +169,10 @@ const char *wifi_osi_name(uint32_t i);
  * optional. See UM-NATOS-038 7.2. */
 uint32_t wifi_osi_intr_clamped(void);
 
+/* The exact call sequence, with repeats and (where meaningful) the argument.
+ * wifi_osi_order() only records first touches and cannot show a loop. */
+uint32_t wifi_osi_trace_len(void);
+uint32_t wifi_osi_trace_idx(uint32_t n);
+uint32_t wifi_osi_trace_arg(uint32_t n);
+
 #endif

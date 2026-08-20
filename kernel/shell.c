@@ -726,7 +726,7 @@ static void execute(char *line)
             }
         }
     }
-    else if (str_eq(line, "wifiinit") || str_eq(line, "wifiinit null")) {
+    else if (str_eq(line, "wifiinit") || str_eq(line, "wifiinit null") || str_eq(line, "wifiinit nvs")) {
         /* next_moves/08. esp_wifi_init_internal() -- the step that installs
          * the OS adapter table.
          *
@@ -776,7 +776,15 @@ static void execute(char *line)
              * has already been caught losing instruction sync in this blob, so
              * "only one site" is worth only as much as the decode. Comparing
              * the two runs answers it without trusting either. */
+            /* `wifiinit nvs` flips nvs_enable to IDF's shipped value.
+             *
+             * It is the one field that unambiguously diverges: nat-os has no
+             * NVS at all, so it was set to 0 on the reasoning that the driver
+             * should not reach for a key/value store that does not exist. If
+             * the driver validates it rather than merely honouring it, that is
+             * a config rejection with a one-field cause. */
             int want_null = str_eq(line, "wifiinit null");
+            if (str_eq(line, "wifiinit nvs")) { wifi_init_cfg_nvs(1); }
             uint32_t r = phy_stack_call(e->wifi_init,
                                         want_null ? 0u : (uint32_t)wifi_init_cfg(),
                                         0u, 0u, 0u);
@@ -808,6 +816,16 @@ static void execute(char *line)
                 uart_puts(cl ? "  *** the blob wants an interrupt that would\n"
                                "       fire mid-erase; see UM-NATOS-038 7.2\n"
                              : "  (must stay zero)\n");
+            }
+            uart_puts("   sequence: ");
+            for (uint32_t k = 0; k < wifi_osi_trace_len(); k++) {
+                uart_puts(wifi_osi_name(wifi_osi_trace_idx(k)));
+                if (wifi_osi_trace_arg(k)) {
+                    uart_puts("(");
+                    uart_put_dec(wifi_osi_trace_arg(k));
+                    uart_puts(")");
+                }
+                uart_puts(k + 1u < wifi_osi_trace_len() ? " -> " : "\n");
             }
             uart_puts("   run 'osiused' for the list, in call order.\n");
         }

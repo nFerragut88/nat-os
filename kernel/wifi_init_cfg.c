@@ -48,6 +48,10 @@ extern char g_wifi_osi_funcs;
  * else entirely. */
 static wifi_init_config_t g_cfg;
 
+/* Override nvs_enable after the struct is built. Exists to bisect
+ * ESP_ERR_INVALID_ARG one field at a time rather than guess at 21 fields. */
+static int g_nvs_override = -1;
+
 const void *wifi_init_cfg(void)
 {
     g_cfg.osi_funcs = (wifi_osi_funcs_t *)wifi_osi_table();
@@ -93,8 +97,13 @@ const void *wifi_init_cfg(void)
     g_cfg.espnow_max_encrypt_num = 7;
 
     /* Last field, and the blob checks it. */
+    if (g_nvs_override >= 0) { g_cfg.nvs_enable = g_nvs_override; }
+
     g_cfg.magic = WIFI_INIT_CONFIG_MAGIC;
     return &g_cfg;
 }
 
 uint32_t wifi_init_cfg_size(void) { return (uint32_t)sizeof g_cfg; }
+
+void wifi_init_cfg_nvs(int on) { g_nvs_override = on; }
+

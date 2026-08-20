@@ -1318,3 +1318,65 @@ give one early adapter entry a body that reports its arguments, and the driver
 will say how far it got and with what, without any disassembly being trusted.
 
 **Nothing has been on air.**
+
+### Step 9c — the call sequence, and what it settles
+
+`wifiinit` now prints the exact adapter call sequence with repeats and
+allocation sizes. `wifi_osi_order()` only ever recorded first touches, which
+cannot show a loop, a retry or a rollback.
+
+```
+_recursive_mutex_create -> _task_get_current_task -> _mutex_lock
+-> _calloc_internal(32) -> _task_get_current_task -> _mutex_unlock
+-> _spin_lock_create -> _recursive_mutex_create -> _spin_lock_delete
+-> _task_get_current_task -> _mutex_lock -> _free
+-> _task_get_current_task -> _mutex_unlock
+```
+
+Fourteen calls: take the API lock, allocate 32 bytes, release, create and
+delete a spin lock, re-take the lock, free, release. **An init that allocates,
+fails, and rolls back cleanly** — which is a driver behaving well against a
+host that answers honestly.
+
+**A NULL config produces a byte-identical sequence.** Both runs non-empty,
+fourteen calls each, same `0x102`.
+
+*(An earlier attempt at this comparison reported "identical" while both runs
+had produced NO sequence at all — comparing two empty strings. The check now
+refuses to conclude anything when either side is empty.)*
+
+### What that settles, and what it does not
+
+**Settled — the blob is not stale.** Reflashed and retested: unchanged.
+
+**Settled — the bridge is fine.** §9b, and independently `register_chipv7_phy`
+takes two pointers through the same bridge and calibrates successfully. Blob
+functions receive their arguments.
+
+**Therefore the listing is wrong.** If instruction 2 were `bnez.n a2` guarding
+a `0x102` return, a NULL config would return immediately with zero adapter
+calls, and `l32i a10, a2, 0` would fault on address 0. Neither happens. objdump
+has been caught losing sync inside this blob twice, decoding `lsi f4` in code
+with no floating point — the "only one `0x102` site" claim rests on that same
+decode and should be treated as withdrawn.
+
+The coherent reading is that the config is **validated later than the listing
+suggested**, after the lock/allocate/rollback above, and is not dereferenced at
+entry at all. That fits every observation without requiring anything to be
+broken.
+
+### Config bisection has started
+
+`wifi_init_cfg_nvs()` exists so fields can be flipped from the shell rather
+than guessed at. First candidate tested and **eliminated**:
+
+| field | tried | result |
+|---|---|---|
+| `nvs_enable` | 0 -> 1 (IDF default) | `0x102`, 14 calls — unchanged |
+| `ampdu_rx/tx`, `rx_ba_win` | -> IDF defaults | `0x102` — unchanged (§8) |
+
+Twenty-one fields, two groups eliminated. The harness makes each further test a
+build and a boot, and the 14-call sequence is the control: a config the driver
+accepts should change the sequence, not merely the return code.
+
+**Nothing has been on air.**

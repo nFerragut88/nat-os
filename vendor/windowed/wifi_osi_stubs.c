@@ -164,6 +164,23 @@ uint8_t  g_osi_order[OSI_N];
 uint8_t  g_osi_seq;
 uint32_t g_osi_intr_clamped;   /* interrupts asked for above CRIT_LEVEL */
 
+/* Exact call SEQUENCE, with repeats -- g_osi_order only records the first time
+ * each entry is touched, which cannot show a loop or a retry. Paired with the
+ * argument where the entry has one worth seeing (allocation sizes). */
+#define OSI_TRACE_MAX 48u
+uint8_t  g_osi_trace[OSI_TRACE_MAX];
+uint32_t g_osi_trace_arg[OSI_TRACE_MAX];
+uint32_t g_osi_trace_n;
+
+static void osi_trace(uint32_t i, uint32_t arg)
+{
+    if (g_osi_trace_n < OSI_TRACE_MAX) {
+        g_osi_trace[g_osi_trace_n] = (uint8_t)i;
+        g_osi_trace_arg[g_osi_trace_n] = arg;
+        g_osi_trace_n++;
+    }
+}
+
 /* Bridges into nat-os's call0 side. The blob calls us windowed; the kernel's
  * heap, mutexes and scheduler are call0, so every real body hands off through
  * these. See window.S. */
@@ -184,6 +201,7 @@ static void osi_hit(uint32_t i)
     if (i >= OSI_N) { return; }
     if (g_osi_calls[i] == 0u && g_osi_seq < 255u) { g_osi_order[i] = ++g_osi_seq; }
     if (g_osi_calls[i] < 0xFFFFu) { g_osi_calls[i]++; }
+    osi_trace(i, 0u);
 }
 
 static bool osi_s_env_is_chip(void)
@@ -471,6 +489,7 @@ static int32_t osi_s_task_get_max_priority(void)
 static void * osi_s_malloc(size_t size)
 {
     osi_hit(43u);
+    g_osi_trace_arg[g_osi_trace_n ? g_osi_trace_n - 1u : 0u] = (uint32_t)size;
     return (void *)w2c_call1((uint32_t)&osi_impl_malloc, (uint32_t)size);
 }
 
@@ -704,6 +723,7 @@ static uint32_t osi_s_log_timestamp(void)
 static void * osi_s_malloc_internal(size_t size)
 {
     osi_hit(85u);
+    g_osi_trace_arg[g_osi_trace_n ? g_osi_trace_n - 1u : 0u] = (uint32_t)size;
     return (void *)w2c_call1((uint32_t)&osi_impl_malloc, (uint32_t)size);
 }
 
@@ -716,6 +736,7 @@ static void * osi_s_realloc_internal(void *ptr, size_t size)
 static void * osi_s_calloc_internal(size_t n, size_t size)
 {
     osi_hit(87u);
+    g_osi_trace_arg[g_osi_trace_n ? g_osi_trace_n - 1u : 0u] = (uint32_t)(n * size);
     return (void *)w2c_call2((uint32_t)&osi_impl_calloc,
                              (uint32_t)n, (uint32_t)size);
 }

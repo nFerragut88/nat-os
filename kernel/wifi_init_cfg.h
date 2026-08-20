@@ -57,5 +57,6 @@ typedef struct {
  * nat-os's table. Returns the config to hand to esp_wifi_init_internal(). */
 const void *wifi_init_cfg(void);
 uint32_t    wifi_init_cfg_size(void);
+void        wifi_init_cfg_nvs(int on);
 
 #endif
