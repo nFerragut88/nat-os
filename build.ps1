@@ -98,7 +98,10 @@ $objs = @()
 # The three files that reach the vendor blobs. Excluded entirely unless -WiFi,
 # so a default build has no path to libphy at all -- not a stubbed one, not a
 # dead-code one. If it is not compiled it cannot link, and `nm` can prove it.
-$blobFiles = @("phyinit.c", "wifimac.c", "wifi_osi_impl.c")
+# phyinit.c is NOT here any more: since the blob carries its own libphy, its
+# bring-up sequence is needed by the blob-free build too. It references no
+# Espressif symbol unless BOARD_HAS_WIFI is set.
+$blobFiles = @("wifimac.c", "wifi_osi_impl.c")
 
 foreach ($src in (Get-ChildItem "$root\kernel" -Include *.c,*.S -Recurse)) {
     if ((-not $WiFi) -and ($blobFiles -contains $src.Name)) { continue }

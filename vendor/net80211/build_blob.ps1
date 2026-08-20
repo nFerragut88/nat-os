@@ -54,7 +54,7 @@ $elf = Join-Path $Out "blob.elf"
 Write-Host "pre-linking to 0x40300000"
 & $gcc -nostdlib -nostartfiles -o $elf `
     (Join-Path $Out "blob_entry.o") (Join-Path $Out "net80211_host.o") $phyHost `
-    "-Wl,-e,0" "-T" (Join-Path $here "blob.ld") `
+    "-Wl,-e,0" "-Wl,--orphan-handling=error" "-T" (Join-Path $here "blob.ld") `
     "-T" "$romld\esp32.rom.ld"              "-T" "$romld\esp32.rom.libgcc.ld" `
     "-T" "$romld\esp32.rom.newlib-funcs.ld" "-T" "$romld\esp32.rom.newlib-data.ld" `
     "-T" "$romld\esp32.rom.newlib-nano.ld" `
@@ -65,26 +65,34 @@ Write-Host "pre-linking to 0x40300000"
 if ($LASTEXITCODE -ne 0) { throw "pre-link failed" }
 
 $bin = Join-Path $Out "net80211.bin"
-& $objcopy -O binary `
-    --only-section=.blob_entry --only-section=.text `
-    --only-section=.rodata --only-section=.data `
-    $elf $bin
+# NO --only-section list. That list is what silently dropped 357,940 bytes of
+# .iram1/.phyiram/.wifi*iram code and produced an image full of zeros that
+# linked, verified, and died on the first call. objcopy -O binary emits every
+# loadable section; .bss is NOLOAD and is excluded automatically.
+& $objcopy -O binary $elf $bin
 if ($LASTEXITCODE -ne 0) { throw "objcopy failed" }
 
 # The image carries its own size. If the file and the header disagree, the
 # objcopy section list is wrong and the loader would copy .data from garbage --
 # so check it here rather than discovering it on the board.
 $fs = (Get-Item $bin).Length
-$hdr = [System.IO.File]::ReadAllBytes($bin)[0..39]
+$hdr = [System.IO.File]::ReadAllBytes($bin)[0..55]
 $magic  = [BitConverter]::ToUInt32($hdr, 0)
 $hdrSz  = [BitConverter]::ToUInt32($hdr, 8)
-$txFn   = [BitConverter]::ToUInt32($hdr, 36)
+# Offset 48, not 36: the rodata_lma/vma/size fields sit before it. This read
+# 36 and cheerfully reported the rodata base as the tx entry point.
+$roLma  = [BitConverter]::ToUInt32($hdr, 36)
+$txFn   = [BitConverter]::ToUInt32($hdr, 48)
 
 Write-Host ""
 Write-Host ("  net80211.bin  {0} bytes ({1:P1} of the 1 MB reservation)" -f $fs, ($fs / 1048576))
 Write-Host ("  magic         0x{0:x8}  {1}" -f $magic, $(if ($magic -eq 0x3230384E) { "N802 OK" } else { "WRONG" }))
 Write-Host ("  header size   {0}" -f $hdrSz)
+Write-Host ("  rodata lma    0x{0:x8}  (mapped to DROM 0x3f700000)" -f $roLma)
 Write-Host ("  tx entry      0x{0:x8}" -f $txFn)
+if ($txFn -lt 0x40300000 -or $txFn -ge 0x40400000) {
+    throw "tx entry 0x$('{0:x8}' -f $txFn) is not in the code window -- header layout drifted"
+}
 
 if ($magic -ne 0x3230384E) { throw "bad magic -- .blob_entry is not first in the image" }
 if ($hdrSz -ne $fs)        { throw "image is $fs bytes but its header says $hdrSz" }

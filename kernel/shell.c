@@ -541,6 +541,43 @@ static void execute(char *line)
         uart_puts("   executing an illegal instruction\n");
         __asm__ volatile ("ill");
     }
+    else if (str_eq(line, "blobphy")) {
+        /* Initialise the PHY *inside the blob*, then report.
+         *
+         * Not the kernel's copy. Until now a -WiFi build linked libphy into
+         * IRAM and calibrated that; the blob carries its own, with its own
+         * .bss, so initialising one and transmitting through the other would
+         * present as a PHY that reported success and a radio that stayed
+         * silent -- the exact shape of failure this project has already spent
+         * sessions on.
+         *
+         * UM-NATOS-036 records that this call panics with StoreProhibited
+         * inside phy_enter_critical under OUR bootloader, which is why -WiFi
+         * forces Espressif's. This is the same call against a different copy
+         * of the same code, from a blob-free kernel. Whether that changes
+         * anything is exactly the open question. */
+        const struct blob_entry *e = blob_map();
+        if (!e) {
+            uart_puts("   no valid image -- run build_blob.ps1 -Flash\n");
+        } else if (blob_init(e) != 0) {
+            uart_puts("   loader refused; not calling anything\n");
+        } else {
+            uart_puts("   blob loaded. calling its register_chipv7_phy at ");
+            uart_put_hex(e->phy_init);
+            uart_puts("\n");
+            int r = phyinit_run_at(e->phy_init);
+            uart_puts("   phyinit   rc=");
+            uart_put_dec((unsigned int)r);
+            uart_puts("  result=");
+            uart_put_hex(phyinit_result());
+            uart_puts("\n   phystack  ");
+            uart_put_dec(phy_stack_used());
+            uart_puts(" of ");
+            uart_put_dec(phy_stack_size());
+            uart_puts(" bytes used\n");
+            uart_puts("   IT RETURNED. that is not evidence the radio works.\n");
+        }
+    }
     else if (str_eq(line, "dramtest")) {
         /* Is the blob DRAM reservation actually usable memory?
          *

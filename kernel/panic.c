@@ -292,6 +292,21 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
     uart_put_hex(ps);
     uart_puts("\n");
 
+    /* EXCVADDR: the address the faulting instruction tried to reach.
+     *
+     * For exccause 3, 9, 28 and 29 the interesting question is never "where
+     * was the code" -- epc answers that -- but "what did it touch". Without
+     * this, a LoadStoreError inside a vendor blob is a bare epc with no way to
+     * tell a byte access to rodata apart from a wild pointer. Still valid at
+     * this point because nothing between the vector and here writes it. */
+    if (exccause == 3u || exccause == 9u || exccause == 28u || exccause == 29u) {
+        uint32_t va;
+        __asm__ volatile ("rsr.excvaddr %0" : "=r"(va));
+        uart_puts("  excvaddr : ");
+        uart_put_hex(va);
+        uart_puts("   <- the address it tried to reach\n");
+    }
+
     /* How deep the PHY got before dying. Meaningless unless a PHY call was in
      * flight, but when one was, this is the difference between a stack that
      * ran out and a fault that merely happened to land in a spill. */

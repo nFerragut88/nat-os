@@ -257,3 +257,88 @@ Calling it. That needs `phy_stack_call` or an equivalent bridge — the blob is
 windowed and the kernel is call0 — and PHY init must have run first, since
 `esp_wifi_80211_tx` reaches the hardware through `libpp` and `libphy`. Nothing
 on air until then.
+
+---
+
+## Step 5 — calling it. Three bugs found and fixed; not yet running.
+
+The blob's PHY is now reachable and the call gets *into* vendor code. It does
+not complete. Four faults so far, each one a different, correctly identified
+cause — recorded because the sequence is the useful part.
+
+### The architecture changed: the blob owns the whole radio stack
+
+The blob links its own `libphy`. The kernel's `-WiFi` build linked a *second*
+copy into IRAM. Two copies have two sets of `.bss`, so calibrating one and
+transmitting through the other would present as a PHY that reported success and
+a radio that stayed silent — a failure shape this project has already lost
+sessions to.
+
+So the kernel now initialises **the blob's** copy. `phyinit_run_at(fn)` takes
+the address as a parameter and references no Espressif symbol, so `phyinit.c`
+compiles into the blob-free build; `phyinit_run()` survives behind
+`BOARD_HAS_WIFI`. The kernel image still contains no vendor code.
+
+### Bug 1 — 357,940 bytes of code were missing from the image
+
+`blob.ld` named `.text`; the vendor archives also ship `.iram1`, `.phyiram`
+and six `.wifi*iram` classes. `objcopy --only-section` then dropped every one
+of them. The image linked, passed its size check, loaded and verified — and the
+region read back as **zeros**. First call: `IllegalInstruction` at
+`0x4036e728`, inside the hole.
+
+Fixed by naming all of them with **globs** (they arrive as `.wifi0iram.37`, so
+bare names match nothing) and by dropping `--only-section` entirely. The real
+guard is **`-Wl,--orphan-handling=error`**: the linker now refuses to place a
+section nobody named. It immediately caught `.rodata_wlog_warning.59`.
+
+> **Untested caveat.** These are called `*iram` because ESP-IDF keeps them in
+> RAM so they stay executable while the flash cache is off. Here they are *in
+> flash*. Anything running during a flash write — WiFi interrupt handlers —
+> is a real risk and is unproven.
+
+### Bug 2 — `.rodata` was in the instruction window
+
+Vendor code reads bytes out of its own rodata. The instruction window serves
+32-bit aligned accesses only. Result: `LoadStoreError`, `epc 0x40362b28`,
+`excvaddr 0x4037bd0c` — squarely inside `.rodata`.
+
+This is exactly why ESP-IDF splits flash into IROM and DROM, and `boot.c`
+already maps the kernel's own `.flash.rodata` through the data cache. The blob
+now gets the same split: rodata at a fixed 64 KB-aligned image offset
+(`BLOB_RODATA_OFF`), mapped to `0x3F700000` at MMU entry offset 0, alongside
+the code mapping at offset 64.
+
+**`excvaddr` is now in the panic report.** Without it a `LoadStoreError` inside
+a blob is a bare `epc` with no way to tell a byte access to rodata from a wild
+pointer. It is what turned bug 2 from a guess into a measurement, and it cost
+four lines.
+
+### Bug 3 — the loader refused, correctly
+
+`rc=7`: `.rodata` ends on a byte boundary (it is full of byte-granular `wlog`
+strings), so `.data`'s load address was unaligned and the word-copy guard threw
+the image out. Fixed by aligning the LMA. Worth noting that the guard written
+"in case a separately built image stops being aligned" earned its place within
+a day.
+
+### Where it stops now
+
+```
+epc      0x403001b3   entry a1, 32   inside phy_enter_critical
+excvaddr 0x3f6fffe0   32 bytes below the DROM window
+```
+
+A window-overflow spill below the stack pointer — so `a1` is not pointing at a
+stack. **`rom_call3` runs the callee on the caller's stack**, which here is the
+shell task's 2 KB. `phy_stack_call` switches to the dedicated 6 KB
+`_phy_stack_top`, but takes only two arguments, and `register_chipv7_phy` needs
+three — so `phyinit.c` calls `rom_call3` and the PHY never receives the stack
+`phy_stack_prime()` prepared for it.
+
+That inconsistency predates this work and is visible in `phyinit.c` today: it
+primes a stack the call it then makes does not use.
+
+**Next:** a three-argument bridge that switches to the PHY stack, then retry.
+Until the PHY initialises, `esp_wifi_80211_tx` is not worth calling — and
+nothing here has been on air.

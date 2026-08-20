@@ -76,9 +76,13 @@ static int      g_phy_attempted;
 uint32_t phyinit_result(void)    { return g_phy_result; }
 int      phyinit_attempted(void) { return g_phy_attempted; }
 
-int phyinit_run(void)
+/* The address is a PARAMETER, so this compiles with no Espressif symbol at
+ * link time and works for either copy of libphy: the one a -WiFi build links
+ * into IRAM, or the one inside the loaded blob. The blob's copy is the one
+ * that matters now -- it has its own .bss, so initialising the kernel's copy
+ * and transmitting through the blob's would calibrate a PHY nobody uses. */
+int phyinit_run_at(uint32_t fn)
 {
-    extern int register_chipv7_phy(const void *, void *, int);
 
     /* Once per boot, and the guard is not a nicety.
      *
@@ -129,7 +133,7 @@ int phyinit_run(void)
     }
 
     g_phy_attempted = 1;
-    g_phy_result = rom_call3((uint32_t)&register_chipv7_phy,
+    g_phy_result = rom_call3(fn,
                              (uint32_t)g_phy_init_data,
                              (uint32_t)g_phy_cal_data,
                              PHY_RF_CAL_FULL);
@@ -169,3 +173,12 @@ uint32_t phy_stack_used(void)
     }
     return (uint32_t)((char *)_phy_stack_top - (char *)p);
 }
+
+#if BOARD_HAS_WIFI
+/* The original entry point, for a build that links libphy into the kernel. */
+int phyinit_run(void)
+{
+    extern int register_chipv7_phy(const void *, void *, int);
+    return phyinit_run_at((uint32_t)&register_chipv7_phy);
+}
+#endif

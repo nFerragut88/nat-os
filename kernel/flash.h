@@ -87,6 +87,30 @@
 #define BLOB_DRAM_ADDR   0x3FFD4000u
 #define BLOB_DRAM_SIZE   0x8000u
 
+/* The blob's read-only data, mapped through the DATA cache.
+ *
+ * This is not a refinement, it is required. .rodata placed in the instruction
+ * window (0x40300000) serves 32-bit aligned accesses only, and vendor code
+ * reads bytes and shorts out of its own rodata constantly. The first call into
+ * the blob died with LoadStoreError at epc 0x40362b28 reaching excvaddr
+ * 0x4037bd0c -- squarely inside .rodata.
+ *
+ * Splitting flash into IROM for code and DROM for rodata is exactly why
+ * ESP-IDF does it, and boot.c already maps the kernel's own .flash.rodata this
+ * way at MMU entry offset 0. This is the same trick for the blob.
+ *
+ *   rodata lives at image offset BLOB_RODATA_OFF, fixed and 64 KB aligned so
+ *   the flash page and the virtual page line up with no fixup arithmetic.
+ *
+ *   flash 0x2A0000            = BLOB_FLASH_ADDR + BLOB_RODATA_OFF
+ *   vaddr 0x3F700000          mmu entries 48.., offset 0 (DROM0)
+ *
+ * The kernel's own drom sits at 0x3F400020, entries 0-1, so there is no
+ * collision. */
+#define BLOB_RODATA_OFF   0x80000u
+#define BLOB_DROM_ADDR    0x3F700000u
+#define BLOB_DROM_SIZE    0x40000u
+
 /* All three return 0 on success. Each masks interrupts for its duration; an
  * erase takes tens of milliseconds and will visibly delay the scheduler, so
  * they are not for calling from a hot path. */

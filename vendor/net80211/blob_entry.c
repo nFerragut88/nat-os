@@ -18,9 +18,16 @@ extern char _blob_data_lma, _blob_data_vma, _blob_data_end;
 extern char _blob_bss_start, _blob_bss_end;
 /* Absolute symbols whose ADDRESS is the size -- see the note in blob.ld. */
 extern char _blob_image_size, _blob_data_size;
+extern char _blob_rodata_lma, _blob_rodata_vma, _blob_rodata_size;
 
 /* The one vendor function this exists to reach. */
 extern int esp_wifi_80211_tx(int ifx, const void *buffer, int len, int seq);
+
+/* The blob carries its OWN libphy. The kernel must therefore initialise THIS
+ * copy, not the one its -WiFi build used to link into IRAM: two copies have
+ * two sets of .bss, and calibrating one while transmitting through the other
+ * would look like a PHY that initialised fine and a radio that stayed silent. */
+extern int register_chipv7_phy(const void *init_data, void *cal_data, int mode);
 
 struct blob_entry {
     uint32_t magic;          /* 'N','8','0','2' */
@@ -34,9 +41,17 @@ struct blob_entry {
     uint32_t bss_start;      /* zero from here...                           */
     uint32_t bss_end;        /* ...to here                                  */
 
+    /* Read-only data, mapped through the DATA cache at a DROM address. The
+     * loader does not copy this -- it maps it -- but it needs the numbers to
+     * know which pages, and reporting them makes a bad split visible. */
+    uint32_t rodata_lma;
+    uint32_t rodata_vma;
+    uint32_t rodata_size;
+
     /* Callable entry points. Windowed ABI: the call0 kernel must reach these
      * through the bridges in kernel/window.S, exactly as it reaches libphy. */
     int (*wifi_80211_tx)(int ifx, const void *buffer, int len, int seq);
+    int (*phy_init)(const void *init_data, void *cal_data, int mode);
 };
 
 /* `used` because nothing in this translation unit references it and
@@ -45,7 +60,7 @@ struct blob_entry {
 __attribute__((section(".blob_entry"), used))
 const struct blob_entry blob_entry = {
     .magic       = 0x3230384Eu,          /* "N802" little-endian */
-    .version     = 1u,
+    .version     = 3u,
     .image_size  = (uint32_t)&_blob_image_size,
     .text_end    = (uint32_t)&_blob_text_end,
 
@@ -55,5 +70,10 @@ const struct blob_entry blob_entry = {
     .bss_start   = (uint32_t)&_blob_bss_start,
     .bss_end     = (uint32_t)&_blob_bss_end,
 
+    .rodata_lma  = (uint32_t)&_blob_rodata_lma,
+    .rodata_vma  = (uint32_t)&_blob_rodata_vma,
+    .rodata_size = (uint32_t)&_blob_rodata_size,
+
     .wifi_80211_tx = esp_wifi_80211_tx,
+    .phy_init      = register_chipv7_phy,
 };

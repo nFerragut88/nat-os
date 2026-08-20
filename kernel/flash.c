@@ -20,6 +20,15 @@ _Static_assert(BLOB_FLASH_ADDR + BLOB_FLASH_SIZE <= 0x400000u,
                "blob region runs past the end of a 4 MB flash");
 _Static_assert(BLOB_IROM_ADDR + BLOB_IROM_SIZE <= 0x40400000u,
                "blob window runs past the top of IRAM0_CACHE");
+_Static_assert((BLOB_RODATA_OFF % 0x10000u) == 0u,
+               "rodata image offset must be 64 KB aligned to map cleanly");
+_Static_assert((BLOB_DROM_ADDR % 0x10000u) == 0u,
+               "blob drom base must be 64 KB aligned");
+_Static_assert(BLOB_DROM_ADDR >= 0x3F400000u &&
+               BLOB_DROM_ADDR + BLOB_DROM_SIZE <= 0x3F800000u,
+               "blob drom window must lie inside DROM0");
+_Static_assert(BLOB_RODATA_OFF + BLOB_DROM_SIZE <= BLOB_FLASH_SIZE,
+               "rodata would run past the flash reservation");
 _Static_assert((BLOB_DRAM_ADDR % 4u) == 0u,
                "blob dram base must be word aligned");
 _Static_assert(BLOB_DRAM_ADDR + BLOB_DRAM_SIZE <= 0x3FFE0000u,

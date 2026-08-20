@@ -23,7 +23,7 @@
 #include "flash.h"   /* BLOB_* reservations; this API is defined in terms of them */
 
 #define BLOB_MAGIC   0x3230384Eu     /* "N802" */
-#define BLOB_VERSION 1u
+#define BLOB_VERSION 3u
 
 /* Mirrors vendor/net80211/blob_entry.c. If one changes, the other must. The
  * magic and version exist so a stale image in flash is REJECTED rather than
@@ -39,7 +39,11 @@ struct blob_entry {
     uint32_t data_size;
     uint32_t bss_start;
     uint32_t bss_end;
+    uint32_t rodata_lma;         /* mapped, not copied -- see blob_map()     */
+    uint32_t rodata_vma;
+    uint32_t rodata_size;
     uint32_t wifi_80211_tx;      /* function pointer, called via the bridge */
+    uint32_t phy_init;           /* the blob's OWN register_chipv7_phy       */
 };
 
 /* Programs the MMU and returns the table, or 0 if the region does not hold a

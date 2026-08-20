@@ -19,6 +19,7 @@
 #define MMU_VADDR_MASK  0x3FFFFFu
 #define MMU_PAGE_SIZE   0x10000u
 #define MMU_IROM_OFFSET 64u
+#define MMU_DROM_OFFSET 0u      /* the data cache indexes from 0 */
 
 /* Cache control. Flushing is not optional: the CPU may already hold entries
  * for these virtual addresses from before the region was programmed, and a
@@ -54,10 +55,26 @@ const struct blob_entry *blob_map(void)
 {
     uint32_t crit = crit_enter();
 
+    /* Code, through the INSTRUCTION cache. */
     uint32_t vaddr = BLOB_IROM_ADDR;
     uint32_t foff  = BLOB_FLASH_ADDR;
     for (uint32_t n = 0; n < BLOB_IROM_SIZE / MMU_PAGE_SIZE; n++) {
         uint32_t entry = MMU_IROM_OFFSET + ((vaddr & MMU_VADDR_MASK) >> 16);
+        MMU_TABLE[entry] = foff >> 16;
+        vaddr += MMU_PAGE_SIZE;
+        foff  += MMU_PAGE_SIZE;
+    }
+
+    /* Read-only data, through the DATA cache, at entry offset 0.
+     *
+     * Without this the blob's rodata is only reachable in the instruction
+     * window, which serves 32-bit aligned accesses and nothing else -- and
+     * vendor code reads bytes out of its own rodata. That produced
+     * LoadStoreError at excvaddr 0x4037bd0c on the first real call. */
+    vaddr = BLOB_DROM_ADDR;
+    foff  = BLOB_FLASH_ADDR + BLOB_RODATA_OFF;
+    for (uint32_t n = 0; n < BLOB_DROM_SIZE / MMU_PAGE_SIZE; n++) {
+        uint32_t entry = MMU_DROM_OFFSET + ((vaddr & MMU_VADDR_MASK) >> 16);
         MMU_TABLE[entry] = foff >> 16;
         vaddr += MMU_PAGE_SIZE;
         foff  += MMU_PAGE_SIZE;
@@ -120,6 +137,10 @@ int blob_init(const struct blob_entry *e)
     }
     if (e->wifi_80211_tx < irom_lo || e->wifi_80211_tx >= irom_hi) {
         return -6;      /* the entry point is not in the blob */
+    }
+    if (!range_ok(e->rodata_vma, e->rodata_vma + e->rodata_size,
+                  BLOB_DROM_ADDR, BLOB_DROM_ADDR + BLOB_DROM_SIZE)) {
+        return -8;      /* rodata is not inside the mapped DROM window */
     }
 
     /* WORD access only, and this is not a preference.
