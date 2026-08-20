@@ -21,6 +21,55 @@ they were reported.
 |---|---|---|---|---|
 | NA-001 | LIKELY_BUG | P2 | `task.c` `task_sleep()` | fixed: clamp + `task_sleep_clamped()` |
 | NA-002 | CONFIRMED_BUG | P0 (latent) | `heap.c` `align_up()` | fixed: guard + boot self-test |
+| NA-003 | UNVERIFIED_ASSUMPTION | P3 | `vm.c` `VM_OP_SAR` | fixed: built from unsigned ops |
+| NA-004 | UNVERIFIED_ASSUMPTION | P3 | `vmarg.c` `vmarg_items()` | fixed: guard + regression test |
+
+## AUDIT VM — run 2026-08-19, AUDIT_ONLY suspended by the owner
+
+**The invariant holds.** `no VM operation may access memory outside its
+authorized arena` was checked at **every one of the 14 places `vm.c` touches
+the arena**, not by sampling:
+
+| site | guard |
+|---|---|
+| `load_u32/u8`, `store_u32/u8` | `vm_in_bounds(off, width)` + alignment |
+| `copy_string` → `vmarg_string` | one bounds-checked byte at a time, copied not borrowed |
+| `DEV_OP_NAME` | `max` clamped to `DEVICE_NAME_MAX`, then `vmarg_store` |
+| `DEV_OP_XFER_IN/OUT` | `len` bounded before use, `DEVICE_XFER_MAX` bounce buffer |
+| `SYS_BLIT` | `w`,`h` bounded **before** the multiply |
+| `SYS_SEND` / `SYS_RECV` | `len`/`max` vs `IPC_MSG_MAX`, and `ipc_recv` honours `max` |
+| instruction fetch | `vm_in_bounds(pc, 4)` + alignment |
+
+Both bounds primitives — `vm_in_bounds()` and `arena_contains()` — compare in
+the **offset domain**, so `off + len` never wraps. `arena_contains()` says why
+in its own comment. `PUTS` walks bytes individually and is bounded by
+`vm->size`, closing the classic unterminated-string leak. The device `caller` id
+comes from `vm->app_id`, never from a register.
+
+Arithmetic: `DIV`/`MOD` fault on zero, registers are unsigned so there is no
+`INT32_MIN / -1` trap, and all three shifts mask to 5 bits.
+
+**Two findings, both P3, both about claims rather than behaviour.**
+
+**NA-003 — `VM_OP_SAR`.** Was `(int32_t)r[b] >> n`. Right-shifting a *negative*
+signed value is implementation-defined in C. GCC picks arithmetic and always
+has, so this was never wrong in practice — but the comment two lines above it
+says a VM exists precisely to stop a program's behaviour depending on the host
+compiler, and `SAR` was the one opcode that did. Rebuilt from unsigned
+operations, with `n == 0` handled separately because `0xFFFFFFFF << 32` would
+itself be the undefined shift being avoided.
+
+**NA-004 — `vmarg_items()`.** The `count > max_items` check bounds the product
+by `max_items * elem`, and nothing verified *that* fits in 32 bits. Every caller
+today is safe (BLIT passes 76800 and 2), so it was an unstated precondition
+rather than a live bug — but on a harness whose purpose is making services safe
+by default, an unstated precondition is the wrong shape. Now checked against
+`count`, so the fault lands on the program's argument. Regression test added:
+`count under a huge ceiling that STILL wraps is refused`. `vmargtest` is 13/13.
+
+**Not found:** any way for a program to reach memory outside its arena. The VM
+is well built, and the audit's value here was in two claims that were slightly
+wider than the code supported — not in a hole.
 
 **NA-001.** `deadline = timer_ticks() + ticks` wraps. Every deadline comparison
 in this kernel is the wrap-safe `(int32_t)(now - deadline) >= 0`, which is

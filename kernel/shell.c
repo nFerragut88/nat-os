@@ -1812,6 +1812,13 @@ static void execute(char *line)
              vmarg_items(&t, 0, 0x80000000u, 2, 32, 2, &s), 0, VM_FAULT_BOUNDS);
         WANT("count*elem that would wrap is refused",
              vmarg_items(&t, 0, 0x40000001u, 4, 1024, 1, &s), 0, VM_FAULT_BOUNDS);
+        /* NA-004. The case a GENEROUS ceiling used to let through: count is
+         * under max_items, so the check above passes, and count*elem then wraps
+         * to something small that fits the arena. Before the guard this
+         * returned a valid 4-byte span for a request of 4 GB. */
+        WANT("count under a huge ceiling that STILL wraps is refused",
+             vmarg_items(&t, 0, 0x40000001u, 4, 0xFFFFFFFFu, 1, &s), 0,
+             VM_FAULT_BOUNDS);
         WANT("zero count yields an empty span, not a fault",
              vmarg_items(&t, 0, 0, 4, 16, 1, &s), 1, VM_FAULT_NONE);
         WANT("unterminated string running off the end is refused",

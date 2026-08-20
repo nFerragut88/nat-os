@@ -59,6 +59,25 @@ int vmarg_items(vm_t *vm, uint32_t off, uint32_t count, uint32_t elem,
         return reject(vm, VM_FAULT_BOUNDS, count);
     }
 
+    /* NA-004. The line above bounds `count` by the SERVICE's ceiling, and the
+     * comment claimed that made `count * elem` unwrappable. It does not, quite:
+     * it makes the product bounded by `max_items * elem`, and nothing here
+     * checks that THAT fits in 32 bits.
+     *
+     * Every caller today is safe -- BLIT passes 76800 and 2 -- so this was an
+     * unstated precondition rather than a live bug. But an unstated
+     * precondition on a harness whose entire purpose is to make services safe
+     * by default is the wrong shape, and a future caller with a generous
+     * ceiling would inherit exactly the overflow this function exists to
+     * prevent.
+     *
+     * Checked against `count` rather than `max_items` so the fault lands on the
+     * program's argument, which is what a VM_FAULT means. elem is non-zero
+     * here, guaranteed by the early return above. */
+    if (count > 0xFFFFFFFFu / elem) {
+        return reject(vm, VM_FAULT_BOUNDS, count);
+    }
+
     return vmarg_span(vm, off, count * elem, align, out);
 }
 

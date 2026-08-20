@@ -890,7 +890,26 @@ int vm_run(vm_t *vm, uint32_t quantum)
          * which is precisely what a VM exists to prevent. */
         case VM_OP_SHL:  r[a] = r[b] << (r[c] & 31u); break;
         case VM_OP_SHR:  r[a] = r[b] >> (r[c] & 31u); break;
-        case VM_OP_SAR:  r[a] = (uint32_t)((int32_t)r[b] >> (r[c] & 31u)); break;
+        /* NA-003. SAR used to be (int32_t)r[b] >> n, and right-shifting a
+         * NEGATIVE signed value is implementation-defined in C -- not
+         * undefined, but chosen by the compiler. GCC picks arithmetic and
+         * always has, so this was never wrong in practice.
+         *
+         * It was wrong in principle, and specifically against the claim two
+         * lines above: that a VM exists to stop a program's behaviour depending
+         * on the host compiler. SAR was the one opcode that did.
+         *
+         * Built from unsigned operations, which are fully defined. The n == 0
+         * case is separate because `0xFFFFFFFF << 32` would itself be the
+         * undefined shift this is avoiding. */
+        case VM_OP_SAR: {
+            uint32_t n = r[c] & 31u;
+            uint32_t v = r[b];
+            uint32_t sign = ((v & 0x80000000u) && n) ? (0xFFFFFFFFu << (32u - n))
+                                                     : 0u;
+            r[a] = (v >> n) | sign;
+            break;
+        }
 
         case VM_OP_NOT:  r[a] = ~r[b]; break;
         case VM_OP_NEG:  r[a] = (uint32_t)(-(int32_t)r[b]); break;
