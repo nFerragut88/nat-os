@@ -68,6 +68,8 @@ true" is the difference between a working boot and a silent reboot.
 
 | [UM-NATOS-036](UM-NATOS-036-the-half-speed-board.md) | The Half-Speed Board | UM-NATOS-035's bootloader left the SoC on the bare 40 MHz crystal instead of the 80 MHz PLL, and no instrument in the kernel could detect it because every duration it reports is derived from CCOUNT -- halve the clock and a cycle count printed as milliseconds shows the same number for twice the time; found only because a crystal frequency of zero in an RTC retention register hangs the PHY; fixed in the kernel rather than the loader so one image boots correctly from either, with the eight-register differential that eliminated the remaining WiFi gap rather than explaining it |
 
+| [UM-NATOS-037](UM-NATOS-037-code-in-flash.md) | Code in Flash, and Three Things That Only Move Reveals | The kernel given a flash-executable region at last -- every instruction had lived in 128 KB of IRAM while .rodata had been mapped from flash since milestone 11, and the WiFi build was using 112 KB of it; free IRAM 19,127 -> 44,943 by moving two files, with the window that is named IROM0 turning out to be the wrong one; and three defects that only moving code could surface -- an alignment bug latent for months in a file nobody touched, a padding segment the bootloader had never been shown, and a build gate that hid the failure in one configuration and not the other |
+
 ## The book
 
 [`book/`](book/README.md) is a long-form synthesis of this whole report set:

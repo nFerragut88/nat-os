@@ -1,5 +1,10 @@
 # 07 — A flash-executable region, before IRAM runs out
 
+> **DONE 2026-08-19 — UM-NATOS-037.** `shell.c` and `kmain.c` execute from
+> flash. Free IRAM 19,127 -> 44,943 in the `-WiFi` build. The plan below held;
+> what it did not predict was that moving code would surface three unrelated
+> defects, which is what the report is mostly about.
+
 **Size:** medium. **Risk:** medium — it changes the memory map and the boot
 chain. **Blocked on:** nothing.
 

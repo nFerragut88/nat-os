@@ -109,12 +109,12 @@ Each has its own file. Roughly in order of value, but they are independent.
 | ~~[03](03-permissions.md)~~ | ~~Per-application device permissions~~ — **done**, UM-NATOS-032 | — | — |
 | [04](04-scheduler-timing.md) | A real-time path for control loops | medium | nothing needs it *yet* |
 | [05](05-open-unknowns.md) | Two unexplained behaviours | small | nothing |
-| [07](07-irom.md) | A flash-executable region, before IRAM runs out | medium | nothing |
+| ~~[07](07-irom.md)~~ | ~~A flash-executable region~~ — **done**, UM-NATOS-037 | — | — |
 | [08](08-wifi-via-loaded-blob.md) | WiFi transmit via the vendor path, blob supplied at runtime | large | 07 |
 | ~~[06](06-documentation-debt.md)~~ | ~~Claims that have gone stale~~ — **done**, all five items | — | — |
 
-02, 03 and 06 are done. **01 is closed** — see below. What is left is 04, 05,
-07 and 08.
+02, 03, 06 and 07 are done. **01 is closed** — see below. What is left is 04,
+05 and 08.
 
 **01 closed as a negative, 2026-08-19.** Both boards beaconing 30 cm apart on
 the same channel; a MediaTek laptop adapter sees the ESP-IDF control and does
@@ -129,10 +129,16 @@ runs through `libnet80211.a`, which this tree does not have, while `wifimac_tx()
 is a hand-written reconstruction that calls no vendor code at all. That is what
 [08](08-wifi-via-loaded-blob.md) is.
 
-**If you want the one that pays off regardless:** [07](07-irom.md). IRAM is
-128 KB, the `-WiFi` build uses 112 KB of it, and there is no flash-executable
-region at all. That ceiling constrains everything — LoRa, DTN, the filesystem —
-not just the radio.
+**07 is done, 2026-08-19.** `shell.c` and `kmain.c` now execute from flash.
+Free IRAM in the `-WiFi` build went from 19,127 bytes to 44,943; the blob-free
+build uses 28% of the window. UM-NATOS-037, which is mostly about the three
+defects that only moving code could reveal — an alignment bug latent for months
+in `window.S`, an esptool padding segment our bootloader had never been shown,
+and the `-WiFi` gate hiding the failure in one build because the two use
+different bootloaders.
+
+**If you want the cheap one now:** [05](05-open-unknowns.md). Two unexplained
+behaviours, one of which can act on its own.
 
 **If you want the cheap one:** [05](05-open-unknowns.md). Two unexplained
 behaviours, and one of them — phantom touches that once *launched a program* —
