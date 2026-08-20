@@ -691,3 +691,74 @@ block — which nothing did until now.
 
 It does sharpen `blob-free.md`'s argument, though. An SX1262 has no windowed
 blob: no bridge, no spill, no frozen scheduler, none of this.
+
+---
+
+## The step-7 regression, chased. Bounded, deterministic, mechanism NOT found.
+
+Deliberate write-up of a failed hunt, because the eliminations are worth more
+than nothing and re-doing them would cost the next attempt an afternoon.
+
+**Deterministic: 5 of 5 trials.** Not the intermittent kind, and not the same
+animal as the step-4 resets.
+
+### What was eliminated, each by measurement
+
+| hypothesis | test | result |
+|---|---|---|
+| `.bss` position moved `_phy_stack` | 224-byte dummy array puts it at **exactly** `0x3ffbc720`, the hanging address | **works** — not it |
+| linking `wifi_init_cfg.o` | one-line command that still forces the link | **works** — not it |
+| `.flash.rodata` growth | +224 B of rodata alone (29,116 vs hanging 29,128) | **works** — not it |
+| `.flash.text` growth | code padding to **23,400**, *larger* than the hanging 22,908 | **works** — not it |
+| a specific statement in the command | bisected in four steps (A/B/C/D) | **every half works** |
+| stack depth | last good measurement 1296 of 6144 | not it |
+| the watchdog | disarmed; still no return after 40 s | not it |
+
+The bisect is the strange part. HALF D — blob map, load, a second
+`phyinit_run_at` call site, the config call, `phy_stack_call` into
+`esp_wifi_init_internal`, and the OSI counting loop — is nearly the whole
+command and **works** at `.flash.text = 22,892`. The full command hangs at
+**22,908**. Sixteen bytes. Yet 23,400 bytes of padding also works.
+
+So it is neither section independently, and not a threshold in either. It is
+some combination of exact sizes and layout.
+
+### The flash image is structurally identical
+
+```
+WORKING   Segment 5: len 0x0596c load 0x400d0000 file_offs 0x0000fff8 [IROM]
+HANGING   Segment 5: len 0x0597c load 0x400d0000 file_offs 0x0000fff8 [IROM]
+```
+
+Same file offset, so IROM data lands at flash `0x20000` in both — 64 KB
+aligned, MMU entry 77 -> flash page 2, congruent. IRAM is contiguous in both
+and ends at the same address. Nothing about the layout is malformed.
+
+### What it smells like
+
+A latent defect in the windowed-call path that particular layouts expose,
+rather than anything the new code does. `phy_stack_call`'s own comments record
+that its previous StoreProhibited was caused by **stale `WINDOWSTART` bits
+surviving from whatever windowed code ran before** — a bug whose visibility
+depended on what had executed earlier. This has the same shape: no fault, a
+spin inside vendor code, and a trigger that moves when unrelated things move.
+
+That also makes it plausibly the *same* underlying issue as the preemption
+prerequisite above, approached from the other side.
+
+### Where it stops
+
+`<prime>`, `<clk>`, `<mac>`, `<call>` print; `<returned>` never does. Inside
+`register_chipv7_phy`, reached through `phy_stack_call`, no exception raised.
+
+The kernel is unaffected: 11/11 boot self-tests, everything except the blob PHY
+path normal.
+
+### For whoever picks this up
+
+Do not re-run the table above. The untried angles are: dumping `WINDOWSTART`
+and `WINDOWBASE` immediately before the `callx8` in both builds and diffing
+them; and single-stepping the first few instructions of `register_chipv7_phy`
+via the APP CPU capture rig (`appcpu.c`) rather than inferring from the outside.
+
+**Nothing has been on air.**
