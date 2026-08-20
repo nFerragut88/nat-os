@@ -1061,3 +1061,66 @@ verified one two files away — the habit this project already records after
 "several long debugging sessions traced to a single misremembered bit
 position". The bit *definitions* were right; the *order* was not, and a
 register read-back would have shown nothing wrong either way.
+
+---
+
+## Step 8 — `esp_wifi_init_internal` runs. The driver names its own first need.
+
+### The OS adapter stubs had to be windowed
+
+First attempt panicked: `IllegalInstruction`, **`epc 0x803014fd`**. Bit 31 set —
+that is not a code address, it is a windowed **return-address encoding**
+(`call8` stores `(2<<30) | offset` in `a0`). The CPU jumped to it raw.
+
+The generated stubs were ordinary call0 kernel functions, and the blob calls
+them through the table with `CALL8`. The window rotated forward on entry, the
+callee used the rotated registers as its own, and its `RET` did not rotate
+back — so `a0` still held the encoding. `window.S` records the identical fault
+from the first time it was hit, at `0x4008a810`.
+
+**Fixed by splitting the file by ABI:**
+
+- `vendor/windowed/wifi_osi_stubs.c` — the 118 stubs and the table itself,
+  compiled `-mabi=windowed`, because the blob calls them.
+- `kernel/wifi_osi_table.c` — the accessors, still call0, reading the counters
+  as **data**. Data has no calling convention; only calls had to move.
+
+### And then it worked
+
+```
+phyinit   rc=0
+config    224 bytes, magic 0x1f2f3f4f, osi_funcs -> 0x3f4070f8
+calling esp_wifi_init_internal at 0x403014dc
+init      returned 0x00000101  (an esp_err_t, not OK)
+osi       1 of 118 adapter entries were called
+
+1  _recursive_mutex_create  x1
+```
+
+**`esp_wifi_init_internal` executed and returned.** No crash, no hang. `0x101`
+is `ESP_ERR_NO_MEM`: it asked for a recursive mutex, the stub returned NULL,
+and it gave up cleanly — which is a driver behaving correctly against a host
+that told it the truth.
+
+This is the first time nat-os has run any part of ESP-IDF's WiFi *driver*, as
+opposed to its PHY.
+
+### The instrumented-stub design paid for itself here
+
+118 entries, and the driver has so far needed **one**. Guessing which to
+implement would have meant writing dozens on spec; instead the table named its
+own requirement, in call order, on the first run. Every entry that never
+appears is work nobody has to do.
+
+`_recursive_mutex_create` is also the easiest possible first ask: nat-os
+already has recursive mutexes, verified at boot — `[6b] mutex : PASS recursive
+depth, ownership, non-owner unlock refused, try_lock both ways`.
+
+### Next
+
+Implement `_recursive_mutex_create` and its companions by bridging from the
+windowed stub into nat-os's call0 mutex code — which is exactly what
+`w2c_callN` in `window.S` exists for. Then run again and let the table name the
+next requirement.
+
+**Nothing has been on air.**
