@@ -1205,3 +1205,70 @@ early, so disassembling the comparisons in the first 100 instructions of
 `esp_wifi_init_internal` will name it directly.
 
 **Nothing has been on air.**
+
+### Step 9 — chasing `INVALID_ARG`, and a claim that has to be withdrawn
+
+Static analysis said the config was the problem. Dynamic testing says the
+question is worse than that.
+
+**`esp_wifi_init_internal` is 252 bytes** (`0x403014dc`-`0x403015d8`) and
+contains exactly one site producing `0x102`:
+
+```
+403014e1: bnez.n a2, +0x12      ; config == NULL?
+403014e6: movi   a2, 0x102      ;   -> ESP_ERR_INVALID_ARG
+403014ee: l32i   a10, a2, 0     ; a10 = config->osi_funcs
+403014f1: call8  wifi_osi_funcs_register
+```
+
+That path returns **before** registering anything. So it cannot account for the
+eight OS adapter calls we observe. Yet:
+
+```
+wifiinit null  ->  0x102, 8 of 118 entries called
+wifiinit       ->  0x102, 8 of 118 entries called
+```
+
+**Identical for a NULL config and a real one.** And the calls are attributable:
+boot alone, `blob`, `blobphy` and `osi` each produce **zero** adapter calls;
+only `wifiinit` produces eight. So they come from this call, from a function
+whose second instruction should have rejected NULL.
+
+### The claim being withdrawn
+
+Step 6 reported `wifi_osi_funcs_register` returning 0 as *"accepted — version
+and magic matched"*, and cited it as evidence the generated table had the right
+shape. **That wording was invented here, not read from the blob.**
+
+`osi null` — registering a NULL table — also returns **0**. A NULL pointer
+cannot satisfy a version or magic check, so this function does not validate
+what it is given, or at least not that. The message has been corrected to say
+what is actually known: it returned zero, and it returns zero for NULL too.
+
+This weakens, though does not overturn, the step-8b conclusion that the in-tree
+table is stale. The 63-position layout divergence is real and measured from the
+headers. What is no longer supported is "the blob detected it" — the different
+outcome may have had another cause.
+
+### What is actually established
+
+- The eight adapter entries are reached, in a stable order, and their
+  implementations work (the driver progressed `NO_MEM` -> `NO_MEM` -> `NO_MEM`
+  -> `INVALID_ARG` as each was written).
+- PHY init is unaffected and still returns `rc=0`.
+- `wifi_osi_funcs_register` returns `ESP_OK` for any argument tried so far.
+- The first argument's effect on `esp_wifi_init_internal` is **not observable**,
+  which is either an argument-passing fault in `phy_stack_call` or a
+  disassembly that is misleading about the function's real shape. objdump has
+  already been caught losing sync inside this blob and emitting `lsi f4`
+  decodes for code containing no floating point.
+
+### Next
+
+Settle argument passing with a function whose behaviour for a known input is
+certain, rather than one whose validation is being inferred. `esp_wifi_80211_tx`
+takes a length; calling it with an absurd length should fail differently from a
+sane one. If both behave identically, the fault is in the call path and every
+result in this section that depended on an argument is void.
+
+**Nothing has been on air.**

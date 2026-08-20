@@ -649,7 +649,7 @@ static void execute(char *line)
             uart_puts("   RETURNING IS NOT RADIATING. scan for NATOS-BLB.\n");
         }
     }
-    else if (str_eq(line, "osi") || str_eq(line, "osiused")) {
+    else if (str_eq(line, "osi") || str_eq(line, "osi null") || str_eq(line, "osiused")) {
         /* next_moves/08. Hand the OS adapter table to the blob, then report
          * which of its entries the driver actually reaches.
          *
@@ -699,18 +699,34 @@ static void execute(char *line)
                 uart_put_hex(e->osi_register);
                 uart_puts("\n");
 
+                /* `osi null` registers a NULL table on purpose.
+                 *
+                 * wifi_osi_funcs_register validates version and magic, so NULL
+                 * MUST be rejected. If it returns 0 for both, the argument is
+                 * not reaching the blob at all -- which would explain why
+                 * esp_wifi_init_internal behaves identically for a real config
+                 * and a NULL one, and would move the fault from the config to
+                 * phy_stack_call. */
                 uint32_t r = phy_stack_call(e->osi_register,
-                                            (uint32_t)wifi_osi_table(), 0u, 0u, 0u);
+                                            str_eq(line, "osi null") ? 0u
+                                                : (uint32_t)wifi_osi_table(),
+                                            0u, 0u, 0u);
                 uart_puts("   osi_reg   returned ");
                 uart_put_hex(r);
                 uart_puts("\n");
-                uart_puts(r == 0u ? "   accepted - version and magic matched\n"
-                                  : "   REJECTED - the blob did not like the table\n");
+                /* NOT "accepted - version and magic matched". That wording
+                 * was invented here and then cited as evidence the table
+                 * layout was right. `osi null` returns 0 as well, so this
+                 * function does not validate what it is given -- or at least
+                 * not that. A return of 0 means only that it returned 0. */
+                uart_puts(r == 0u ? "   returned ESP_OK (it also returns ESP_OK for NULL,\n"
+                                    "     so this does NOT confirm the table)\n"
+                                  : "   non-zero: the blob refused something\n");
                 uart_puts("   run 'osiused' to see what it called.\n");
             }
         }
     }
-    else if (str_eq(line, "wifiinit")) {
+    else if (str_eq(line, "wifiinit") || str_eq(line, "wifiinit null")) {
         /* next_moves/08. esp_wifi_init_internal() -- the step that installs
          * the OS adapter table.
          *
@@ -752,8 +768,18 @@ static void execute(char *line)
             uart_put_hex(e->wifi_init);
             uart_puts("\n");
 
+            /* `wifiinit null` passes a NULL config on purpose.
+             *
+             * The disassembly shows exactly one site returning 0x102 -- the
+             * config-is-NULL path -- but that path returns before registering
+             * the OS adapter, so it cannot explain 8 adapter calls. objdump
+             * has already been caught losing instruction sync in this blob, so
+             * "only one site" is worth only as much as the decode. Comparing
+             * the two runs answers it without trusting either. */
+            int want_null = str_eq(line, "wifiinit null");
             uint32_t r = phy_stack_call(e->wifi_init,
-                                        (uint32_t)wifi_init_cfg(), 0u, 0u, 0u);
+                                        want_null ? 0u : (uint32_t)wifi_init_cfg(),
+                                        0u, 0u, 0u);
             uart_puts("   init      returned ");
             uart_put_hex(r);
             uart_puts(r == 0u ? "  (ESP_OK)\n" : "  (an esp_err_t, not OK)\n");
