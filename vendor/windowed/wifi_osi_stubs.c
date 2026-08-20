@@ -195,6 +195,8 @@ extern void osi_impl_malloc(void);
 extern void osi_impl_calloc(void);
 extern void osi_impl_free(void);
 extern void task_current(void);
+extern void osi_impl_queue_create(void);
+extern void osi_impl_queue_delete(void);
 
 static void osi_hit(uint32_t i)
 {
@@ -309,24 +311,34 @@ static void osi_s_task_yield_from_isr(void)
 static void * osi_s_semphr_create(uint32_t max, uint32_t init)
 {
     osi_hit(13u);
-    return 0;
+    /* nat-os's semaphores already back the mutex entries; these are the same
+     * primitive exposed under its own name. */
+    return (void *)w2c_call2((uint32_t)&osi_impl_sem_create,
+                             (uint32_t)max, (uint32_t)init);
 }
 
 static void osi_s_semphr_delete(void *semphr)
 {
     osi_hit(14u);
+    (void)w2c_call1((uint32_t)&osi_impl_sem_delete, (uint32_t)semphr);
 }
 
 static int32_t osi_s_semphr_take(void *semphr, uint32_t block_time_tick)
 {
     osi_hit(15u);
-    return 0;
+    /* CAUTION: a genuinely contended take blocks, and phy_stack_call masks
+     * interrupts for the whole blob call -- so the giver can never run and
+     * this would never return. Every take so far has been uncontended. This
+     * is the preemption prerequisite (next_moves/08) arriving as a real code
+     * path rather than a hypothesis. */
+    return (int32_t)w2c_call2((uint32_t)&osi_impl_sem_take,
+                              (uint32_t)semphr, (uint32_t)block_time_tick);
 }
 
 static int32_t osi_s_semphr_give(void *semphr)
 {
     osi_hit(16u);
-    return 0;
+    return (int32_t)w2c_call1((uint32_t)&osi_impl_sem_give, (uint32_t)semphr);
 }
 
 static void * osi_s_wifi_thread_semphr_get(void)
@@ -483,7 +495,14 @@ static void * osi_s_task_get_current_task(void)
 static int32_t osi_s_task_get_max_priority(void)
 {
     osi_hit(42u);
-    return 0;
+    /* What ESP-IDF returns: configMAX_PRIORITIES. The blob was compiled
+     * against that scale and derives its task priorities from it, so
+     * answering with nat-os's own three levels would have it asking for
+     * numbers that mean something different. The mapping down to
+     * TASK_PRIO_LOW/NORMAL/HIGH belongs in task creation, where the number is
+     * actually used -- not here, where it would silently rescale a constant
+     * the blob also uses for arithmetic. */
+    return 25;
 }
 
 static void * osi_s_malloc(size_t size)
@@ -774,12 +793,35 @@ static void * osi_s_wifi_zalloc(size_t size)
 static void * osi_s_wifi_create_queue(int queue_len, int item_size)
 {
     osi_hit(93u);
-    return 0;
+    /* ESP-IDF hands back a wifi_static_queue_t { handle; storage; } -- 8
+     * bytes -- not a bare queue handle. The blob then uses ->handle for the
+     * queue operations itself, so the wrapper only has to exist and be the
+     * right shape. storage stays NULL: nat-os's queues allocate their own. */
+    /* Record what was ASKED for. osi_impl_queue_create refuses anything over
+     * OSI_QUEUE_BYTES, so a NULL return is ambiguous between "pool exhausted"
+     * and "too big" until the request itself is visible. */
+    g_osi_trace_arg[g_osi_trace_n ? g_osi_trace_n - 1u : 0u] =
+        ((uint32_t)queue_len << 16) | ((uint32_t)item_size & 0xFFFFu);
+
+    uint32_t *q = (uint32_t *)w2c_call1((uint32_t)&osi_impl_malloc, 8u);
+    if (!q) { return 0; }
+    q[0] = w2c_call2((uint32_t)&osi_impl_queue_create,
+                     (uint32_t)queue_len, (uint32_t)item_size);
+    q[1] = 0u;
+    if (!q[0]) {
+        (void)w2c_call1((uint32_t)&osi_impl_free, (uint32_t)q);
+        return 0;
+    }
+    return (void *)q;
 }
 
 static void osi_s_wifi_delete_queue(void * queue)
 {
     osi_hit(94u);
+    uint32_t *q = (uint32_t *)queue;
+    if (!q) { return; }
+    if (q[0]) { (void)w2c_call1((uint32_t)&osi_impl_queue_delete, q[0]); }
+    (void)w2c_call1((uint32_t)&osi_impl_free, (uint32_t)q);
 }
 
 static int osi_s_coex_init(void)

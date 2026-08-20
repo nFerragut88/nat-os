@@ -31,7 +31,21 @@
 #define OSI_QUEUE_MAX    8u
 #define OSI_EVT_MAX      4u
 #define OSI_TIMER_MAX   12u
-#define OSI_QUEUE_BYTES 512u        /* item storage per queue */
+/* Queue storage is HEAP-ALLOCATED per queue, not a fixed array.
+ *
+ * It was uint8_t buf[512] inline, and osi_impl_queue_create refused anything
+ * larger. The WiFi driver asks for 200 items of 8 bytes -- 1600 -- so every
+ * bring-up ended at _wifi_create_queue returning NULL.
+ *
+ * Raising the constant would have cost OSI_QUEUE_MAX x the new size in .bss
+ * whether or not the queues exist: 8 x 2 KB = 16 KB for one queue that needs
+ * it. Allocating what is actually asked for costs the 1600 bytes the driver
+ * wanted and nothing for the seven unused slots.
+ *
+ * The cap remains, moved from "per queue, static" to "per queue, sane" -- a
+ * queue is still refused rather than truncated, because one silently shorter
+ * than requested loses messages under load. */
+#define OSI_QUEUE_BYTES 4096u       /* upper bound on a single queue */
 
 #define OSI_MAX_DELAY   0xFFFFFFFFu
 
@@ -53,7 +67,7 @@ typedef struct {
     int      used;
     uint32_t item_size, capacity, head, tail, len;
     uint32_t waiters_recv, waiters_send;
-    uint8_t  buf[OSI_QUEUE_BYTES];
+    uint8_t *buf;               /* heap, sized to len * item_size */
 } osi_queue_t;
 
 typedef struct {
@@ -183,11 +197,16 @@ void *osi_impl_queue_create(uint32_t len, uint32_t item_size)
     if (!item_size || !len || len * item_size > OSI_QUEUE_BYTES) {
         return 0;
     }
+    uint8_t *buf = (uint8_t *)heap_alloc(len * item_size);
+    if (!buf) {
+        return 0;
+    }
     uint32_t crit = crit_enter();
     for (uint32_t i = 0; i < OSI_QUEUE_MAX; i++) {
         if (!g_queue[i].used) {
             osi_queue_t *q = &g_queue[i];
             q->used = 1;
+            q->buf = buf;
             q->item_size = item_size;
             q->capacity = len;
             q->head = q->tail = q->len = 0;
@@ -197,14 +216,26 @@ void *osi_impl_queue_create(uint32_t len, uint32_t item_size)
         }
     }
     crit_exit(crit);
+    heap_free(buf);             /* no slot free -- do not leak the storage */
     return 0;
 }
 
 void osi_impl_queue_delete(void *h)
 {
-    if (H_OK(h, OSI_QUEUE_MAX)) {
-        g_queue[H_INDEX(h)].used = 0;
+    if (!H_OK(h, OSI_QUEUE_MAX)) {
+        return;
     }
+    osi_queue_t *q = &g_queue[H_INDEX(h)];
+
+    /* Free the storage, not just the slot. It became a heap allocation when
+     * the fixed 512-byte array was removed; marking the slot unused and
+     * walking away would leak 1600 bytes per WiFi bring-up. */
+    uint32_t crit = crit_enter();
+    uint8_t *buf = q->buf;
+    q->buf  = 0;
+    q->used = 0;
+    crit_exit(crit);
+    heap_free(buf);
 }
 
 static void copy_n(uint8_t *d, const uint8_t *s, uint32_t n)

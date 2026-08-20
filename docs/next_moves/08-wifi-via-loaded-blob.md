@@ -1437,3 +1437,55 @@ repeated here: a disassembly that could not be trusted, nineteen fields of
 guessing, and a board on the desk that could simply be asked.
 
 **Nothing has been on air.**
+
+### Step 11 — queues, semaphores, and the fork arriving on schedule
+
+With the config layout fixed, each run names the next requirement and the loop
+runs fast:
+
+| run | rc | asked for |
+|---|---|---|
+| a | `NO_MEM` | `_wifi_create_queue` |
+| b | `NO_MEM` | queue too large — see below |
+| c | `NO_MEM` | `_semphr_create` |
+| d | `NO_MEM` | **`_task_create_pinned_to_core`** |
+
+**`_wifi_create_queue` needed more than nat-os would give.** ESP-IDF hands back
+a `wifi_static_queue_t { handle; storage; }` rather than a bare handle, so the
+wrapper is an 8-byte allocation around `osi_impl_queue_create`. That part was
+easy; the refusal was not. Recording the request showed the driver asking for
+**200 items of 8 bytes = 1600**, against `OSI_QUEUE_BYTES = 512`.
+
+A `NULL` return was ambiguous between "pool exhausted" and "too big" until the
+*request* was visible — the same lesson as the adapter stubs, one level down.
+
+**Fixed by allocating storage rather than reserving it.** The queue struct held
+`uint8_t buf[512]` inline. Raising that constant would have cost
+`OSI_QUEUE_MAX x` the new size in `.bss` regardless of whether the queues
+exist — 8 x 2 KB for one queue that needs it. Storage is now heap-allocated to
+the size actually requested, and `osi_impl_queue_delete` frees it: marking the
+slot unused and walking away would have leaked 1600 bytes per bring-up.
+
+The cap survives as an upper bound (4 KB), because a queue silently shorter
+than requested loses messages under load. Refuse, do not truncate.
+
+**Semaphores** were already there under another name — `osi_impl_sem_*` backs
+the mutex entries — so `_semphr_create/delete/take/give` are direct forwards.
+
+### The fork has arrived
+
+`_task_create_pinned_to_core` is the next requirement, and it is not another
+entry to fill in.
+
+`phy_stack_call` masks interrupts for the whole blob call. A task created
+inside that call **cannot run**, and a `_semphr_take` that genuinely blocks
+waiting for it **cannot return**. Every take so far has been uncontended, which
+is the only reason this has not bitten yet.
+
+This is the preemption prerequisite, reached as a live code path rather than an
+argument. The measured answer from earlier still stands: preemption across live
+windowed frames is safe (`wintorture`, 6/6, with the switch count as control),
+and the real invariant is **one context inside windowed code at a time** — a
+mutex, not a masked interrupt. That change is now on the critical path.
+
+**Nothing has been on air.**

@@ -1,7 +1,7 @@
 # UM-NATOS-038 — Running the Vendor Stack from Flash
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.0 · 2026-08-20 · Status: **Partial. Driver init reached; nothing on air.**
+Revision 1.1 · 2026-08-20 · Status: **Partial. Driver init runs and asks for resources; nothing on air.**
 
 ---
 
@@ -119,7 +119,7 @@ before anything executes.
 
 ---
 
-## 5. Seven defects, each with the measurement that found it
+## 5. Eight defects, each with the measurement that found it
 
 **5.1 A byte copy from instruction memory.** `LoadStoreError` at `0x4008187f`.
 `data_lma` points into the flash-mapped *instruction* region, which serves
@@ -176,6 +176,39 @@ hang in §7.2 is unproven and probably not directly provable.
 
 ---
 
+**5.8 The init config was four bytes too long.** `esp_wifi_init_internal`
+returned `ESP_ERR_INVALID_ARG` — an error that, unlike `NO_MEM`, names nothing.
+Nineteen config fields remained unbisected and every hypothesis was wrong.
+
+The answer came from `tools/idf_ref`, a board running real ESP-IDF, made to
+print its own `wifi_init_config_t` with offsets:
+
+```
+reference: sizeof=216   static_rx_buf_num off=120   feature_caps 192   magic 208
+nat-os:    sizeof=224   static_rx_buf_num off=124   feature_caps 200   magic 216
+```
+
+`wpa_crypto_funcs` is embedded **by value** and had 120 bytes reserved for it,
+counted by hand from the header. It is **116** — 29 members, not 30. One extra
+word pushed every following field 4 bytes late and added 4 bytes of tail
+padding, so the driver read `magic` at offset 208 where nat-os held
+`sta_disconnected_pm` = 0.
+
+**Every value in the struct was correct and every one was in the wrong place.**
+That is why it survived so long: nothing about the values could be wrong, so
+the values kept being checked. The reference also supplied two genuinely wrong
+values without being asked — `feature_caps` is `0xa1`, not 0, and
+`sta_disconnected_pm` is 1.
+
+Fixed, and the error immediately became self-locating again:
+`INVALID_ARG` -> `NO_MEM`, 8 adapter entries -> 11, sequence 14 calls -> 18.
+
+**The method matters more than the bug.** A second board answering a question
+directly beat both static analysis and field-by-field bisection, and
+UM-NATOS-034 had already recorded the same lesson once. Any question of the
+form "what value does the vendor stack expect here" can be asked of COM6
+instead of guessed.
+
 ## 6. The adapter names its own requirements
 
 118 entries; nat-os has 24 primitives. Rather than guess which a bring-up needs,
@@ -230,9 +263,9 @@ exit would also return zero.
 
 - **Nothing has been on air.** No frame has been transmitted, and
   `esp_wifi_start` has never been called.
-- **`esp_wifi_init_internal` does not yet succeed.** It returns
-  `ESP_ERR_INVALID_ARG` against a table the blob accepts, which points at the
-  config rather than the adapter. The field has not been identified.
+- **`esp_wifi_init_internal` does not yet succeed**, but it no longer fails on
+  its argument. See §5.8 — the `INVALID_ARG` was a struct-layout bug and is
+  fixed. It now returns `ESP_ERR_NO_MEM` and names the resource it wants.
 - **One hang remains unexplained.** A narrow band of kernel layouts caused
   `blob_map()` to hang deterministically. Everything software-visible was
   eliminated — `.bss` position, section sizes, symbol addresses, instruction
