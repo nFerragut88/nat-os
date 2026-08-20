@@ -434,3 +434,71 @@ never deliver a callback. Association and scan need those to actually work;
 a bare `esp_wifi_80211_tx` may not.
 
 **Nothing has been on air.**
+
+---
+
+## Step 6 — the OS adapter table. Built, accepted, and not yet exercised.
+
+`kernel/wifi_osi_table.c` is **generated** from
+`esp_private/wifi_os_adapter.h`, not typed. The blob indexes the table by byte
+offset, so a misordered entry calls the wrong function through the right slot —
+the least debuggable failure available, and not a risk worth taking by hand.
+
+### The layout is per-target, and getting that wrong is silent
+
+The header is `#if`'d. On ESP32 `_phy_common_clock_enable/_disable` **are**
+members and two other entries are **not**. A first pass ignored the
+conditionals and produced a 123-entry table; the correct ESP32 layout is
+**118 entries, 472 bytes**. `CONFIG_IDF_TARGET_ESP32` is now defined in the
+header before the struct is included, because the precompiled blob was built
+for ESP32 and the two layouts have to agree.
+
+### Every entry is an instrumented stub, deliberately
+
+nat-os has 24 primitives against 118 slots. Rather than guess which a bring-up
+needs, each entry records that it was called and returns something safe;
+`osiused` reports which entries were reached, in what order, and how often.
+
+This turns "what does the driver need?" from an argument into a measurement,
+and it is aimed squarely at this project's oldest failure mode: a stub that
+quietly returns success is indistinguishable from a working implementation
+until the radio silently does nothing. Entries get real bodies when the
+evidence demands them.
+
+### The blob validates the table
+
+```
+table     118 entries, version 8, magic 0xdeadbeaf
+registering at 0x4030125c
+osi_reg   returned 0
+accepted - version and magic matched
+```
+
+`wifi_osi_funcs_register` checks `_version` and `_magic` and accepted it. That
+is the *consumer* confirming the layout, which is better evidence than the
+offset arithmetic that produced it.
+
+### But transmit is unchanged, and that corrects an earlier claim
+
+With the table registered, `esp_wifi_80211_tx` still faults identically —
+`LoadProhibited`, `excvaddr 0x00000054` — and **`osiused` reports zero entries
+called.**
+
+Step 5 identified that null pointer as the OS adapter table, because offset
+`0x54` is exactly `_mutex_lock`. **That identification does not survive this
+measurement.** If it were the registered table, filling it would have changed
+something; instead the driver does not reach a single table entry. Whatever
+holds that pointer is per-interface state that only `esp_wifi_init_internal`
+builds, and the `_mutex_lock` offset was a coincidence read too confidently.
+
+The empty trace is itself the useful result: it says the fault happens *before*
+any OS service is requested, so no amount of OSI implementation will move it.
+
+### Next
+
+`esp_wifi_init_internal(&cfg)`, which needs a real `wifi_init_config_t` — a
+substantial struct, and the first thing here that will actually exercise the
+table. Expect `osiused` to become interesting at that point, and expect it to
+name the entries that need real bodies.
+
+**Nothing has been on air.**

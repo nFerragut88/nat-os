@@ -7,6 +7,7 @@
 #include "shell.h"
 #include "panic.h"
 #include "blob.h"
+#include "wifi_osi_table.h"
 #include "console.h"
 #include "app.h"
 #include "heap.h"
@@ -637,7 +638,7 @@ static void execute(char *line)
 
             uint32_t r = phy_stack_call(e->wifi_80211_tx, 0u,
                                         (uint32_t)frame, n, 0u);
-            uart_puts("   tx        returned 0x");
+            uart_puts("   tx        returned ");
             uart_put_hex(r);
             uart_puts("\n   phystack  ");
             uart_put_dec(phy_stack_used());
@@ -645,6 +646,64 @@ static void execute(char *line)
             uart_put_dec(phy_stack_size());
             uart_puts(" bytes used\n");
             uart_puts("   RETURNING IS NOT RADIATING. scan for NATOS-BLB.\n");
+        }
+    }
+    else if (str_eq(line, "osi") || str_eq(line, "osiused")) {
+        /* next_moves/08. Hand the OS adapter table to the blob, then report
+         * which of its entries the driver actually reaches.
+         *
+         * Every entry is an instrumented stub (kernel/wifi_osi_table.c), so
+         * this is a measurement rather than a guess: the driver names its own
+         * requirements, in call order, and the entries that never appear are
+         * ones nobody has to write. */
+        if (str_eq(line, "osiused")) {
+            uart_puts("   entries called so far (order, count):\n");
+            uint32_t shown = 0;
+            for (uint32_t i = 0; i < wifi_osi_entries(); i++) {
+                if (wifi_osi_calls(i) == 0u) { continue; }
+                uart_puts("     ");
+                uart_put_dec(wifi_osi_order(i));
+                uart_puts("  ");
+                uart_puts(wifi_osi_name(i));
+                uart_puts("  x");
+                uart_put_dec(wifi_osi_calls(i));
+                uart_puts("\n");
+                shown++;
+            }
+            if (!shown) { uart_puts("     none -- nothing has called in yet\n"); }
+            else {
+                uart_puts("   ");
+                uart_put_dec(shown);
+                uart_puts(" of ");
+                uart_put_dec(wifi_osi_entries());
+                uart_puts(" entries used\n");
+            }
+        } else {
+            const struct blob_entry *e = blob_map();
+            if (!e) {
+                uart_puts("   no valid image\n");
+            } else if (blob_init(e) != 0) {
+                uart_puts("   loader refused\n");
+            } else {
+                int prc = phyinit_run_at(e->phy_init);
+                uart_puts("   phyinit   rc=");
+                uart_put_dec((unsigned int)(prc < 0 ? -prc : prc));
+                uart_puts("\n   table     ");
+                uart_put_dec(wifi_osi_entries());
+                uart_puts(" entries, version 8, magic 0xdeadbeaf\n");
+                uart_puts("   registering at ");
+                uart_put_hex(e->osi_register);
+                uart_puts("\n");
+
+                uint32_t r = phy_stack_call(e->osi_register,
+                                            (uint32_t)wifi_osi_table(), 0u, 0u, 0u);
+                uart_puts("   osi_reg   returned ");
+                uart_put_hex(r);
+                uart_puts("\n");
+                uart_puts(r == 0u ? "   accepted - version and magic matched\n"
+                                  : "   REJECTED - the blob did not like the table\n");
+                uart_puts("   run 'osiused' to see what it called.\n");
+            }
         }
     }
     else if (str_eq(line, "dramtest")) {

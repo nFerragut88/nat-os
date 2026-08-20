@@ -29,6 +29,13 @@ extern int esp_wifi_80211_tx(int ifx, const void *buffer, int len, int seq);
  * would look like a PHY that initialised fine and a radio that stayed silent. */
 extern int register_chipv7_phy(const void *init_data, void *cal_data, int mode);
 
+/* Bring-up, in the order the driver requires: hand over the OS adapter table,
+ * then init, then start. esp_wifi_80211_tx is the LAST step -- calling it cold
+ * faulted on osi_funcs->_mutex_lock through a null table. */
+extern int  wifi_osi_funcs_register(const void *funcs);
+extern int  esp_wifi_init_internal(const void *cfg);
+extern int  esp_wifi_start(void);
+
 struct blob_entry {
     uint32_t magic;          /* 'N','8','0','2' */
     uint32_t version;
@@ -52,6 +59,9 @@ struct blob_entry {
      * through the bridges in kernel/window.S, exactly as it reaches libphy. */
     int (*wifi_80211_tx)(int ifx, const void *buffer, int len, int seq);
     int (*phy_init)(const void *init_data, void *cal_data, int mode);
+    int (*osi_register)(const void *funcs);
+    int (*wifi_init)(const void *cfg);
+    int (*wifi_start)(void);
 };
 
 /* `used` because nothing in this translation unit references it and
@@ -60,7 +70,7 @@ struct blob_entry {
 __attribute__((section(".blob_entry"), used))
 const struct blob_entry blob_entry = {
     .magic       = 0x3230384Eu,          /* "N802" little-endian */
-    .version     = 3u,
+    .version     = 4u,
     .image_size  = (uint32_t)&_blob_image_size,
     .text_end    = (uint32_t)&_blob_text_end,
 
@@ -76,4 +86,7 @@ const struct blob_entry blob_entry = {
 
     .wifi_80211_tx = esp_wifi_80211_tx,
     .phy_init      = register_chipv7_phy,
+    .osi_register  = wifi_osi_funcs_register,
+    .wifi_init     = esp_wifi_init_internal,
+    .wifi_start    = esp_wifi_start,
 };
