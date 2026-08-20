@@ -977,3 +977,53 @@ The next measurement is now much cheaper than a cache experiment: put markers
 which of those three the failing band cannot get past. If it is the return
 after the flush, the mechanism is instruction refill from flash and has nothing
 to do with the PHY at all.
+
+### Step-7 hang: it cannot be instrumented in place
+
+Markers were added inside `blob_map()` — before the MMU writes, between the
+IROM and DROM loops, before and after `cache_flush()`, around the magic read —
+plus two in `shell.c` either side of the call. `uart_puts` is IRAM-resident, so
+they would print even if flash fetch were broken.
+
+**Every marker printed and the load succeeded.**
+
+```
+[shell:pre-map] [map:enter] [map:irom-done] [map:mmu-done]
+[map:flush-done] [map:read-magic] [map:returning] [shell:post-map]
+LOAD VERIFIED
+```
+
+The instrumentation added code to `blob.c` (IRAM) and `shell.c` (flash), which
+moved the build **out of the failing band**. This is the literal observer
+effect: the trigger is a narrow region of layout space, and any probe placed
+inside the kernel changes the layout it is trying to observe.
+
+That retrospectively explains the whole hunt. Every probe in this section —
+the 224-byte `.bss` array, the code padding, the `g_osi` realignment — "worked",
+and each time that was read as *eliminating a hypothesis*. Some of those
+eliminations are sound (they reproduced a specific address and still worked),
+but any that relied on **"I changed X and the hang went away"** are worthless,
+because changing anything makes the hang go away.
+
+### What this means for the next attempt
+
+In-kernel instrumentation is only usable if the build is first padded **back
+into the failing band with the instrumentation already present** — a knob
+swept until `blob` hangs again, with the markers compiled in the whole time.
+That is the only way the markers report on the failing configuration rather
+than on a different one.
+
+The alternatives need no layout change at all:
+
+- **The APP CPU rig** (`kernel/appcpu.c`) already runs on core 1 and samples
+  registers while core 0 works. It is compiled in regardless, so arming it
+  costs no core-0 code.
+- **A hardware debugger.** UM-NATOS-001 notes JTAG has never been available on
+  this board; this is the first defect that would clearly have justified it.
+
+### Honest status
+
+Not solved. Bounded to a narrow band of kernel layouts, reachable through
+`blob_map()` with no PHY involved, deterministic within a build, and
+unobservable by any means that alters the build. Known-good state restored and
+verified.

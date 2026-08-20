@@ -53,6 +53,7 @@ static void cache_flush(void)
 
 const struct blob_entry *blob_map(void)
 {
+    uart_puts("      [map:enter]\n");
     uint32_t crit = crit_enter();
 
     /* Code, through the INSTRUCTION cache. */
@@ -65,6 +66,7 @@ const struct blob_entry *blob_map(void)
         foff  += MMU_PAGE_SIZE;
     }
 
+    uart_puts("      [map:irom-done]\n");
     /* Read-only data, through the DATA cache, at entry offset 0.
      *
      * Without this the blob's rodata is only reachable in the instruction
@@ -79,7 +81,9 @@ const struct blob_entry *blob_map(void)
         vaddr += MMU_PAGE_SIZE;
         foff  += MMU_PAGE_SIZE;
     }
+    uart_puts("      [map:mmu-done]\n");
     cache_flush();
+    uart_puts("      [map:flush-done]\n");
     crit_exit(crit);
 
     const struct blob_entry *e = (const struct blob_entry *)BLOB_IROM_ADDR;
@@ -87,12 +91,14 @@ const struct blob_entry *blob_map(void)
     /* An unprogrammed flash region reads as 0xFF, so this is also the test for
      * "nothing has been installed" -- which must be a clean negative, not a
      * jump through a pointer made of erase pattern. */
+    uart_puts("      [map:read-magic]\n");
     if (e->magic != BLOB_MAGIC) {
         return 0;
     }
     if (e->version != BLOB_VERSION) {
         return 0;
     }
+    uart_puts("      [map:returning]\n");
     return e;
 }
 
