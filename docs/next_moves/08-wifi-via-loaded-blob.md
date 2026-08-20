@@ -924,3 +924,56 @@ whereas no monotonic size effect ever appeared.
 by one 64 KB page and rebuild — which shifts its cache footprint without
 touching a line of kernel code. If the hang moves to a different `.flash.text`
 band, the mechanism is confirmed.
+
+### Step-7 hang: three corrections, and the diagnosis moves
+
+**1. The cache-aliasing probe was invalid, and its result must be discarded.**
+
+`.blob_pad : { . = . + 0x140; }` advances the location counter but emits **no
+bytes**. The LMAs of everything after it shifted by 0x140 — `tx entry` moved
+from `0x4031acb8` to `0x4031adf8`, exactly 0x140 — while the image stayed
+**606,404 bytes**, unchanged. So the file was 320 bytes shorter than its own
+addresses claimed, and what got flashed was a corrupt blob. The "still hangs,
+3/3" reading measured nothing but that corruption.
+
+The tell was in the build output the whole time: padding was added and the byte
+count did not move. A probe whose size does not change is not a probe.
+*(Fourth silently-failed probe in this work. The pattern is always the same —
+an edit that does not take, producing a confident result.)*
+
+**2. `blob` hangs too, so the fault is NOT confined to the PHY call.**
+
+With the correct blob restored, in the failing band, plain `blob` — which maps,
+loads, verifies and **never touches the PHY** — hangs as well.
+
+Step 7 recorded *"it spins inside `register_chipv7_phy`"*, based on markers
+reaching `<call>` and never `<returned>`. That was true of the build it was
+measured on and is **not the general case**. The trigger is reachable from
+`blob_map()` / `blob_init()` alone.
+
+That is a much better lead, because those two do something the PHY call does
+not: **reprogram MMU entries and flush the cache**, from IRAM, with the caller
+(`shell.c`) executing from **flash**. Returning to a flash-resident caller
+immediately after invalidating the cache is precisely the kind of operation
+whose behaviour can depend on where that caller sits — which is the observed
+variable.
+
+**3. The controls drifted mid-investigation.**
+
+`vendor_torture` was added to `vendor/windowed/`, and `build.ps1` compiles that
+directory **into the kernel**. IRAM `.text` therefore moved from 40,772 to
+40,848. The earlier claim that "IRAM symbols are identical between the builds"
+held when it was measured and does not hold across that boundary, so results
+either side of it are not directly comparable.
+
+### Where this actually leaves it
+
+Known-good state restored and verified: `.flash.text 23,112`, 11/11 boot
+self-tests, `blob` -> LOAD VERIFIED, `blobphy` -> `phyinit rc=0`.
+
+The next measurement is now much cheaper than a cache experiment: put markers
+**inside `blob_map()`** — before the MMU writes, between them and
+`cache_flush()`, and after the return to the flash-resident caller — and find
+which of those three the failing band cannot get past. If it is the return
+after the flush, the mechanism is instruction refill from flash and has nothing
+to do with the PHY at all.
