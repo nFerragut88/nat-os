@@ -111,6 +111,8 @@ Each has its own file. Roughly in order of value, but they are independent.
 | [05](05-open-unknowns.md) | Two unexplained behaviours | small | nothing |
 | ~~[07](07-irom.md)~~ | ~~A flash-executable region~~ — **done**, UM-NATOS-037 | — | — |
 | [08](08-wifi-via-loaded-blob.md) | WiFi transmit via the vendor path, blob supplied at runtime | large | 07 |
+| [09](09-lora-one-link.md) | **LoRa Phase 0: one link** — what the project is for | medium | hardware arriving |
+| [10](10-lora-bundle.md) | LoRa Phase 1: one bundle that survives a power cut | large | 09 |
 | ~~[06](06-documentation-debt.md)~~ | ~~Claims that have gone stale~~ — **done**, all five items | — | — |
 
 02, 03, 06 and 07 are done. **01 is closed** — see below. What is left is 04,
@@ -137,8 +139,19 @@ in `window.S`, an esptool padding segment our bootloader had never been shown,
 and the `-WiFi` gate hiding the failure in one build because the two use
 different bootloaders.
 
-**If you want the cheap one now:** [05](05-open-unknowns.md). Two unexplained
-behaviours, one of which can act on its own.
+**The list was missing the thing the project is for.** 04, 05 and 08 are a
+timing improvement nothing needs yet, two curiosities, and a route this
+project's own documents argue against. Meanwhile
+`docs/conceptual/the-ark-and-fiendnet.md` §7 has a build order, the SX1262 is
+ordered, and SPI3 is up and self-tested. [09](09-lora-one-link.md) and
+[10](10-lora-bundle.md) now exist and map onto that document's Phase 0 and
+Phase 1.
+
+**When the hardware lands, do [09](09-lora-one-link.md).** It is the only route
+where "working" and "ours" are the same outcome.
+
+**If you want the cheap one meanwhile:** [05](05-open-unknowns.md), most of
+which turned out to be already done.
 
 **If you want the cheap one:** [05](05-open-unknowns.md). Two unexplained
 behaviours, and one of them — phantom touches that once *launched a program* —
