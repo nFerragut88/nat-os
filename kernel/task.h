@@ -149,6 +149,13 @@ int      task_stack_broken(void);      /* id of a task with a clobbered guard, o
  * number of times ageing changed the decision. Reported because a fairness
  * policy nobody measures is a fairness policy nobody has. */
 uint32_t task_max_wait(void);
+
+/* Ready-to-running wait as a HISTOGRAM, not a high-water mark. Buckets in
+ * ticks: 0, 1, 2-3, 4-7, 8-15, 16-31, 32-63, 64+. next_moves/04 wants the tail,
+ * because one long wait per hour and one per second are the same `maxwait` and
+ * completely different systems. */
+uint32_t task_wait_hist(uint32_t bucket);
+void     task_wait_hist_reset(void);
 uint32_t task_age_rescues(void);
 int      task_stack_tightest(void);    /* id with the least headroom */
 const char *task_name(int id);         /* creation name, or "?" */

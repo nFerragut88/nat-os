@@ -539,6 +539,90 @@ static void execute(char *line)
         for (;;) {
         }
     }
+    else if (str_eq(line, "jitter")) {
+        /* next_moves/04, step one: get the number before touching anything.
+         *
+         * That file's own instruction is "measure before changing", and its
+         * named suspect is store_save() -- a flash sector erase inside
+         * crit_enter/crit_exit, which is tens of milliseconds where nothing
+         * runs at all. If that dominates the tail then the honest fix is a
+         * policy ("do not erase flash while a control loop is running"), which
+         * is free, rather than a scheduler change, which is not.
+         *
+         *   jitter          print the distribution
+         *   jitter reset    zero it
+         *   jitter save     time a real store_save() and print the tail again
+         *
+         * The histogram counts every ready-to-running wait, in ticks, which is
+         * the same quantity `fair maxwait` reports as a high-water mark. A
+         * maximum cannot distinguish one long wait per hour from one per
+         * second; those are the same number and completely different systems.
+         */
+        static const char *LBL[8] = { "0", "1", "2-3", "4-7",
+                                      "8-15", "16-31", "32-63", "64+" };
+        if (str_eq(arg, "reset")) {
+            task_wait_hist_reset();
+            uart_puts("   histogram and maxwait zeroed\n");
+        } else {
+            if (str_eq(arg, "save")) {
+                /* Time the suspect directly, rather than inferring it from the
+                 * tail. store_save() erases a sector with interrupts masked;
+                 * this is how long nothing else in the system can run. */
+                uint32_t t0 = xt_ccount();
+                int rc = store_save();
+                uint32_t dt = xt_ccount() - t0;
+                uart_puts("   store_save() returned ");
+                uart_put_dec((unsigned int)rc);
+                uart_puts(", took ");
+                uart_put_dec(dt / 80000u);
+                uart_puts(" ms (");
+                uart_put_dec(dt);
+                uart_puts(" cycles at 80 MHz)\n");
+                uart_puts("   during which interrupts were masked and NOTHING\n"
+                          "   else in the system ran.\n");
+                /* The ticks LOST to it, which is the actual point.
+                 *
+                 * The histogram below cannot see this stall. `waiting` only
+                 * advances on a scheduler decision, decisions happen on ticks,
+                 * and the tick is masked for the whole erase -- so the wait it
+                 * causes is never counted by the instrument built to count
+                 * waits. That is visible as an empty 8-15 bucket while the
+                 * erase lasts 12-14 ticks.
+                 *
+                 * timer_late_count() does see it, because the timer notices its
+                 * own missed deadlines after the fact. An instrument sharing a
+                 * dependency with the fault is the failure this project keeps
+                 * rediscovering; here it was predicted and is reported rather
+                 * than tripped over. */
+                uart_puts("   timer deadlines missed/skipped, cumulative: ");
+                uart_put_dec(timer_late_count());
+                uart_puts("\n");
+            }
+            uint32_t total = 0;
+            for (uint32_t i = 0; i < 8u; i++) {
+                total += task_wait_hist(i);
+            }
+            uart_puts("   ready-to-running wait, ticks (1 tick = 10 ms)\n");
+            uart_puts("   bucket   count      share\n");
+            for (uint32_t i = 0; i < 8u; i++) {
+                uint32_t c = task_wait_hist(i);
+                uart_puts("   ");
+                uart_puts(LBL[i]);
+                uart_puts("\t   ");
+                uart_put_dec(c);
+                uart_puts("\t   ");
+                /* Per-mille rather than percent: the tail is the point and at
+                 * whole percent the interesting buckets all read 0. */
+                uart_put_dec(total ? (c * 1000u) / total : 0u);
+                uart_puts("/1000\n");
+            }
+            uart_puts("   samples ");
+            uart_put_dec(total);
+            uart_puts("   worst ");
+            uart_put_dec(task_max_wait());
+            uart_puts(" ticks\n");
+        }
+    }
     else if (str_eq(line, "stacks")) {
         uart_puts("   id  name        free B  of 2048\n");
         for (int id = 0; id < TASK_MAX; id++) {

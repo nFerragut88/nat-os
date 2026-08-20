@@ -85,6 +85,44 @@ static int g_idle_id = -1;
  * only because ageing had lifted it. If the second is zero the policy is inert,
  * which is itself worth knowing. */
 static uint32_t g_max_wait;
+
+/* The TAIL, not the maximum.
+ *
+ * next_moves/04 asks for a histogram rather than a high-water mark, and the
+ * reason is in its own text: `maxwait=36` is the worst wait ever OBSERVED,
+ * which is not the worst possible and says nothing about how often a long wait
+ * happens. A control loop cares about the shape of the distribution -- one
+ * 36-tick wait per hour and one per second are the same number here and
+ * completely different systems.
+ *
+ * Buckets are in ticks, matching `waiting`: 0, 1, 2-3, 4-7, 8-15, 16-31,
+ * 32-63, 64+. Doubling widths because the interesting region is the tail and a
+ * linear scale spends all its resolution on the head. */
+#define WAIT_BUCKETS 8
+static uint32_t g_wait_hist[WAIT_BUCKETS];
+
+static uint32_t wait_bucket(uint32_t w)
+{
+    uint32_t b = 0;
+    while (w > 1u && b < WAIT_BUCKETS - 1u) {
+        w >>= 1;
+        b++;
+    }
+    return (w == 0u) ? 0u : b + 1u < WAIT_BUCKETS ? b + 1u : WAIT_BUCKETS - 1u;
+}
+
+uint32_t task_wait_hist(uint32_t i)
+{
+    return (i < WAIT_BUCKETS) ? g_wait_hist[i] : 0u;
+}
+
+void task_wait_hist_reset(void)
+{
+    for (int i = 0; i < WAIT_BUCKETS; i++) {
+        g_wait_hist[i] = 0u;
+    }
+    g_max_wait = 0u;
+}
 static uint32_t g_age_rescues;
 
 uint32_t task_max_wait(void)    { return g_max_wait; }
@@ -362,6 +400,7 @@ uint32_t task_schedule(uint32_t current_sp)
             if (g_tasks[i].waiting > g_max_wait) {
                 g_max_wait = g_tasks[i].waiting;
             }
+            g_wait_hist[wait_bucket(g_tasks[i].waiting)]++;
             if (g_tasks[i].waiting >= TASK_AGE_TICKS) {
                 g_age_rescues++;    /* it only ran because ageing lifted it */
             }
