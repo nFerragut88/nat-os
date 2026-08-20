@@ -13,9 +13,9 @@ landed in `store.h` hours before it was written.
 
 ## Findings so far
 
-Two, both from spot-checking rather than a full pass. Both now FIXED — the
-audit's own `AUDIT_ONLY` rule was suspended deliberately, by the owner, after
-they were reported.
+Six. NA-001 to NA-004 came from spot-checking; NA-005 and NA-006 from the full
+`AUDIT scheduler` pass. All FIXED — the audit's own `AUDIT_ONLY` rule was
+suspended deliberately, by the owner, after the first four were reported.
 
 | ID | class | pri | where | state |
 |---|---|---|---|---|
@@ -23,6 +23,99 @@ they were reported.
 | NA-002 | CONFIRMED_BUG | P0 (latent) | `heap.c` `align_up()` | fixed: guard + boot self-test |
 | NA-003 | UNVERIFIED_ASSUMPTION | P3 | `vm.c` `VM_OP_SAR` | fixed: built from unsigned ops |
 | NA-004 | UNVERIFIED_ASSUMPTION | P3 | `vmarg.c` `vmarg_items()` | fixed: guard + regression test |
+| NA-005 | CONFIRMED_BUG | P2 (dormant) | `task.c` / `touch.c` lost wakeup | fixed: `task_sleep_armed()` + `waketest` |
+| NA-006 | UNVERIFIED_ASSUMPTION | P1 (latent) | `task.h` `TASK_AGE_MAX` | fixed: `_Static_assert` |
+
+## AUDIT scheduler — run 2026-08-20, AUDIT_ONLY suspended by the owner
+
+Covered: the four states and all six transition sites, wake/sleep races, tick
+wraparound, priority ageing, starvation, voluntary yield, interrupt-context
+scheduling, and the context frame in `vectors.S`.
+
+**Clean, and verified rather than assumed:**
+
+- **Tick wraparound.** Both `task_sleep()` and `wake_sleepers()` compare with
+  `(int32_t)(now - deadline) >= 0`. Correct across the wrap.
+- **The context frame.** `LBEG`/`LEND`/`LCOUNT` are saved *before* any C is
+  called and `PS.EXCM` is cleared before the call — the M2 defect of
+  UM-NATOS-009 §6.3. On restore `LCOUNT` is written **last**, because it is the
+  register that arms the loop. `SAR` covered. This area was already right.
+- **Starvation is bounded**, and the arithmetic was checked rather than trusted:
+  a NORMAL task behind a permanently-ready HIGH one needs `waiting >= 60` ticks
+  (600 ms — matching the header comment), a LOW task `>= 90`.
+
+### NA-005 — a wake delivered to a running task was lost
+
+The arm-then-sleep sequence in `touch_irq_wait()`:
+
+```c
+crit_enter(); register_waiter(); arm_the_pin(); crit_exit();
+task_sleep(timeout);          /* <-- an edge landing HERE was lost */
+```
+
+An edge in that gap found the task still **RUNNING**. `task_wake()` acted only
+on `BLOCKED`/`SLEEPING`, so it did nothing; and `touch_isr()` latches
+`g_irq_flag` only when *no* waiter is registered, and one was. The sleep then
+ran its full timeout with the event already gone.
+
+The header comment at `touch_irq_wait()` claims this window is closed by
+registering inside a critical section. **It closes the earlier half** — an edge
+before the waiter is registered — and reads as though it closes both. It did
+not close the half between `crit_exit()` and the sleep.
+
+**Dormant, which is why it is worth fixing rather than noting.** `touch_irq_wait()`
+has no caller; `kmain.c` says it is "one line from being reinstated" and the
+board reports `irq=0`. So it is a trap set for whoever flips that line, and the
+cost of fixing it while nothing depends on it is zero.
+
+**Fixed** by splitting the clear from the sleep. `task_wake()` now records the
+wake for a task in any live state; `task_sleep()` keeps its old behaviour by
+clearing on entry (a plain delay must not be cut short by a stale flag), and the
+new `task_sleep_armed()` does not clear, so a wake from the arm window survives:
+
+```c
+crit_enter(); task_arm_wake(); arm_the_pin(); crit_exit();
+task_sleep_armed(timeout);    /* an edge landing HERE returns at once */
+```
+
+**Verified on hardware, with a negative control** — `waketest`:
+
+```
+armed  0 ticks   (the wake survived)
+plain 47 ticks   (control: the wake was discarded, full sleep)
+PASS
+```
+
+The control is the point. A test that only measured the armed case would pass if
+`task_sleep_armed()` returned early for some unrelated reason. `plain` exceeding
+its 30-tick request by 17 is the scheduler tail from `next_moves/04`, not an
+anomaly.
+
+### NA-006 — the ageing cap is exactly sized, and nothing said so
+
+`TASK_AGE_MAX 3` bounds starvation only while
+
+```
+TASK_AGE_MAX > TASK_PRIO_LEVELS - 1
+```
+
+because selection is on strictly greater effective priority and a freshly-run
+top-priority task scores `TASK_PRIO_LEVELS - 1`. With 3 levels and a cap of 3,
+that holds **by exactly one**. Adding a fourth priority level would not slow
+anything down or warn — it would make LOW tasks stop running entirely, showing
+up as a hang somewhere unrelated.
+
+Not a live bug; an unstated precondition on a value that looks like a tuning
+knob. **Fixed** with a `_Static_assert`, verified in both directions: it builds
+clean at 3 levels and fails with *"ageing cap too small to bound starvation
+across the priority range"* at 4.
+
+### Left open
+
+- **`task_block()`/`task_sleep()` have no interrupt-context guard.** No ISR
+  calls them today. Cheap to assert if one ever might.
+- **Why the wait tail is 16-63 with `TASK_AGE_TICKS = 30`** — still open from
+  `next_moves/04`, still a fairness question rather than a latency one.
 
 ## AUDIT VM — run 2026-08-19, AUDIT_ONLY suspended by the owner
 

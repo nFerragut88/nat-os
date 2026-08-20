@@ -545,6 +545,45 @@ static void execute(char *line)
         for (;;) {
         }
     }
+    else if (str_eq(line, "waketest")) {
+        /* NA-005 regression.
+         *
+         * The bug lives in a dormant path -- touch_irq_wait() has no caller --
+         * so it cannot be reproduced by touching the screen. What CAN be tested
+         * is the primitive the fix rests on: a wake delivered while the task is
+         * still RUNNING must survive to the sleep that follows.
+         *
+         * Two measurements, and the second one is the point. If only the
+         * "armed" case were measured, a task_sleep_armed() that returned
+         * immediately for some unrelated reason would pass. The plain case is
+         * the negative control: it must sleep the FULL time, because that is
+         * exactly the old, broken behaviour. A test where both numbers are
+         * small is a test that is measuring nothing. */
+        const uint32_t N = 30u;         /* 300 ms -- a full sleep is unmistakable */
+
+        task_arm_wake();
+        task_wake(task_current());      /* wake a task that is still running */
+        uint32_t t0 = timer_ticks();
+        task_sleep_armed(N);
+        uint32_t armed = timer_ticks() - t0;
+
+        task_arm_wake();
+        task_wake(task_current());
+        t0 = timer_ticks();
+        task_sleep(N);                  /* clears on entry -- must NOT be cut short */
+        uint32_t plain = timer_ticks() - t0;
+
+        uart_puts("   armed  ");
+        uart_put_dec(armed);
+        uart_puts(" ticks  (expected 0-1, the wake survived)\n   plain  ");
+        uart_put_dec(plain);
+        uart_puts(" ticks  (expected ");
+        uart_put_dec(N);
+        uart_puts(", control: the wake was discarded)\n");
+        uart_puts((armed <= 1u && plain >= N - 1u)
+                  ? "   PASS - a wake to a running task survives task_sleep_armed()\n"
+                  : "   FAIL - see NA-005 in docs/audit-spec.md\n");
+    }
     else if (str_eq(line, "storetest")) {
         /* Exercise the save-deferral bound, because a mechanism with no
          * exerciser is untested code and this project has a long record of

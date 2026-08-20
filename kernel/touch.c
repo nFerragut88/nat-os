@@ -347,6 +347,11 @@ void touch_irq_wait(uint32_t timeout_ticks)
         crit_exit(crit);
         return;                     /* an edge is already outstanding */
     }
+    /* NA-005. Clear the pending-wake flag HERE, inside the same critical
+     * section that registers the waiter and arms the pin, so that any edge
+     * from this point on is recorded rather than lost. Paired with
+     * task_sleep_armed() below. */
+    task_arm_wake();
     g_irq_waiter = task_current();
     g_irq_last_reg = g_irq_waiter;
     g_irq_waits++;
@@ -362,7 +367,7 @@ void touch_irq_wait(uint32_t timeout_ticks)
     g_irq_armed_rb = GPIO_REG(GPIO_PIN_REG(PIN_IRQ));
     crit_exit(crit);
 
-    task_sleep(timeout_ticks);      /* cut short by touch_isr via task_wake() */
+    task_sleep_armed(timeout_ticks); /* cut short by touch_isr via task_wake() */
 
     crit = crit_enter();
     gpio_int_disable(PIN_IRQ);      /* disarm before any SPI can run */

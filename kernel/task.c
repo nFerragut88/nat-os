@@ -610,6 +610,23 @@ void task_wake(int id)
      * Safe from an ISR. It only promotes a state to READY; wake_tick is left
      * alone, and the scheduler's sleep sweep ignores a task that is no longer
      * SLEEPING. */
+    /* NA-005. The flag is set for ANY live task, including one that is still
+     * RUNNING -- which is the case this used to lose.
+     *
+     * A waiter arms its interrupt inside a critical section, leaves it, and
+     * then calls task_sleep(). An edge arriving in that gap found the task
+     * still READY, so the old `state == BLOCKED || state == SLEEPING` guard
+     * matched nothing, no flag was set, and the sleep that followed ran its
+     * full timeout with the event already gone. touch.c's ISR does not latch
+     * in that case either, because a waiter WAS registered.
+     *
+     * Recording the wake regardless costs nothing for existing callers, since
+     * task_sleep() clears the flag on entry and can never see a stale one. It
+     * is task_sleep_armed() that keeps it, for callers that armed something
+     * first. */
+    if (g_tasks[id].state != TASK_UNUSED) {
+        g_tasks[id].woken = 1;
+    }
     if (g_tasks[id].state == TASK_BLOCKED ||
         g_tasks[id].state == TASK_SLEEPING) {
         g_tasks[id].state = TASK_READY;
@@ -618,7 +635,6 @@ void task_wake(int id)
          * would sleep the caller again and the early wake would be lost. Set
          * only here; wake_sleepers() leaves it alone, which is what makes the
          * two cases distinguishable. */
-        g_tasks[id].woken = 1;
     }
 }
 
@@ -652,7 +668,27 @@ void task_unboost(int id)
     }
 }
 
+void task_arm_wake(void)
+{
+    if (g_current < 0) {
+        return;
+    }
+    uint32_t crit = crit_enter();
+    g_tasks[g_current].woken = 0;
+    crit_exit(crit);
+}
+
 void task_sleep(uint32_t ticks)
+{
+    /* Discards any wake that arrived before this call. Correct for a plain
+     * delay, which is what almost every caller wants -- a stale flag would
+     * otherwise make the very next sleep return immediately. A caller that
+     * armed something first wants the opposite and uses task_sleep_armed(). */
+    task_arm_wake();
+    task_sleep_armed(ticks);
+}
+
+void task_sleep_armed(uint32_t ticks)
 {
     if (g_current < 0) {
         return;                     /* no context to sleep */
@@ -706,12 +742,8 @@ void task_sleep(uint32_t ticks)
 
     uint32_t deadline = timer_ticks() + ticks;
 
-    uint32_t crit = crit_enter();
-    g_tasks[g_current].woken = 0;
-    crit_exit(crit);
-
     for (;;) {
-        crit = crit_enter();
+        uint32_t crit = crit_enter();
         if (g_tasks[g_current].woken) {
             g_tasks[g_current].woken = 0;
             crit_exit(crit);

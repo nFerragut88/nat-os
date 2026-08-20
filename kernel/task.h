@@ -111,6 +111,25 @@ typedef enum {
 #define TASK_AGE_TICKS  30u
 #define TASK_AGE_MAX    3u      /* cap, so ageing cannot invert LOW past HIGH twice over */
 
+/* NA-006. The cap is EXACTLY sized for the current priority range, and that is
+ * load-bearing rather than incidental.
+ *
+ * For ageing to bound starvation, a task at the bottom priority must eventually
+ * out-score a permanently-ready task at the top. The freshly-run top task has
+ * waiting == 0, so its effective priority is (TASK_PRIO_LEVELS - 1); the bottom
+ * task's best possible score is TASK_AGE_MAX. Selection is on STRICTLY greater
+ * priority, so the guarantee needs
+ *
+ *     TASK_AGE_MAX > TASK_PRIO_LEVELS - 1
+ *
+ * With 3 levels and a cap of 3 that holds by exactly one. Adding a fourth
+ * priority level without raising the cap would not produce a slow task or a
+ * warning -- it would produce a LOW task that never runs again, presenting as a
+ * hang in something unrelated. The assertion turns that into a build failure at
+ * the moment the level is added, which is the only moment anyone is looking. */
+_Static_assert(TASK_AGE_MAX >= TASK_PRIO_LEVELS,
+               "ageing cap too small to bound starvation across the priority range");
+
 typedef struct {
     uint32_t      sp;                  /* saved stack pointer when not running */
     task_state_t  state;
@@ -222,6 +241,22 @@ void task_unboost(int id);
 #define TASK_SLEEP_MAX 0x7FFFFFFFu
 
 void task_sleep(uint32_t ticks);
+
+/* ---- sleeping after arming something that will wake you -----------------
+ *
+ * NA-005. The plain sequence is racy and the race is silent:
+ *
+ *     crit_enter(); arm_the_interrupt(); crit_exit();
+ *     task_sleep(timeout);          <-- an edge landing HERE is lost
+ *
+ * The edge finds the task still RUNNING, so nothing is asleep to wake, and the
+ * sleep then runs its full timeout with the event already gone. Use instead:
+ *
+ *     crit_enter(); task_arm_wake(); arm_the_interrupt(); crit_exit();
+ *     task_sleep_armed(timeout);    <-- an edge landing HERE returns at once
+ */
+void task_arm_wake(void);
+void task_sleep_armed(uint32_t ticks);
 
 /* Times a sleep request exceeded TASK_SLEEP_MAX and was clamped. Should be zero
  * forever; anything else means a caller's arithmetic overflowed. */
