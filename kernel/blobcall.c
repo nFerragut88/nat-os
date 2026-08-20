@@ -89,6 +89,16 @@ uint32_t blob_call(uint32_t fn, uint32_t a, uint32_t b, uint32_t c, uint32_t d)
     return r;
 }
 
+/* Held while a context is executing blob code; released when that context is
+ * about to BLOCK inside it. The adapter's blocking entries spill their window
+ * first, so the blocked task is left with exactly one live frame -- the call0
+ * steady state the existing context switch already handles correctly.
+ *
+ * That is the whole idea: rather than teach the scheduler about windows, make
+ * a blocked windowed task stop looking like one. */
+void blob_lock(void)   { blob_call_init(); mutex_lock(&g_blob_mutex); }
+void blob_unlock(void) { mutex_unlock(&g_blob_mutex); }
+
 uint32_t blob_call_count(void)     { return g_calls; }
 uint32_t blob_call_contended(void) { return g_contended; }
 
@@ -147,7 +157,12 @@ static void blob_task_entry(void)
     }
     /* call0 -> windowed, one argument. rom_call3 passes three; the callee
      * takes one and ignores the rest. */
+    /* The blob task holds the lock while it runs and releases it whenever it
+     * blocks, so only one context is ever inside windowed code at a time
+     * without the task having to hold it forever. */
+    blob_lock();
     (void)rom_call3(g_bt[slot].fn, g_bt[slot].arg, 0u, 0u);
+    blob_unlock();
 }
 
 /* Called from the windowed adapter stub. Arguments arrive in a small struct

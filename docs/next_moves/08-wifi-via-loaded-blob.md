@@ -1970,3 +1970,51 @@ driver with its own task is out of reach and `docs/blob-free.md`'s conclusion
 stands on engineering grounds rather than principle.
 
 **Nothing has been on air.**
+
+### Step 21 — spill-before-block: implemented, and it does not fix it
+
+The idea was to avoid `_handler_level3` entirely. A blob task holds the blob
+lock while it runs; when it is about to **block** inside blob code, the adapter
+spills its window — pushing every live frame to the task's own stack, leaving
+exactly one, the call0 steady state the existing switch already handles — then
+releases the lock, blocks, re-acquires, and returns. Frames reload through
+`_WindowUnderflow*` on the way out.
+
+Only the blocking path pays: `_semphr_take` tries the uncontended take first
+and returns without spilling or touching the lock in the common case.
+
+**One real bug found on the way.** `blob_lock`/`blob_unlock` are call0 kernel
+functions and were called directly from the windowed adapter — the window
+rotated, their `RET` did not rotate back, and the CPU jumped to `0x80247feb`:
+bit 31 set, a return-address *encoding* used as an address. The same fault
+`window.S` records from the first time this project hit it, and the third time
+in this work. Fixed by routing them through `w2c_call0f`.
+
+**It still collides.** `wifiinit task` panics in `w2c_call2` — the same place
+as before the change.
+
+The reason is the limitation stated when the idea was proposed: it only covers
+**voluntary** blocking. A task preempted by the timer mid-blob-code never
+reaches `_semphr_take`, has not spilled, and another context rotates over its
+frames. The idea was sound and insufficient, and now measurably so rather than
+by argument.
+
+### Kept rather than reverted
+
+No regression in the paths verified: boot 11/11, `wintorture` correct, `blob`
+LOAD VERIFIED. It is the correct behaviour for voluntary blocking and will be
+needed whenever the involuntary case is solved; reverting would discard the
+`w2c_call0f` fix as well.
+
+**Verification is incomplete** — the board disconnected from USB partway
+through. `blobphy`, `wifiinit` and `blobtx force` were not re-checked after
+this change and should be before anything is built on top.
+
+### What this leaves
+
+Involuntary preemption of a task inside windowed code is the whole remaining
+problem, and it can only be handled where the preemption happens — the context
+switch. Five attempts there have failed and the two best explanations are
+eliminated. That needs single-stepping.
+
+**Nothing has been on air.**

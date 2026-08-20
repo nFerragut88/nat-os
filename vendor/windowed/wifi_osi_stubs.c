@@ -198,6 +198,9 @@ extern void task_current(void);
 extern void osi_impl_queue_create(void);
 extern void osi_impl_queue_delete(void);
 extern void blob_task_create(void);
+extern void blob_lock(void);
+extern void blob_unlock(void);
+extern void win_spill_all(void);   /* windowed; callable directly from here */
 
 static void osi_hit(uint32_t i)
 {
@@ -327,13 +330,36 @@ static void osi_s_semphr_delete(void *semphr)
 static int32_t osi_s_semphr_take(void *semphr, uint32_t block_time_tick)
 {
     osi_hit(15u);
-    /* CAUTION: a genuinely contended take blocks, and phy_stack_call masks
-     * interrupts for the whole blob call -- so the giver can never run and
-     * this would never return. Every take so far has been uncontended. This
-     * is the preemption prerequisite (next_moves/08) arriving as a real code
-     * path rather than a hypothesis. */
-    return (int32_t)w2c_call2((uint32_t)&osi_impl_sem_take,
-                              (uint32_t)semphr, (uint32_t)block_time_tick);
+    /* Uncontended first, without blocking. This is the common case and it
+     * must stay cheap -- no spill, no lock traffic. */
+    if (w2c_call2((uint32_t)&osi_impl_sem_take, (uint32_t)semphr, 0u)) {
+        return 1;
+    }
+
+    /* Contended: we are about to block INSIDE windowed blob code, which is
+     * exactly the state nat-os cannot preserve across a context switch.
+     *
+     * So stop being in that state. Spilling pushes every live frame out to
+     * this task's own stack and leaves one -- the call0 steady state the
+     * existing switch already handles. The blob lock is then released so
+     * another context may enter windowed code while we wait.
+     *
+     * On the way back the frames reload through _WindowUnderflow* as we
+     * return, which is where the hardware put them.
+     *
+     * Spilling here works because this is TASK context. Every attempt to do it
+     * inside _handler_level3 failed; see next_moves/08 steps 14-18. */
+    win_spill_all();
+    /* Through the bridge: blob_lock/blob_unlock are call0 kernel functions and
+     * this file is windowed. Calling them directly rotates the window and
+     * their RET does not rotate back -- which is exactly what happened, an
+     * IllegalInstruction at epc 0x80247feb, bit 31 set, a return encoding
+     * jumped to raw. Same fault window.S records from the first time. */
+    (void)w2c_call0f((uint32_t)&blob_unlock);
+    int32_t r = (int32_t)w2c_call2((uint32_t)&osi_impl_sem_take,
+                                   (uint32_t)semphr, (uint32_t)block_time_tick);
+    (void)w2c_call0f((uint32_t)&blob_lock);
+    return r;
 }
 
 static int32_t osi_s_semphr_give(void *semphr)
