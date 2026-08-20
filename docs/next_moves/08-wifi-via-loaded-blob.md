@@ -1702,3 +1702,43 @@ diagnosis above is worth more than a third attempt made tired; the next one
 should start from it rather than from scratch.
 
 **Nothing has been on air.**
+
+### Step 16 — part 1 of 3, in the right place this time
+
+`win_spill_all` is back, but invoked from `rom_call3` in **task context**
+rather than from the level-3 handler. A task about to rotate the window first
+pushes out whatever the previously-running task left live, onto that task's own
+stack, where `_WindowOverflow*` already knows to put it.
+
+```
+boot        11 PASS 0 FAIL
+wintorture  CORRECT      <- steps 14 and 15 both broke this
+wincollide  still panics
+```
+
+**This is the first version that does not break what already worked.** It is
+also not a fix on its own, which the diagnosis predicted: spilling is step 1 of
+three, and steps 2 and 3 -- save/restore `WINDOWBASE`, then narrow
+`WINDOWSTART` -- are still missing.
+
+### The remaining subtlety, which is why 2 and 3 are not just "add them back"
+
+Narrowing `WINDOWSTART` on resume is only valid if that task's frames were
+actually spilled. They are spilled when *another* task enters windowed code —
+but if no other task did, the frames are still in registers and untouched, and
+narrowing would throw them away. That is exactly how step 15 broke
+`wintorture`.
+
+So the restore has to know which happened. A generation counter answers it:
+`win_spill_all` bumps it, each frame records the value seen at switch-out, and
+on resume the handler compares —
+
+- **unchanged** — nobody rotated over us; restore the saved `WINDOWSTART`
+- **changed** — our frames were spilled; narrow to one and let
+  `_WindowUnderflow*` reload them
+
+That is a small amount of state and it makes both cases correct rather than
+picking one and hoping. Recorded rather than written, because it belongs on top
+of a verified base and this one has just been established.
+
+**Nothing has been on air.**

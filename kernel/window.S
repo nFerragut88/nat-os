@@ -295,6 +295,53 @@ rom_call4:
     ret
     .size rom_call4, . - rom_call4
 
+/* ---- pushing live windows out to memory, from TASK context ------------
+ *
+ * Six nested CALL12s consume 72 registers against a 64-register file, so the
+ * hardware raises overflows and _WindowOverflow* writes each oldest live frame
+ * to the stack pointer recorded IN that frame -- the frame's own owner's
+ * stack, which is exactly where it belongs.
+ *
+ * next_moves/08 step 14 called this from inside _handler_level3 and it broke
+ * the single-task case: rotating the window mid-context-switch, while a1 is
+ * the frame under construction, does not work. Here it runs in ordinary task
+ * context, on a normal stack, outside any handler.
+ *
+ * Windowed by necessity -- ENTRY is what does the work. */
+    .section .text, "ax"
+    .align 4
+    .global win_spill_all
+    .type win_spill_all, @function
+win_spill_all:
+    entry   a1, 48
+    call12  .Lws1
+    retw
+    .align 4
+.Lws1:
+    entry   a1, 48
+    call12  .Lws2
+    retw
+    .align 4
+.Lws2:
+    entry   a1, 48
+    call12  .Lws3
+    retw
+    .align 4
+.Lws3:
+    entry   a1, 48
+    call12  .Lws4
+    retw
+    .align 4
+.Lws4:
+    entry   a1, 48
+    call12  .Lws5
+    retw
+    .align 4
+.Lws5:
+    entry   a1, 48
+    retw
+    .size win_spill_all, . - win_spill_all
+
     .global rom_call3
     .type rom_call3, @function
     .align 4
@@ -305,6 +352,16 @@ rom_call3:
     s32i    a13, a1, 8
     s32i    a14, a1, 12
     s32i    a15, a1, 16
+
+    /* Push whatever the previously-running task left live out to ITS stack,
+     * before this call rotates over it. Task context, so this is safe here in
+     * a way it was not inside the interrupt handler (step 14).
+     *
+     * CALL8 clobbers a8..a15 only; a2 (the target) and a3..a5 (the arguments)
+     * are below that and survive, which is why this sits before they are
+     * moved into place. */
+    call8   win_spill_all
+
     mov     a10, a3
     mov     a11, a4
     mov     a12, a5
