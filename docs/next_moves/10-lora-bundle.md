@@ -60,9 +60,9 @@ what needed it, and the measurement has been taken. **Read the section at the
 end of this file before designing anything that has to be awake on time.**
 
 A relay node has a duty-cycled radio and receive windows it has to be awake for.
-`fair maxwait=36` is ~340 ms worst *observed* wait, and 04 names `store_save()`
-as the suspect — a flash erase with interrupts masked, tens of milliseconds
-where nothing runs at all.
+`fair maxwait=36` is ~360 ms worst *observed* scheduler wait, and 04 named
+`store_save()` as the suspect — a flash erase with interrupts masked. It
+guessed "tens of milliseconds". **It is 125 ms**, measured, five times.
 
 **A node that writes a bundle to flash while a receive window opens will miss
 it.** That is exactly the interaction 04 exists to measure, and the measurement
