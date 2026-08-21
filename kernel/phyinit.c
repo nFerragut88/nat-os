@@ -23,6 +23,7 @@
 
 #include "phyinit.h"
 #include "window.h"
+#include "task.h"
 #include "uart.h"
 #include "efuse.h"
 
@@ -141,11 +142,37 @@ int phyinit_run_at(uint32_t fn)
      * never used -- the PHY ran on whichever task called in. From the 2 KB
      * shell task that faulted inside phy_enter_critical's ENTRY, spilling
      * below a stack pointer that was not a stack. */
+    /* Bracket the write. Step 65 bisected the corruption of g_tasks[].sp to this
+     * stage; this says whether it happens inside the call itself. Sampling the
+     * SAVED sp, not the live one -- no switch can occur here, so the stored
+     * value should be untouched across the call. */
+    int      me      = task_current();
+    uint32_t sp_pre  = task_saved_sp(me);
+
     g_phy_result = phy_stack_call(fn,
                                   (uint32_t)g_phy_init_data,
                                   (uint32_t)g_phy_cal_data,
                                   PHY_RF_CAL_FULL,
                                   0u);
+
+    {
+        uint32_t sp_post = task_saved_sp(me);
+        if (sp_post != sp_pre) {
+            uart_puts("   [phy] saved sp of task ");
+            uart_put_dec((unsigned int)me);
+            uart_puts(" changed across the call: ");
+            uart_put_hex(sp_pre);
+            uart_puts(" -> ");
+            uart_put_hex(sp_post);
+            uart_puts(", phy used ");
+            uart_put_dec(phy_stack_used());
+            uart_puts(" of ");
+            uart_put_dec(phy_stack_size());
+            uart_puts(" B\n");
+        } else {
+            uart_puts("   [phy] saved sp unchanged across the call\n");
+        }
+    }
     return (int)g_phy_result;
 }
 

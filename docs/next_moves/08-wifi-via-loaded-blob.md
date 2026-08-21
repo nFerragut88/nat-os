@@ -4526,3 +4526,64 @@ the call:
    against the 6 KB buffer and the distance from `_phy_stack` to `g_tasks[]`
 
 **Nothing has been on air.**
+
+---
+
+## Step 66 — the write is inside the PHY call, and the scheduler is running when it shouldn't be
+
+Bracketing `phy_stack_call` in `phyinit_run_at()`:
+
+```
+[!] task 5 sp 0x3ffc0020 left its stack
+[phy] saved sp of task 5 changed across the call: 0x3ffba810 -> 0x3ffc0020,
+      phy used 1296 of 6144 B
+```
+
+Two facts, and the second is the important one.
+
+**It is not a buffer overrun.** The PHY used 1296 of 6144 bytes. Nothing walked
+off the end of `_phy_stack`.
+
+**The scheduler ran during the call.** `g_tasks[].sp` is written by nothing else
+after task creation, and the `[!]` line — emitted from `task_schedule()` — is
+printed *before* the post-call bracket. So a tick was serviced while `a1` was on
+the private PHY stack, and the task was duly saved pointing at it.
+
+That should be impossible. `g_phy_call_mask` is `1` (`.word 1` in `.data`, not a
+`.bss` zero), so `phy_stack_call` takes `rsil a9, 3`, and the tick is level 3.
+
+### The candidate
+
+`phy_exit_critical()` in `vendor/windowed/phy_host.c`:
+
+```c
+if (g_crit_depth > 0 && --g_crit_depth == 0) {
+    ps = (ps & ~0xFu) | (g_crit_saved & 0xFu);   /* step 35 made this INTLEVEL-only */
+}
+```
+
+with `g_crit_saved` captured only on the *outermost* enter:
+
+```c
+if (g_crit_depth++ == 0) { g_crit_saved = ps; }
+```
+
+The blob calls these around its own critical sections. If `g_crit_depth` is ever
+stale — an unbalanced pair, or a depth left over from an earlier call — then the
+level restored is one captured **outside** `phy_stack_call`'s masked region, and
+`INTLEVEL` drops to 0 in the middle of the PHY call. Interrupts return, the tick
+fires, and the scheduler saves a task that is running on a stack it does not own.
+
+This is a candidate with a mechanism, not a conclusion — the last five of those
+were wrong, and the way to settle it is the same as every time: record
+`g_crit_depth` and the `INTLEVEL` actually restored, rather than reason about
+when they could be wrong.
+
+### Why this matters beyond the symptom
+
+If the blob can drop the kernel's interrupt level from inside a masked region,
+then *no* masked region in this system is safe while blob code runs — which is a
+much larger statement than one corrupted `sp`, and it would apply to
+`phy_stack_call`, `crit_enter()` and the blob lock equally.
+
+**Nothing has been on air.**
