@@ -242,7 +242,21 @@ int task_create_with_stack(const char *name, task_entry_fn entry,
             uint32_t wb;
             __asm__ volatile ("rsr.windowbase %0" : "=r"(wb));
             frame[TASK_FRAME_IDX_WBASE]  = wb;
-            frame[TASK_FRAME_IDX_WSTART] = 1u << (wb & 31u);
+            /* CLAIM NOTHING.
+             *
+             * A new task has no windowed frames -- it starts in call0 code, and
+             * the first windowed call it makes sets its own bit, because that is
+             * what `entry` does. Seeding a bit here asserts a frame exists
+             * before one does, and step 50 measured where that goes: the blob
+             * task is created from INSIDE the driver's own excursion, so the
+             * creator's base is in the middle of the creator's live window, and
+             * the claim lands on somebody else's registers.
+             *
+             * The base is still recorded, because the restore needs somewhere to
+             * put the sixteen registers; that is harmless, since every task's
+             * registers travel through memory on each switch. It is the BIT that
+             * was the lie. */
+            frame[TASK_FRAME_IDX_WSTART] = 0u;
         }
 
         g_tasks[id].sp         = (uint32_t)frame;

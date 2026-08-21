@@ -3779,3 +3779,46 @@ its own, which is what step 50 established `task_create()` does when the creator
 is mid-excursion. The two are separate defects and only one is fixed.
 
 **Nothing has been on air.**
+
+---
+
+## Step 52 — new tasks claim nothing, and the phantom is not theirs
+
+A new task has no windowed frames: it starts in call0 code, and the first
+windowed call it makes sets its own bit, because that is what `entry` does.
+Seeding a bit at creation asserts a frame exists before one does. `task_create()`
+now seeds `WINDOWSTART = 0` and records only the base, which the restore needs
+somewhere to put sixteen registers and which is harmless because every task's
+registers travel through memory on each switch.
+
+Correct on its own terms, and **not** the source of the phantom:
+
+```
+boot 11 PASS 0 FAIL   wintorture CORRECT   wincollide runs=142 wrong=0   blobphy rc=0
+wifiinit task: LoadProhibited, DEPC 0x40080103, excvaddr 0x0000000d  (unchanged)
+```
+
+Byte for byte the same fault. Step 50's diagnosis — that the blob task is created
+from inside the driver's excursion and inherits a base in the creator's live
+window — was a real defect and is now fixed, but it is not what produces the
+frame being spilled.
+
+### What the remaining phantom looks like
+
+`_WindowOverflow12+3` faults loading `[a1 - 12]` with `a1 = 0x19`. Twenty-five.
+Not a stack pointer, not null, not an address at all — a small integer, of the
+kind a register holds when it contains a count or an index rather than a
+pointer.
+
+So a window position has its bit set while its registers hold ordinary data.
+With ownership tracking in place the bit must have come from some task's
+switch-out `WINDOWSTART` — `g_win_mask[t] = ws_out & ~others` — which means the
+hardware itself had that bit set at a switch. Either a frame really was live
+there and its registers were later overwritten, or the attribution is wrong.
+
+The next instrument follows directly and is cheap: record, per task, the mask it
+claimed and the base it claimed it at, and print the table at the panic. That
+turns "some position is lying" into "task N claimed position P at time T", which
+is the same move that worked for the double exception and for the overflow base.
+
+**Nothing has been on air.**
