@@ -34,7 +34,22 @@ _Static_assert(TASK_FRAME_BYTES >= TASK_FRAME_WORDS * 4,
 _Static_assert((TASK_FRAME_BYTES % 16) == 0,
                "Xtensa requires a 16-byte aligned stack");
 
-static task_t   g_tasks[TASK_MAX];
+/* The task table, fenced.
+ *
+ * next_moves/08 step 62: g_tasks[5].sp holds a value the scheduler never saved,
+ * and after creation the scheduler is the only thing that assigns it. So
+ * something outside writes here. One struct rather than three objects, because
+ * separate statics may be placed anywhere and the point is adjacency. */
+static struct {
+    uint32_t lo;
+    task_t   t[TASK_MAX];
+    uint32_t hi;
+} g_ttab = { 0xA5A5A5A5u, {{0}}, 0x5A5A5A5Au };
+
+#define g_tasks (g_ttab.t)
+
+volatile uint32_t g_ttab_lo_seen, g_ttab_hi_seen;   /* first clobbered value */
+volatile int      g_ttab_side = -1;                 /* 0 = below, 1 = above */
 static uint32_t g_stacks[TASK_MAX][TASK_STACK_WORDS];
 
 /* Scratch for _handler_level3's window-state restore: the frame pointer has to
@@ -411,6 +426,15 @@ uint32_t task_schedule(uint32_t current_sp)
                 g_phytop_task = g_current;
                 g_phytop_epc  = ((const uint32_t *)current_sp)[TASK_FRAME_IDX_EPC3];
                 g_phytop_a0   = ((const uint32_t *)current_sp)[0];
+            }
+        }
+
+        /* Fence check, once per switch, before anything trusts the table. */
+        if (g_ttab_side < 0) {
+            if (g_ttab.lo != 0xA5A5A5A5u) {
+                g_ttab_side = 0; g_ttab_lo_seen = g_ttab.lo;
+            } else if (g_ttab.hi != 0x5A5A5A5Au) {
+                g_ttab_side = 1; g_ttab_hi_seen = g_ttab.hi;
             }
         }
 

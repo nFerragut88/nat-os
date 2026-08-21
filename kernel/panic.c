@@ -475,6 +475,21 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
                 uart_puts("\n");
             }
 
+            {
+                extern volatile int g_ttab_side;
+                extern volatile uint32_t g_ttab_lo_seen, g_ttab_hi_seen;
+                uart_puts("  ttab fence: ");
+                if (g_ttab_side < 0) { uart_puts("intact both sides"); }
+                else if (g_ttab_side == 0) {
+                    uart_puts("BELOW the table clobbered, value ");
+                    uart_put_hex(g_ttab_lo_seen);
+                } else {
+                    uart_puts("ABOVE the table clobbered, value ");
+                    uart_put_hex(g_ttab_hi_seen);
+                }
+                uart_puts("\n");
+            }
+
             uart_puts("  woe watch : ");
             if (g_woe_lost_at == 0xFFFFFFFFu) {
                 uart_puts("never seen clear at an adapter entry");

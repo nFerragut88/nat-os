@@ -4364,3 +4364,57 @@ Find the writer, the same way:
 (2) is the cheapest and names the direction of the overrun immediately.
 
 **Nothing has been on air.**
+
+---
+
+## Step 63 — not an overrun, and the value tracks the symbol
+
+The task table is now fenced: one struct holding a guard word, `g_tasks[]`, and a
+second guard word, checked once per switch.
+
+```
+ttab fence: intact both sides
+bad sp    : task 5 sp 0x3ffc0020 outside 0x3ffba0b8..0x3ffba8b8
+phytop    : never saved at _phy_stack_top
+last osi  : entry 29  _queue_recv
+epc       : 0x7ffffff0   (no DOUBLE line -- a first-level fault this time)
+```
+
+Three things follow.
+
+**It is not a linear overrun.** Both fences are untouched, so nothing is walking
+into `g_tasks[]` from the object below or above it.
+
+**The value follows the symbol.** Adding eight bytes of `.bss` for the fence
+moved the reported `sp` from `0x3ffc0000` to `0x3ffc0020` — exactly the shift, so
+it really is `_phy_stack_top`'s address and not a coincidence of the number.
+
+**And the scheduler still never wrote it.** `phytop` remains silent, so the value
+does not arrive through `g_tasks[g_current].sp = current_sp`.
+
+A targeted write of a known symbol's address into one field of one task, with the
+fences either side untouched, is not corruption by accident. It is something
+computing a pointer into the table.
+
+### Also changed
+
+`last osi` is now **entry 29 `_queue_recv`**, not 15 `_semphr_take`, and the
+fault is a first-level `IllegalInstruction` at `0x7ffffff0` rather than a double
+exception. The blob is getting further than it was — far enough to reach a
+different adapter entry — which is consistent with steps 57-61 having removed
+real obstacles even though none of them was this.
+
+### Next
+
+The write is targeted, so catch it by address rather than by symptom. `g_tasks[]`
+is at a known DRAM address and `sp` is at a known offset within each entry:
+
+1. Take the address of `g_tasks[5].sp` and watch that one word — sample it in
+   `task_schedule()` and in the blocking stub, before and after each blob call,
+   and latch the first transition together with `last osi`. That brackets the
+   write to a single adapter entry.
+2. The ESP32 has no data watchpoint available without a debug probe, which is
+   why this is sampling rather than a trap. The probe remains ordered and not in
+   hand.
+
+**Nothing has been on air.**
