@@ -689,9 +689,25 @@ phy_stack_call:
      * that killed them were the useful part: it was not stack DEPTH -- the
      * fault came 272 bytes into 6144 -- and it was not stale WINDOWSTART bits,
      * since declaring a single live frame did not change it either. */
-    movi    a9,  _phy_stack_top
+    /* The caller's REAL stack pointer, not a marker.
+     *
+     * This wrote `_phy_stack_top` -- a plausible-looking value chosen so
+     * _WindowOverflow8/12 would find something sane at [sp-12] and stop
+     * spilling through a .bss zero. It fixed that StoreProhibited and created a
+     * quieter bug in the mirror direction: _WindowUnderflow8/12 restores a1 from
+     * this same slot, so a frame underflowing through the base frame comes back
+     * with a1 = _phy_stack_top, and a switch landing there saves the task
+     * pointing at the top of a shared buffer it does not own.
+     *
+     * Measured for many steps as `bad sp: task 5 sp 0x3ffc0000`, and the value
+     * is what identified it -- a1 after the switch would be _phy_stack_top - 64,
+     * never the top exactly.
+     *
+     * a1 still holds the caller's sp here: step 59 moved the switch after the
+     * mask, and this runs before both. So the slot can hold something true
+     * rather than something merely unobservable. */
     addi    a10, a8, -12            /* s32i takes no negative offset */
-    s32i    a9,  a10, 0
+    s32i    a1,  a10, 0
 
 
     /* Mask interrupts for the duration.

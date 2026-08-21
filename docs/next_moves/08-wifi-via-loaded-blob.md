@@ -4267,3 +4267,48 @@ path under test and generalised past it. The `bad sp` check exists precisely to
 catch that class, and it did.
 
 **Nothing has been on air.**
+
+---
+
+## Step 61 — the sentinel is gone, the symptom is not
+
+The base save area now holds the caller's real `sp` instead of `_phy_stack_top`.
+`a1` still carries it at that point, since step 59 moved the switch after the
+mask, so the slot costs nothing and an underflow through the base frame now
+restores something true rather than something merely plausible.
+
+Correct, no regressions — and not the symptom:
+
+```
+boot 11 PASS 0 FAIL   wintorture CORRECT   wincollide runs=138 wrong=0   blobphy rc=0
+bad sp : task 5 sp 0x3ffc0000 outside 0x3ffb9e88..0x3ffba688     (unchanged)
+```
+
+### What that leaves
+
+`_phy_stack_top` now appears in exactly three places:
+
+- `phy_stack_call`'s frame base, which is `top - 64` and never the top itself
+- `phyinit.c`, twice, as a **bound** for priming and for `phy_stack_size()` —
+  never as a stack pointer
+
+So on the current reading, nothing assigns `a1 = _phy_stack_top`, and the check
+still reports it. One of those two statements is wrong, and the cheap way to find
+out which is to stop reasoning about who *could* write it and record who *did*:
+latch the value in `task_schedule()` the first time a saved `sp` equals
+`_phy_stack_top` exactly, along with the task and its saved `epc`. The `epc` names
+the instruction that was executing, which is the thing every inference so far has
+been standing in for.
+
+That is the same move that ended the double-exception confusion (step 39) and the
+overflow-base hunt (step 48): stop deducing the writer, record it.
+
+### Standing
+
+Three fixes in this stretch — the switch/mask ordering (59), the truthful base
+save area (61), and before them the phantom frame (57) — are all correct, all
+verified free of regressions, and none of them is the `bad sp`. That is worth
+stating plainly rather than letting a run of green suites imply progress on the
+symptom.
+
+**Nothing has been on air.**
