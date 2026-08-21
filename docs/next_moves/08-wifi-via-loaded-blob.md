@@ -4473,3 +4473,56 @@ three stages does it, with no new instrumentation at all — every probe needed 
 already in the build.
 
 **Nothing has been on air.**
+
+---
+
+## Step 65 — bisected: PHY init is the stage
+
+The `bad sp` check now announces at the latch rather than only in a panic dump,
+so any command is self-reporting. (`nestfault` was no help — it goes through
+`kernel_panic_msg`, a different entry point that does not print the window
+diagnostics.)
+
+```
+nothing      ok
+blob         ok        <- blob_map + blob_init are clean
+blobphy      BAD       <- [!] task 5 sp 0x3ffc0020 left its stack
+wifiinit     BAD
+```
+
+`blob_map()` and `blob_init()` are innocent. The corruption happens inside
+`phyinit_run_at()` — `phy_stack_call` → `register_chipv7_phy`.
+
+That is a large narrowing. The search space went from "somewhere in WiFi init,
+across a driver, an adapter table and a task" to a single call that has been
+working since rev 1.1 and reports `rc=0`.
+
+### What it means that PHY init is where it happens
+
+`phy_stack_call` masks interrupts for the whole call, and since step 59 the mask
+is taken before the switch — so **no context switch can occur during the PHY
+call at all**. The scheduler cannot be saving anything, which matches `phytop`
+staying silent.
+
+So `g_tasks[5].sp` is written by a store that is not the scheduler, during a
+window in which the scheduler is not running. That is the blob's own PHY code
+writing outside its stack, and the value it leaves is the address of
+`_phy_stack_top`.
+
+The obvious reading — the PHY writes a pointer to its own stack top somewhere it
+should not — is exactly the kind of inference that has been wrong four times in
+this investigation, so it is written here as a candidate and not a conclusion.
+
+### Next
+
+`blobphy` is now a one-command reproducer that runs in seconds and needs no
+driver, no adapter table and no blob task. That is a far better instrument than
+`wifiinit task`, and the first thing to do with it is bracket the write inside
+the call:
+
+1. sample `g_tasks[5].sp` immediately before and after `phy_stack_call` in
+   `phyinit_run_at()` — if it is bad after, the write is inside the PHY call
+2. if so, `phy_stack_used()` already reports how deep the PHY went; compare
+   against the 6 KB buffer and the distance from `_phy_stack` to `g_tasks[]`
+
+**Nothing has been on air.**

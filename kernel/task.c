@@ -775,6 +775,20 @@ uint32_t task_schedule(uint32_t current_sp)
                  * bracketing it to one entry is the whole remaining question. */
                 g_badsp_osi  = g_woe_prev_hit;
                 g_badsp_tick = timer_ticks();
+
+                /* Say so IMMEDIATELY, once.
+                 *
+                 * The panic dump only appears on an exception, so bisecting
+                 * which stage corrupts the table meant provoking a fault to read
+                 * the result -- and kernel_panic_msg takes a different path that
+                 * does not print it. Announcing at the latch makes any command
+                 * self-reporting. Polled UART, one line, guarded by the same
+                 * stickiness as the record. */
+                uart_puts("\n[!] task ");
+                uart_put_dec((unsigned int)next);
+                uart_puts(" sp ");
+                uart_put_hex(sp);
+                uart_puts(" left its stack\n");
             }
         }
     }
