@@ -4587,3 +4587,52 @@ much larger statement than one corrupted `sp`, and it would apply to
 `phy_stack_call`, `crit_enter()` and the blob lock equally.
 
 **Nothing has been on air.**
+
+---
+
+## Step 67 — no: the blob never touches the interrupt level
+
+Step 66's candidate was that the blob lowers `PS.INTLEVEL` through
+`phy_exit_critical()` with a stale `g_crit_depth`, re-enabling interrupts inside
+`phy_stack_call`'s masked region. Instrumented and measured:
+
+```
+[phy] crit enter/exit 0/0   never lowered the level
+```
+
+**Zero.** `register_chipv7_phy` never calls the critical-section API at all, so it
+never restores an interrupt level, so it cannot have re-enabled interrupts that
+way. The hypothesis is dead, and with it step 66's larger worry that no masked
+region in the system is safe while blob code runs. That worry was unfounded.
+
+### What survives
+
+```
+[!] task 5 sp 0x3ffc0020 left its stack
+[phy] saved sp of task 5 changed across the call: 0x3ffba810 -> 0x3ffc0020
+```
+
+`g_tasks[5].sp` still changes across the PHY call, and `phytop` still never fires,
+so the value is still not arriving through `g_tasks[g_current].sp = current_sp`.
+
+And the arithmetic still refuses the simple reading: `phy_stack_call` builds at
+`a8 = _phy_stack_top - 64` = `0x3ffbffe0`, so `a1` inside the call is
+`0x3ffbffe0`, never `0x3ffc0020`. The recorded value is the **top itself**, which
+no stack pointer in that function ever holds. This is the same arithmetic that
+retired the mid-switch race at step 60, and it retires the "a tick caught it on
+the PHY stack" reading here for exactly the same reason.
+
+### What that leaves
+
+Something writes the *address* `_phy_stack_top` into one word of the task table
+during the PHY call, while the scheduler is masked out, without overrunning the
+table's fences and without going through the save path.
+
+The one thing not yet checked is the simplest: whether `g_tasks[5].sp` is where
+this code thinks it is. Every conclusion above assumes the address of that field,
+and the `[!]` print reports a value read back through the same expression that
+would be wrong if the assumption were. Print `&g_tasks[5].sp` alongside
+`_phy_stack` and `_phy_stack_top` and confirm they are distinct regions — a check
+that costs one line and has never been done.
+
+**Nothing has been on air.**

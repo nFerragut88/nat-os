@@ -172,6 +172,23 @@ int phyinit_run_at(uint32_t fn)
         } else {
             uart_puts("   [phy] saved sp unchanged across the call\n");
         }
+        {
+            extern uint32_t g_crit_enters, g_crit_exits;
+            extern uint32_t g_crit_lowered, g_crit_from_lvl, g_crit_to_lvl;
+            uart_puts("   [phy] crit enter/exit ");
+            uart_put_dec(g_crit_enters);
+            uart_puts("/");
+            uart_put_dec(g_crit_exits);
+            if (g_crit_lowered) {
+                uart_puts("   LOWERED intlevel ");
+                uart_put_dec(g_crit_from_lvl);
+                uart_puts(" -> ");
+                uart_put_dec(g_crit_to_lvl);
+            } else {
+                uart_puts("   never lowered the level");
+            }
+            uart_puts("\n");
+        }
     }
     return (int)g_phy_result;
 }

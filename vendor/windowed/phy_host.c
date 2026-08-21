@@ -33,10 +33,15 @@
 static uint32_t g_crit_saved;
 static int      g_crit_depth;
 
+/* Instrumentation for step 66 -- see phy_exit_critical(). */
+uint32_t g_crit_enters, g_crit_exits;
+uint32_t g_crit_lowered, g_crit_from_lvl, g_crit_to_lvl;
+
 void phy_enter_critical(void)
 {
     uint32_t ps;
     __asm__ volatile ("rsil %0, 3" : "=a"(ps));
+    g_crit_enters++;
     if (g_crit_depth++ == 0) {
         g_crit_saved = ps;
     }
@@ -51,6 +56,22 @@ void phy_exit_critical(void)
          * capture time rather than as it must be now. */
         uint32_t ps;
         __asm__ volatile ("rsr.ps %0" : "=a"(ps));
+        /* Did the blob just lower the kernel's interrupt level?
+         *
+         * next_moves/08 step 66. Recorded rather than reasoned about: the level
+         * in force now, the level about to be restored, and how many times this
+         * has run. If the restore is ever LOWER than what was in force, the blob
+         * has re-enabled interrupts inside a region the kernel masked. */
+        g_crit_exits++;
+        {
+            uint32_t now_lvl = ps & 0xFu;
+            uint32_t new_lvl = g_crit_saved & 0xFu;
+            if (new_lvl < now_lvl && !g_crit_lowered) {
+                g_crit_lowered   = 1u;
+                g_crit_from_lvl  = now_lvl;
+                g_crit_to_lvl    = new_lvl;
+            }
+        }
         ps = (ps & ~0xFu) | (g_crit_saved & 0xFu);
         __asm__ volatile ("wsr.ps %0; rsync" :: "a"(ps));
     }
