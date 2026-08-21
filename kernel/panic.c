@@ -324,7 +324,12 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
      * WINDOWSTART are the two registers that decide whether an `entry` or a
      * `retw` is legal, and the call0 handler between the fault and here does
      * not touch either -- so they still read as they did at the fault. */
-    if (exccause == 0u || exccause == 2u) {
+    /* UNCONDITIONAL. Gating this on a cause list has now hidden a changed fault
+     * twice -- step 38 (exccause 2 arrived, the block was gated on 0) and again
+     * at step 53 (exccause 28 arrived, the block was gated on 0 and 2). Both
+     * times the panic printed less than it knew and the run read as unchanged.
+     * The lesson was written down after the first one and not applied. */
+    {
         uint32_t wb, ws;
         __asm__ volatile ("rsr.windowbase  %0" : "=r"(wb));
         __asm__ volatile ("rsr.windowstart %0" : "=r"(ws));
@@ -476,6 +481,10 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
             uart_put_hex(base);
             uart_puts("+");
             uart_put_dec(w * 4u);
+            uart_puts(" win ");
+            uart_put_hex(task_win_mask(t));
+            uart_puts("@");
+            uart_put_dec(task_win_base(t));
             uart_puts(task_stack_intact(t) ? " guard ok\n" : " GUARD BROKEN\n");
         }
     }

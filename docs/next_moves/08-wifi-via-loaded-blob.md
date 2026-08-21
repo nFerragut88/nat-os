@@ -3822,3 +3822,62 @@ turns "some position is lying" into "task N claimed position P at time T", which
 is the same move that worked for the double exception and for the overflow base.
 
 **Nothing has been on air.**
+
+---
+
+## Step 53 — the attribution rule is wrong, and the table says so
+
+Printing each task's recorded claim alongside the base it claimed at:
+
+```
+task 5 (shell)  win 0x00002000@13   guard ok
+task 6 (disp)   win 0x0000c400@1    guard ok
+task 0..4,7..9  win 0x00000000@..   guard ok
+windowbase 10   windowstart 0x0000e64a
+```
+
+`disp` is a call0 task. It never executes a windowed instruction. It has been
+credited with **bits 10, 14 and 15**, at a base of 1 — three window positions it
+cannot possibly have created.
+
+### Why
+
+The attribution rule is
+
+```c
+g_win_mask[g_current] = ws_out & ~others;
+```
+
+"whatever is set at my switch-out that nobody else has claimed." That credits
+the *current* task with frames belonging to a task that simply has not been
+switched out since. The shell enters the blob and goes deep; `disp` is switched
+out while those frames are live; the shell has not yet re-claimed them at its own
+switch-out, so `~others` lets them through and `disp` takes ownership of the
+driver's window.
+
+Then the union keeps them alive after the shell has spilled and released, and an
+overflow eventually walks into a position whose registers hold `0x19` — the
+`a1 = 25` from step 52, an index, not a pointer.
+
+So ownership tracking (step 51) was the right idea implemented with the wrong
+rule. It fixed the accumulation problem and introduced a misattribution one.
+
+### The rule it should be
+
+A task can only own frames it created, and after the step-34 spill it parks with
+exactly one: **its own base**. So the claim is `1u << base`, not "everything
+unclaimed". A call0 task owns one position; a windowed task that blocked owns one
+position; nothing owns three positions at a base four away from them.
+
+That is a one-line change with a ready-made check: `disp` must show
+`win 0x00000200@..`-shaped values matching its own base, and `of filter` must
+stay empty.
+
+### An instrument failure, repeated
+
+This table did not print on the first attempt: the window diagnostics were gated
+on `exccause == 0 || exccause == 2`, and the fault is 28. The identical mistake
+was made at step 38, written up there as a lesson, and then made again. The block
+is now unconditional.
+
+**Nothing has been on air.**

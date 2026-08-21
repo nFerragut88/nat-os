@@ -59,10 +59,12 @@ volatile uint32_t g_switch_sp;
  * and a restore may assign exactly that -- keeping other tasks' frames and
  * dropping bits nobody owns. */
 static uint32_t g_win_mask[TASK_MAX];
+static uint8_t  g_win_base[TASK_MAX];   /* the base each claim was made at */
 volatile uint32_t g_win_union;          /* read by _handler_level3 */
 
 uint32_t task_win_union(void) { return g_win_union; }
 uint32_t task_win_mask(int id) { return (id >= 0 && id < TASK_MAX) ? g_win_mask[id] : 0u; }
+uint32_t task_win_base(int id) { return (id >= 0 && id < TASK_MAX) ? g_win_base[id] : 0u; }
 
 /* Tasks switched away from with more than one live windowed frame. See
  * task_schedule(). Zero is the design; anything else is the bug. */
@@ -430,6 +432,8 @@ uint32_t task_schedule(uint32_t current_sp)
                 if (t != g_current) { others |= g_win_mask[t]; }
             }
             g_win_mask[g_current] = ws_out & ~others;
+            g_win_base[g_current] =
+                (uint8_t)((const uint32_t *)current_sp)[TASK_FRAME_IDX_WBASE];
         }
 
         uint32_t ws = ((const uint32_t *)current_sp)[TASK_FRAME_IDX_WSTART];
