@@ -222,6 +222,20 @@ int task_create(const char *name, task_entry_fn entry)
     return task_create_with_stack(name, entry, 0, 0u);
 }
 
+/* Seed the overflow probe's scratch so it cannot report its own uninitialised
+ * state. _WindowOverflow8/12 write EXCSAVE 6/7 on every overflow; until the
+ * first one they hold whatever was there at reset, and a zero satisfies the
+ * "not a stack address" filter perfectly. That is what `base 0x00000000 from
+ * frame sp 0x00000000` has been reporting since step 48 -- the probe firing on
+ * nothing at all. See next_moves/08 step 73. */
+void win_probe_seed(void);
+void win_probe_seed(void)
+{
+    uint32_t sentinel = 0xFFFFFFFFu;
+    __asm__ volatile ("wsr.excsave6 %0" :: "r"(sentinel));
+    __asm__ volatile ("wsr.excsave7 %0" :: "r"(sentinel));
+}
+
 int task_create_with_stack(const char *name, task_entry_fn entry,
                            uint32_t *stack_in, uint32_t words_in)
 {
@@ -411,6 +425,14 @@ uint32_t task_schedule(uint32_t current_sp)
 {
     /* On the very first switch there is no task to save — the interrupted
      * context is the boot path, which is deliberately discarded. */
+    /* Seed the overflow probe once, here rather than in kmain.c -- kmain is
+     * flash-resident and step 25 measured that adding to it walks into the
+     * layout band. */
+    {
+        static int seeded;
+        if (!seeded) { seeded = 1; win_probe_seed(); }
+    }
+
     uint32_t now = xt_ccount();
     if (g_current >= 0) {
         /* Catch the write, not its consequence.

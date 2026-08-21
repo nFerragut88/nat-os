@@ -254,7 +254,10 @@ static void of_sample(uint32_t when)
     uint32_t base, frame;
     __asm__ volatile ("rsr.excsave6 %0" : "=r"(base));
     __asm__ volatile ("rsr.excsave7 %0" : "=r"(frame));
-    if (g_of_bad_when == 0u && base < 0x3ff00000u) {
+    /* 0xFFFFFFFF is the seed (win_probe_seed) meaning "no overflow yet", and a
+     * base at or above DRAM is a legitimate recovery. Only what is neither is
+     * worth reporting. */
+    if (g_of_bad_when == 0u && base != 0xFFFFFFFFu && base < 0x3ff00000u) {
         g_of_bad_base  = base;
         g_of_bad_frame = frame;
         g_of_bad_when  = when;

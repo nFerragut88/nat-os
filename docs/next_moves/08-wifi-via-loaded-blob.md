@@ -4914,3 +4914,56 @@ bad sp none
 ```
 
 **Nothing has been on air.**
+
+---
+
+## Step 73 — the overflow probe was reporting its own uninitialised state
+
+`EXCSAVE 6/7` are written by `_WindowOverflow8/12` on every overflow, and until
+the first one they hold whatever survived reset. `of_sample`'s filter was
+`base < 0x3ff00000`, which a zero satisfies perfectly — so the probe latched
+before any overflow had occurred, and `base 0x00000000 recovered from frame sp
+0x00000000` has meant *nothing happened yet* since step 48.
+
+Seeded to `0xFFFFFFFF` (from `task_schedule()`, not `kmain.c` — kmain is
+flash-resident and step 25 measured that adding to it walks into the layout
+band) and filtered against the seed:
+
+```
+of filter : no near-null base recovered
+```
+
+Twenty-five steps of "AFTER spill, base 0x0" were the probe firing on itself.
+Fifth instance of the class, and the most expensive: unlike the others this one
+produced a *positive* reading rather than a silence, which is far more
+persuasive and no more true.
+
+### What the fault actually is, now that nothing is lying
+
+```
+exccause 29 (StoreProhibited)   DEPC 0x40080100   excvaddr 0x00000009
+windowbase 7   windowstart 0x0000e4c8   last osi 15 _semphr_take
+```
+
+`0x40080100` is the **first instruction** of `_WindowOverflow12`:
+
+```asm
+s32e a0, a13, -16
+```
+
+`excvaddr 0x9` means `a13 = 0x19`. **The frame being spilled has a stack pointer
+of 25.** Not a corrupted pointer — 25 is a plausible loop counter, index or
+length. A register holding ordinary data is being used as a frame pointer,
+because `WINDOWSTART` says a frame lives at that position.
+
+`windowstart 0x0000e4c8` = bits 3, 6, 7, 10, 13, 14, 15 — seven live frames, with
+`windowbase 7`. The blob is genuinely deep in windowed calls when this happens.
+
+### Next
+
+The probe records at the `l32e`, which is the *second* instruction — after the
+faulting store. It never runs. Move the `wsr.excsave7 a13` to the very top of
+`_WindowOverflow12`, before the first `s32e`, and the frame that owns the bad
+pointer is named directly rather than inferred.
+
+**Nothing has been on air.**
