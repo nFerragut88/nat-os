@@ -765,7 +765,18 @@ uint32_t task_schedule(uint32_t current_sp)
         if (base != 0u) {
             uint32_t lo = base;
             uint32_t hi = base + g_tasks[next].stack_words * 4u;
-            if ((sp < lo || sp > hi) && g_badsp_task < 0) {
+            /* The private PHY stack is a legitimate place for a task to be
+             * executing, so a saved sp inside it is expected rather than wrong.
+             * phy_stack_call switches onto it deliberately, and the save and
+             * restore around a tick are symmetric -- step 70.
+             *
+             * Everything else outside the owning task's stack is still worth
+             * catching. That property has never actually been violated, which is
+             * the point of keeping the check rather than deleting it. */
+            extern uint32_t _phy_stack[], _phy_stack_top[];
+            int on_phy = (sp >= (uint32_t)_phy_stack && sp <= (uint32_t)_phy_stack_top);
+
+            if ((sp < lo || sp > hi) && !on_phy && g_badsp_task < 0) {
                 extern volatile uint32_t g_woe_prev_hit;
                 g_badsp_task = next;
                 g_badsp_val  = sp;

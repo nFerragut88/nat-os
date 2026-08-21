@@ -4805,3 +4805,51 @@ still `IllegalInstruction` reaching `_queue_recv`, with the window bookkeeping
 consistent, the phantom frame gone, and the PHY path pinned and excluded.
 
 **Nothing has been on air.**
+
+---
+
+## Step 71 — the false signal is gone, and the real one is unobscured
+
+The `sp` check now knows that `_phy_stack` is a legitimate place for a task to be
+executing, and asserts the rest:
+
+```
+blobphy      rc=0     no spurious [!]
+wintorture   CORRECT
+wincollide   runs=119 wrong=0
+bad sp       none -- every saved sp was inside its own stack
+```
+
+**"none" is the useful result.** It says there is, and was, no stack-pointer
+corruption anywhere in this system — the property the check was written to assert
+now holds and is stated rather than assumed. Thirteen steps were spent on a
+signal that meant "a task ran on the private stack", which it was designed to do.
+
+### The real failure, unobscured
+
+```
+exccause 28 (LoadProhibited)   DEPC 0x40080103   epc1 0x4008b34b
+last osi : entry 15  _semphr_take
+```
+
+`0x40080103` is `_WindowOverflow12 + 3`: the `l32e a0, a1, -12` that recovers a
+caller's stack pointer before spilling through it. A frame is being overflowed
+whose `a1` is not a stack pointer.
+
+That is the same fault as step 51, and everything since has been either a real
+but unrelated fix or a false trail. What is different now is the ground it stands
+on:
+
+- window bookkeeping is internally consistent (56, 57)
+- the phantom frame from bad ownership is gone (57)
+- no task's saved `sp` is ever wrong (71)
+- the PHY path is pinned and excluded, not merely masked (69, 70)
+- the mask is known to be advisory across a blob call (69)
+
+So the frame with the bad `a1` is not produced by any of those, and the next
+question is narrow: **which frame, and who built it.** The overflow probe already
+records the recovered base and the frame `sp` into `EXCSAVE 6/7`; it needs the
+same treatment the `sp` check just got — an exception for what is legitimate, so
+that what it reports is what is wrong.
+
+**Nothing has been on air.**
