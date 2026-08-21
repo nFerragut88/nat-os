@@ -4853,3 +4853,64 @@ same treatment the `sp` check just got — an exception for what is legitimate, 
 that what it reports is what is wrong.
 
 **Nothing has been on air.**
+
+---
+
+## Step 72 — `wifiinit 0x101` was a stale number, not a regression
+
+Plain `wifiinit` panics: `LoadProhibited` at `_WindowOverflow12 + 3`, the same
+fault as `wifiinit task`. Two single-variable tests cleared the obvious suspects:
+
+| test | result |
+|---|---|
+| step 70's pin around `phy_stack_call` removed | still panics |
+| step 61's base-save-area change reverted | still panics |
+
+So it was bisected instead:
+
+| commit | `wifiinit` |
+|---|---|
+| `09cf215` (HEAD) | PANIC |
+| `be82d1c` | PANIC |
+| `4423f36` | PANIC |
+| `b817349` | PANIC |
+| `c16d257` | **PANIC** |
+
+`c16d257` is the commit whose own message reads
+`wifiinit 0x101 ESP_ERR_NO_MEM`. It was already panicking when that was written.
+
+**There is no regression.** `0x101` was measured once, well before that commit,
+and then carried forward through every "standing state" table since — in commit
+messages, in `next_moves/08`, and in UM-NATOS-038 rev 1.4 and 1.5 — without being
+re-measured. The suites run in between mostly exercised `wifiinit task`, and the
+one number nobody checked stayed in the report looking like evidence.
+
+This is the same failure as step 68's `_phy_stack_top`, and it is the fourth of
+its kind in this investigation:
+
+- a constant read once and carried forward (step 68)
+- a counter that could not produce the value it was trusted to rule out (54)
+- a probe comparing against a stale symbol, so its silence was a tautology (62)
+- **a result carried in a summary table long after it stopped being true (here)**
+
+The rule that covers all four: **a number in a report is a claim, and a claim
+that is not re-measured decays into an assumption without changing appearance.**
+
+### Consequence
+
+`wifiinit` and `wifiinit task` fail identically, which means the fault has nothing
+to do with blob task creation. The reproducer is smaller than believed: no task,
+no `_semphr_take` blocking path required. `esp_wifi_init_internal` alone
+overflows a window through a frame whose `a1` is not a stack pointer.
+
+Standing state, re-measured rather than recalled:
+
+```
+boot 11 PASS 0 FAIL   wintorture CORRECT (switches=0)   wincollide runs=125 wrong=0
+blobphy rc=0, phystack 1296/6144        blobtx force 0x00003004
+wifiinit       PANIC  LoadProhibited, DEPC 0x40080103
+wifiinit task  PANIC  LoadProhibited, DEPC 0x40080103
+bad sp none
+```
+
+**Nothing has been on air.**
