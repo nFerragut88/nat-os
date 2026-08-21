@@ -42,6 +42,9 @@ static uint32_t g_stacks[TASK_MAX][TASK_STACK_WORDS];
 volatile uint32_t g_switch_sp;
 
 /* First task whose saved sp fell outside its own stack. See task_schedule(). */
+volatile int      g_phytop_task = -1;   /* who was saved at _phy_stack_top */
+volatile uint32_t g_phytop_epc, g_phytop_a0;
+
 volatile int      g_badsp_task = -1;
 volatile uint32_t g_badsp_val, g_badsp_lo, g_badsp_hi;
 
@@ -393,6 +396,24 @@ uint32_t task_schedule(uint32_t current_sp)
      * context is the boot path, which is deliberately discarded. */
     uint32_t now = xt_ccount();
     if (g_current >= 0) {
+        /* Catch the write, not its consequence.
+         *
+         * A saved sp of exactly _phy_stack_top has been reported for many steps
+         * and three fixes, and every attempt to identify the writer by reading
+         * the code has been wrong. This records it: the task, and the EPC3 in
+         * the frame being saved -- the instruction that was actually executing.
+         *
+         * Read from current_sp, which the handler has just written and is known
+         * good, rather than from the suspect value later. */
+        {
+            extern uint32_t _phy_stack_top[];
+            if (current_sp == (uint32_t)_phy_stack_top && g_phytop_task < 0) {
+                g_phytop_task = g_current;
+                g_phytop_epc  = ((const uint32_t *)current_sp)[TASK_FRAME_IDX_EPC3];
+                g_phytop_a0   = ((const uint32_t *)current_sp)[0];
+            }
+        }
+
         g_tasks[g_current].sp = current_sp;
         g_run_cycles[g_current] += now - g_slice_start;
 

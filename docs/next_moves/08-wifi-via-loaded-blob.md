@@ -4312,3 +4312,55 @@ stating plainly rather than letting a run of green suites imply progress on the
 symptom.
 
 **Nothing has been on air.**
+
+---
+
+## Step 62 — nobody saved it: the task table is being written from outside
+
+Recording the writer instead of deducing it. The save path in `task_schedule()`
+now latches the task and its `EPC3` the first time `current_sp` equals
+`_phy_stack_top` exactly:
+
+```
+bad sp : task 5 sp 0x3ffc0000 outside 0x3ffb9e90..0x3ffba690
+phytop : never saved at _phy_stack_top
+```
+
+Both true in the same run. The scheduler never saved that value, and the
+scheduler is the only code that assigns `g_tasks[].sp` after creation — so
+`g_tasks[5].sp` is being written by **something that is not the scheduler**.
+
+This is a wild store into kernel data, not a register-window problem.
+
+### Why the last several steps could not have worked
+
+Steps 58-61 all treated `0x3ffc0000` as a stack pointer that some code path had
+legitimately produced, and looked for the path: the switch/mask race, the base
+save area sentinel, a second `phy_stack_call` caller. Three fixes came out of
+that, all correct, none of them the symptom — because the premise was wrong. The
+value never flowed through a stack pointer at all.
+
+`_phy_stack_top` is simply what happens to sit at the address being clobbered, or
+what happens to be written there. The name misled every inference built on it,
+including mine, for four steps.
+
+### What to do
+
+Find the writer, the same way:
+
+1. **Bracket it in time.** `g_tasks[5].sp` is checked once per switch already.
+   Record the tick and the running task the first time it goes bad, and compare
+   against `last osi` — that says which adapter entry the blob was in when the
+   table was clobbered.
+2. **Bracket it in space.** `g_tasks[]` sits in DRAM near the stacks and near
+   `_phy_stack` (`0x3ffbe800..0x3ffc0000`). A guard word either side of
+   `g_tasks[]`, checked per switch, converts "something writes here" into
+   "something overran that neighbour".
+3. The blob's `.bss` is zeroed by `blob_init()` at `0x3ffd5018..0x3ffd90f8` and
+   its `.data` copied to `0x3ffd4000` — both well clear of `g_tasks[]`, but the
+   loader's range checks are worth re-reading against the linker symbols rather
+   than trusted.
+
+(2) is the cheapest and names the direction of the overrun immediately.
+
+**Nothing has been on air.**

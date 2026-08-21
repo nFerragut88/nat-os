@@ -459,6 +459,22 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
                 uart_puts("\n");
             }
 
+            {
+                extern volatile int g_phytop_task;
+                extern volatile uint32_t g_phytop_epc, g_phytop_a0;
+                uart_puts("  phytop    : ");
+                if (g_phytop_task < 0) { uart_puts("never saved at _phy_stack_top"); }
+                else {
+                    uart_puts("task ");
+                    uart_put_dec((unsigned int)g_phytop_task);
+                    uart_puts(" was executing epc ");
+                    uart_put_hex(g_phytop_epc);
+                    uart_puts(" a0 ");
+                    uart_put_hex(g_phytop_a0);
+                }
+                uart_puts("\n");
+            }
+
             uart_puts("  woe watch : ");
             if (g_woe_lost_at == 0xFFFFFFFFu) {
                 uart_puts("never seen clear at an adapter entry");
