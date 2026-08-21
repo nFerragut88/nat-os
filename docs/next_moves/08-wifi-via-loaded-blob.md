@@ -3625,3 +3625,63 @@ a null base.
 the counter already in place: `of filter` must stay empty.
 
 **Nothing has been on air.**
+
+---
+
+## Step 49 — assignment tried again, and the OR is load-bearing
+
+Step 48 proposed going back to assigning `WINDOWSTART` on the grounds that
+step 34 had removed the condition the OR defended against. Tested:
+
+```
+boot 11 PASS 0 FAIL   wintorture FAIL   wincollide FAIL   blobphy FAIL
+```
+
+Everything windowed breaks. Reverted; the suite recovers exactly
+(`wintorture` CORRECT, `wincollide` runs=134 wrong=0, `blobphy` rc=0).
+
+### Why the argument was wrong
+
+The claim was: "at the moment any task is switched away from, no OTHER task has
+live frames to protect." That is false, and the pin is what makes it false.
+
+The pin stops the scheduler switching **away from** a task inside windowed code.
+It does nothing about the other direction. Tasks B, C, D are switched away from
+and resumed *while* A sits pinned mid-excursion with several live frames in the
+register file. Every one of those restores runs with A's frames live, and
+assignment wipes them.
+
+So the OR is not a workaround that step 34 outgrew. It is the only thing making
+a per-task restore survivable at all while another context holds frames — which
+is the normal state, not an edge case.
+
+### What that leaves
+
+The two operations remain exactly as step 33 framed them, and both are now
+measured rather than argued:
+
+- **assignment** destroys frames belonging to a task that is still using them
+- **OR** never clears, so bits accumulate and eventually name a frame `entry`
+  never created — step 48's `a1 = 0` spill
+
+The missing capability is the one the hardware does not provide: knowing **which
+task owns a bit**. `WINDOWSTART` is 16 bits of "live", with no owner field, and
+nat-os needs owners because more than one task has frames in the file at once.
+
+The honest options, none of them cheap:
+
+1. **Track ownership in software.** A per-task mask of the positions it has
+   claimed, OR-ed in on restore and cleared on exit from windowed code. Exact,
+   and costs a word per task plus bookkeeping at every window transition.
+2. **Never let two tasks hold frames at once.** Spill on switch-*out* for any
+   task with more than one live frame, which is step 31's option (1) and needs
+   the spill in `_handler_level3` — attempted five times (steps 14-18) and
+   failed each time, though never with the pin and per-task base in place.
+3. **Give the blob its own window regime**: keep blob excursions strictly
+   non-preemptible end to end, so no other task ever runs while frames are live.
+   The pin already does this for the excursion; it is the *blocking* release
+   that breaks it, which is where this whole sequence started.
+
+(1) is the only one that does not fight the hardware.
+
+**Nothing has been on air.**
