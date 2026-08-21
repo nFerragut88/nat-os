@@ -3461,3 +3461,51 @@ Next: work out why the counting table forwards nothing, and what the blob reads
 out of it during init.
 
 **Nothing has been on air.**
+
+---
+
+## Step 46 — the "zero forwarded calls" lead was a stale instrument
+
+Step 45 called this the most promising thread left:
+
+```
+real osi forwarded calls: 0   last impl at 0x00000000
+```
+
+It is not a symptom. `g_osi_last` and `g_osi_hits` are defined in
+`vendor/windowed/wifi_osi.c` — the table whose own header begins **"STALE. DO
+NOT HAND THIS TABLE TO THE BLOB"**, kept only because its bodies are useful
+reference. The live table is the generated `wifi_osi_stubs.c`, whose entries
+reach `osi_impl_*` through `w2c_call*` and never touch those counters.
+
+Zero is therefore the correct reading, and it would read zero on a completely
+healthy system. The lead was wrong.
+
+### The actual defect here is the instrument
+
+A counter that reads zero for two entirely different reasons — "nothing
+forwarded" and "nothing uses this table" — cannot distinguish them, and it sits
+in the middle of the output of the one command being used to debug this. It cost
+a step, and it is the same shape as the `exccause == 0` gate in step 38 and the
+global-`WINDOWSTART` counter in step 31: **an instrument whose silence is
+indistinguishable from a result.**
+
+Not fixed in this pass, deliberately. The print lives in `shell.c`, which is the
+first object in `.flash.text`, and step 25 measured that adding nine lines there
+walks into the layout band. Changing it means re-testing `blobphy` and the whole
+blob path for a cosmetic fix. It is recorded here instead, and should be removed
+or repointed at `wifi_osi_calls()` the next time `shell.c` is touched for another
+reason.
+
+### Standing conclusion
+
+The OSI table is not implicated. The blob accepted it, fifteen entries are
+reached and counted through the generated table's own instrumentation
+(`osiused`), and the forwarding those entries do is real.
+
+The open question is unchanged from step 44: control reaches
+`BLOB_DRAM_ADDR + 0x20`, an address that was computed rather than loaded, during
+`esp_wifi_init_internal`. The `.data` window is faithful in placement, content
+and cross-window pointer resolution; the window subsystem is measured correct.
+
+**Nothing has been on air.**
