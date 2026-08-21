@@ -23,6 +23,7 @@
 #include "critical.h"
 #include "xtensa.h"
 #include "task.h"
+#include "wifi_osi_table.h"
 
 static int g_record_rc = -99;
 
@@ -405,6 +406,34 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
                     uart_puts(g_uf_bad_when == 1u ? "  BEFORE the spill\n"
                                                   : "  AFTER the spill\n");
                 }
+            }
+
+            {
+                extern volatile uint32_t g_woe_prev_hit;
+                /* The last adapter entry the blob reached. Says WHERE in
+                 * esp_wifi_init_internal it was when control left. */
+                uart_puts("  last osi  : entry ");
+                if (g_woe_prev_hit == 0xFFFFFFFFu) { uart_puts("none"); }
+                else {
+                    uart_put_dec(g_woe_prev_hit);
+                    uart_puts("  ");
+                    uart_puts(wifi_osi_name(g_woe_prev_hit));
+                }
+                uart_puts("\n");
+            }
+
+            {
+                extern volatile uint32_t g_of_bad_base, g_of_bad_frame, g_of_bad_when;
+                uart_puts("  of filter : ");
+                if (!g_of_bad_when) { uart_puts("no near-null base recovered"); }
+                else {
+                    uart_puts("base ");
+                    uart_put_hex(g_of_bad_base);
+                    uart_puts(" recovered from frame sp ");
+                    uart_put_hex(g_of_bad_frame);
+                    uart_puts(g_of_bad_when == 1u ? "  BEFORE spill" : "  AFTER spill");
+                }
+                uart_puts("\n");
             }
 
             uart_puts("  woe watch : ");

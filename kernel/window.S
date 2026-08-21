@@ -75,6 +75,13 @@ _WindowUnderflow4:
 _WindowOverflow8:
     s32e    a0, a9, -16
     l32e    a0, a1, -12             /* a0 <- call[j-1]'s sp */
+    /* step 48: the caller sp this handler just recovered, and the frame it came
+     * from. A near-null base here is a call0 frame whose base save area was
+     * never written -- the class phy_stack_call documents and step 37 fixed in
+     * only three of its places. EXCSAVE 6/7 because these vectors have no stack
+     * and no literal pool. Filtered in the stub, where there is room. */
+    wsr.excsave6 a0
+    wsr.excsave7 a1
     s32e    a1, a9, -12
     s32e    a2, a9,  -8
     s32e    a3, a9,  -4
@@ -113,6 +120,13 @@ _WindowUnderflow8:
 _WindowOverflow12:
     s32e    a0,  a13, -16
     l32e    a0,  a1,  -12
+    /* step 48: the caller sp this handler just recovered, and the frame it came
+     * from. A near-null base here is a call0 frame whose base save area was
+     * never written -- the class phy_stack_call documents and step 37 fixed in
+     * only three of its places. EXCSAVE 6/7 because these vectors have no stack
+     * and no literal pool. Filtered in the stub, where there is room. */
+    wsr.excsave6 a0
+    wsr.excsave7 a1
     s32e    a1,  a13, -12
     s32e    a2,  a13,  -8
     s32e    a3,  a13,  -4

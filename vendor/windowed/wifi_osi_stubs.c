@@ -243,6 +243,24 @@ volatile uint32_t g_uf_bad_a0;
 volatile uint32_t g_uf_bad_base;
 volatile uint32_t g_uf_bad_when;      /* 1 = before the spill, 2 = after */
 
+/* Same idea for the OVERFLOW side: a recovered caller sp that is not a plausible
+ * DRAM stack address is a frame whose base save area was never written. */
+volatile uint32_t g_of_bad_base;
+volatile uint32_t g_of_bad_frame;
+volatile uint32_t g_of_bad_when;
+
+static void of_sample(uint32_t when)
+{
+    uint32_t base, frame;
+    __asm__ volatile ("rsr.excsave6 %0" : "=r"(base));
+    __asm__ volatile ("rsr.excsave7 %0" : "=r"(frame));
+    if (g_of_bad_when == 0u && base < 0x3ff00000u) {
+        g_of_bad_base  = base;
+        g_of_bad_frame = frame;
+        g_of_bad_when  = when;
+    }
+}
+
 static void uf_sample(uint32_t when)
 {
     uint32_t a0, base;
@@ -449,9 +467,9 @@ static int32_t osi_s_semphr_take(void *semphr, uint32_t block_time_tick)
         g_stub_sp_pre_spill = sp;
         if (sp < g_stub_sp_min) { g_stub_sp_min = sp; }
     }
-    uf_sample(1u);
+    uf_sample(1u); of_sample(1u);
     win_spill_all();
-    uf_sample(2u);
+    uf_sample(2u); of_sample(2u);
     /* Through the bridge: blob_lock/blob_unlock are call0 kernel functions and
      * this file is windowed. Calling them directly rotates the window and
      * their RET does not rotate back -- which is exactly what happened, an
@@ -515,9 +533,9 @@ static int32_t osi_s_mutex_lock(void *mutex)
         g_stub_sp_pre_spill = sp;
         if (sp < g_stub_sp_min) { g_stub_sp_min = sp; }
     }
-    uf_sample(1u);
+    uf_sample(1u); of_sample(1u);
     win_spill_all();
-    uf_sample(2u);
+    uf_sample(2u); of_sample(2u);
     (void)w2c_call0f((uint32_t)&blob_unlock);
     uint32_t r2 = w2c_call2((uint32_t)&osi_impl_sem_take, (uint32_t)mutex, 0xFFFFFFFFu);
     (void)w2c_call0f((uint32_t)&blob_lock);
@@ -560,9 +578,9 @@ static int32_t osi_s_queue_send(void *queue, void *item, uint32_t block_time_tic
         g_stub_sp_pre_spill = sp;
         if (sp < g_stub_sp_min) { g_stub_sp_min = sp; }
     }
-    uf_sample(1u);
+    uf_sample(1u); of_sample(1u);
     win_spill_all();
-    uf_sample(2u);
+    uf_sample(2u); of_sample(2u);
     (void)w2c_call0f((uint32_t)&blob_unlock);
     uint32_t r2 = w2c_call3((uint32_t)&osi_impl_queue_send, (uint32_t)queue, (uint32_t)item, (uint32_t)block_time_tick);
     (void)w2c_call0f((uint32_t)&blob_lock);
@@ -608,9 +626,9 @@ static int32_t osi_s_queue_recv(void *queue, void *item, uint32_t block_time_tic
         g_stub_sp_pre_spill = sp;
         if (sp < g_stub_sp_min) { g_stub_sp_min = sp; }
     }
-    uf_sample(1u);
+    uf_sample(1u); of_sample(1u);
     win_spill_all();
-    uf_sample(2u);
+    uf_sample(2u); of_sample(2u);
     (void)w2c_call0f((uint32_t)&blob_unlock);
     int32_t r = (int32_t)w2c_call3((uint32_t)&osi_impl_queue_recv, (uint32_t)queue,
                                    (uint32_t)item, (uint32_t)block_time_tick);
@@ -666,9 +684,9 @@ static uint32_t osi_s_event_group_wait_bits(void *event, uint32_t bits_to_wait_f
         g_stub_sp_pre_spill = sp;
         if (sp < g_stub_sp_min) { g_stub_sp_min = sp; }
     }
-    uf_sample(1u);
+    uf_sample(1u); of_sample(1u);
     win_spill_all();
-    uf_sample(2u);
+    uf_sample(2u); of_sample(2u);
     (void)w2c_call0f((uint32_t)&blob_unlock);
     uint32_t r2 = w2c_call3((uint32_t)&osi_impl_evt_wait, (uint32_t)event, (uint32_t)bits_to_wait_for, (uint32_t)block_time_tick);
     (void)w2c_call0f((uint32_t)&blob_lock);

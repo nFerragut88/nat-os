@@ -3509,3 +3509,119 @@ The open question is unchanged from step 44: control reaches
 and cross-window pointer resolution; the window subsystem is measured correct.
 
 **Nothing has been on air.**
+
+---
+
+## Step 47 — the last adapter entry, and a bisect that names the mechanism
+
+### Where the blob is
+
+```
+last osi  : entry 15  _semphr_take
+```
+
+The blob's final adapter call before the fault is the blocking one. So the
+sequence is exactly the designed path: `_semphr_take` finds the semaphore
+contended, spills, releases the lock, blocks; the blob task runs; the fault
+follows.
+
+### Bisecting the spill out
+
+`wincollide` was fixed by removing one `call8 win_spill_all`. Removing the spill
+from the five blocking sites here does not fix this, but it **moves the fault
+somewhere far more specific**:
+
+| spill | fault |
+|---|---|
+| present | `InstructionFetchError`, DEPC `0x3ffd4020` (blob `.data`) |
+| removed | `StoreProhibited`, DEPC **`0x40080100`**, excvaddr `0x00000010` |
+
+`0x40080100` is `_WindowOverflow12` itself. The handler recovers the caller's
+stack pointer with `l32e a0, a1, -12` and then spills through it — and it is
+storing to `0x10`, i.e. it recovered a near-null base.
+
+That is precisely the fault `phy_stack_call`'s own comment describes:
+
+> the caller's prologue does. phy_stack_call is call0 and wrote nothing there,
+> so the handler loaded a fresh .bss zero and spilled to 0 - 32.
+
+So the **base save area class is the mechanism after all**, and step 37's three
+fixes (`rom_call3`, `rom_call4`, `win_spill_call0`) did not cover every frame the
+blob's windowed code rotates over. With the spill present, the spill pushes those
+frames out early enough that this overflow never happens — and the failure
+presents as the `.data` jump instead. Two faces of one defect.
+
+### What that makes the next step
+
+Find the remaining call0 frame in the chain that windowed code rotates over.
+Candidates, all compiled `-mabi=call0` and none of which write a base save area:
+
+1. `blob_call()` — sits directly beneath `rom_call4`
+2. the `wifiinit` shell command frame beneath that
+3. any `osi_impl_*` reached by `callx0` from a windowed stub (these create no
+   window frame, so they are the least likely)
+
+The spill is restored; the bisect was diagnostic, not a fix. The instrument that
+would settle it is already half-built: `_WindowOverflow4/8/12` can record the
+base they recovered into `EXCSAVE`, exactly as the underflow handlers now do, and
+a near-null value names the frame directly.
+
+**Nothing has been on air.**
+
+---
+
+## Step 48 — the overflow spills a frame that was never created
+
+Polling the overflow probe from `task_schedule()` — the one vantage point that
+sees every tick regardless of who is running — catches it:
+
+```
+of filter : base 0x00000000 recovered from frame sp 0x00000000   AFTER spill
+```
+
+Both zero. The handler was spilling a frame whose **own `a1` is zero**. A frame
+established by `entry` always has a valid `a1` (`entry` computes it from the
+caller's). A frame with `a1 = 0` was never established — yet `WINDOWSTART` had
+its bit set, so the hardware believed it was live and tried to push it out.
+
+### What sets a bit for a frame that does not exist
+
+The per-task window restore (step 30, amended step 32):
+
+```
+WINDOWSTART |= 1 << saved_WINDOWBASE
+```
+
+It asserts "this task has one live frame at its saved base" without any
+guarantee that the physical registers at that base belong to this task. For a
+task restored onto a base whose registers are stale or zero — a freshly created
+task, or one whose base collides with a window position another context has
+since rotated through — that bit is a lie, and the next rotation deep enough to
+overflow tries to spill it.
+
+That closes the loop with step 33, which established that a per-task copy of a
+global register cannot be written back: **assignment resurrects other tasks'
+frames, OR-ing invents one of your own.** Both are now measured rather than
+argued.
+
+It also explains the two faces from step 47. With the spill present the invented
+frame is pushed out early and the damage surfaces later as a computed jump into
+`.data`; with the spill removed the overflow hits it directly and stores through
+a null base.
+
+### The shape of the fix
+
+`WINDOWSTART` must only claim a frame the restore can *prove* exists. Two ways:
+
+1. Restore the task's registers **and** its base such that the one frame it
+   claims is the one just written — i.e. treat `a1` in the restored frame as the
+   proof, and refuse to set the bit if the restored `a1` is not a plausible
+   stack address for that task. Cheap, and turns a lie into a checked assertion.
+2. Guarantee one-frame-per-task by construction, which is step 33's option (1)
+   and needs the spill to cover every path that reaches a switch — already true
+   for voluntary blocks since step 34.
+
+(1) is a few instructions in `_handler_level3` and is testable immediately with
+the counter already in place: `of filter` must stay empty.
+
+**Nothing has been on air.**

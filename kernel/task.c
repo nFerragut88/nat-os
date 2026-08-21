@@ -366,6 +366,25 @@ uint32_t task_schedule(uint32_t current_sp)
          *
          * Counted, not enforced: refusing the switch here would be a second
          * guess layered on the first. This names the task instead. */
+        /* Poll the overflow probe every tick.
+         *
+         * Sampling it only at the stub's spill boundary never fired: the bad
+         * overflow happens after the task blocks, while another context is
+         * rotating the window, so neither side of the spill sees it. The
+         * scheduler runs on every tick regardless of who is executing, which is
+         * the one vantage point that does. */
+        {
+            extern volatile uint32_t g_of_bad_base, g_of_bad_frame, g_of_bad_when;
+            uint32_t base, frame;
+            __asm__ volatile ("rsr.excsave6 %0" : "=r"(base));
+            __asm__ volatile ("rsr.excsave7 %0" : "=r"(frame));
+            if (g_of_bad_when == 0u && base != 0xFFFFFFFFu && base < 0x3ff00000u) {
+                g_of_bad_base  = base;
+                g_of_bad_frame = frame;
+                g_of_bad_when  = 3u;          /* 3 = caught by the scheduler */
+            }
+        }
+
         uint32_t ws = ((const uint32_t *)current_sp)[TASK_FRAME_IDX_WSTART];
         uint32_t bits = 0u;
         for (uint32_t m = ws; m; m &= m - 1u) { bits++; }
