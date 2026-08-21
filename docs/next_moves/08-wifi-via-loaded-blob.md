@@ -3881,3 +3881,68 @@ was made at step 38, written up there as a lesson, and then made again. The bloc
 is now unconditional.
 
 **Nothing has been on air.**
+
+---
+
+## Step 54 — the one-bit rule fails, and wintorture's control does not measure what it claims
+
+### The rule
+
+`g_win_mask[t] = 1 << base` — a task owns the one frame it is parked on — was
+implemented on the step-34 invariant that every task is switched away from with
+exactly one live frame. It regresses `wintorture` and `wincollide`; reverted, and
+both recover (CORRECT, runs=135 wrong=0).
+
+### The control is not a control
+
+`wintorture` prints:
+
+```
+switches during the call: 6  (preemption really happened)
+```
+
+and that sentence has been load-bearing since step 14 — it is the reason
+"windowed frames survive preemption" was treated as measured rather than assumed.
+
+It counts the wrong thing. In `task_schedule()`:
+
+```c
+g_current = next;
+g_tasks[next].switches++;
+```
+
+The counter increments on **every tick**, including the ones where `next ==
+g_current` and nothing switched. The scheduler itself knows the difference — two
+lines earlier it passes `next != g_current` to `watchdog_liveness()` — but the
+per-task counter does not use it.
+
+And during `wintorture` nothing *can* switch: `rom_call3` takes `blob_lock`,
+which pins, so `next` is forced to `g_current` for the whole call. The six are
+six ticks of the same task resuming itself.
+
+**So `wintorture` has never demonstrated that windowed frames survive
+preemption.** It demonstrated that a pinned task holding eight frames is not
+corrupted while nothing else runs — which is true, and much weaker.
+
+That does not make the earlier conclusions wrong. It makes one of them
+unsupported, and it is a load-bearing one:
+
+- step 14's "the concern was MEASURED and does not hold" rests on this control
+- `blobcall.c`'s header comment states it as established fact
+- the pin, the spill and the ownership work were all designed around it
+
+### What to do about it
+
+1. **Fix the counter** so `switches` counts distinct switches, and add a separate
+   tick counter if the old number is wanted. One line, and it changes what every
+   past `wintorture` run meant.
+2. **Re-run `wintorture` with the pin disabled**, which is the experiment the
+   test was always supposed to be. If frames survive genuine preemption, the
+   original conclusion is restored on real evidence. If they do not, the pin is
+   not an optimisation — it is the only thing holding the system together, and
+   the one-bit rule failed because the invariant it assumed was never true.
+
+Until (2) runs, the invariant is unknown rather than established, and any rule
+built on it — including the one reverted here — is unfounded.
+
+**Nothing has been on air.**
