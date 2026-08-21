@@ -629,8 +629,22 @@ uint32_t task_schedule(uint32_t current_sp)
         kernel_panic_msg("stack guard overwritten", (unsigned int)broken);
     }
 
+    /* DISTINCT switches only.
+     *
+     * This counted every tick, including the ones where next == g_current and
+     * nothing switched -- and two lines above, the same function passes
+     * `next != g_current` to watchdog_liveness(), so the distinction was already
+     * known here and simply not used.
+     *
+     * It made wintorture's control meaningless: "switches during the call: 6
+     * (preemption really happened)" was six ticks of a pinned task resuming
+     * itself. That sentence is why "windowed frames survive preemption" was
+     * treated as measured since step 14. See next_moves/08 step 54. */
+    if (next != g_current) {
+        g_tasks[next].switches++;
+    }
+    g_tasks[next].resumes++;
     g_current = next;
-    g_tasks[next].switches++;
 
 #if TRACE_SWITCHES > 0
     if (g_trace_n < TRACE_SWITCHES) {

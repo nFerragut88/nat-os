@@ -140,7 +140,14 @@ static volatile int g_pinned = -1;
  * happens to land on an unpinned task. */
 static volatile uint32_t g_pin_seq;
 
-int      blob_pinned_task(void) { return g_pinned; }
+/* Set at build time to run the experiment wintorture was always supposed to be:
+ * windowed frames held across a GENUINE preemption. With the pin in force the
+ * scheduler refuses to switch away, so the test never tested anything. */
+#ifndef BLOB_PIN_DISABLE
+#define BLOB_PIN_DISABLE 0
+#endif
+
+int      blob_pinned_task(void) { return BLOB_PIN_DISABLE ? -1 : g_pinned; }
 uint32_t blob_pin_seq(void)     { return g_pin_seq; }
 void     blob_pin(void)         { g_pinned = task_current(); g_pin_seq++; }
 void     blob_unpin(void)       { g_pinned = -1; g_pin_seq++; }

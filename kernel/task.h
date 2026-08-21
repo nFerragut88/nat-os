@@ -155,7 +155,8 @@ typedef struct {
      * cut this sleep short" from "the deadline has not arrived yet", which
      * task_sleep must tell apart to re-arm without defeating touch_irq_wait. */
     volatile uint8_t woken;
-    uint32_t      switches;            /* times this task has been resumed */
+    uint32_t      switches;            /* times a DIFFERENT task was switched to */
+    uint32_t      resumes;             /* ticks this task was selected, incl. itself */
     uint32_t      waiting;             /* ticks READY but not selected      */
     const char   *name;
     uint32_t     *stack_base;          /* for guard checking; NULL for boot task */

@@ -3946,3 +3946,69 @@ Until (2) runs, the invariant is unknown rather than established, and any rule
 built on it — including the one reverted here — is unfounded.
 
 **Nothing has been on air.**
+
+---
+
+## Step 55 — the experiment finally run: windowed frames do NOT survive preemption
+
+### The counter, made honest
+
+`g_tasks[next].switches++` now runs only when `next != g_current`, with a
+separate `resumes` for the old meaning. `wintorture` immediately reports the
+truth about itself:
+
+```
+spun 60 ms with 8 windowed frames live, interrupts ENABLED
+switches during the call: 0  -- NONE, so this proves nothing
+checksum 1632 expected 1632  CORRECT
+```
+
+Zero. The test's own fallback wording — written at step 14 to guard against
+exactly this — was correct all along and had never been reached, because the
+counter could not produce a zero.
+
+### The experiment
+
+With `BLOB_PIN_DISABLE=1`, so the scheduler really can switch away from a task
+holding eight live windowed frames:
+
+```
+exccause 29 (StoreProhibited)   DEPC 0x40080115   excvaddr 0x00000190
+DOUBLE EXCEPTION   windowbase 6   windowstart 0x0000a248
+```
+
+`wintorture` panics. Not a wrong checksum — a fault inside `_WindowOverflow12`.
+
+**Windowed frames do not survive preemption in nat-os.** Step 14's conclusion,
+stated in `blobcall.c`'s header as "That concern was MEASURED and does not hold",
+is false, and has been since it was written.
+
+### What this re-frames
+
+The pin is not an optimisation or a convenience. It is **the only thing keeping
+windowed code alive on this kernel**, and every result that looked like it
+survived preemption was a result obtained while the pin silently prevented
+preemption from happening.
+
+It also explains step 54 cleanly. The one-bit ownership rule assumed "every task
+is switched away from with exactly one live frame". Under the pin that is
+vacuously true for windowed tasks — they are never switched away at all — so the
+rule was not wrong about the invariant. It was wrong to think the invariant
+described a *guarantee* rather than an absence.
+
+And it sharpens the real question. Two contexts inside windowed code work today
+(`wincollide` runs=120 wrong=0) because the lock serialises them and the pin
+stops the scheduler mid-window. The WiFi driver needs a task that blocks and
+resumes inside windowed code, which is exactly the case the pin cannot cover —
+and which this step shows the kernel cannot survive without it.
+
+### Restored and verified
+
+```
+boot 11 PASS 0 FAIL   wintorture CORRECT   wincollide runs=120 wrong=0
+```
+
+`blobcall.c`'s header comment is now known to be wrong and should be rewritten
+against this measurement rather than left contradicting it.
+
+**Nothing has been on air.**
