@@ -3685,3 +3685,48 @@ The honest options, none of them cheap:
 (1) is the only one that does not fight the hardware.
 
 **Nothing has been on air.**
+
+---
+
+## Step 50 — seeding an unclaimed base: tried, regressed, reverted
+
+The step-49 diagnostic found `windowstart 0x00002002` — bits 1 and 13 — where
+one bit was expected, and traced the extra claim to `task_create()` seeding a new
+task's `WINDOWBASE` from **the creator's** base. The blob task is the first task
+in this system created from *windowed* code (the driver calls
+`_task_create_pinned_to_core` from inside its own excursion), so the creator's
+base sits in the middle of the creator's live window.
+
+The fix tried: pick a `WINDOWSTART` bit that is currently clear.
+
+```
+boot 11 PASS 0 FAIL   wintorture CORRECT   wincollide FAIL   wifiinit task PANIC
+```
+
+Reverted. `wincollide` recovers to runs=134 wrong=0.
+
+### Why a clear bit is not a free base
+
+A task's sixteen registers span **four** window positions — `base`, `base+1`,
+`base+2`, `base+3`. A bit being clear says nothing about its three neighbours, so
+"unclaimed" in the `WINDOWSTART` sense is not "unoccupied" in the register-file
+sense, and restoring sixteen registers at a nominally free base can still write
+over frames that are live at the positions above it.
+
+That is the same category error as the multiframe counter in step 31: reading a
+16-bit register as if each bit described an independent unit, when the thing it
+indexes is four registers wide and tasks straddle four of them.
+
+### What the diagnosis is still worth
+
+The *observation* stands and is the sharpest thing available: a new task created
+from windowed code inherits a base inside its creator's live window, and that is
+where the phantom frame comes from. What does not follow is that any single free
+bit fixes it — a correct base has to be four positions clear of every live frame,
+which on a 16-position file with several tasks holding frames is not always
+available.
+
+Which puts the weight back on step 49's option (1): track ownership in software,
+because the register file cannot be partitioned by inspection.
+
+**Nothing has been on air.**
