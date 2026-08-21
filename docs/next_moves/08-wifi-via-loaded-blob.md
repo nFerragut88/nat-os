@@ -4061,3 +4061,55 @@ part (7 frames to 1, measured). The last live frame is the part that has never
 worked, and it is now the only part left.
 
 **Nothing has been on air.**
+
+---
+
+## Step 57 — a non-running task needs no live frame, and the phantom is gone
+
+Every non-running task has all sixteen of its registers in memory: saved by
+`_handler_level3` on the way out, restored on the way back in. A `WINDOWSTART`
+bit left set for it preserves nothing — the registers at that position belong to
+whoever is running now — but it does tell the hardware a frame lives there, and
+an overflow reaching it spills through somebody else's registers.
+
+That is the phantom frame of steps 48-56.
+
+So on a **real** task change the incoming task claims its own base and nothing
+else; the union contributes zero. This is the assignment that regressed the suite
+twice — and both times the damage was done on *same-task* resumes, which step 56's
+branch now leaves untouched. With that in place, assignment is correct.
+
+```
+boot 11 PASS 0 FAIL   wintorture CORRECT   wincollide runs=118 wrong=0   blobphy rc=0
+```
+
+`of filter` no longer reports a null base, and the `StoreProhibited` inside
+`_WindowOverflow12` — the fault that has dominated since step 47 — is gone.
+
+### The new failure
+
+```
+exccause 0 (IllegalInstruction)
+DEPC 0xc008aefe
+epc1 0x400891b0   <- what triggered the handler
+```
+
+Different in both parts. `epc1` is in kernel code rather than `win_spill_all`,
+so whatever raises the window exception is no longer the spill; and per step 39's
+lesson the CALL12 bits on `DEPC` are not automatically evidence of a raw jump —
+that has to be checked rather than assumed, having been misread once already.
+
+### Where this leaves the sequence
+
+The window bookkeeping is now, for the first time, internally consistent:
+
+- a task owns one bit, at its own base, and only when the hardware confirms a
+  frame there (step 56)
+- a same-task resume does not touch the window (step 56)
+- a non-running task owns nothing, because its registers are in memory (here)
+
+Each of those was measured into existence by a regression, not designed up
+front. What remains is a fault that no longer has anything to do with the
+frames' bookkeeping.
+
+**Nothing has been on air.**

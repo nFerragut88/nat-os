@@ -665,6 +665,22 @@ uint32_t task_schedule(uint32_t current_sp)
             uint32_t live;
             __asm__ volatile ("rsr.windowstart %0" : "=r"(live));
             u = live;
+        } else {
+            /* A REAL task change: nobody else needs a live bit.
+             *
+             * Every non-running task has all sixteen of its registers in memory,
+             * saved by this handler on the way out and restored on the way back
+             * in. A bit left set for it does not preserve anything -- the
+             * registers at that position now belong to whoever is running -- but
+             * it does tell the hardware a frame lives there, and an overflow that
+             * reaches it spills through registers that are somebody else's. That
+             * is the phantom frame of steps 48-56.
+             *
+             * So on a real switch the incoming task claims its own base and
+             * nothing else. This is the assignment that regressed the suite
+             * twice -- but both times the damage was done on SAME-task resumes,
+             * which the branch above now leaves untouched. */
+            u = 0u;
         }
         g_win_union = u;
     }
