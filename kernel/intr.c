@@ -124,6 +124,17 @@ void intr_dump(void)
     uart_puts("   programmed state:\n");
     row("intenable       ", xt_get_intenable());
     row("interrupt       ", xt_get_interrupt());
+    {
+        /* [H1 experiment] ticks deferred because they landed inside a window
+         * handler (EPS3.EXCM set). Zero here with a surviving wifiinit is the
+         * H1 refutation condition. */
+        extern volatile uint32_t g_tick_excm_hits, g_tick_excm_pc, g_tick_excm_ps;
+        row("tick-excm hits  ", g_tick_excm_hits);
+        if (g_tick_excm_hits) {
+            row("tick-excm pc    ", g_tick_excm_pc);
+            row("tick-excm ps    ", g_tick_excm_ps);
+        }
+    }
     row("dport map src22 ", DPORT_REG(DPORT_PRO_MAP(INTR_SRC_GPIO_PRO)));
     row("gpio_pin36      ", DPORT_REG(GPIO_PIN36_REG));
     row("gpio_status1    ", DPORT_REG(GPIO_STATUS1));

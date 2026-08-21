@@ -153,6 +153,48 @@ _handler_level3:
     wsr.ps   a2
     rsync
 
+    /* ---- [H1 experiment] never switch out of a mid-window-handler context --
+     *
+     * docs/debug/2026-08-21-wifiinit-storeprohibited.md, hypothesis H1: a tick
+     * landing while the interrupted context is INSIDE _WindowOverflow12
+     * (its EPS3 has EXCM set) schedules another task out from under a
+     * half-finished spill. The frames mid-spill belong to no task yet, so they
+     * are absent from g_win_union, and the next rotation spills through
+     * whatever stale pointers they hold — measured as OF12 executing with a13
+     * near garbage and a StoreProhibited double exception.
+     *
+     * The change: when the interrupted PS shows EXCM, service the pending
+     * sources anyway (NOT servicing the tick would leave CCOMPARE1 un-armed and
+     * freeze the scheduler permanently) but skip task_schedule for this one
+     * tick. The preempted handler resumes at once; the switch is deferred ten
+     * milliseconds, by which time the spill has long completed.
+     *
+     * Instrumentation doubles as X1-lite: every hit increments
+     * g_tick_excm_hits, and the FIRST hit records EPC3/EPS3. hits > 0 proves
+     * the preemption happens; a surviving wifiinit with hits == 0 refutes H1
+     * outright and points at H2/H3 instead.
+     *
+     * The decision branches BEFORE intr_dispatch, not after: the defer decision
+     * cannot be carried across a call0 call in a caller-saved register, and the
+     * first build carried it in a5 -- which intr_dispatch clobbered, so no tick
+     * ever switched and the hang detector reset the board every 3 s. Two call
+     * sites, no cross-call state.
+     */
+    l32i     a2, a1, 68                 /* saved EPS3 of the interrupted context */
+    bbci     a2, 4, .Lsched             /* PS.EXCM is bit 4 */
+    movi     a3, g_tick_excm_hits
+    l32i     a4, a3, 0
+    addi     a4, a4, 1
+    s32i     a4, a3, 0
+    movi     a3, g_tick_excm_pc
+    l32i     a4, a3, 0
+    bnez     a4, .Ldefer                /* keep only the FIRST hit */
+    l32i     a4, a1, 64                 /* EPC3 as captured at entry */
+    s32i     a4, a3, 0
+    movi     a3, g_tick_excm_ps
+    l32i     a4, a1, 68
+    s32i     a4, a3, 0
+.Ldefer:
     /* Service whichever level-3 sources are actually pending.
      *
      * This called timer_isr directly until the interrupt matrix existed, which
@@ -164,6 +206,10 @@ _handler_level3:
      *
      * intr_dispatch reads the INTERRUPT register and dispatches on fact. */
     call0    intr_dispatch
+    j        .Lresume                   /* [H1] EXCM was set: keep this task */
+
+.Lsched:
+    call0    intr_dispatch
 
     /* Hand the current stack pointer to the scheduler; it returns the stack
      * pointer to resume on, which may belong to a different task. From this
@@ -171,6 +217,7 @@ _handler_level3:
     mov      a2, a1
     call0    task_schedule
     mov      a1, a2
+.Lresume:
 
     /* Window state FIRST, before any general register is restored, so that the
      * sixteen registers land at the base this task was saved at rather than at
@@ -325,3 +372,15 @@ _handler_panic:
 _panic_stack:
     .space 512
 _panic_stack_top:
+
+/* ---- [H1 experiment] evidence, printed by the panic dump and 'intr' ---- */
+    .align 4
+    .global g_tick_excm_hits
+g_tick_excm_hits:
+    .space 4
+    .global g_tick_excm_pc
+g_tick_excm_pc:
+    .space 4
+    .global g_tick_excm_ps
+g_tick_excm_ps:
+    .space 4

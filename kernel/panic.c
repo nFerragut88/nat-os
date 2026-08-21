@@ -549,6 +549,23 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
         }
         uart_puts("\n");
 
+        {
+            /* [H1 experiment] ticks that arrived mid-window-handler and were
+             * deferred instead of switched. hits > 0 with a surviving wifiinit
+             * confirms hypothesis H1; see docs/debug/2026-08-21-*.md */
+            extern volatile uint32_t g_tick_excm_hits, g_tick_excm_pc, g_tick_excm_ps;
+            uart_puts("  tick-excm : ");
+            if (!g_tick_excm_hits) { uart_puts("never deferred"); }
+            else {
+                uart_put_dec(g_tick_excm_hits);
+                uart_puts(" switches deferred, first hit epc ");
+                uart_put_hex(g_tick_excm_pc);
+                uart_puts(" ps ");
+                uart_put_hex(g_tick_excm_ps);
+            }
+            uart_puts("\n");
+        }
+
         for (int t = 0; t < 12; t++) {
             uint32_t w = 0u, base = task_stack_span(t, &w);
             if (!base) { continue; }

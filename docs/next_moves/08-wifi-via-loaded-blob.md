@@ -5100,3 +5100,49 @@ chain, which has now been wrong twice:
 Neither costs a build.
 
 **Nothing has been on air.**
+
+### Step 77.5 (branch `dev`) — H1 implemented as a controlled experiment, and refuted by its own instrumentation
+
+**What changed** (kernel/vectors.S + panic.c + intr.c, all marked
+`[H1 experiment]`): `_handler_level3` now reads the interrupted EPS3 before
+dispatching. If PS.EXCM was set — the tick landed while the interrupted context
+was inside a window handler — the handler services the sources (the tick must
+still re-arm CCOMPARE1 or the scheduler freezes) but skips `task_schedule` for
+that one tick, deferring the switch by 10 ms. Every hit increments
+`g_tick_excm_hits`; the first hit records EPC3/EPS3. The counters print in the
+panic dump (`tick-excm :`) and in `'intr'`.
+
+Build note: the first build carried the defer decision across
+`call0 intr_dispatch` in a5, which the call clobbers; no tick ever switched and
+the hang detector reset the board every 3 s (TG0WDT_SYS_RESET boot loop). Fixed
+by branching before the dispatch — two call sites, no cross-call state.
+
+**Expected if H1 were right**: either wifiinit survives with hits > 0 (H1
+confirmed and fixed), or it panics with hits > 0 recorded (preemption happens
+but is not sufficient).
+
+**Actual**: wifiinit panicked exactly as before — same StoreProhibited at
+DEPC 0x40080109 (_WindowOverflow12+9), excvaddr 9, ws 0xe4c8, last osi entry 15
+_semphr_take, saved frame on task 6's sp, M6 sp-change reproduced inside
+blobphy too (0x3ffba820 -> 0x3ffc0040, rc=0, no crash) — and the counter read:
+
+    tick-excm : never deferred
+
+Zero EXCM-set preemptions occurred across the whole run, including the failing
+excursion. The existing independent instrument agrees: `multiframe: 0
+switch-outs with >1 live frame`.
+
+**Conclusion**: H1 is ELIMINATED. A deterministic failure cannot be caused by
+an event that provably does not happen. Neither preemption-flavoured mechanism
+(tick mid-window-handler, switch-out with >1 live frame) occurs before the
+fault. Attention shifts to what happens WITHOUT any preemption: H2 (something
+writes over parked contexts / save areas in DRAM — note blobphy reproduces the
+M6 sp-change harmlessly, so the change itself is not the poison) and H3
+(bridge save-area writes; though upstream commit 154e5be already tested writing
+the caller's save area from the bridge and it changed nothing).
+
+The guard stays on `dev`: it costs nothing while its condition never fires,
+and it doubles as standing X1 instrumentation for any future preemption theory.
+
+Regressions on this build: wincollide runs=156 wrong=0; wintorture checksum
+CORRECT (switches-during-call 0 as always); blobphy rc=0.
