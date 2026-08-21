@@ -4418,3 +4418,58 @@ is at a known DRAM address and `sp` is at a known offset within each entry:
    hand.
 
 **Nothing has been on air.**
+
+---
+
+## Step 64 — it happens before the driver runs at all
+
+Latching `last osi` and the tick at the moment the table first goes bad:
+
+```
+bad sp : task 5 sp 0x3ffc0020 outside 0x3ffba0bc..0x3ffba8bc
+         at tick 1433, last osi none yet
+last osi (at panic): entry 29  _queue_recv
+```
+
+**`last osi none yet`.** No adapter entry had been reached when `g_tasks[5].sp`
+first went bad, though by the time of the panic the blob has called fifteen of
+them and got as far as `_queue_recv`.
+
+So the write does not come from the WiFi driver. It happens in the window between
+the command starting and the blob's first call into the OS adapter — which is
+`blob_map()`, `blob_init()` and `phyinit_run_at()`, and nothing else.
+
+That retires the framing of steps 58-63 completely. Every one of them looked for
+the writer inside the driver's execution or the window machinery serving it. The
+value was already wrong before the driver started.
+
+### What is in that window
+
+- `blob_map()` reprograms the flash MMU and invalidates the cache
+- `blob_init()` word-copies `.data` to `0x3ffd4000` and zeroes `.bss` at
+  `0x3ffd5018..0x3ffd90f8` — both far above `g_tasks[]`, and both range-checked,
+  though the checks are worth reading against the linker symbols rather than
+  trusted
+- `phyinit_run_at()` primes `_phy_stack` (`0x3ffbe800..0x3ffc0020`) and calls
+  `register_chipv7_phy` on it
+
+The reported value is the *address* of `_phy_stack_top`, and `phy_stack_prime()`
+is the one thing in that window that iterates to exactly that address:
+
+```c
+for (uint32_t *p = _phy_stack; p < _phy_stack_top; p++) { ... }
+```
+
+A loop bound and a written value being the same symbol is worth more than a
+coincidence, and it is checkable directly: the prime writes a fill pattern, so if
+it is the writer, `g_tasks[5].sp` would hold the pattern, not the address. It
+holds the address — so something is storing the *pointer*, not dereferencing it.
+
+### Next
+
+Bisect the window rather than reason about it. Run `blob` alone, then
+`blob` + `blobphy`, checking `bad sp` after each. Three runs name which of the
+three stages does it, with no new instrumentation at all — every probe needed is
+already in the build.
+
+**Nothing has been on air.**

@@ -62,6 +62,7 @@ volatile uint32_t g_phytop_epc, g_phytop_a0;
 
 volatile int      g_badsp_task = -1;
 volatile uint32_t g_badsp_val, g_badsp_lo, g_badsp_hi;
+volatile uint32_t g_badsp_osi = 0xFFFFFFFFu, g_badsp_tick;
 
 /* ---- who owns which window position ------------------------------------
  *
@@ -764,10 +765,16 @@ uint32_t task_schedule(uint32_t current_sp)
             uint32_t lo = base;
             uint32_t hi = base + g_tasks[next].stack_words * 4u;
             if ((sp < lo || sp > hi) && g_badsp_task < 0) {
+                extern volatile uint32_t g_woe_prev_hit;
                 g_badsp_task = next;
                 g_badsp_val  = sp;
                 g_badsp_lo   = lo;
                 g_badsp_hi   = hi;
+                /* Which adapter entry the blob had most recently reached when
+                 * the table first went bad. The write is targeted (step 63), so
+                 * bracketing it to one entry is the whole remaining question. */
+                g_badsp_osi  = g_woe_prev_hit;
+                g_badsp_tick = timer_ticks();
             }
         }
     }

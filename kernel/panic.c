@@ -455,6 +455,18 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
                     uart_put_hex(g_badsp_lo);
                     uart_puts("..");
                     uart_put_hex(g_badsp_hi);
+                    {
+                        extern volatile uint32_t g_badsp_osi, g_badsp_tick;
+                        uart_puts("  at tick ");
+                        uart_put_dec(g_badsp_tick);
+                        uart_puts(", last osi ");
+                        if (g_badsp_osi == 0xFFFFFFFFu) { uart_puts("none yet"); }
+                        else {
+                            uart_put_dec(g_badsp_osi);
+                            uart_puts(" ");
+                            uart_puts(wifi_osi_name(g_badsp_osi));
+                        }
+                    }
                 }
                 uart_puts("\n");
             }
