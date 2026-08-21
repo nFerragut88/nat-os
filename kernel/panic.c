@@ -391,6 +391,20 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
                 uint32_t ua0, ubase;
                 __asm__ volatile ("rsr.excsave4 %0" : "=r"(ua0));
                 __asm__ volatile ("rsr.excsave5 %0" : "=r"(ubase));
+                {
+                    /* The overflow probe, read HERE rather than sampled
+                     * later: a frame with a bogus pointer takes the
+                     * system down inside the handler, so no sample point
+                     * downstream ever runs. See step 74. */
+                    uint32_t ob, of;
+                    __asm__ volatile ("rsr.excsave6 %0" : "=r"(ob));
+                    __asm__ volatile ("rsr.excsave7 %0" : "=r"(of));
+                    uart_puts("  overflow  : frame sp ");
+                    uart_put_hex(of);
+                    uart_puts("  recovered base ");
+                    uart_put_hex(ob);
+                    uart_puts("\n");
+                }
                 uart_puts("  underflow : recovered a0 ");
                 uart_put_hex(ua0);
                 uart_puts(" from save area ");

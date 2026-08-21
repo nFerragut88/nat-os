@@ -4967,3 +4967,49 @@ faulting store. It never runs. Move the `wsr.excsave7 a13` to the very top of
 pointer is named directly rather than inferred.
 
 **Nothing has been on air.**
+
+---
+
+## Step 74 — the overflow recovers a fill pattern
+
+The probe now records the frame pointer *before* the first store — the store is
+what faults, so recording after it never ran — and the panic handler reads
+`EXCSAVE 6/7` directly, because a bogus frame takes the system down inside the
+handler and no downstream sample point is ever reached.
+
+```
+overflow  : frame sp 0x00000019   recovered base 0xeeeeeeee
+exccause 29 (StoreProhibited)  DEPC 0x40080103  excvaddr 0x00000009
+windowbase 7  windowstart 0x0000e4c8   last osi 15 _semphr_take
+```
+
+Two values, and both are decisive.
+
+**`0xeeeeeeee` is a fill pattern.** The overflow handler recovered a caller stack
+pointer out of memory that had been *filled and never written* — a base save area
+that no `entry` prologue ever populated. That is the defect class `phy_stack_call`
+documents and step 37 fixed in three call0 bridges; this is a fourth site, and it
+is being reached from the blob's own windowed frames.
+
+**`0x19` is not an address at all.** Twenty-five: a loop counter, an index, a
+length. `WINDOWSTART` (`0x0000e4c8`, seven live frames at base 7) claims a frame
+exists at a position whose registers hold ordinary data.
+
+The two go together. A frame whose save area was never written yields a garbage
+caller pointer on the way out; the window walks into a position that was never a
+frame; the next overflow spills through whatever that register happens to hold.
+
+### Why this is the end of the search rather than another step in it
+
+Every previous candidate was eliminated by measurement — the window bookkeeping,
+the phantom frame, the saved `sp`, the PHY stack sharing, the mask, the blob's
+interrupt level, the `.data` placement, the loader. What is left is a specific,
+named, mechanical fault with a known cure: **find the frame whose base save area
+is unwritten, and write it**, exactly as `rom_call3`, `rom_call4` and
+`win_spill_call0` now do.
+
+The candidate sites are the call0 functions the blob's windowed code can rotate
+over that are *not* those three: `blob_call()` itself, and the shell command frame
+beneath it — both compiled `-mabi=call0`, both never writing `[sp-12]`.
+
+**Nothing has been on air.**

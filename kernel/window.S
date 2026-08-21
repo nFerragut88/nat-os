@@ -73,6 +73,14 @@ _WindowUnderflow4:
     .align 4
     .global _WindowOverflow8
 _WindowOverflow8:
+    /* Record the frame pointer BEFORE the first store.
+     *
+     * This probe used to sit at the l32e, which is the second instruction -- and
+     * the first instruction is `s32e a0, a9, -16`, which is exactly what faults
+     * when the frame pointer is not a pointer. The probe never ran. Recorded
+     * first, so a frame with a bogus sp names itself instead of taking the
+     * handler down before it can be seen. See next_moves/08 step 74. */
+    wsr.excsave7 a9
     s32e    a0, a9, -16
     l32e    a0, a1, -12             /* a0 <- call[j-1]'s sp */
     /* step 48: the caller sp this handler just recovered, and the frame it came
@@ -118,6 +126,14 @@ _WindowUnderflow8:
     .align 4
     .global _WindowOverflow12
 _WindowOverflow12:
+    /* Record the frame pointer BEFORE the first store.
+     *
+     * This probe used to sit at the l32e, which is the second instruction -- and
+     * the first instruction is `s32e a0, a13, -16`, which is exactly what faults
+     * when the frame pointer is not a pointer. The probe never ran. Recorded
+     * first, so a frame with a bogus sp names itself instead of taking the
+     * handler down before it can be seen. See next_moves/08 step 74. */
+    wsr.excsave7 a13
     s32e    a0,  a13, -16
     l32e    a0,  a1,  -12
     /* step 48: the caller sp this handler just recovered, and the frame it came
