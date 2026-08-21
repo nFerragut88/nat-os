@@ -202,8 +202,13 @@ _handler_level3:
     movi     a3, 1
     ssl      a2
     sll      a3, a3                     /* 1 << saved WINDOWBASE */
-    rsr.windowstart a6
-    or       a3, a3, a6                 /* keep every other task's live frames */
+    /* Every OTHER task's live frames, by recorded ownership rather than by
+     * whatever happens to be set. See g_win_mask in task.c: the hardware bit is
+     * "a frame lives here" with no owner, so reading it back cannot tell a live
+     * frame from an abandoned one. The union does. */
+    movi     a6, g_win_union
+    l32i     a6, a6, 0
+    or       a3, a3, a6
 
     movi     a4, g_switch_sp
     s32i     a1, a4, 0

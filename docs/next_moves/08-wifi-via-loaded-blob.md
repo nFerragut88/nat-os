@@ -3730,3 +3730,52 @@ Which puts the weight back on step 49's option (1): track ownership in software,
 because the register file cannot be partitioned by inspection.
 
 **Nothing has been on air.**
+
+---
+
+## Step 51 — window ownership tracked in software
+
+`WINDOWSTART` is 16 bits of "a frame lives here" with no owner field, and nat-os
+needs owners: a task pinned inside windowed code keeps frames live while every
+other task is switched away from and resumed around it. Assignment destroys
+those frames (step 49); OR never clears, so bits accumulate until one names a
+frame `entry` never created (step 48). Both measured. So the kernel records what
+the hardware does not.
+
+- `g_win_mask[TASK_MAX]` — the positions each task owns. A task is the only
+  thing that can change `WINDOWSTART` while it runs, so its mask is whatever is
+  set at its switch-out that no other task has claimed.
+- `g_win_union` — the union, recomputed per switch in C, because the vector has
+  no room to walk a table.
+- `_handler_level3` now assigns `1 << saved_base | g_win_union` instead of
+  OR-ing whatever happened to be in the register. Other tasks' frames survive;
+  bits nobody owns do not.
+
+### No regressions
+
+```
+boot 11 PASS 0 FAIL   wintorture CORRECT   wincollide runs=142 wrong=0   blobphy rc=0
+```
+
+### The fault moved closer to its cause
+
+```
+exccause 28 (LoadProhibited)   DEPC 0x40080103   excvaddr 0x0000000d
+epc1 0x4008ae57
+```
+
+`0x40080103` is `_WindowOverflow12 + 3` — the `l32e a0, a1, -12` that recovers
+the caller's stack pointer. It faults on the load itself, with `a1 = 0x19`.
+
+That is progress of a specific kind. Before, a phantom frame was spilled through
+a null base and the damage surfaced much later as a computed jump into the blob's
+`.data`; now the handler faults immediately, at the instruction that touches the
+bad frame, with the bad `a1` visible in `excvaddr`. The failure stopped being
+action-at-a-distance.
+
+A phantom frame still exists. Ownership tracking removes bits that nobody
+claimed; it does not stop a task from claiming a position whose registers are not
+its own, which is what step 50 established `task_create()` does when the creator
+is mid-excursion. The two are separate defects and only one is fixed.
+
+**Nothing has been on air.**

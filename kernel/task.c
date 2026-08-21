@@ -41,6 +41,29 @@ static uint32_t g_stacks[TASK_MAX][TASK_STACK_WORDS];
  * live somewhere base-independent while WINDOWBASE is written. See vectors.S. */
 volatile uint32_t g_switch_sp;
 
+/* ---- who owns which window position ------------------------------------
+ *
+ * next_moves/08 steps 49-50. WINDOWSTART is 16 bits of "a frame lives here"
+ * with no owner field, and nat-os needs owners because more than one task holds
+ * frames in the register file at once: a task pinned inside windowed code keeps
+ * its frames live while every other task is switched away from and resumed
+ * around it.
+ *
+ * Assignment on restore destroys those frames. OR never clears, so bits
+ * accumulate until one names a frame `entry` never created. Both were measured.
+ * The only way out is to record what the hardware does not.
+ *
+ * A task is the ONLY thing that can change WINDOWSTART while it runs, so the
+ * bits it owns are whatever is set at its switch-out that no other task has
+ * claimed. The union of every task's mask is then the true set of live frames,
+ * and a restore may assign exactly that -- keeping other tasks' frames and
+ * dropping bits nobody owns. */
+static uint32_t g_win_mask[TASK_MAX];
+volatile uint32_t g_win_union;          /* read by _handler_level3 */
+
+uint32_t task_win_union(void) { return g_win_union; }
+uint32_t task_win_mask(int id) { return (id >= 0 && id < TASK_MAX) ? g_win_mask[id] : 0u; }
+
 /* Tasks switched away from with more than one live windowed frame. See
  * task_schedule(). Zero is the design; anything else is the bug. */
 static uint32_t g_multiframe_count, g_multiframe_worst, g_multiframe_ws;
@@ -385,6 +408,16 @@ uint32_t task_schedule(uint32_t current_sp)
             }
         }
 
+        /* Claim what this task changed while it ran. */
+        {
+            uint32_t ws_out = ((const uint32_t *)current_sp)[TASK_FRAME_IDX_WSTART];
+            uint32_t others = 0u;
+            for (int t = 0; t < TASK_MAX; t++) {
+                if (t != g_current) { others |= g_win_mask[t]; }
+            }
+            g_win_mask[g_current] = ws_out & ~others;
+        }
+
         uint32_t ws = ((const uint32_t *)current_sp)[TASK_FRAME_IDX_WSTART];
         uint32_t bits = 0u;
         for (uint32_t m = ws; m; m &= m - 1u) { bits++; }
@@ -396,6 +429,14 @@ uint32_t task_schedule(uint32_t current_sp)
         }
     }
     g_slice_start = now;
+
+    /* The union is what _handler_level3 assigns on the way back in. Computed
+     * here, in C, because the vector has no room to walk a table. */
+    {
+        uint32_t u = 0u;
+        for (int t = 0; t < TASK_MAX; t++) { u |= g_win_mask[t]; }
+        g_win_union = u;
+    }
 
     /* Round robin from the one after current, so no task can starve another.
      * With g_current == -1 the first candidate is 0, so the first switch enters
