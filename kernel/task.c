@@ -426,14 +426,25 @@ uint32_t task_schedule(uint32_t current_sp)
 
         /* Claim what this task changed while it ran. */
         {
+            /* A task owns the bit at its OWN base, and only if the hardware
+             * says a frame really lives there.
+             *
+             * Two earlier rules failed here and both failures are informative.
+             * "Everything set that nobody else claimed" credited a call0 task
+             * with the driver's frames (step 53). "1 << base unconditionally"
+             * claimed a frame for tasks that have none, because a call0 task is
+             * not in windowed code at all (step 54).
+             *
+             * WINDOWSTART already answers the question the bookkeeping was
+             * trying to guess: the bit at the task's base is set exactly when a
+             * windowed frame lives there. A call0 task owns nothing; a task that
+             * spilled to one frame before blocking owns that one. Frames deeper
+             * than the base belong to whoever is RUNNING and are unwound or
+             * spilled before that task can reach a switch. */
             uint32_t ws_out = ((const uint32_t *)current_sp)[TASK_FRAME_IDX_WSTART];
-            uint32_t others = 0u;
-            for (int t = 0; t < TASK_MAX; t++) {
-                if (t != g_current) { others |= g_win_mask[t]; }
-            }
-            g_win_mask[g_current] = ws_out & ~others;
-            g_win_base[g_current] =
-                (uint8_t)((const uint32_t *)current_sp)[TASK_FRAME_IDX_WBASE];
+            uint32_t base   = ((const uint32_t *)current_sp)[TASK_FRAME_IDX_WBASE] & 15u;
+            g_win_mask[g_current] = ((ws_out >> base) & 1u) ? (1u << base) : 0u;
+            g_win_base[g_current] = (uint8_t)base;
         }
 
         uint32_t ws = ((const uint32_t *)current_sp)[TASK_FRAME_IDX_WSTART];
@@ -448,13 +459,6 @@ uint32_t task_schedule(uint32_t current_sp)
     }
     g_slice_start = now;
 
-    /* The union is what _handler_level3 assigns on the way back in. Computed
-     * here, in C, because the vector has no room to walk a table. */
-    {
-        uint32_t u = 0u;
-        for (int t = 0; t < TASK_MAX; t++) { u |= g_win_mask[t]; }
-        g_win_union = u;
-    }
 
     /* Round robin from the one after current, so no task can starve another.
      * With g_current == -1 the first candidate is 0, so the first switch enters
@@ -640,6 +644,31 @@ uint32_t task_schedule(uint32_t current_sp)
      * (preemption really happened)" was six ticks of a pinned task resuming
      * itself. That sentence is why "windowed frames survive preemption" was
      * treated as measured since step 14. See next_moves/08 step 54. */
+    /* The union is what _handler_level3 assigns on the way back in. Computed
+     * here, in C, because the vector has no room to walk a table. */
+    {
+        uint32_t u = 0u;
+        for (int t = 0; t < TASK_MAX; t++) { u |= g_win_mask[t]; }
+
+        /* A SAME-TASK resume must not disturb the window.
+         *
+         * next == g_current still runs the whole restore path, including the
+         * WINDOWSTART write -- and a task pinned inside windowed code is resumed
+         * as itself on every tick. Any rule that narrows the mask therefore
+         * deletes the RUNNING task's deep frames one tick after it creates them,
+         * which is why both attempts at a precise rule regressed wintorture
+         * while the imprecise OR survived: the OR never dropped what was live.
+         *
+         * Handing the live register back makes the assignment a no-op in that
+         * case, without a branch in the vector. */
+        if (next == g_current) {
+            uint32_t live;
+            __asm__ volatile ("rsr.windowstart %0" : "=r"(live));
+            u = live;
+        }
+        g_win_union = u;
+    }
+
     if (next != g_current) {
         g_tasks[next].switches++;
     }

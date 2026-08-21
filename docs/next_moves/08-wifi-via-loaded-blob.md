@@ -4012,3 +4012,52 @@ boot 11 PASS 0 FAIL   wintorture CORRECT   wincollide runs=120 wrong=0
 against this measurement rather than left contradicting it.
 
 **Nothing has been on air.**
+
+---
+
+## Step 56 — precise ownership, and why the precise rules kept failing
+
+Two attempts at an exact attribution rule regressed the suite while the sloppy OR
+survived. The reason is not the rule:
+
+**`next == g_current` still runs the whole restore path.** A task pinned inside
+windowed code is resumed *as itself* on every tick, and the handler writes
+`WINDOWSTART` on each of those resumes. Any rule that narrows the mask therefore
+deletes the RUNNING task's deep frames one tick after `entry` created them. The
+OR survived only because it never dropped what was live — not because it was
+right.
+
+Both pieces are now in:
+
+- **ownership**: a task owns the bit at its own base, and only when the hardware
+  says a frame lives there — `((ws_out >> base) & 1) ? (1 << base) : 0`. A call0
+  task owns nothing; a task that spilled to one frame before blocking owns that
+  one. Frames deeper than the base belong to whoever is running and are unwound
+  or spilled before that task reaches a switch.
+- **same-task resume**: the union is computed after `next` is selected, and when
+  `next == g_current` it is set to the live `WINDOWSTART`, which makes the
+  handler's assignment a no-op without a branch in the vector.
+
+```
+boot 11 PASS 0 FAIL   wintorture CORRECT   wincollide runs=120 wrong=0   blobphy rc=0
+```
+
+The precise rule now coexists with the suite, which neither earlier attempt
+managed. `wifiinit task` still panics — `StoreProhibited` in `_WindowOverflow12`,
+`excvaddr 0x10` — so a frame the hardware believes in is still being spilled
+through a bad base, but the bookkeeping around it is no longer guesswork.
+
+### What step 55 means for the shape of the answer
+
+Windowed frames do not survive preemption. The pin is what prevents preemption,
+and the driver needs a task that blocks and resumes inside windowed code — the
+one case the pin cannot cover.
+
+So the remaining work is not more bookkeeping. It is making a *blocked* windowed
+task genuinely restorable: its frames spilled to its own stack, its window state
+reduced to something the restore can reconstruct, and nothing of it left live in
+the register file while another context runs. The spill already does the first
+part (7 frames to 1, measured). The last live frame is the part that has never
+worked, and it is now the only part left.
+
+**Nothing has been on air.**
