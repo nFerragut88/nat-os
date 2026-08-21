@@ -5060,3 +5060,43 @@ trusted for, and patching the likelier-looking of two candidates would have had
 even odds of producing another correct-but-irrelevant fix.
 
 **Nothing has been on air.**
+
+---
+
+## Step 76 — writing the caller's save area from the bridge: no change
+
+`rom_call3` and `rom_call4` were made to write `[caller_sp - 12]` with the
+caller's own `sp` — a real address on the right stack, so a spill unwinding that
+far would write inside the caller's frame instead of through a fill pattern.
+
+No regressions (boot 11 PASS, `wintorture` CORRECT, `wincollide` runs=123
+wrong=0, `blobphy` rc=0) and **no change to the fault**:
+
+```
+overflow : prev good frame sp 0x3ffba520   recovered base 0xeeeeeeee
+```
+
+Identical frame, identical fill. So the frame at `0x3ffba520` is not the one
+either bridge writes for — `[caller_sp - 12]` for `rom_call4` lands elsewhere in
+the chain. Reverted rather than left in: it is unproven code that fixes nothing,
+and this investigation already carries enough of that.
+
+### What the negative result narrows
+
+The failing frame is at a fixed, reproducible address on the shell's stack, and
+neither bridge's caller is it. That excludes the two candidates step 75 named by
+elimination and leaves the frame identified only by address.
+
+The next move is to name it directly rather than by reasoning about the call
+chain, which has now been wrong twice:
+
+1. `0x3ffba520` is stable across runs. The saved `a0` of that frame — at
+   `[0x3ffba520 + 0]` for a call0 frame, or recoverable from the window — is a
+   return address, and a return address maps to a function in the disassembly.
+2. Simpler still: the panic already prints `epc1 0x4008b3a7`, the instruction
+   that triggered the window exception. Disassembling *that* names the function
+   whose call caused the overflow, and its caller is the frame in question.
+
+Neither costs a build.
+
+**Nothing has been on air.**
