@@ -108,3 +108,40 @@ unsigned int vendor_torture(unsigned int depth, unsigned int spin_ms)
     }
     return sum;
 }
+
+/* ---- does win_spill_all actually reduce the window to one frame? --------
+ *
+ * next_moves/08 step 31. The whole per-task window design rests on a task
+ * having exactly ONE live frame when it is switched away from, and the thing
+ * meant to guarantee that on the voluntary path is win_spill_all(). That has
+ * never been measured directly -- only inferred from whether the WiFi driver
+ * survived, which is a test with far too much else in it.
+ *
+ * This holds `depth` live windowed frames, reads WINDOWSTART, spills, and reads
+ * it again. Two numbers, no driver, no blob. */
+extern volatile unsigned int g_spill_ws_before;
+extern volatile unsigned int g_spill_ws_after;
+extern void win_spill_all(void);
+
+unsigned int vendor_spilltest(unsigned int depth);
+
+unsigned int vendor_spilltest(unsigned int depth)
+{
+    unsigned int local[6];
+    for (unsigned int i = 0; i < 6u; i++) { local[i] = (depth * 7u) + i; }
+
+    if (depth == 0u) {
+        unsigned int ws;
+        __asm__ volatile ("rsr.windowstart %0" : "=r"(ws));
+        g_spill_ws_before = ws;
+        win_spill_all();
+        __asm__ volatile ("rsr.windowstart %0" : "=r"(ws));
+        g_spill_ws_after = ws;
+        return 0u;
+    }
+
+    unsigned int deeper = vendor_spilltest(depth - 1u);
+    unsigned int sum = deeper;
+    for (unsigned int i = 0; i < 6u; i++) { sum += local[i]; }
+    return sum;
+}

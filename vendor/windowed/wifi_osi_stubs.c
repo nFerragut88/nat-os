@@ -202,9 +202,78 @@ extern void blob_lock(void);
 extern void blob_unlock(void);
 extern void win_spill_all(void);   /* windowed; callable directly from here */
 extern void osi_impl_queue_recv(void);
+extern void osi_impl_delay(void);
+extern void osi_impl_evt_wait(void);
+extern void osi_impl_queue_send(void);
+
+/* WOE watch. next_moves/08 step 35.
+ *
+ * PS.WOE clear makes every windowed instruction illegal, and something on this
+ * path clears it -- the fault landed inside win_spill_all, a routine measured
+ * correct in isolation, with ps 0x00030210.
+ *
+ * Every one of the 118 adapter entries passes through osi_hit(), so this is the
+ * one place that sees the whole blob/kernel boundary. It records the FIRST
+ * crossing at which WOE is already clear: that entry is the first witness, and
+ * whatever ran between it and the previously recorded entry is the writer.
+ *
+ * Recorded once and never overwritten -- the first transition is the evidence,
+ * every later one is a consequence. */
+/* PS as it stands on entry to the blocking path, BEFORE the spill runs.
+ *
+ * Step 37. Everything since step 30 assumed the spill causes the exception
+ * state. If EXCM is already set here, the spill is only the first windowed
+ * instruction to notice -- the same mistake made with WOE one step earlier. */
+volatile uint32_t g_stub_ps_pre_spill = 0xFFFFFFFFu;
+
+/* The stack pointer at the same moment. win_spill_all nests six CALL12 frames
+ * of 48 bytes plus whatever the spills themselves write, on the CALLER'S task
+ * stack -- 2048 bytes for the shell, already 1344 deep at its tightest. If the
+ * spill runs off the end, the window handlers read frames back from memory that
+ * was never a save area, which is step 40's return address pointing into the
+ * blob's .data. */
+volatile uint32_t g_stub_sp_pre_spill;
+volatile uint32_t g_stub_sp_min = 0xFFFFFFFFu;
+
+/* First underflow recovery that is not a code address, and which side of the
+ * spill it appeared on. EXCSAVE_4/5 are written by _WindowUnderflow* on every
+ * underflow (step 42), so they must be filtered here rather than there -- the
+ * vectors have no room for a compare. Sticky: the first one is the evidence. */
+volatile uint32_t g_uf_bad_a0;
+volatile uint32_t g_uf_bad_base;
+volatile uint32_t g_uf_bad_when;      /* 1 = before the spill, 2 = after */
+
+static void uf_sample(uint32_t when)
+{
+    uint32_t a0, base;
+    __asm__ volatile ("rsr.excsave4 %0" : "=r"(a0));
+    __asm__ volatile ("rsr.excsave5 %0" : "=r"(base));
+    if (g_uf_bad_when == 0u && a0 != 0u && a0 < 0x40000000u) {
+        g_uf_bad_a0   = a0;
+        g_uf_bad_base = base;
+        g_uf_bad_when = when;
+    }
+}
+
+volatile uint32_t g_woe_lost_ps;
+volatile uint32_t g_woe_lost_at   = 0xFFFFFFFFu;
+volatile uint32_t g_woe_prev_hit  = 0xFFFFFFFFu;
+volatile uint32_t g_woe_seen_ok;
 
 static void osi_hit(uint32_t i)
 {
+    {
+        uint32_t ps;
+        __asm__ volatile ("rsr.ps %0" : "=r"(ps));
+        if (ps & (1u << 18)) {
+            g_woe_seen_ok++;                 /* WOE still set here */
+            g_woe_prev_hit = i;              /* last entry known good */
+        } else if (g_woe_lost_at == 0xFFFFFFFFu) {
+            g_woe_lost_at = i;               /* first entry seen with WOE clear */
+            g_woe_lost_ps = ps;
+        }
+    }
+
     if (i >= OSI_N) { return; }
     if (g_osi_calls[i] == 0u && g_osi_seq < 255u) { g_osi_order[i] = ++g_osi_seq; }
     if (g_osi_calls[i] < 0xFFFFu) { g_osi_calls[i]++; }
@@ -305,7 +374,26 @@ static void osi_s_wifi_int_restore(void *wifi_int_mux, uint32_t tmp)
 {
     osi_hit(11u);
     (void)wifi_int_mux;
-    __asm__ volatile ("wsr.ps %0; rsync" :: "r"(tmp));
+
+    /* ONLY the interrupt level, which is what IDF's counterpart does.
+     *
+     * portEXIT_CRITICAL_NESTED reaches XTOS_RESTORE_JUST_INTLEVEL -- the name
+     * is the specification. Writing the whole word into PS instead trusts the
+     * driver to hand back a well-formed PS, and nothing makes that true: a
+     * stale or differently-shaped value clears PS.WOE, after which EVERY
+     * windowed instruction raises IllegalInstruction.
+     *
+     * Measured. The fault landed inside win_spill_all -- a routine the
+     * standalone probe proves correct, spilling 7 frames to 1 -- with
+     * ps 0x00030210: WOE clear. The spill was never wrong; it was being run in
+     * a processor state where it could not be right.
+     *
+     * Reading PS and merging preserves WOE, UM, CALLINC and OWB, which belong
+     * to the kernel's execution mode and were never the driver's to set. */
+    uint32_t ps;
+    __asm__ volatile ("rsr.ps %0" : "=r"(ps));
+    ps = (ps & ~0xFu) | (tmp & 0xFu);
+    __asm__ volatile ("wsr.ps %0; rsync" :: "r"(ps));
 }
 
 static void osi_s_task_yield_from_isr(void)
@@ -350,7 +438,20 @@ static int32_t osi_s_semphr_take(void *semphr, uint32_t block_time_tick)
      *
      * Spilling here works because this is TASK context. Every attempt to do it
      * inside _handler_level3 failed; see next_moves/08 steps 14-18. */
+    if (g_stub_ps_pre_spill == 0xFFFFFFFFu) {
+        uint32_t ps;
+        __asm__ volatile ("rsr.ps %0" : "=r"(ps));
+        g_stub_ps_pre_spill = ps;
+    }
+    {
+        uint32_t sp;
+        __asm__ volatile ("mov %0, a1" : "=r"(sp));
+        g_stub_sp_pre_spill = sp;
+        if (sp < g_stub_sp_min) { g_stub_sp_min = sp; }
+    }
+    uf_sample(1u);
     win_spill_all();
+    uf_sample(2u);
     /* Through the bridge: blob_lock/blob_unlock are call0 kernel functions and
      * this file is windowed. Calling them directly rotates the window and
      * their RET does not rotate back -- which is exactly what happened, an
@@ -398,8 +499,29 @@ static void osi_s_mutex_delete(void *mutex)
 static int32_t osi_s_mutex_lock(void *mutex)
 {
     osi_hit(21u);
-    return (int32_t)w2c_call2((uint32_t)&osi_impl_sem_take,
-                              (uint32_t)mutex, 0xFFFFFFFFu);
+    /* Try without blocking. */
+    { uint32_t r = w2c_call2((uint32_t)&osi_impl_sem_take, (uint32_t)mutex, 0u); if (r) { return (int32_t)r; } }
+    /* About to block inside windowed code. Spill first so this task is left
+     * with exactly ONE live frame -- the state the ordinary context switch
+     * already handles -- then unpin and release so another context may run. */
+    if (g_stub_ps_pre_spill == 0xFFFFFFFFu) {
+        uint32_t ps;
+        __asm__ volatile ("rsr.ps %0" : "=r"(ps));
+        g_stub_ps_pre_spill = ps;
+    }
+    {
+        uint32_t sp;
+        __asm__ volatile ("mov %0, a1" : "=r"(sp));
+        g_stub_sp_pre_spill = sp;
+        if (sp < g_stub_sp_min) { g_stub_sp_min = sp; }
+    }
+    uf_sample(1u);
+    win_spill_all();
+    uf_sample(2u);
+    (void)w2c_call0f((uint32_t)&blob_unlock);
+    uint32_t r2 = w2c_call2((uint32_t)&osi_impl_sem_take, (uint32_t)mutex, 0xFFFFFFFFu);
+    (void)w2c_call0f((uint32_t)&blob_lock);
+    return (int32_t)r2;
 }
 
 static int32_t osi_s_mutex_unlock(void *mutex)
@@ -422,7 +544,29 @@ static void osi_s_queue_delete(void *queue)
 static int32_t osi_s_queue_send(void *queue, void *item, uint32_t block_time_tick)
 {
     osi_hit(25u);
-    return 0;
+    /* Try without blocking. */
+    { uint32_t r = w2c_call3((uint32_t)&osi_impl_queue_send, (uint32_t)queue, (uint32_t)item, 0u); if (r) { return (int32_t)r; } }
+    /* About to block inside windowed code. Spill first so this task is left
+     * with exactly ONE live frame -- the state the ordinary context switch
+     * already handles -- then unpin and release so another context may run. */
+    if (g_stub_ps_pre_spill == 0xFFFFFFFFu) {
+        uint32_t ps;
+        __asm__ volatile ("rsr.ps %0" : "=r"(ps));
+        g_stub_ps_pre_spill = ps;
+    }
+    {
+        uint32_t sp;
+        __asm__ volatile ("mov %0, a1" : "=r"(sp));
+        g_stub_sp_pre_spill = sp;
+        if (sp < g_stub_sp_min) { g_stub_sp_min = sp; }
+    }
+    uf_sample(1u);
+    win_spill_all();
+    uf_sample(2u);
+    (void)w2c_call0f((uint32_t)&blob_unlock);
+    uint32_t r2 = w2c_call3((uint32_t)&osi_impl_queue_send, (uint32_t)queue, (uint32_t)item, (uint32_t)block_time_tick);
+    (void)w2c_call0f((uint32_t)&blob_lock);
+    return (int32_t)r2;
 }
 
 static int32_t osi_s_queue_send_from_isr(void *queue, void *item, void *hptw)
@@ -453,7 +597,20 @@ static int32_t osi_s_queue_recv(void *queue, void *item, uint32_t block_time_tic
     if (w2c_call3((uint32_t)&osi_impl_queue_recv, (uint32_t)queue, (uint32_t)item, 0u)) {
         return 1;
     }
+    if (g_stub_ps_pre_spill == 0xFFFFFFFFu) {
+        uint32_t ps;
+        __asm__ volatile ("rsr.ps %0" : "=r"(ps));
+        g_stub_ps_pre_spill = ps;
+    }
+    {
+        uint32_t sp;
+        __asm__ volatile ("mov %0, a1" : "=r"(sp));
+        g_stub_sp_pre_spill = sp;
+        if (sp < g_stub_sp_min) { g_stub_sp_min = sp; }
+    }
+    uf_sample(1u);
     win_spill_all();
+    uf_sample(2u);
     (void)w2c_call0f((uint32_t)&blob_unlock);
     int32_t r = (int32_t)w2c_call3((uint32_t)&osi_impl_queue_recv, (uint32_t)queue,
                                    (uint32_t)item, (uint32_t)block_time_tick);
@@ -493,7 +650,29 @@ static uint32_t osi_s_event_group_clear_bits(void *event, uint32_t bits)
 static uint32_t osi_s_event_group_wait_bits(void *event, uint32_t bits_to_wait_for, int clear_on_exit, int wait_for_all_bits, uint32_t block_time_tick)
 {
     osi_hit(35u);
-    return 0;
+    /* Try without blocking. */
+    { uint32_t r = 0u; if (r) { return (uint32_t)r; } }
+    /* About to block inside windowed code. Spill first so this task is left
+     * with exactly ONE live frame -- the state the ordinary context switch
+     * already handles -- then unpin and release so another context may run. */
+    if (g_stub_ps_pre_spill == 0xFFFFFFFFu) {
+        uint32_t ps;
+        __asm__ volatile ("rsr.ps %0" : "=r"(ps));
+        g_stub_ps_pre_spill = ps;
+    }
+    {
+        uint32_t sp;
+        __asm__ volatile ("mov %0, a1" : "=r"(sp));
+        g_stub_sp_pre_spill = sp;
+        if (sp < g_stub_sp_min) { g_stub_sp_min = sp; }
+    }
+    uf_sample(1u);
+    win_spill_all();
+    uf_sample(2u);
+    (void)w2c_call0f((uint32_t)&blob_unlock);
+    uint32_t r2 = w2c_call3((uint32_t)&osi_impl_evt_wait, (uint32_t)event, (uint32_t)bits_to_wait_for, (uint32_t)block_time_tick);
+    (void)w2c_call0f((uint32_t)&blob_lock);
+    return (uint32_t)r2;
 }
 
 static int32_t osi_s_task_create_pinned_to_core(void *task_func, const char *name, uint32_t stack_depth, void *param, uint32_t prio, void *task_handle, uint32_t core_id)

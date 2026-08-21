@@ -50,8 +50,8 @@
  * made the symptom disappear, because a loop body containing a call cannot be a
  * zero-overhead loop and GCC emitted a plain branch instead.
  */
-#define TASK_FRAME_WORDS  21
-#define TASK_FRAME_BYTES  96           /* 21 words, padded to 16-byte alignment */
+#define TASK_FRAME_WORDS  23
+#define TASK_FRAME_BYTES  112          /* 23 words, padded to 16-byte alignment */
 
 #define TASK_FRAME_IDX_SAR    15
 #define TASK_FRAME_IDX_EPC3   16
@@ -59,6 +59,21 @@
 #define TASK_FRAME_IDX_LBEG   18
 #define TASK_FRAME_IDX_LEND   19
 #define TASK_FRAME_IDX_LCOUNT 20
+
+/* WINDOWBASE and WINDOWSTART, per task.
+ *
+ * These are GLOBAL processor state, and leaving them out is what step 29
+ * finally isolated: the handler put a task's sixteen registers back at whatever
+ * WINDOWBASE happened to be at that moment, which after another context had run
+ * windowed code was not the base the task was saved at. The frame in memory was
+ * perfect and the live registers were zeros.
+ *
+ * Only ONE case needs this, which is why two words are enough rather than a
+ * whole spilled window: the pin means an involuntary switch never lands while a
+ * task holds live windowed frames, and the blocking adapter path spills down to
+ * a single frame before it waits. */
+#define TASK_FRAME_IDX_WBASE  21
+#define TASK_FRAME_IDX_WSTART 22
 
 /* Test hook — see task.c. Runs the selection loop single-threaded. */
 int task_select_probe(int current);
@@ -144,11 +159,26 @@ typedef struct {
     uint32_t      waiting;             /* ticks READY but not selected      */
     const char   *name;
     uint32_t     *stack_base;          /* for guard checking; NULL for boot task */
+    uint32_t      stack_words;         /* size of that stack; 0 for boot task  */
 } task_t;
 
 /* Create a runnable task. Returns its id, or -1 if the table is full.
  * The entry function must not return — there is nowhere to return to. */
 int task_create(const char *name, task_entry_fn entry);
+
+/* The same, but on a stack the caller supplies.
+ *
+ * TASK_STACK_WORDS is one size for every task, and that stopped being workable
+ * the moment a vendor task asked for 6656 bytes: scaling all twelve slots to
+ * fit it would cost 78 KB against a heap of 84. Rather than raise the fixed
+ * size for everyone, a task that genuinely needs more brings its own.
+ *
+ * `stack` must stay alive for the life of the task, so in practice it is a
+ * static buffer rather than anything from the heap. The guard word, the fill
+ * pattern and the headroom report all work exactly as they do for pool tasks,
+ * because they read the size from the task rather than from the constant. */
+int task_create_with_stack(const char *name, task_entry_fn entry,
+                           uint32_t *stack, uint32_t words);
 
 /* Called from the interrupt handler with the interrupted stack pointer.
  * Saves it against the current task, selects the next, and returns the stack
@@ -160,6 +190,12 @@ uint32_t task_schedule(uint32_t current_sp);
 
 int      task_current(void);
 uint32_t task_switch_count(int id);
+uint32_t task_multiframe_count(void);  /* switch-outs with >1 live frame */
+uint32_t task_multiframe_worst(void);
+uint32_t task_multiframe_ws(void);
+int      task_multiframe_task(void);
+uint32_t task_saved_sp(int id);        /* saved sp of a non-running task */
+uint32_t task_stack_span(int id, uint32_t *words);  /* base; size via out-param */
 int      task_stack_intact(int id);    /* guard word still present? */
 uint32_t task_stack_headroom(int id);  /* untouched words remaining */
 int      task_stack_broken(void);      /* id of a task with a clobbered guard, or -1 */

@@ -2119,3 +2119,1345 @@ involuntary preemption, the bound for the wedge it would otherwise permit. Both
 are prerequisites for any eventual fix rather than alternatives to it.
 
 **Nothing has been on air.**
+
+---
+
+## Step 24 — the blocking set is closed, and the spill was the wedge
+
+Step 23 concluded that a vendor driver owning a task "cannot be hosted without
+per-task `WINDOWBASE`/`WINDOWSTART`". **That conclusion was wrong**, and the
+thing that overturned it was the question it had skipped: *which* windowed
+regions can actually block?
+
+### The blocking set is small and closed
+
+Every blocking entry in the adapter routes through one function, `wait_on()` in
+`kernel/wifi_osi_impl.c`. That makes the set enumerable rather than open-ended:
+
+| adapter entry | reaches | spills + releases |
+|---|---|---|
+| `_semphr_take` | `sem_take` → `wait_on` | yes |
+| `_queue_recv` | `queue_recv` → `wait_on` | yes |
+| `_mutex_lock` | `sem_take` → `wait_on` | yes |
+| `_queue_send` / `_to_back` / `_to_front` | `queue_send` → `wait_on` | yes |
+| `_event_group_wait_bits` | `evt_wait` → `wait_on` | yes |
+| `_task_delay` | `task_sleep` | not yet |
+
+Each takes the non-blocking path first and only spills and releases the lock
+when it is genuinely about to wait — so a wait costs a spill, and a hit costs
+nothing.
+
+### The gap the question exposed
+
+`rom_call3` did not take the lock at all. It called `blob_pin()`, and a pin only
+*records* which task must not be switched away from — a second caller simply
+overwrote the first, so both entered windowed code and collided anyway. The
+exclusion that step 23 assumed was in force had never been in force.
+
+Two defects were hiding behind that, and both were measurement failures rather
+than design failures:
+
+1. **The change had never been emitted.** The edit targeted text that a previous
+   revert had removed, so it silently did nothing, and two rounds of "pinning
+   does not help" were measurements of an unmodified binary. Confirming the
+   instruction in the disassembly *before* testing is now the rule.
+2. **`call0` clobbers `a2..a11`** — which is precisely `rom_call3`'s target and
+   its three arguments. Taking the lock destroyed them before use. The frame
+   grew to 48 bytes and the arguments are stacked across the call.
+
+### The pin bound was counting the wrong thing
+
+`g_blob_pin_ticks` counted *consecutive ticks on which the current task happened
+to be pinned*. Two tasks taking short turns inside the blob accumulate that just
+as fast as one wedged task does, so a perfectly healthy workload tripped the
+bound after two seconds and died on the watchdog. The bound is now **per pin**:
+`blob_pin()` bumps a sequence number and the scheduler resets the budget when it
+changes.
+
+### The spill was the wedge
+
+With exclusion genuinely in force, `wincollide` stopped corrupting and started
+*hanging* — one `a` on the trace, no matching `A`, the first task entering the
+windowed call and never leaving, its pin then starving every other task.
+
+Bisected to one instruction: `call8 win_spill_all` inside `rom_call3`. Removing
+it turned a watchdog reset into **156 runs, zero wrong checksums**.
+
+The spill was compensating for the absence of exclusion — it pushed a previous
+task's live frames out before rotating over them. Once the lock exists that case
+cannot arise: the only way to hold live windowed frames is to hold the lock, and
+a task that released it has already unwound them. Keeping the spill was not
+merely redundant; called from a freshly spawned task it never returned.
+
+`win_spill_all` itself stays. The blocking adapter entries use it for a
+different purpose — reducing a *blocked* task to one live frame — from inside
+windowed code where frames genuinely are live.
+
+### Measured
+
+```
+boot            11 PASS 0 FAIL
+wintorture 60   checksum 1632 expected 1632  CORRECT, 6 switches during the call
+wincollide      runs=156  wrong=0
+blob            image 606404 bytes, tx entry 0x4031acb8
+blobphy         rc=0, 1296 of 6144 bytes of private stack
+wifiinit        0x00000101 (ESP_ERR_NO_MEM), 15 of 118 adapter entries called
+blobtx force    0x00003004 (ESP_ERR_WIFI_IF)
+```
+
+`wintorture`'s switch counter is still the control: 6 real preemptions occurred
+with eight windowed frames live, so the CORRECT is evidence rather than an
+absence of opportunity.
+
+### Open, and not attributed
+
+`blobtx force` returns `ESP_ERR_WIFI_IF` and the shell answers commands
+afterwards, but the board resets on the hang detector **3.5 seconds later**.
+There is no baseline for what happened more than three seconds after that
+command before this change, so it is recorded as unattributed rather than
+assumed pre-existing.
+
+### What this changes
+
+Step 23's "specifically window-aware context switching" is no longer the
+remaining work. Exclusion plus a closed blocking set delivers what the driver
+needs without per-task `WINDOWBASE`/`WINDOWSTART`, and without disturbing the
+`-mabi=call0` decision. The next test is the one step 23 declared impossible:
+`blob_task_enable(1)`, with the driver owning a real task.
+
+**Nothing has been on air.**
+
+---
+
+## Step 25 — the blob task's failure is a stack clobber, and an open regression
+
+### What `wifiinit task` actually fails on
+
+Enabling blob task creation still panics, but the panic is now explained rather
+than merely located. Phase markers through the blocking stub gave `1-Ssu`:
+entered, found the semaphore contended, **spilled successfully**, **released the
+lock successfully** — then the blocking `w2c_call2` never came back.
+
+Extending the panic dump with the two registers that decide whether a windowed
+instruction is legal, then with the values at the `retw` itself:
+
+```
+windowbase: 3   windowstart: 0x0000000a   bit(base) SET
+ps at retw: 0x00060d20   EXCM clear
+a0 at retw: 0x00000000   callinc n=0   sp: 0x00000000   task: 6
+ws before repair: 0x00000000
+```
+
+`a0`, `a1` and `WINDOWSTART` are **all zero**, and the faulting task is the
+shell — the task that called `blob_call` and was sitting blocked. That is not a
+register-window bug at all. A blocked task's saved context was overwritten with
+zeros while it waited, and `retw` on a zeroed `a0` (n=0) is illegal, which is
+merely the first instruction unlucky enough to notice.
+
+The cause is a resource limit that was being counted instead of enforced:
+`blob_task_create` recorded requests exceeding `TASK_STACK_WORDS * 4` (2 KB) in
+`g_bt_short` and then created the task anyway. An Espressif WiFi task asks for
+several KB, and a task handed a quarter of what it asked for does not fail where
+the mistake is — it runs off its slot and writes through its neighbours.
+
+It now **refuses**, returning pdFAIL, which the driver already handles by
+unwinding and reporting NO_MEM. A shortfall should read as a resource limit.
+
+### A hypothesis that measurement killed
+
+Before the register dump, the fault looked like a cleared `WINDOWSTART` bit, and
+a `WSTART_REPAIR` macro was added to all four `w2c` bridges to set the current
+frame's bit before returning. It was emitted, it ran, and the fault did not
+move. `ws before repair: 0x00000000` is why: the whole register was zero, not
+one bit of it. The macro has been removed rather than left in as insurance
+against something it does not fix.
+
+### A defect this introduced
+
+`rom_call4` acquired a `blob_unlock` with **no matching `blob_lock`** — a
+single-shot text replacement matched the first identical return sequence in the
+file, and `rom_call4` sits above `rom_call3`. Every `rom_call4` return therefore
+cleared whatever pin was held and called `mutex_unlock` on a mutex it did not
+own. Fixed; both functions were then checked in the disassembly rather than in
+the source (`rom_call3`: 1 lock / 1 unlock, `rom_call4`: 0 / 0).
+
+### The `blobphy` regression, bisected to the layout band
+
+`blobphy` hung deterministically, and bisection against HEAD found the cause to
+be nothing that runs:
+
+| tree | `blobphy` |
+|---|---|
+| HEAD | OK rc=0 |
+| + `window.S`, `blobcall.c/.h`, `task.c` (the whole lock/spill/pin core) | OK rc=0 |
+| + `wifi_osi_stubs.c` (the three added blocking entries) | OK rc=0 |
+| + `panic.c`, `shell.c`, `wincollide.c` (print-only) | **hang** |
+| + `shell.c` alone | **hang** |
+
+Nine lines of `uart_puts` in `shell.c` — code that does not execute during
+`blobphy` — flip it. That is step 7's layout band, and this is the first minimal
+reproducer for it.
+
+The mechanism now has a candidate. `kernel/linker.ld` places `.flash.text` in
+`irom` with **`shell.c` first**, so `shell.c`'s size shifts everything the flash
+MMU maps — and `blob_map()` reprograms that MMU. `blob.c` is deliberately in
+IRAM for exactly this reason ("it cannot be fetching its own next instruction
+through the thing it is changing"); the shell is not, and it is the caller.
+That is a hypothesis with a named mechanism, not yet a proof.
+
+Resolved for now by dropping the diagnostic print, which was the only added
+flash-resident code. Every real fix is kept. The band itself remains open, and
+it is now cheap to reproduce on purpose.
+
+### Still measured good
+
+```
+boot           11 PASS 0 FAIL
+wintorture     CORRECT
+wincollide     runs=146  wrong=0
+blobphy        rc=0
+wifiinit       0x00000101 (ESP_ERR_NO_MEM)
+blobtx force   0x00003004 (ESP_ERR_WIFI_IF), then resets 3.5 s later -- the
+               same unattributed item as step 24, unchanged by any of this
+```
+
+The step-24 result stands. **Nothing has been on air.**
+
+---
+
+## Step 26 — variable task stacks, and a wrong diagnosis corrected
+
+### The request, measured
+
+`esp_wifi_init_internal` asks for **6656 bytes** of task stack. nat-os gives
+every task a fixed `TASK_STACK_WORDS * 4` = 2048.
+
+The measurement had to be printed from `blobcall.c` rather than from the shell:
+`shell.c` is the first object in `.flash.text`, so anything added there shifts
+what the flash MMU maps and walks into the step-25 layout band. `blobcall.c` is
+not flash-resident, so the same print is free. That is the band being worked
+*around* deliberately rather than tripped over.
+
+### Variable stacks
+
+Scaling the pool to fit would cost 12 x 6656 = 78 KB against a heap of 84, so the
+size belongs with the one caller that needs it:
+
+- `task_create_with_stack(name, entry, stack, words)` — the general form. The
+  caller supplies the memory; it must outlive the task, so in practice a static
+  buffer.
+- `task_create()` delegates to it with the slot's pool stack.
+- `task_t` gained `stack_words`, and `task_stack_headroom()` now bounds its scan
+  by *that task's* size rather than by the pool constant — otherwise a task on a
+  supplied stack would report headroom from whatever follows it in DRAM.
+- `blobcall.c` owns one 7168 B stack for the one task the driver creates, with a
+  `_Static_assert` against the measured 6656. A second concurrent blob task
+  wanting more than a pool stack is refused and counted, not squeezed.
+
+Cost: heap 84456 -> 77208 B. Boot stays 11 PASS 0 FAIL.
+
+### The diagnosis this corrects
+
+Step 25 attributed the zeroed context to the stack shortfall: a task handed 2 KB
+when it asked for 6.5 KB overruns its slot and writes through its neighbours.
+That was plausible, and it is wrong.
+
+With a stack that genuinely fits, the fault is unchanged:
+
+```
+exccause 0 (IllegalInstruction)   windowbase: 3   windowstart: 0x0000000a  bit(base) SET
+a0/sp out : 0x00000000 / 0x00000000   BOTH ZERO -- context clobbered
+```
+
+So the stack was a real defect and a real limit — worth fixing on its own terms —
+but it was not the cause of the clobber. Something else zeroes a blocked task's
+context while the blob task runs.
+
+The primary corruption is `a1`, not `a0`: the bridge reloads `a0` with
+`l32i a0, a1, 0`, so a zero stack pointer produces a zero return address for
+free. The shape to chase is a task resuming on a **freshly created task's frame**
+— `task_create()` zeroes `TASK_FRAME_WORDS` at the top of the new stack, which
+is exactly a frame of zeros — i.e. a saved-`sp` aliasing bug, not a register
+window bug.
+
+**Nothing has been on air.**
+
+---
+
+## Step 27 — the clobber is the shared PHY stack, re-opened by the lock release
+
+Dumping the task table at the panic ends the guessing:
+
+```
+task 5 (shell)  sp 0x3ffbfe00   stack 0x3ffb9e14+2048   guard ok
+task 9 (blob)   sp 0x3ffb23d0   stack 0x3ffb0974+7168   guard ok
+   ... all twelve slots: guard ok
+```
+
+Two things follow immediately. **No stack overflowed** — every guard word is
+intact, which retires the step-25 stack-shortfall theory for good. And the blob
+task is correctly on its new 7168 B stack, so step 26's fix does what it claims.
+
+The shell's saved `sp` is `0x3ffbfe00`, nowhere near its own 2 KB stack. From the
+symbol table:
+
+```
+3ffbe800 B _phy_stack
+3ffc0000 B _phy_stack_top
+```
+
+`0x3ffbfe00` is inside `_phy_stack`, 512 bytes below its top. The shell blocked
+while running on the **shared private PHY stack** — and, by the blocking-path
+design added in step 24, it *released the blob lock* to do so.
+
+That re-opens precisely the hazard this file's own header says the mutex exists
+to close:
+
+> THE PRIVATE STACK. `_phy_stack` is a single shared 6 KB buffer. Two contexts
+> entering phy_stack_call would corrupt each other whatever the window did.
+
+The mutex was the only thing keeping a second context off that buffer. Releasing
+it on the blocking path lets the blob task in **while the first context is still
+parked there**, with live frames and a saved switch frame on it. `_phy_stack` has
+no guard word, which is exactly why every task guard reads OK while the resumed
+context comes back as zeros.
+
+So the sequence of diagnoses ran: register window (wrong) -> stack shortfall
+(wrong, though a real defect) -> **shared PHY stack, unprotected during a
+voluntary block**. Each was retired by a measurement rather than by argument, and
+the last one is consistent with all of them: zeroed `a0`/`a1`, zeroed
+`WINDOWSTART`, and intact guards everywhere.
+
+### What this implies for the design
+
+The step-24 rule "release the lock whenever you are about to block" is sound for
+the *window*, and unsound for the *stack*. A context may only release the lock if
+nothing it leaves behind is shared — and the PHY stack is shared by construction.
+
+Two directions, neither tested:
+
+1. **Per-context PHY stacks.** Costly (6 KB each) but removes the sharing.
+2. **Do not run blockable code on the private stack at all.** `phy_stack_call`
+   exists for PHY init, which does not block. The driver's own task already runs
+   on its own stack through `rom_call3`; `esp_wifi_init_internal` is the one
+   blockable call still routed through `blob_call` -> `phy_stack_call`.
+
+(2) looks much cheaper and matches what the private stack was actually for.
+
+**Nothing has been on air.**
+
+---
+
+## Step 28 — option 2 done; it removed the sharing and did not fix the fault
+
+`blob_call()` now enters the blob through `rom_call4` instead of
+`phy_stack_call`, so a blockable driver call runs on the **caller's own task
+stack**. `blob_call` has exactly one caller, so this touched no flash-resident
+file and stayed clear of the step-25 layout band.
+
+It does what it was meant to do. The shell now blocks at `sp 0x3ffba200`, inside
+its own stack (`0x3ffb9e14+2048`), rather than at `0x3ffbfe00` on the shared
+`_phy_stack`. The buffer is no longer occupied by a parked context, and the
+private stack keeps only the job it was built for.
+
+The fault is unchanged:
+
+```
+exccause 0 (IllegalInstruction)  windowbase: 3  windowstart: 0x0000000a  bit SET
+a0/sp out : 0x00000000 / 0x00000000   BOTH ZERO
+all twelve task stack guards: ok
+```
+
+So the shared PHY stack was a third real defect on this path -- and not the
+cause either. Three hypotheses have now been retired by measurement:
+
+1. cleared `WINDOWSTART` bit — disproved: the whole register was zero
+2. blob task stack shortfall — disproved: fault identical with 7168 B, guards ok
+3. shared `_phy_stack` — disproved: fault identical with a private stack, and the
+   shell verifiably no longer parks on the buffer
+
+Each was a genuine bug worth fixing on its own terms. None was this one.
+
+### What is left
+
+The corruption is not in memory. Every task guard is intact, the stack is now
+private, and the values still come back as zeros — so the damage is in the
+**register restore across a changed `WINDOWBASE`**, which is where step 23
+pointed before the exclusion work began.
+
+The specific thing to test next: the level-3 handler saves and restores sixteen
+registers *at whatever `WINDOWBASE` currently is*, and `WINDOWBASE` is global. A
+task switched out at base X and resumed after another context has moved the base
+to Y has its registers restored at Y, while its spilled caller frames and the
+`retw` encoding in `a0` still describe X. That is precisely the per-task
+`WINDOWBASE`/`WINDOWSTART` gap, and it is now the only candidate left standing.
+
+**Nothing has been on air.**
+
+---
+
+## Step 29 — the memory is fine; the damage is in the window state
+
+The faulting task's saved switch frame, read out of memory at the panic:
+
+```
+saved frame @ 0x3ffba200: 0x40087abb 0x00000000 0x00060d20 0xfffffff0 0x00000700 0x3ffb0920 ...
+task 5 sp 0x3ffba200 stack 0x3ffb9e14+2048 guard ok
+```
+
+Word 0 is the saved `a0`: `0x40087abb`, a valid code address. The frame is
+**intact**. It was saved correctly, it sits inside the task's own stack, and the
+guard above it is untouched.
+
+So the zeros are not in memory. They exist only in the live registers at the
+`retw`. Combined with steps 26-28 that closes the question of *where*:
+
+| candidate | verdict | evidence |
+|---|---|---|
+| cleared `WINDOWSTART` bit | no | whole register was zero, not one bit |
+| blob task stack shortfall | no | identical fault at 7168 B, all guards ok |
+| shared `_phy_stack` | no | identical fault on a private stack |
+| saved frame corrupted in memory | **no** | frame reads back intact |
+| register/window state on resume | **only one left** | zeros are live-register-only |
+
+Four memory explanations, each measured and each retired. `a1` is restored from
+a good frame and is nevertheless zero by the time the bridge returns, which
+means it is being changed by a **window rotation between the restore and the
+`retw`** -- the handler puts sixteen registers back at whatever `WINDOWBASE`
+happens to be, and `WINDOWBASE` is global and no longer the one this task was
+saved at.
+
+That is per-task `WINDOWBASE`/`WINDOWSTART`, precisely as step 23 said, and it
+is now the last thing standing rather than the first thing assumed.
+
+### Why it is tractable now, and was not then
+
+Step 23's five attempts had to make context switching window-aware for *any*
+task at *any* moment. Two results since have shrunk that problem:
+
+- The **pin** means an involuntary switch never happens while a task holds live
+  windowed frames. Timer preemption is out of scope entirely.
+- The **spill** on the blocking path means a task that blocks voluntarily has
+  exactly **one** live frame.
+
+So the switch does not need to save a window; it needs to save two registers for
+the one case that remains, and restore them before the sixteen registers go
+back. `TASK_FRAME_WORDS` grows by two, `task_create()` seeds a canonical base,
+and the restore sets `WINDOWBASE` before `a1` is reloaded -- which is the part
+that has to be written carefully, because changing `WINDOWBASE` changes which
+physical register `a1` *is*.
+
+**Nothing has been on air.**
+
+---
+
+## Step 30 — per-task window state: implemented, no regressions, fault moved
+
+`WINDOWBASE` and `WINDOWSTART` are now part of a task's context.
+
+- `TASK_FRAME_WORDS` 21 -> 23, `TASK_FRAME_BYTES` 96 -> 112.
+- `_handler_level3` saves both alongside the LOOP registers, and restores them
+  **before** any general register, so the sixteen registers land at the base the
+  task was saved at rather than at whatever the previous context left behind.
+- Writing `WINDOWBASE` changes which physical register `a1` *is*, so the frame
+  pointer is parked in `g_switch_sp` — addressed by an `l32r` literal, which
+  survives the base change even though no register does — and reloaded after.
+- `task_create()` seeds a new task with the creator's base and
+  `WINDOWSTART = 1 << base`: exactly one live frame, its own, with no inherited
+  claim on the creator's frames.
+
+Only two words are needed rather than a spilled window, because the pin means an
+involuntary switch never lands mid-window and the blocking path spills to a
+single frame first.
+
+### No regressions
+
+```
+boot         11 PASS 0 FAIL
+wintorture   CORRECT
+wincollide   runs=128  wrong=0
+blobphy      rc=0
+```
+
+That is the whole scheduler exercised, including the two windowed stress tests,
+across a change to every context switch in the system.
+
+### The fault moved
+
+`wifiinit task` no longer dies in `w2c_call2` with a zeroed context. It now dies
+inside the handler's own restore:
+
+```
+exccause 29 (StoreProhibited)   epc 0x40088cbb   excvaddr 0x000004a2
+```
+
+`0x40088cbb` is `l32i.n a8, a1, 28` in the register-restore block, with `a1`
+around `0x486` — garbage. So the mechanism is live and doing its job for every
+ordinary task, and **some task's saved window state is invalid**: a restored
+`WINDOWSTART` claiming frames whose physical registers another context has since
+reused would produce exactly this, an overflow spilling through a meaningless
+stack pointer.
+
+The invariant the two-word design rests on — *a task is only ever switched away
+from with exactly one live frame* — is currently **assumed rather than
+enforced**. The next step is to stop assuming it: count the bits in
+`WINDOWSTART` on the save path and record any task switched out with more than
+one, which turns the assumption into a measurement.
+
+### Noticed in passing
+
+`osi_s_task_delay` is an empty stub. A driver asking to sleep gets an immediate
+return, so any wait loop built on it becomes a busy spin. Not the cause of
+anything here, but it is wrong and it is counted rather than implemented.
+
+**Nothing has been on air.**
+
+---
+
+## Step 31 — the invariant is false, and the reason is structural
+
+`task_schedule()` now counts the bits in each outgoing task's saved
+`WINDOWSTART`. The design says that number is always one. It is not:
+
+```
+multiframe: 14 switch-outs with >1 live frame, worst 7 frames,
+            last task 6 ws 0x0000e3c0
+```
+
+Task 6 is `disp` — an ordinary call0 task that never executes a windowed
+instruction — saved with **seven** live frames. `0x0000e3c0` is bits 6, 7, 8, 9,
+13, 14 and 15, and none of them are its own.
+
+### Why, and why it is not a bug in the counting
+
+`WINDOWSTART` is a single global register describing the whole 64-register
+physical file, and that file holds frames belonging to **several tasks at once**.
+When the blob's windowed code leaves frames live and the scheduler switches to
+`disp`, those frames are still in the register file and still marked live —
+correctly. `disp` has one frame of its own and inherits a claim on six it has
+never touched, because there is nowhere else for that claim to live.
+
+This is what steps 30's garbage stack pointer was: restoring a per-task
+`WINDOWSTART` writes one task's view of the register file over everyone's, so
+either the restoring task's frames are lost or another task's are resurrected
+against physical registers that have since been reused. A rotation then spills
+through whatever `a1` those stale frames contain.
+
+### What this actually settles
+
+Per-task `WINDOWBASE`/`WINDOWSTART` is **not sufficient on its own**, and the
+two-word design cannot be rescued by fixing the seeding or the ordering. The
+register file is shared, so either:
+
+1. **Every switch-out spills that task's windows to its own stack**, leaving the
+   file genuinely empty of its frames — which is what FreeRTOS/ESP-IDF do, and
+   what `win_spill_all` exists for. Then one bit per task is true rather than
+   assumed, and per-task `WINDOWSTART` becomes meaningful.
+2. Or `WINDOWSTART` stays global and is never restored per task — which is the
+   pre-step-30 behaviour, and fails for a task that blocks inside windowed code.
+
+(1) is the real answer and always was. The pin already removes the involuntary
+case, so the spill only has to happen on the voluntary path — which is exactly
+where the blocking stubs already call `win_spill_all`. The measurement says that
+spill is either not reducing to one frame or not covering every path that
+reaches a switch.
+
+The counter stays. It is the first thing in this whole sequence that can say
+whether a window fix worked without needing the WiFi driver to be the test.
+
+### Kept
+
+Per-task window state is retained: it is necessary but not sufficient, boot is
+11 PASS 0 FAIL with it, `wintorture` CORRECT and `wincollide` 128/0. Removing it
+would only put back a different half of the same problem.
+
+**Nothing has been on air.**
+
+---
+
+## Step 32 — the spill works; WINDOWSTART is OR-ed; and a correction
+
+### win_spill_all does exactly what it claims
+
+Measured directly, with no blob and no driver in frame — eight live windowed
+frames, spill, read `WINDOWSTART` either side:
+
+```
+spill: windowstart 0x0000aa8a (7 frames) -> 0x00000008 (1 frames)
+spill reduces to ONE frame as designed
+```
+
+So the spill is correct, and every failure since step 24 has to be explained
+without blaming it. This is also the first instrument here that tests the window
+machinery without needing the WiFi driver to be the experiment.
+
+### WINDOWSTART is now OR-ed rather than assigned
+
+A restoring task may claim only the ONE frame it is being restored into.
+Everything else in the register file belongs to a task still using it, so the
+restore now does `WINDOWSTART |= 1 << saved_WINDOWBASE` and leaves the rest
+alone, instead of writing a saved word that resurrects frames whose physical
+registers have since been reused.
+
+No regressions: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `wincollide`
+runs=131 wrong=0, `blobphy` rc=0.
+
+### Correction to step 31
+
+Step 31 said the one-live-frame invariant is false. **That claim was stronger
+than the instrument supports.** The counter reads `WINDOWSTART`, which is global
+and describes the whole register file, so it cannot tell whose frames it is
+counting. `disp` "saved with seven frames" almost certainly means *some task was
+legitimately mid-excursion at that moment* — not that `disp` owned seven frames.
+
+The structural point in step 31 stands: a per-task copy of a global register
+cannot be written back wholesale, which is why the OR above is the right shape.
+The specific claim that the invariant is violated does not stand, and the
+counter needs to mask against the restoring task's own base before it can say
+anything about ownership.
+
+### Where it now fails
+
+```
+exccause 0 (IllegalInstruction)   epc 0xc008aaae   windowbase 13  windowstart 0x00002802
+```
+
+`epc` has **bit 31 set**. That is the signature this project has now hit four
+times: a windowed return-address encoding (`a0 = (n<<30) | offset`, here n=3, so
+CALL12) jumped to as a raw address. The real target is `0x4008aaae`. It is an
+ABI-mixing fault -- call0 code returning through a windowed `a0`, or the reverse
+-- not a window-bookkeeping fault, and it is a different bug from the zeroed
+context that preceded it.
+
+**Nothing has been on air.**
+
+---
+
+## Step 33 — the OR-restore loses a task's OWN frames, and that closes the argument
+
+`0xc008aaae` decodes to `0x4008aaae` with bits 31:30 forced to `11` — a CALL12
+return encoding on an address that is the `retw.n` at the **second nested level
+inside `win_spill_all` itself**.
+
+Every call site is identical:
+
+```
+call8 4008aaa0 <win_spill_all>      x5, including the probe that works
+```
+
+So the entry path is not the difference. The probe spills correctly from eight
+clean frames; the adapter stub faults spilling from a frame the scheduler has
+restored. The only thing that differs is the **window state on entry**, which
+step 32 changed.
+
+### The flaw in OR-ing
+
+`WINDOWSTART |= 1 << saved_base` was introduced so a restoring task cannot
+destroy another task's live frames. It succeeds at that and fails at the
+converse: it does not restore the task's **own** frames either.
+
+A task that was spilled down to one frame before blocking is fine — one bit is
+the whole truth about it. A task that reaches a switch with several live frames
+gets exactly one bit back, and its caller frames are then marked dead while
+still living only in physical registers that another context is free to reuse.
+The next `retw` finds no live caller, takes an underflow, and reloads from a
+stack slot that was never written — which is a CALL12-encoded word landing in
+PC. Hence the signature.
+
+Assignment resurrects other tasks' frames. OR-ing discards your own. **There is
+no correct way to write a per-task copy of a global register back**, and that is
+not a bug to be fixed by choosing a better expression — it is the reason
+step 31's option (1) was always the answer:
+
+> Every switch-out spills that task's windows to its own stack, leaving the file
+> genuinely empty of its frames. Then one bit per task is TRUE rather than
+> assumed, and per-task `WINDOWSTART` becomes meaningful.
+
+With one frame per task guaranteed, assignment and OR-ing become the same
+operation, and both are correct.
+
+### Why this is now reachable
+
+Spilling inside `_handler_level3` failed five times (steps 14-18) and is still a
+bad idea. It no longer has to happen there:
+
+- The **pin** means an involuntary switch never lands while a task holds live
+  windowed frames, so the ISR path needs no spill at all.
+- Every remaining switch out of windowed code is **voluntary**, and spilling in
+  task context is measured to work — `win_spill_all` reduces 7 frames to 1.
+
+So the work is to guarantee that *every* voluntary block from inside windowed
+code spills first. The adapter's blocking entries already do. Ordinary kernel
+blocking — `mutex_lock`, `task_sleep`, `task_block` — does not, and a task
+inside windowed code that blocks through one of those is the remaining hole.
+
+That is a small, well-defined change with an instrument already built to check
+it: the multiframe counter, once masked to the restoring task's own base.
+
+**Nothing has been on air.**
+
+---
+
+## Step 34 — spill before parking: 33 multiframe switch-outs down to 2
+
+`task_block()` and `task_sleep()` now leave the register file holding exactly one
+frame for the parking task, via a new call0-callable bridge:
+
+- `win_spill_call0` in `window.S` — the same shape as `rom_call3` with no target
+  and no lock. call0 code cannot call the windowed `win_spill_all` directly;
+  that is the CALL8/call0 mismatch this file has recorded four times, from the
+  other direction.
+- `spill_before_parking()` in `task.c`, guarded by `ws & (ws - 1)`, so a plain
+  call0 task with nothing windowed in flight pays a single register read.
+
+Done in **task context**, not in `_handler_level3` where five attempts failed.
+It does not need to be in the handler: the pin means an involuntary switch never
+lands mid-window, so every switch out of windowed code is voluntary and passes
+through here.
+
+### Measured
+
+```
+boot         11 PASS 0 FAIL
+wintorture   CORRECT
+wincollide   runs=123  wrong=0
+blobphy      rc=0
+multiframe   33 -> 2 switch-outs with >1 live frame
+```
+
+Thirty-three down to two, with no regression anywhere. The mechanism works; what
+is left is a hole in its coverage rather than a fault in its design.
+
+### The remaining two
+
+```
+exccause 0 (IllegalInstruction)  epc 0xc008aad6  ps 0x00030210
+a0/sp out : 0x8008bbca / 0x00000000   (a0 CALL8-encoded, sp still zero)
+saved frame @ 0x3ffba200: 0x40087bc9 0x00000000 0x00060f20 0xfffffff0 0xc008aade ...
+multiframe: 2 switch-outs with >1 live frame, worst 8 frames, last task 7
+```
+
+`0xc008aad6` is `0x4008aad6`, inside `win_spill_all` itself, and word 4 of the
+saved frame is `0xc008aade` — a CALL12-encoded return address sitting in saved
+register state. Two switch-outs still park with eight live frames, and task 7 is
+`touch`, which does not run windowed code: consistent with the counter's known
+limitation (it reads the global register and cannot attribute ownership), so the
+eight frames are somebody else's, still in flight.
+
+The candidates for the hole, in order:
+
+1. A block that reaches a switch **without** going through `task_block` or
+   `task_sleep` — `mutex_lock` calls `task_block` then `task_yield`, but any path
+   that yields directly while windowed is uncovered.
+2. `spill_before_parking()`'s guard is on the **global** register, so it can skip
+   a spill when this task has one frame and another has several — which is
+   correct — but it can also spill a task whose frames are not the multiple ones,
+   which is wasted rather than wrong.
+3. The counter still cannot say *whose* frames it counted. Masking it to the
+   restoring task's own base is the prerequisite for reading the last two events
+   properly, and is now the cheapest next move.
+
+**Nothing has been on air.**
+
+---
+
+## Step 35 — PS.WOE is clear, which is why a correct spill faults
+
+### Option 1, closed in one line
+
+`spill_before_parking()` now also runs in `task_yield()`, so every voluntary
+switch point is covered without having to find the one that was missed.
+Multiframe switch-outs **2 -> 1**; boot 11 PASS 0 FAIL, `wintorture` CORRECT,
+`wincollide` runs=129 wrong=0, `blobphy` rc=0. As expected it did not move the
+panic — the remaining event is task 6 `disp`, which runs no windowed code, so
+the counter is reporting somebody else's frames exactly as its known limitation
+predicts.
+
+### The actual cause of the IllegalInstruction
+
+```
+ps : 0x00030210
+```
+
+decodes to INTLEVEL 0, EXCM 1, OWB 2, CALLINC 3, and **WOE = 0**.
+
+With `PS.WOE` clear, every windowed instruction — `entry`, `retw` — raises
+IllegalInstruction *by definition*. So the fault inside `win_spill_all` was
+never a fault in `win_spill_all`: the standalone probe proves that routine
+correct (7 frames -> 1). It was being executed in a processor state in which no
+windowed instruction can be legal.
+
+That also retires the reading in step 33. The CALL12-encoded `epc` is not
+evidence of a raw jump to an encoded return address; it is `0x4008aae2` with
+CALLINC=3 in the high bits, which is what an `epc` looks like when the window
+machinery is disabled underneath windowed code.
+
+### One real defect found, and it was not this one
+
+`osi_s_wifi_int_restore` wrote the **whole** word into PS. IDF's counterpart
+reaches `XTOS_RESTORE_JUST_INTLEVEL` — the name is the specification — and
+restores only the interrupt level. Writing the whole word trusts the driver to
+hand back a well-formed PS, and any value with WOE clear disables the window
+machinery from that moment on. Now merged: `(ps & ~0xF) | (tmp & 0xF)`.
+`phy_exit_critical` had the same shape and got the same fix.
+
+Correct on its own terms, and **not** the source: PS is still `0x00030210`
+afterwards.
+
+### Where WOE goes, next
+
+Remaining writers of PS on this path:
+
+1. `phy_stack_call`'s masking (`window.S`), which saves and restores PS around
+   the call — and which **also assigns `WINDOWSTART` outright**, the same
+   clobber pattern that was wrong in the handler and is still wrong here.
+2. The blob's own code. It is entitled to run `wsr.ps`, and nothing currently
+   checks what it leaves behind.
+
+The cheap instrument is the one that has worked all session: sample PS at the
+entry and exit of each bridge and record the first transition where WOE goes
+from 1 to 0. That names the writer instead of inferring it.
+
+**Nothing has been on air.**
+
+---
+
+## Step 36 — the blob never clears WOE; the fault is inside an exception context
+
+The WOE watch instruments `osi_hit()`, which every one of the 118 adapter
+entries passes through — the whole blob/kernel boundary in one place:
+
+```
+woe watch : never seen clear at an adapter entry   good crossings 15
+```
+
+**WOE is set at every crossing.** The blob is not clearing it, and neither is
+anything on the kernel side of that boundary. Step 35's shortlist is wrong: it
+is neither `phy_stack_call`'s masking nor the blob's own `wsr.ps`.
+
+### What the PS actually says
+
+```
+ps 0x00030210   ->  INTLEVEL 0, EXCM 1, UM 0, OWB 2, CALLINC 3, WOE 0
+```
+
+`EXCM=1` **with** `UM=0` **and** `WOE=0` is not the state of ordinary task code
+that has lost a bit. It is the state a processor is in while running an
+**exception handler** — specifically a window overflow/underflow vector, which is
+entered with EXCM set and is why those handlers use `s32e`/`l32e` rather than
+ordinary windowed instructions.
+
+The faulting instruction is the `retw.n` at `win_spill_all+0x0e`, and the
+vectors are installed where they should be:
+
+```
+40080000 _WindowOverflow4    40080040 _WindowUnderflow4
+40080080 _WindowOverflow8    400800c0 _WindowUnderflow8
+40080100 _WindowOverflow12   40080140 _WindowUnderflow12
+```
+
+So the sequence is: `win_spill_all`'s `call12` forces a window overflow, the
+overflow vector is entered with EXCM set, and control reaches the `retw` **with
+EXCM still set** — at which point a windowed instruction is illegal by
+definition. The spill is correct, the vectors exist, and the fault is in what
+happens between them.
+
+This also joins up with step 30's `StoreProhibited excvaddr 0x000004a2`: a
+window vector spilling through a meaningless stack pointer is a fault *inside*
+an exception handler, which is the other half of the same story.
+
+### Next
+
+The window vectors themselves, which this project has never examined:
+
+1. Do `_WindowOverflow4/8/12` and `_WindowUnderflow4/8/12` end with `rfwo`/`rfwu`
+   — the instructions that clear EXCM and complete the rotation? A handler that
+   returns any other way leaves EXCM set exactly as observed.
+2. Is the spill destination valid for the frames `win_spill_all` forces out? The
+   handler writes through the frame's own `a1`, and step 30 saw it write to
+   `0x4a2`.
+
+`vendor/phy/MAC-STATE.md` and `window.S` both assume these vectors are correct
+because windowed code has worked; every windowed test so far has stayed shallow
+enough not to overflow, so that assumption has never actually been exercised.
+
+**Nothing has been on air.**
+
+---
+
+## Step 37 — the vectors are correct; three latent bugs fixed; fault unmoved
+
+### The window vectors are fine
+
+All six are canonical Xtensa implementations and each ends in `rfwo`/`rfwu`, the
+instructions that clear EXCM and complete the rotation. The double-exception
+vector is installed too:
+
+```
+40080000 _WindowOverflow4    40080040 _WindowUnderflow4
+40080080 _WindowOverflow8    400800c0 _WindowUnderflow8
+40080100 _WindowOverflow12   40080140 _WindowUnderflow12
+400803c0 _vector_double      40080340 _vector_user
+```
+
+Step 36's first hypothesis — a handler returning without `rfwo` and leaving EXCM
+set — is dead.
+
+### Three latent bugs, found and fixed, none of them this one
+
+All three are real, all match a precedent already documented in this file, and
+all are verified not to regress:
+
+1. `osi_s_wifi_int_restore` wrote the whole word into PS where IDF restores only
+   the interrupt level. Now merged.
+2. `win_spill_call0` — the new call0 bridge — never wrote its **base save area**.
+   `_WindowOverflow8/12` recover the caller's sp with `l32e a0, a1, -12` and
+   spill through it; a windowed `entry` writes that slot, a call0 frame must do
+   it by hand. `phy_stack_call` already does, and says so in a comment that
+   names this exact fault.
+3. `rom_call3` and `rom_call4` had the same gap, and `rom_call4` is on the
+   `blob_call` path since step 28.
+
+Fixed, and the fault did not move: still IllegalInstruction at `win_spill_all`'s
+`retw`, still `ps 0x00030210`.
+
+```
+boot 11 PASS 0 FAIL   wintorture CORRECT   wincollide runs=121 wrong=0   blobphy rc=0
+```
+
+### The assumption still unchecked
+
+Every attempt so far has assumed the spill *causes* the exception state — that a
+`call12` overflows, a vector runs, and something goes wrong inside it. That has
+never been measured. The alternative fits the evidence just as well and is
+simpler:
+
+**PS.EXCM is already set when `win_spill_all` is entered.** Then the spill is
+merely the first windowed instruction to notice — exactly as WOE was in step 35,
+and exactly the mistake made there.
+
+One sample settles it: read PS at the top of the blocking stub, before
+`win_spill_all()` is called. If EXCM is already 1 there, everything since
+step 30 has been investigating the messenger, and the real question becomes how
+a task comes to be running blob code with EXCM set — for which the level-3
+handler's deliberate `PS.EXCM` clear (`vectors.S`, "Clear PS.EXCM before calling
+any C") is the obvious first place to look, since it clears the bit for the
+handler's own C but says nothing about what the resumed task inherits.
+
+**Nothing has been on air.**
+
+---
+
+## Step 38 — the spill really is entered clean, so the fault is generated inside it
+
+Step 37 proposed that `PS.EXCM` might already be set when `win_spill_all` is
+entered, making the spill merely the first windowed instruction to notice. One
+sample, taken at the top of the blocking path before the spill runs:
+
+```
+pre-spill : ps 0x00060320   EXCM clear before the spill, WOE set
+```
+
+**That hypothesis is false.** The blocking path is entered from ordinary task
+state — WOE set, EXCM clear, exactly as it should be. So the original direction
+was right after all: the exception state is *generated during* the spill, not
+inherited by it.
+
+Combined with steps 36-37 this narrows hard. At the moment `win_spill_all` is
+called: WOE set, EXCM clear, vectors correct and installed, base save areas now
+written by every call0 bridge. During the spill, the processor ends up at
+`ps 0x00030210` — EXCM 1, WOE 0 — which is window-vector state. Something in the
+overflow sequence is not completing.
+
+### Current fault
+
+```
+exccause 2 (InstructionFetchError)  epc 0x4008abbe  ps 0x00030318
+windowbase 13  windowstart 0x00002002  bit(base) SET
+```
+
+`ps 0x00030318` has `INTLEVEL = 8`, which is not a legal level on this part
+(1-7 plus NMI). A PS holding an impossible interrupt level is itself evidence:
+either PS is being written with a value that was never a PS, or it is being read
+mid-update. That is a stronger and more specific lead than anything the previous
+four steps produced, and it is where the next session should start.
+
+### An instrument bug worth recording
+
+The window diagnostics were gated on `exccause == 0`, so when the fault became
+`exccause 2` the panic printed nothing and the run looked like a repeat of the
+previous one. Two builds were spent before noticing. The guard now covers both.
+
+A diagnostic that is silent for the fault you actually got is worse than no
+diagnostic, because the silence reads as "unchanged".
+
+**Nothing has been on air.**
+
+---
+
+## Step 39 — it was a double exception, and the real PC was never being read
+
+### Nothing was illegal
+
+`_vector_double` jumped to `_handler_panic`, the same handler as `_vector_user`,
+and that handler reads `EPC1` and `PS`. On Xtensa an exception taken while
+`PS.EXCM` is already set writes **`DEPC`**; `EPC1` keeps the FIRST exception's
+PC.
+
+A window overflow/underflow *is* an exception: it sets `EPC1` to the instruction
+that triggered it and runs with `EXCM=1`, `WOE=0`. A fault inside that handler
+therefore arrived reporting:
+
+| reported | actually |
+|---|---|
+| `epc` = `win_spill_all`'s `retw` | `EPC1` — what *triggered* the spill handler |
+| `ps` = EXCM 1, WOE 0, INTLEVEL 8 | the window vector's own execution state |
+| — | `DEPC`, the real faulting PC, never read |
+
+So the "cleared WOE" of step 35, the "exception context" of step 36 and the
+"impossible INTLEVEL" of step 38 were all one thing: **the window handler's
+normal state, misread as task state.** Four steps of explanation for values that
+were never anomalous. The lesson is narrow and repeatable — a fault reporter that
+cannot distinguish a double exception will confidently describe the wrong
+instruction.
+
+`_vector_double` now has its own handler, which reports `DEPC` as the fault and
+keeps `EPC1` alongside it, labelled as context rather than as cause.
+
+### What it actually is
+
+```
+exccause 2 (InstructionFetchError)
+epc      0x3ffd4020   <- DEPC, the faulting instruction
+DOUBLE EXCEPTION - a fault inside an exception handler.
+epc1     0x4008ac22   <- what triggered the handler (NOT the culprit)
+```
+
+`0x3ffd4020` is `BLOB_DRAM_ADDR` (`0x3FFD4000`, kernel/flash.h) **+ 0x20** — the
+blob's copied `.data` region. Control was transferred into the blob's data
+segment, and ESP32 data RAM is not executable, so the fetch faults.
+
+That is a loader/linker-script question, not a register-window question:
+something executable is being placed in `.data` and copied to DRAM, or a pointer
+into `.data` is being called. `blob.ld` collects code with globs
+(`*(.iram1*) *(.phyiram*) *(.wifi0iram*)`); a section that matches none of them
+and holds executable content would land exactly here.
+
+### Next
+
+1. Disassemble the blob image at `.data` offset `0x20` — is it code?
+2. List the blob's input sections and check which ones `blob.ld` routes to
+   `.data`, looking for anything executable that the globs miss.
+3. `--orphan-handling=error` already guarantees nothing is silently dropped; it
+   does not guarantee everything is placed in the right window.
+
+**Nothing has been on air.**
+
+---
+
+## Step 40 — not misplaced code: a return address recovered out of the blob's data
+
+`blob.ld` is exonerated. Disassembling the blob image at the faulting address
+shows genuine data, and the symbols confirm it:
+
+```
+3ffd4018 D g_wifi_crypto_funcs_md5
+3ffd401c D g_wifi_osi_funcs_md5        <- 0x3ffd4020 falls in this pointer region
+3ffd4024 D libnet80211_reversion_remote
+```
+
+Nothing executable is routed into `.data`; the section layout is right:
+
+```
+.blob_entry vma 40300000   .text vma 40300044   .rodata vma 3f700000
+.data       vma 3ffd4000   .bss  vma 3ffd5018
+```
+
+So this is **not** a placement bug. It is a control transfer to the address of a
+data variable — a jump through a return address that is not one.
+
+### The mechanism
+
+```
+epc1 0x4008ac22  = retw.n at win_spill_all+0x6, the FIRST nested level
+DEPC 0x3ffd4020  = where control went
+```
+
+`retw` at the first nesting level raises a window **underflow**, whose handler
+recovers the frame's return address with `l32e a0, a13, -16` (or the /4 and /8
+variants) and returns through it. The value it recovered points into the blob's
+`.data`. So the spill area that underflow read from did not contain a saved
+frame — it contained blob data, or something that had been overwritten with it.
+
+That is the same family as the base-save-area bugs fixed in step 37, one level
+further out: not "a call0 frame forgot to write its save area", but "the memory
+the handler read a frame back from was never that frame's save area".
+
+### What to check next
+
+1. **Whose stack is it?** Print `a1`/`a13` from inside the underflow path, or
+   record the spill-area address the handler reads. If it points into
+   `0x3ffd4000..0x3ffd5018` then some frame's stack pointer is inside the blob's
+   `.data` region, and the overflow that preceded it wrote *through* blob data —
+   which would also silently corrupt the driver.
+2. **Depth.** `win_spill_all` nests six CALL12 frames of 48 bytes plus the spill
+   traffic. Confirm the calling task has room: the adapter stubs run on the
+   caller's task stack, which for the shell is 2048 bytes and already 1344 deep
+   at its tightest.
+3. (2) is the more likely of the two and is cheap: `task_stack_headroom()` for
+   the blocking task, sampled at the stub before `win_spill_all()`.
+
+The guards all read intact, but a guard only catches an overrun that reaches the
+bottom word — a spill that lands *beyond* the stack into a neighbour, or short of
+the guard, does not trip it.
+
+**Nothing has been on air.**
+
+---
+
+## Step 41 — the stack has room; the bad return address is genuinely in a frame
+
+Step 40 called stack depth the likely cause. It is not:
+
+```
+pre-spill : sp 0x3ffba320   lowest seen 0x3ffba320
+task 5      stack 0x3ffb9e3c + 2048   ->  0x3ffb9e3c .. 0x3ffba63c
+```
+
+The spill starts 1252 bytes above the bottom of the task's own stack and needs
+roughly 288 for its six CALL12 frames plus spill traffic. `lowest seen` never
+moved, so no other blocking site goes deeper. The stack is not exhausted, the
+spill area is inside the right task's stack, and the guard being intact is for
+once actually meaningful.
+
+So the underflow handler read a legitimate save area on the correct stack, and
+what it found there was `0x3ffd4020` — a pointer into the blob's `.data` — being
+used as a return address.
+
+That leaves one explanation standing: **a frame in the chain genuinely holds
+that value in its `a0` slot.** The frames being spilled belong to the blob's own
+windowed code, now running on the caller's task stack since step 28 routed
+`blob_call` through `rom_call4`. Their return addresses should be blob `.text`
+(`0x40300044`+). One of them is not.
+
+### Next, and it is now a two-line instrument
+
+Log the address the window handler reads from and the value it recovers:
+
+- in `_WindowUnderflow4/8/12`, store `a13`/`a9`/`a5` and the loaded `a0` to a
+  pair of globals before `rfwu`;
+- print both at the panic.
+
+That names the exact save area and the exact frame, rather than inferring either.
+The handlers are five instructions each and run with `EXCM` set, so the store
+must go to a fixed address via `l32e`-safe means -- no literals, no stack.
+
+Every cheaper explanation has now been tested and eliminated: placement
+(step 40), depth (here), base save areas (step 37), PS state (steps 35-38), and
+the window bookkeeping itself (steps 30-33).
+
+**Nothing has been on air.**
+
+---
+
+## Step 42 — the underflow probe works, and records the wrong underflow
+
+`_WindowUnderflow4/8/12` now record the return address they recover and the save
+area it came from, in `EXCSAVE_4`/`EXCSAVE_5` — the only scratch available to a
+handler with no stack, no literal pool and 64 bytes of room.
+
+It reports:
+
+```
+underflow : recovered a0 0x400875e0 from save area 0x3ffbb540
+```
+
+`0x400875e0` is a valid kernel code address and `0x3ffbb540` is inside task 7's
+stack (`touch`, `0x3ffbae14 + 2048`). That is a **healthy underflow belonging to
+an unrelated task.**
+
+Underflows happen continuously across the whole system — every `retw` that needs
+a frame reloaded — so recording unconditionally captures whichever task
+underflowed last before the panic, which is almost never the interesting one.
+The probe is correct and the sampling is wrong.
+
+### The fix, and its constraint
+
+Record only a *suspicious* recovery: a return address that is not in the code
+region (`< 0x40000000`), which is exactly the `0x3ffd4020`-shaped value the
+fault returns through, and make it sticky so the first one survives.
+
+The constraint is real. These handlers may not clobber `a0..a3` (being
+restored), have no spare registers, and must stay inside a 64-byte vector slot.
+`_WindowUnderflow12` is currently 13 instructions plus the two `wsr`s: about 45
+of 64 bytes, so a compare and branch fits, but the register to compare *with*
+has to come from somewhere that is not the frame being restored.
+
+The cleanest form is probably to leave the unconditional `wsr` in place and do
+the filtering where there is room to do it — sample `EXCSAVE_4` from
+`spill_before_parking()` and from the blocking stub, on both sides of
+`win_spill_all()`, and keep the first value that is not a code address. Same
+information, no constraint on the vector.
+
+### Standing state
+
+```
+boot 11 PASS 0 FAIL   wintorture CORRECT   wincollide runs=121 wrong=0   blobphy rc=0
+wifiinit task: DOUBLE EXCEPTION, InstructionFetchError, DEPC 0x3ffd4020
+```
+
+**Nothing has been on air.**
+
+---
+
+## Step 43 — the bad address is not an underflow recovery, so it is not a window bug
+
+The filtered probe brackets `win_spill_all()` on both sides and keeps the first
+underflow recovery that is not a code address:
+
+```
+uf filter : no non-code recovery seen at either side of the spill
+underflow : recovered a0 0x40087654 from save area 0x3ffbb540   (healthy, task 7)
+```
+
+**Nothing bad is ever recovered.** Every underflow the system performs returns a
+valid code address. The `0x3ffd4020` that control reaches is therefore *not* a
+return address reloaded from a save area, which is what steps 40-42 assumed.
+
+### What that changes
+
+The window machinery is exonerated, and with it roughly ten steps of suspicion:
+
+- the spill is correct (step 32, measured 7 frames -> 1)
+- the vectors are correct (step 37)
+- base save areas are now written by every call0 bridge (step 37)
+- the stack has room and is the right stack (step 41)
+- underflow recoveries are all valid code addresses (here)
+
+What remains is the plainest reading of the fault, and the one available since
+step 39: **the blob transfers control to an address inside its own `.data`.**
+`0x3ffd4020` sits among `g_wifi_crypto_funcs_md5`, `g_wifi_osi_funcs_md5` and
+`libnet80211_reversion_*` — pointer-sized slots the driver initialises and
+dereferences. A call through one of those, holding a value that is a data
+address rather than a code address, produces exactly this.
+
+That is a **blob loading question**, not a scheduler or window question:
+
+1. `blob_init()` word-copies `.data` (LMA `0x403930ac`, 0x1018 bytes) to
+   `0x3ffd4000` and zeroes `.bss`. Verify the copy against the image rather than
+   trusting it — a shifted or truncated `.data` puts wrong values in exactly
+   these slots.
+2. The three-window split means `.rodata` lives at `0x3f700000` while `.data` is
+   at `0x3ffd4000`. Any pointer the blob expects to resolve into one and which
+   lands in the other is this fault.
+3. `esp_wifi_init_internal` is the first caller to reach these tables, which is
+   why nothing before it faulted.
+
+Ten steps of window investigation produced four real fixes and eliminated the
+whole subsystem as the cause. That is worth having, and it is also a reminder
+that step 39 named the right region and the next ten steps looked elsewhere.
+
+**Nothing has been on air.**
+
+---
+
+## Step 44 — `.data` is right, and the fault address is an address, not a value
+
+The blob image's `.data`, as linked:
+
+```
+3ffd4000  2e02703f 01000000 3e02703f 4602703f
+3ffd4010  4e02703f 5602703f 5e02703f 6602703f
+3ffd4020  01000000 7702703f 8602703f 01010100
+```
+
+Two results, both eliminating step 43's shortlist.
+
+**The window split is consistent.** The `*_md5` and `libnet80211_reversion_*`
+slots hold `0x3f70022e`, `0x3f70023e`, `0x3f700277` … — pointers into `.rodata`
+at `0x3f700000`, which is precisely where the DROM window maps it. Pointers that
+must resolve across the split do resolve. Step 43's hypothesis (2) is dead.
+
+**`0x3ffd4020` holds `0x00000001`.** A boolean, not a pointer. So the faulting
+PC is the *address* of a data slot, not a corrupted pointer value read out of
+one. Nothing in `.data` contains `0x3ffd4020`; control was computed to it.
+
+That distinction matters, because it rules out the whole family of "a function
+pointer holds the wrong value" explanations — including a mis-copied `.data`,
+which would have to have written `0x3ffd4020` into some slot, and no slot
+contains it.
+
+### What computes 0x3ffd4020
+
+An address, not a loaded value, means it was *formed*: a table base plus an
+offset, or a symbol reference. `0x3ffd4020` is `_blob_data_vma + 0x20`, and the
+blob reaches this only once `esp_wifi_init_internal` starts walking its own
+tables.
+
+The candidates worth testing, in order:
+
+1. **A jump table.** `s_ioctl_table` sits at `0x3ffd4034`, 0x14 past the fault.
+   A dispatch computed off a table base in `.data` — rather than off `.rodata`
+   or `.text` — lands here. If the blob's linker placed a table our script routed
+   to `.data` that the original placed elsewhere, dispatch through it jumps into
+   data.
+2. **A call through a not-yet-initialised slot** that the driver fills during
+   init and which our OSI table never populates, leaving the blob to compute a
+   target from a base that is still the table's own address.
+
+(1) is checkable statically: compare which input sections `blob.ld` routes to
+`.data` against what the original `libnet80211.a`/`libpp.a` objects declare, and
+look for anything the ESP-IDF link would have placed in `.rodata` or IRAM.
+
+**Nothing has been on air.**
+
+---
+
+## Step 45 — the `.data` routing is faithful, so the jump table theory is out
+
+`blob.ld` routes `.data` by the input sections the objects declare:
+
+```
+.data : AT(ALIGN(LOADADDR(.rodata) + SIZEOF(.rodata), 4))
+{
+  _blob_data_vma = .;
+  *(.data .data.* .sdata .sdata.*)
+  *(.dram1*)
+}
+```
+
+No pattern here can pull in something IDF would have placed elsewhere — and
+`s_ioctl_table`, the table sitting 0x14 past the fault, is `D` in the symbol
+table, i.e. the original object declares it as initialised **data**. Our script
+puts it exactly where IDF's link would.
+
+So step 44's candidate (1) is eliminated statically, without a board run. The
+`.data` window is faithful to the image in placement (step 45), in content
+(step 44), and in cross-window pointer resolution (step 44).
+
+### What is left
+
+Candidate (2): the blob computes a call target from a base that is still a table
+address because nothing has filled the slot in. `0x3ffd4020` is
+`_blob_data_vma + 0x20`, it holds `0x00000001`, and it is only reached once
+`esp_wifi_init_internal` walks its own tables — which is also the first moment
+the driver expects structures the host was supposed to populate.
+
+The OSI table is the obvious such structure, and there is a live discrepancy in
+the existing output worth pulling on before anything else:
+
+```
+osi_funcs -> 0x3f40761c   (counting table 0x3f40761c, real table 0x3ffb00bc)
+real osi forwarded calls: 0   last impl at 0x00000000
+```
+
+**Zero forwarded calls.** 15 adapter entries are reached and counted, but the
+counting table never forwards to the real one, and `last impl` is null. If the
+blob is reading function pointers out of a table that the host never finished
+wiring, a computed dispatch off that table's base is precisely the shape of this
+fault — and this line has been printing all along.
+
+Next: work out why the counting table forwards nothing, and what the blob reads
+out of it during init.
+
+**Nothing has been on air.**

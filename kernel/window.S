@@ -56,6 +56,14 @@ _WindowOverflow4:
     .global _WindowUnderflow4
 _WindowUnderflow4:
     l32e    a0, a5, -16
+    /* next_moves/08 step 42. Record what this handler recovered as the return
+     * address, and the save area it came from. EXCSAVE because these vectors
+     * have no stack, no literal pool and 64 bytes of room, and because they run
+     * with PS.EXCM set where nothing else is safe. Levels 4 and 5 are unused by
+     * this kernel. Overwritten on every underflow, so what survives to a panic
+     * is the last one -- which is the one that returned into the fault. */
+    wsr.excsave4 a0
+    wsr.excsave5 a5
     l32e    a1, a5, -12
     l32e    a2, a5,  -8
     l32e    a3, a5,  -4
@@ -81,6 +89,14 @@ _WindowOverflow8:
     .global _WindowUnderflow8
 _WindowUnderflow8:
     l32e    a0, a9, -16
+    /* next_moves/08 step 42. Record what this handler recovered as the return
+     * address, and the save area it came from. EXCSAVE because these vectors
+     * have no stack, no literal pool and 64 bytes of room, and because they run
+     * with PS.EXCM set where nothing else is safe. Levels 4 and 5 are unused by
+     * this kernel. Overwritten on every underflow, so what survives to a panic
+     * is the last one -- which is the one that returned into the fault. */
+    wsr.excsave4 a0
+    wsr.excsave5 a9
     l32e    a1, a9, -12
     l32e    a2, a9,  -8
     l32e    a7, a1, -12
@@ -115,6 +131,14 @@ _WindowOverflow12:
     .global _WindowUnderflow12
 _WindowUnderflow12:
     l32e    a0,  a13, -16
+    /* next_moves/08 step 42. Record what this handler recovered as the return
+     * address, and the save area it came from. EXCSAVE because these vectors
+     * have no stack, no literal pool and 64 bytes of room, and because they run
+     * with PS.EXCM set where nothing else is safe. Levels 4 and 5 are unused by
+     * this kernel. Overwritten on every underflow, so what survives to a panic
+     * is the last one -- which is the one that returned into the fault. */
+    wsr.excsave4 a0
+    wsr.excsave5 a13
     l32e    a1,  a13, -12
     l32e    a2,  a13,  -8
     l32e    a11, a1,  -12
@@ -275,6 +299,17 @@ win_call_vendor:
     .align 4
 rom_call4:
     addi    a1, a1, -32
+
+    /* Base save area, for the reason spelled out in win_spill_call0 and in
+     * phy_stack_call: _WindowOverflow8/12 recover the caller's sp with
+     * `l32e a0, a1, -12` and spill through it. A windowed `entry` writes that
+     * slot; this function is call0 and must write it by hand, or a spill that
+     * unwinds this far stores through whatever was already at [sp-12] -- from
+     * inside a window vector, with PS.EXCM set. */
+    addi    a8, a1, 32
+    addi    a9, a1, -12
+    s32i    a8, a9, 0
+
     s32i    a0,  a1, 0
     s32i    a12, a1, 4              /* callee-saved under call0; CALL8 eats them */
     s32i    a13, a1, 8
@@ -342,37 +377,134 @@ win_spill_all:
     retw
     .size win_spill_all, . - win_spill_all
 
-    .global rom_call3
-    .type rom_call3, @function
+/* ---- spilling from call0 code -----------------------------------------
+ *
+ * win_spill_all is windowed, so call0 kernel code cannot simply call it -- that
+ * is the CALL8-into-call0 mismatch this file has recorded four times, from the
+ * other direction. This is the same shape as rom_call3 with no target and no
+ * lock: save what CALL8 eats, rotate into the spill, come back.
+ *
+ * Exists so task_block()/task_sleep() can leave the register file holding
+ * exactly one frame for this task before it parks. See next_moves/08 step 34. */
     .align 4
-rom_call3:
+    .global win_spill_call0
+    .type win_spill_call0, @function
+win_spill_call0:
     addi    a1, a1, -32
+
+    /* Write this frame's BASE SAVE AREA before rotating into windowed code.
+     *
+     * _WindowOverflow8/12 recover the caller's stack pointer with
+     * `l32e a0, a1, -12` and then spill through it. A windowed callee's `entry`
+     * writes that slot as part of its prologue; a call0 function does not, so a
+     * call0 frame that windowed code rotates over hands the overflow handler
+     * whatever happens to be at [sp-12] -- and the handler then stores through
+     * it, inside an exception context with PS.EXCM set.
+     *
+     * That is the fault: StoreProhibited to 0x000004a2 in step 30, and the
+     * IllegalInstruction at win_spill_all's retw in step 36, both with
+     * ps 0x00030210 -- EXCM 1, WOE 0, UM 0, the state of a window vector rather
+     * than of task code.
+     *
+     * phy_stack_call already does exactly this and says so in its own comment;
+     * this bridge was written from rom_call3's shape and inherited the gap.
+     * s32i takes no negative offset, hence the second addi. */
+    addi    a8, a1, 32              /* the caller's sp */
+    addi    a9, a1, -12
+    s32i    a8, a9, 0
+
     s32i    a0,  a1, 0
-    s32i    a12, a1, 4              /* callee-saved under call0; CALL8 eats them */
+    s32i    a12, a1, 4
     s32i    a13, a1, 8
     s32i    a14, a1, 12
     s32i    a15, a1, 16
-
-    /* Push whatever the previously-running task left live out to ITS stack,
-     * before this call rotates over it. Task context, so this is safe here in
-     * a way it was not inside the interrupt handler (step 14).
-     *
-     * CALL8 clobbers a8..a15 only; a2 (the target) and a3..a5 (the arguments)
-     * are below that and survive, which is why this sits before they are
-     * moved into place. */
     call8   win_spill_all
-
-    mov     a10, a3
-    mov     a11, a4
-    mov     a12, a5
-    callx8  a2
-    mov     a2,  a10
     l32i    a0,  a1, 0
     l32i    a12, a1, 4
     l32i    a13, a1, 8
     l32i    a14, a1, 12
     l32i    a15, a1, 16
     addi    a1, a1, 32
+    ret
+    .size win_spill_call0, . - win_spill_call0
+
+    .global rom_call3
+    .type rom_call3, @function
+    .align 4
+rom_call3:
+    addi    a1, a1, -48
+
+    /* Base save area, for the reason spelled out in win_spill_call0 and in
+     * phy_stack_call: _WindowOverflow8/12 recover the caller's sp with
+     * `l32e a0, a1, -12` and spill through it. A windowed `entry` writes that
+     * slot; this function is call0 and must write it by hand, or a spill that
+     * unwinds this far stores through whatever was already at [sp-12] -- from
+     * inside a window vector, with PS.EXCM set. */
+    addi    a8, a1, 48
+    addi    a9, a1, -12
+    s32i    a8, a9, 0
+
+    s32i    a0,  a1, 0
+    s32i    a12, a1, 4              /* callee-saved under call0; CALL8 eats them */
+    s32i    a13, a1, 8
+    s32i    a14, a1, 12
+    s32i    a15, a1, 16
+
+    /* Take the blob lock for the duration of this excursion into windowed
+     * code. EXCLUSION, not a marker: a pin that only records the current task
+     * is overwritten by the next caller, so both enter and collide.
+     *
+     * blob_lock pins as a side effect, so the scheduler will not switch away
+     * either. Blocking adapter entries spill and release it, so a wait does
+     * not deadlock against the task it is waiting for. */
+    /* a2..a5 are the target and its arguments, and call0 CLOBBERS a2..a11 --
+     * they have to be stacked across the lock call. (The spill below is a
+     * CALL8, which only eats a8..a15, so they survive that one untouched.) */
+    s32i    a2,  a1, 24
+    s32i    a3,  a1, 28
+    s32i    a4,  a1, 32
+    s32i    a5,  a1, 36
+    call0   blob_lock
+    l32i    a2,  a1, 24
+    l32i    a3,  a1, 28
+    l32i    a4,  a1, 32
+    l32i    a5,  a1, 36
+
+    /* NO SPILL HERE, and its absence is load-bearing.
+     *
+     * Step 16 spilled the previously-running task's live frames out to its own
+     * stack before rotating over them. That was compensating for the absence of
+     * exclusion: without a lock, another task really could be sitting on live
+     * windowed frames when this one rotated the window.
+     *
+     * The lock above removes that case at the source. The only way to hold live
+     * windowed frames is to hold the lock, and a task that released it has
+     * already unwound them, so there is never anything here to spill.
+     *
+     * Keeping the spill anyway was not merely redundant, it WEDGED: called from
+     * a freshly spawned task, win_spill_all never returned, the pin then starved
+     * every other task, and the board died on the hang detector three seconds
+     * later. Bisected -- removing this one call turned wincollide from a
+     * watchdog reset into 156 runs with zero wrong checksums.
+     *
+     * win_spill_all itself stays; the blocking adapter entries call it for a
+     * different reason (reducing a blocked task to ONE live frame), from inside
+     * windowed code where frames genuinely are live. */
+
+    mov     a10, a3
+    mov     a11, a4
+    mov     a12, a5
+    callx8  a2
+    mov     a2,  a10
+    s32i    a2,  a1, 20             /* preserve the result across a call0 */
+    call0   blob_unlock
+    l32i    a2,  a1, 20
+    l32i    a0,  a1, 0
+    l32i    a12, a1, 4
+    l32i    a13, a1, 8
+    l32i    a14, a1, 12
+    l32i    a15, a1, 16
+    addi    a1, a1, 48
     ret
     .size rom_call3, . - rom_call3
 
@@ -399,6 +531,7 @@ rom_call3:
     .align 4
     .global w2c_call0f
     .type w2c_call0f, @function
+
 w2c_call0f:                         /* uint32_t w2c_call0f(fn) */
     entry   a1, 32
     s32i    a0, a1, 0
@@ -432,6 +565,13 @@ w2c_call2:                          /* uint32_t w2c_call2(fn, a, b) */
     mov     a3, a4
     callx0  a8
     l32i    a0, a1, 0
+    /* Diagnostic: a0 and a1 as they are on the way out. The blocking adapter
+     * path returns through here after the task has been switched away and
+     * back, so these are the two values that say whether the context came back
+     * intact or came back as zeros. */
+    movi    a9, g_win_a0
+    s32i    a0, a9, 0
+    s32i    a1, a9, 4
     retw
     .size w2c_call2, . - w2c_call2
 

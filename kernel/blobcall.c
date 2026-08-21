@@ -46,8 +46,14 @@
 #include "window.h"
 #include "critical.h"
 #include "task.h"
+#include "uart.h"
 
 extern uint32_t g_phy_call_mask;     /* window.S */
+
+
+/* Written by w2c_call2 in window.S -- see there. */
+volatile uint32_t g_win_a0;
+volatile uint32_t g_win_sp;
 
 static mutex_t g_blob_mutex;
 static int     g_ready;
@@ -80,11 +86,30 @@ uint32_t blob_call(uint32_t fn, uint32_t a, uint32_t b, uint32_t c, uint32_t d)
 
     /* Scheduler stays alive for the duration. The mutex is what keeps a
      * second context out; interrupts no longer have to be. */
-    g_phy_call_mask = 0u;
+
+    /* rom_call4, NOT phy_stack_call -- this runs on the CALLER'S OWN task
+     * stack, and that is the whole point of step 27.
+     *
+     * phy_stack_call moves execution onto `_phy_stack`, a single shared 6 KB
+     * buffer. That was safe while the mutex was held for the entire call. It
+     * stopped being safe in step 24, when the blocking adapter entries began
+     * releasing the lock in order to wait: the waiting context stays PARKED on
+     * the shared buffer, with live frames and a saved switch frame on it, while
+     * a second context is now free to enter and run on the same 6 KB.
+     *
+     * Measured. The shell blocked inside esp_wifi_init_internal with sp
+     * 0x3ffbfe00 -- inside _phy_stack (0x3ffbe800..0x3ffc0000) -- the blob task
+     * ran, and the shell resumed with a0, a1 and WINDOWSTART all zero. Every
+     * task stack guard was intact, because the buffer that was overwritten is
+     * the one thing with no guard on it.
+     *
+     * A task stack is private by construction, so a context that blocks on one
+     * leaves nothing another context can reach. The private stack keeps the job
+     * it was built for -- PHY init, which does not block -- and blockable driver
+     * code now runs where the driver's own task already runs. */
     blob_pin();                      /* not preemptible from here */
-    uint32_t r = phy_stack_call(fn, a, b, c, d);
+    uint32_t r = rom_call4(fn, a, b, c, d);
     blob_unpin();
-    g_phy_call_mask = 1u;
 
     g_calls++;
     mutex_unlock(&g_blob_mutex);
@@ -105,9 +130,20 @@ uint32_t blob_call(uint32_t fn, uint32_t a, uint32_t b, uint32_t c, uint32_t d)
  * away is safe, because the window is either not in use or has been spilled. */
 static volatile int g_pinned = -1;
 
-int  blob_pinned_task(void)  { return g_pinned; }
-void blob_pin(void)          { g_pinned = task_current(); }
-void blob_unpin(void)        { g_pinned = -1; }
+/* Bumped by every pin so the scheduler's runaway bound can be PER PIN.
+ *
+ * Measured, not assumed: the bound was first written as consecutive ticks on
+ * which the current task happened to be pinned, and two tasks taking short
+ * turns inside the blob accumulate that just as fast as one wedged task does.
+ * wincollide reset the board on TG0WDT after two seconds while making perfectly
+ * good progress. The counter has to reset when the pin CHANGES, not when a tick
+ * happens to land on an unpinned task. */
+static volatile uint32_t g_pin_seq;
+
+int      blob_pinned_task(void) { return g_pinned; }
+uint32_t blob_pin_seq(void)     { return g_pin_seq; }
+void     blob_pin(void)         { g_pinned = task_current(); g_pin_seq++; }
+void     blob_unpin(void)       { g_pinned = -1; g_pin_seq++; }
 
 void blob_lock(void)   { blob_call_init(); mutex_lock(&g_blob_mutex); blob_pin(); }
 void blob_unlock(void) { blob_unpin(); mutex_unlock(&g_blob_mutex); }
@@ -129,6 +165,21 @@ uint32_t blob_call_contended(void) { return g_contended; }
  */
 #define BLOB_TASK_MAX 4
 
+/* One big stack, for the one task the driver actually creates.
+ *
+ * Measured, not guessed: esp_wifi_init_internal asks for 6656 bytes. nat-os
+ * pool stacks are 2048, and raising the pool to fit would cost 12 * 6656 = 78 KB
+ * against a heap of 84 -- so the size lives here, with the one caller that needs
+ * it, instead of being charged to every task in the system.
+ *
+ * A second concurrent blob task wanting more than a pool stack is refused
+ * rather than silently squeezed; if that ever happens the counter says so. */
+#define BLOB_TASK_STACK_WORDS 1792u             /* 7168 B */
+_Static_assert(BLOB_TASK_STACK_WORDS * 4u >= 6656u,
+               "blob task stack smaller than the 6656 B the WiFi task requests");
+static uint32_t g_blob_stack[BLOB_TASK_STACK_WORDS];
+static int      g_blob_stack_taken;
+
 struct blob_task {
     int      used;
     int      id;            /* nat-os task id, -1 until known */
@@ -138,6 +189,7 @@ struct blob_task {
 };
 static struct blob_task g_bt[BLOB_TASK_MAX];
 static uint32_t g_bt_short;     /* times the request exceeded a nat-os stack */
+static uint32_t g_bt_last_want; /* the largest such request, in bytes */
 
 /* Task creation is OPT-IN, and the reason is architectural rather than a bug.
  *
@@ -192,10 +244,42 @@ int blob_task_create(void *reqp, const char *name)
         return 0;              /* pdFAIL -- driver reports NO_MEM and unwinds */
     }
 
-    /* Record what was ASKED for. nat-os stacks are a fixed TASK_STACK_WORDS,
-     * so a blob task wanting more is a real constraint rather than a detail --
-     * and one that would present as a stack-guard panic much later. */
-    if (r->stack_bytes > (uint32_t)(TASK_STACK_WORDS * 4)) { g_bt_short++; }
+    /* REFUSED, not merely counted. nat-os stacks are a fixed TASK_STACK_WORDS,
+     * and a blob task handed less than it asked for does not fail where the
+     * mistake is: it overruns its slot and writes through whatever follows.
+     *
+     * Measured. Creating the task anyway zeroed a BLOCKED task's saved context
+     * three slots away -- the shell came back from a wait with a0, a1 and
+     * WINDOWSTART all zero and died on the retw in w2c_call2, an
+     * IllegalInstruction that looks like a register-window bug and is not one.
+     *
+     * Refusing turns that into pdFAIL, which the driver already handles: it
+     * unwinds and reports NO_MEM. A shortfall is a resource limit, and it
+     * should read like one. */
+    /* Big enough for the pool? Then nothing special is needed. Otherwise the
+     * dedicated stack above, once. */
+    uint32_t *big = 0; uint32_t big_words = 0u;
+    if (r->stack_bytes > (uint32_t)(TASK_STACK_WORDS * 4)) {
+        if (!g_blob_stack_taken && r->stack_bytes <= BLOB_TASK_STACK_WORDS * 4u) {
+            big = g_blob_stack; big_words = BLOB_TASK_STACK_WORDS;
+        }
+    }
+
+    if (r->stack_bytes > (uint32_t)(TASK_STACK_WORDS * 4) && !big) {
+        g_bt_short++;
+        g_bt_last_want = r->stack_bytes;
+        /* Reported from HERE rather than from the shell. shell.c is the first
+         * object in .flash.text (kernel/linker.ld), so anything added to it
+         * shifts everything the flash MMU maps and walks into the step-7 layout
+         * band -- measured: nine lines of uart_puts there hung blob_map. This
+         * file is not flash-resident, so the same print is free. */
+        uart_puts("   [blobtask] refused: wants ");
+        uart_put_dec(r->stack_bytes);
+        uart_puts(" B, nat-os task stacks are ");
+        uart_put_dec((unsigned int)(TASK_STACK_WORDS * 4));
+        uart_puts(" B\n");
+        return 0;                                        /* pdFAIL */
+    }
 
     uint32_t crit = crit_enter();
     int slot = -1;
@@ -210,11 +294,14 @@ int blob_task_create(void *reqp, const char *name)
     g_bt[slot].want_stack = r->stack_bytes;
     crit_exit(crit);
 
-    int id = task_create(name ? name : "blob", blob_task_entry);
+    int id = big ? task_create_with_stack(name ? name : "blob", blob_task_entry,
+                                         big, big_words)
+                 : task_create(name ? name : "blob", blob_task_entry);
     if (id < 0) {
         g_bt[slot].used = 0;
         return 0;                                        /* pdFAIL */
     }
+    if (big) { g_blob_stack_taken = 1; }
     g_bt[slot].id = id;                                  /* trampoline unblocks */
 
     if (r->handle) { *(uint32_t *)r->handle = (uint32_t)(id + 1); }
@@ -228,4 +315,5 @@ uint32_t blob_task_count(void)
     return n;
 }
 uint32_t blob_task_stack_short(void) { return g_bt_short; }
-uint32_t blob_task_want_stack(void)  { return g_bt[0].want_stack; }
+uint32_t blob_task_want_stack(void)  { return g_bt_last_want ? g_bt_last_want
+                                                            : g_bt[0].want_stack; }

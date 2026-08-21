@@ -407,3 +407,116 @@ The rule this earns: **a negative result from a command whose execution was
 never confirmed is not a negative result.** The project already had the same
 rule one level up, about instruments sharing a dependency with the fault. Here
 the instrument was the shell.
+
+---
+
+## 11. Concurrency, and a fault that took twelve steps to name (rev 1.3)
+
+Rev 1.2 closed with the vendor stack running single-threaded and the conclusion
+that hosting a driver which owns a task needed per-task `WINDOWBASE`/
+`WINDOWSTART`. That conclusion was half right, and the half that was wrong was
+found by asking a narrower question: *which* windowed regions can actually block?
+
+### 11.1 The blocking set is closed
+
+Every blocking entry in the adapter funnels through one function, `wait_on()`.
+Six entries, enumerable rather than open-ended, and all but `_task_delay` now
+take the non-blocking path first and only spill-and-release when genuinely about
+to wait. A wait costs a spill; a hit costs nothing.
+
+### 11.2 Exclusion, not preemption
+
+`rom_call3` recorded a pin but took no lock, so a second caller simply overwrote
+the first and both entered windowed code. With a real lock:
+
+```
+wintorture 60   checksum 1632 = 1632 CORRECT, 6 real preemptions
+wincollide      runs=156  wrong=0
+```
+
+`wincollide` had reproduced corruption in ~2 s since step 13. The spill inside
+`rom_call3` turned out to be the *wedge* — it compensated for the absence of
+exclusion, and once the lock existed it could not help, only hang. Removing one
+`call8` turned a watchdog reset into 156 clean runs.
+
+### 11.3 Resource limits, enforced rather than counted
+
+`esp_wifi_init_internal` asks for **6656 bytes** of task stack; nat-os gave every
+task 2048 and *counted* the shortfall while creating the task anyway. Scaling the
+pool would cost 78 KB against an 84 KB heap, so tasks may now bring their own
+stack (`task_create_with_stack`), and blob tasks get one 7168-byte stack sized
+against the measured request. Heap 84456 -> 77208 B.
+
+### 11.4 Four diagnoses, each retired by measurement
+
+The remaining failure produced a blocked task resuming with `a0`, `a1` and
+`WINDOWSTART` all zero. In order, each of these was proposed, tested, and killed:
+
+| # | diagnosis | how it died |
+|---|---|---|
+| 1 | cleared `WINDOWSTART` bit | the whole register was zero, not one bit |
+| 2 | blob task stack shortfall | identical fault with 7168 B, all guards intact |
+| 3 | shared `_phy_stack` | identical fault on a private stack |
+| 4 | saved frame corrupted in memory | the frame read back intact |
+
+Each was a real defect and is fixed. None was the cause.
+
+### 11.5 The fault reporter was describing the wrong instruction
+
+`_vector_double` jumped to the same handler as `_vector_user`, which reads
+`EPC1` and `PS`. A double exception writes **`DEPC`**; `EPC1` keeps the *first*
+exception's PC. A window overflow/underflow *is* an exception, so a fault inside
+one arrived reporting the `retw` that triggered it and the window vector's own
+`EXCM=1, WOE=0` state — which was then explained, at length, as corrupted task
+state.
+
+Steps 35-38 of `next_moves/08` are an investigation into values that were never
+anomalous. The rule earned:
+
+> **A fault reporter that cannot distinguish a double exception will confidently
+> describe the wrong instruction.** `DEPC` is not optional.
+
+With `_vector_double` given its own handler:
+
+```
+exccause 2 (InstructionFetchError)
+epc   0x3ffd4020   <- DEPC, the real faulting instruction
+epc1  0x4008ac82   <- what triggered the handler, not the culprit
+```
+
+`0x3ffd4020` is `BLOB_DRAM_ADDR + 0x20`: control transferred into the blob's own
+`.data`.
+
+### 11.6 The window subsystem, exonerated
+
+Having spent twelve steps there, it is worth recording what is now *measured* to
+be correct rather than assumed:
+
+- `win_spill_all` reduces 7 live frames to 1 (probed directly, no blob involved)
+- all six window vectors are canonical and end in `rfwo`/`rfwu`
+- every call0 bridge now writes its base save area (`rom_call3`, `rom_call4`,
+  `win_spill_call0`) — three latent bugs of the class `phy_stack_call` already
+  documented
+- the spill runs on the right stack with 1252 bytes to spare
+- every underflow in the system recovers a valid code address
+
+### 11.7 Where it stands
+
+The `.data` window is faithful in placement, content, and cross-window pointer
+resolution. `0x3ffd4020` holds `0x00000001` — so the faulting PC is an address
+that was *computed*, not a pointer that was loaded, which rules out the entire
+"a function pointer holds the wrong value" family.
+
+What remains is a line that has been printing since rev 1.2 and was read past
+every time:
+
+```
+real osi forwarded calls: 0   last impl at 0x00000000
+```
+
+Fifteen adapter entries are reached and counted, and the counting table forwards
+**none** of them. The blob accepting the table's version and magic proved the
+header was right; it never proved the entries resolve. A computed dispatch off a
+table base the host never finished wiring is exactly the shape of this fault.
+
+**Nothing has been on air.**

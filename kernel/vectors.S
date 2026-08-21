@@ -51,7 +51,7 @@ _vector_user:
     .align 4
     .global _vector_double
 _vector_double:
-    j       _handler_panic
+    j       _handler_double
 
 /* ------------------------------------------------------------------ */
 /* Level-3 interrupt handler.                                          */
@@ -89,7 +89,7 @@ _vector_double:
     .type _handler_level3, @function
 
 _handler_level3:
-    addi     a1, a1, -96
+    addi     a1, a1, -112
     s32i     a0,  a1, 0
     s32i     a2,  a1, 4
     s32i     a3,  a1, 8
@@ -123,6 +123,12 @@ _handler_level3:
     s32i       a2,  a1, 76
     rsr.lcount a2
     s32i       a2,  a1, 80
+
+    /* Per-task window state. See TASK_FRAME_IDX_WBASE in task.h. */
+    rsr.windowbase  a2
+    s32i       a2,  a1, 84
+    rsr.windowstart a2
+    s32i       a2,  a1, 88
 
     /* Clear PS.EXCM before calling any C.
      *
@@ -166,6 +172,48 @@ _handler_level3:
     call0    task_schedule
     mov      a1, a2
 
+    /* Window state FIRST, before any general register is restored, so that the
+     * sixteen registers land at the base this task was saved at rather than at
+     * whichever base the previous context left behind.
+     *
+     * Writing WINDOWBASE changes which PHYSICAL register `a1` refers to, so the
+     * frame pointer cannot simply stay in a1 across it. It is parked in a fixed
+     * DRAM word instead -- addressed by a literal, so the address survives the
+     * base change even though every register does not. EXCSAVE would also work;
+     * a plain global is used because nothing else here depends on it. */
+    l32i     a2, a1, 84                 /* saved WINDOWBASE */
+
+    /* WINDOWSTART is OR-ed, not assigned, and that distinction is the whole of
+     * step 32.
+     *
+     * The register is global: it describes the entire 64-register file, which
+     * holds frames belonging to several tasks at once. A task saved while
+     * another was mid-excursion carries that other task's bits in its frame --
+     * measured, `disp` was saved claiming seven frames, none of them its own.
+     * Writing that value back later resurrects frames whose physical registers
+     * have since been reused, and the next rotation spills through whatever a1
+     * those stale frames contain. That was step 30's garbage stack pointer.
+     *
+     * A task may only claim the ONE frame it is being restored into. Everything
+     * else in the register file belongs to somebody still using it, so it is
+     * left exactly as found. The saved WINDOWSTART word stays in the frame --
+     * it is what the invariant counter reads -- but it is not authoritative on
+     * the way back in. */
+    movi     a3, 1
+    ssl      a2
+    sll      a3, a3                     /* 1 << saved WINDOWBASE */
+    rsr.windowstart a6
+    or       a3, a3, a6                 /* keep every other task's live frames */
+
+    movi     a4, g_switch_sp
+    s32i     a1, a4, 0
+    wsr.windowbase  a2
+    rsync
+    wsr.windowstart a3
+    rsync
+    movi     a4, g_switch_sp            /* different physical reg now; reload */
+    l32i     a1, a4, 0
+
     /* Restore EPS3/EPC3 first: after this, RFI will return to whatever task
      * this frame describes. */
     l32i     a2,  a1, 68
@@ -200,7 +248,7 @@ _handler_level3:
     l32i     a13, a1, 48
     l32i     a14, a1, 52
     l32i     a15, a1, 56
-    addi     a1, a1, 96
+    addi     a1, a1, 112
     rfi      3
 
     .size _handler_level3, . - _handler_level3
@@ -222,6 +270,39 @@ _handler_level3:
     .global _handler_panic
     .type _handler_panic, @function
 
+/* A DOUBLE exception is not the same event as a first-level one, and reporting
+ * it through the same path is what made next_moves/08 steps 35-38 chase their
+ * own tail.
+ *
+ * An exception taken while PS.EXCM is already set writes **DEPC**, not EPC1.
+ * EPC1 keeps the FIRST exception's PC. A window overflow/underflow is itself an
+ * exception -- it sets EPC1 to the instruction that triggered it and runs the
+ * handler with EXCM set and WOE clear -- so a fault INSIDE that handler arrives
+ * here with:
+ *
+ *   EPC1  = the retw/call that caused the spill      (looks like the culprit)
+ *   PS    = the window handler's state, EXCM 1 WOE 0 (looks like corruption)
+ *   DEPC  = the actual faulting instruction          (never read, until now)
+ *
+ * Four steps were spent explaining the first two as if they described task
+ * state. They describe the window vector. */
+    .align 4
+    .global _handler_double
+    .type _handler_double, @function
+_handler_double:
+    movi    a1, _panic_stack_top
+    movi    a5, g_panic_double
+    movi    a6, 1
+    s32i    a6, a5, 0
+    rsr.epc1     a6
+    s32i    a6, a5, 4               /* the FIRST fault's pc, kept for context */
+    rsr.exccause a2
+    rsr.depc     a3                 /* the SECOND fault's pc -- the real one */
+    rsr.ps       a4
+    call0   kernel_panic
+    .size _handler_double, . - _handler_double
+
+    .align 4
 _handler_panic:
     /* Use a known-good stack: the faulting one may be why we are here. */
     movi    a1, _panic_stack_top

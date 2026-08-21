@@ -13,6 +13,7 @@
  */
 
 #include "task.h"
+#include "window.h"
 #include "timer.h"
 #include "uart.h"
 #include "critical.h"
@@ -35,6 +36,20 @@ _Static_assert((TASK_FRAME_BYTES % 16) == 0,
 
 static task_t   g_tasks[TASK_MAX];
 static uint32_t g_stacks[TASK_MAX][TASK_STACK_WORDS];
+
+/* Scratch for _handler_level3's window-state restore: the frame pointer has to
+ * live somewhere base-independent while WINDOWBASE is written. See vectors.S. */
+volatile uint32_t g_switch_sp;
+
+/* Tasks switched away from with more than one live windowed frame. See
+ * task_schedule(). Zero is the design; anything else is the bug. */
+static uint32_t g_multiframe_count, g_multiframe_worst, g_multiframe_ws;
+static int      g_multiframe_task = -1;
+
+uint32_t task_multiframe_count(void) { return g_multiframe_count; }
+uint32_t task_multiframe_worst(void) { return g_multiframe_worst; }
+uint32_t task_multiframe_ws(void)    { return g_multiframe_ws; }
+int      task_multiframe_task(void)  { return g_multiframe_task; }
 
 /* -1 means "no task is running yet": the boot context is about to be abandoned
  * and its stack pointer must NOT be saved, because doing so would overwrite the
@@ -152,19 +167,33 @@ static void wake_sleepers(void)
 
 int task_create(const char *name, task_entry_fn entry)
 {
+    /* Slot id and pool index are the same thing here, so the pool stack cannot
+     * be chosen until the slot is. task_create_with_stack() takes NULL to mean
+     * "use this slot's pool stack" rather than duplicating the search. */
+    return task_create_with_stack(name, entry, 0, 0u);
+}
+
+int task_create_with_stack(const char *name, task_entry_fn entry,
+                           uint32_t *stack_in, uint32_t words_in)
+{
     for (int id = 0; id < TASK_MAX; id++) {
         if (g_tasks[id].state != TASK_UNUSED) {
             continue;
         }
 
-        uint32_t *stack = g_stacks[id];
-        for (int i = 0; i < TASK_STACK_WORDS; i++) {
+        uint32_t *stack = stack_in ? stack_in : g_stacks[id];
+        uint32_t  words = stack_in ? words_in : (uint32_t)TASK_STACK_WORDS;
+        if (words < (uint32_t)TASK_FRAME_WORDS + 8u) {
+            return -1;              /* too small to hold even the first frame */
+        }
+
+        for (uint32_t i = 0; i < words; i++) {
             stack[i] = STACK_FILL;
         }
         stack[0] = STACK_GUARD;
 
         /* Frame sits at the top of the stack, 16-byte aligned. */
-        uint32_t top = (uint32_t)&stack[TASK_STACK_WORDS];
+        uint32_t top = (uint32_t)&stack[words];
         top &= ~15u;
         uint32_t *frame = (uint32_t *)(top - TASK_FRAME_BYTES);
 
@@ -181,6 +210,18 @@ int task_create(const char *name, task_entry_fn entry)
         frame[TASK_FRAME_IDX_EPS3] = xt_get_ps() & ~0xFu;
         frame[TASK_FRAME_IDX_SAR]  = 0;
 
+        /* A new task starts with exactly one live frame -- its own -- at the
+         * base its creator happens to be running at. Any base is correct for
+         * call0 code, which never rotates the window; what matters is that
+         * WINDOWSTART claims that one frame and nothing else, so the task does
+         * not inherit a claim on frames belonging to whoever created it. */
+        {
+            uint32_t wb;
+            __asm__ volatile ("rsr.windowbase %0" : "=r"(wb));
+            frame[TASK_FRAME_IDX_WBASE]  = wb;
+            frame[TASK_FRAME_IDX_WSTART] = 1u << (wb & 31u);
+        }
+
         g_tasks[id].sp         = (uint32_t)frame;
         g_tasks[id].state      = TASK_READY;
         g_tasks[id].prio       = TASK_PRIO_NORMAL;
@@ -190,7 +231,8 @@ int task_create(const char *name, task_entry_fn entry)
         g_tasks[id].switches   = 0;
         g_tasks[id].waiting    = 0;
         g_tasks[id].name       = name;
-        g_tasks[id].stack_base = stack;
+        g_tasks[id].stack_base  = stack;
+        g_tasks[id].stack_words = words;
         return id;
     }
     return -1;
@@ -310,6 +352,29 @@ uint32_t task_schedule(uint32_t current_sp)
     if (g_current >= 0) {
         g_tasks[g_current].sp = current_sp;
         g_run_cycles[g_current] += now - g_slice_start;
+
+        /* The invariant the two-word window save rests on, MEASURED.
+         *
+         * Saving only WINDOWBASE/WINDOWSTART -- rather than a whole spilled
+         * window -- is only sound while every task is switched away from with
+         * exactly ONE live frame. The pin is supposed to guarantee that for
+         * involuntary switches and the blocking path's spill for voluntary
+         * ones. Both were assumed. Step 30 died on a garbage stack pointer
+         * inside the restore, which is what an invalid saved WINDOWSTART looks
+         * like from the other end, so the assumption is worth checking rather
+         * than believing.
+         *
+         * Counted, not enforced: refusing the switch here would be a second
+         * guess layered on the first. This names the task instead. */
+        uint32_t ws = ((const uint32_t *)current_sp)[TASK_FRAME_IDX_WSTART];
+        uint32_t bits = 0u;
+        for (uint32_t m = ws; m; m &= m - 1u) { bits++; }
+        if (bits > 1u) {
+            g_multiframe_count++;
+            g_multiframe_task = g_current;
+            g_multiframe_ws   = ws;
+            if (bits > g_multiframe_worst) { g_multiframe_worst = bits; }
+        }
     }
     g_slice_start = now;
 
@@ -455,6 +520,16 @@ uint32_t task_schedule(uint32_t current_sp)
          * watchdog is left alone and the hang detector does its job. A blob
          * call that has not blocked or returned in this long is not making
          * progress. */
+        /* Per pin, not per run of pinned ticks. Each new pin starts a fresh
+         * budget; two tasks alternating short blob calls therefore never
+         * accumulate one another's ticks. */
+        static uint32_t last_seq;
+        uint32_t seq = blob_pin_seq();
+        if (seq != last_seq) {
+            last_seq = seq;
+            g_blob_pin_ticks = 0;
+        }
+
         if (++g_blob_pin_ticks < BLOB_PIN_MAX_TICKS) {
             watchdog_feed();
         }
@@ -495,6 +570,24 @@ int task_current(void) { return g_current; }
 uint32_t task_switch_count(int id)
 {
     return (id >= 0 && id < TASK_MAX) ? g_tasks[id].switches : 0;
+}
+
+/* The saved stack pointer of a task that is not running.
+ *
+ * Diagnostic. A blocked task resuming with a zero sp is the whole question in
+ * next_moves/08 step 26, and this is the only way to see whether the damage is
+ * in the task table or happens on the way back out. */
+uint32_t task_saved_sp(int id)
+{
+    if (id < 0 || id >= TASK_MAX) { return 0u; }
+    return g_tasks[id].sp;
+}
+
+uint32_t task_stack_span(int id, uint32_t *words)
+{
+    if (id < 0 || id >= TASK_MAX) { return 0u; }
+    if (words) { *words = g_tasks[id].stack_words; }
+    return (uint32_t)g_tasks[id].stack_base;
 }
 
 int task_stack_intact(int id)
@@ -594,8 +687,11 @@ uint32_t task_stack_headroom(int id)
         return 0;
     }
     uint32_t untouched = 0;
-    /* Walk up from just above the guard until the fill pattern stops. */
-    for (int i = 1; i < TASK_STACK_WORDS; i++) {
+    /* Walk up from just above the guard until the fill pattern stops. Bounded
+     * by THIS task's stack, not by the pool constant -- a task on a supplied
+     * stack has a different size, and reading past it would report headroom
+     * from whatever follows in DRAM. */
+    for (uint32_t i = 1u; i < g_tasks[id].stack_words; i++) {
         if (g_tasks[id].stack_base[i] != STACK_FILL) {
             break;
         }
@@ -611,8 +707,35 @@ void task_set_idle(int id)
     }
 }
 
+/* Leave the register file holding exactly ONE frame for this task.
+ *
+ * next_moves/08 step 33. WINDOWSTART is global and describes frames belonging to
+ * several tasks at once, so a per-task copy cannot be written back: assigning it
+ * resurrects other tasks' frames, OR-ing it discards your own. Both were tried
+ * and both fail. The only way the per-task word becomes meaningful is if it is
+ * always one bit -- which means a task must not park with more than one live
+ * frame.
+ *
+ * Done HERE, in task context, and not in _handler_level3 where five attempts
+ * failed (steps 14-18). It does not need to be in the handler: the pin means an
+ * involuntary switch never lands while a task holds live windowed frames, so
+ * every switch out of windowed code is voluntary and passes through here.
+ *
+ * The test is cheap and skips the common case: `ws & (ws - 1)` is non-zero only
+ * when more than one frame is live anywhere in the file. A plain call0 task with
+ * nothing windowed in flight pays one register read. */
+static void spill_before_parking(void)
+{
+    uint32_t ws;
+    __asm__ volatile ("rsr.windowstart %0" : "=r"(ws));
+    if (ws & (ws - 1u)) {
+        win_spill_call0();
+    }
+}
+
 void task_block(void)
 {
+    spill_before_parking();
     if (g_current < 0) {
         return;                     /* boot context has nothing to block */
     }
@@ -730,6 +853,7 @@ void task_arm_wake(void)
 
 void task_sleep(uint32_t ticks)
 {
+    spill_before_parking();
     /* Discards any wake that arrived before this call. Correct for a plain
      * delay, which is what almost every caller wants -- a stale flag would
      * otherwise make the very next sleep return immediately. A caller that
@@ -828,6 +952,15 @@ void task_yield(void)
      * It cost a full debugging session: `while (timer_ticks() < until)
      * task_yield();` in the display task halted the entire kernel, and looked
      * exactly like a hung display driver. */
+    /* Every voluntary switch point funnels through here, so closing the class
+     * costs one line and needs no search for the path that was missed. The
+     * blocking primitives already spill; this covers the bare yields -- idle
+     * loops in the shell and the app host today, whatever calls it tomorrow.
+     *
+     * The guard means a task with nothing windowed in flight pays one register
+     * read, which is what the idle loops that call this hardest will pay. */
+    spill_before_parking();
+
     uint32_t soon = xt_ccount() + 64u;
     if ((int32_t)(soon - xt_get_ccompare1()) < 0) {
         xt_set_ccompare1(soon);

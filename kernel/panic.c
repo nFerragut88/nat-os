@@ -22,8 +22,12 @@
 #include "flash.h"
 #include "critical.h"
 #include "xtensa.h"
+#include "task.h"
 
 static int g_record_rc = -99;
+
+/* [0] set by _handler_double, [1] the first fault's EPC1. See vectors.S. */
+volatile uint32_t g_panic_double[2];
 
 /* NA-007. How many times the panic path has been entered.
  *
@@ -286,7 +290,14 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
 
     uart_puts("  epc      : ");
     uart_put_hex(epc);
-    uart_puts("   <- faulting instruction\n");
+    uart_puts(g_panic_double[0] ? "   <- DEPC, the faulting instruction\n"
+                                : "   <- faulting instruction\n");
+    if (g_panic_double[0]) {
+        uart_puts("  DOUBLE EXCEPTION - a fault inside an exception handler.\n");
+        uart_puts("  epc1     : ");
+        uart_put_hex(g_panic_double[1]);
+        uart_puts("   <- what triggered the handler (NOT the culprit)\n");
+    }
 
     uart_puts("  ps       : ");
     uart_put_hex(ps);
@@ -305,6 +316,139 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
         uart_puts("  excvaddr : ");
         uart_put_hex(va);
         uart_puts("   <- the address it tried to reach\n");
+    }
+
+    /* IllegalInstruction on a windowed kernel is nearly always the register
+     * window, and an epc alone cannot tell WHICH way. WINDOWBASE and
+     * WINDOWSTART are the two registers that decide whether an `entry` or a
+     * `retw` is legal, and the call0 handler between the fault and here does
+     * not touch either -- so they still read as they did at the fault. */
+    if (exccause == 0u || exccause == 2u) {
+        uint32_t wb, ws;
+        __asm__ volatile ("rsr.windowbase  %0" : "=r"(wb));
+        __asm__ volatile ("rsr.windowstart %0" : "=r"(ws));
+        uart_puts("  windowbase: ");
+        uart_put_dec(wb);
+        uart_puts("   windowstart: ");
+        uart_put_hex(ws);
+        uart_puts("   bit(base) ");
+        uart_puts(((ws >> (wb & 31u)) & 1u) ? "SET\n" : "CLEAR\n");
+        extern volatile uint32_t g_win_a0, g_win_sp;
+        uart_puts("  a0/sp out : ");
+        uart_put_hex(g_win_a0);
+        uart_puts(" / ");
+        uart_put_hex(g_win_sp);
+        uart_puts(((g_win_a0 | g_win_sp) == 0u) ? "   BOTH ZERO -- context clobbered\n"
+                                                : "   non-zero -- context survived\n");
+        /* The faulting task's saved switch frame, as it sits in memory.
+         *
+         * This splits the last two possibilities apart. Good values here mean
+         * the frame was saved correctly and the damage happens on the way back
+         * out (the register restore / window state). Zeros here mean the frame
+         * itself was destroyed, and no amount of window bookkeeping would help. */
+        {
+            uint32_t fsp = task_saved_sp(task_current());
+            uart_puts("  saved frame @ ");
+            uart_put_hex(fsp);
+            uart_puts(":");
+            for (int w = 0; w < 8; w++) {
+                uart_puts(" ");
+                uart_put_hex(((volatile uint32_t *)fsp)[w]);
+            }
+            uart_puts("\n");
+        }
+
+        {
+            extern volatile uint32_t g_woe_lost_ps, g_woe_lost_at;
+            extern volatile uint32_t g_woe_prev_hit, g_woe_seen_ok;
+            extern volatile uint32_t g_stub_ps_pre_spill;
+            uart_puts("  pre-spill : ps ");
+            uart_put_hex(g_stub_ps_pre_spill);
+            if (g_stub_ps_pre_spill != 0xFFFFFFFFu) {
+                uart_puts((g_stub_ps_pre_spill & 0x10u)
+                          ? "   EXCM ALREADY SET before the spill"
+                          : "   EXCM clear before the spill");
+                uart_puts((g_stub_ps_pre_spill & (1u << 18))
+                          ? ", WOE set\n" : ", WOE CLEAR\n");
+            } else {
+                uart_puts("   blocking path never reached\n");
+            }
+
+            extern volatile uint32_t g_stub_sp_pre_spill, g_stub_sp_min;
+            uart_puts("  pre-spill : sp ");
+            uart_put_hex(g_stub_sp_pre_spill);
+            uart_puts("   lowest seen ");
+            uart_put_hex(g_stub_sp_min);
+            uart_puts("\n");
+
+            {
+                uint32_t ua0, ubase;
+                __asm__ volatile ("rsr.excsave4 %0" : "=r"(ua0));
+                __asm__ volatile ("rsr.excsave5 %0" : "=r"(ubase));
+                uart_puts("  underflow : recovered a0 ");
+                uart_put_hex(ua0);
+                uart_puts(" from save area ");
+                uart_put_hex(ubase);
+                uart_puts("\n");
+            }
+
+            {
+                extern volatile uint32_t g_uf_bad_a0, g_uf_bad_base, g_uf_bad_when;
+                uart_puts("  uf filter : ");
+                if (!g_uf_bad_when) {
+                    uart_puts("no non-code recovery seen at either side of the spill\n");
+                } else {
+                    uart_puts("a0 ");
+                    uart_put_hex(g_uf_bad_a0);
+                    uart_puts(" from ");
+                    uart_put_hex(g_uf_bad_base);
+                    uart_puts(g_uf_bad_when == 1u ? "  BEFORE the spill\n"
+                                                  : "  AFTER the spill\n");
+                }
+            }
+
+            uart_puts("  woe watch : ");
+            if (g_woe_lost_at == 0xFFFFFFFFu) {
+                uart_puts("never seen clear at an adapter entry");
+            } else {
+                uart_puts("first clear at osi entry ");
+                uart_put_dec(g_woe_lost_at);
+                uart_puts(", last good entry ");
+                uart_put_dec(g_woe_prev_hit);
+                uart_puts(", ps ");
+                uart_put_hex(g_woe_lost_ps);
+            }
+            uart_puts("   good crossings ");
+            uart_put_dec(g_woe_seen_ok);
+            uart_puts("\n");
+        }
+
+        uart_puts("  multiframe: ");
+        uart_put_dec(task_multiframe_count());
+        uart_puts(" switch-outs with >1 live frame");
+        if (task_multiframe_count()) {
+            uart_puts(", worst ");
+            uart_put_dec(task_multiframe_worst());
+            uart_puts(" frames, last task ");
+            uart_put_dec((unsigned int)task_multiframe_task());
+            uart_puts(" ws ");
+            uart_put_hex(task_multiframe_ws());
+        }
+        uart_puts("\n");
+
+        for (int t = 0; t < 12; t++) {
+            uint32_t w = 0u, base = task_stack_span(t, &w);
+            if (!base) { continue; }
+            uart_puts("   task ");
+            uart_put_dec((unsigned int)t);
+            uart_puts(" sp ");
+            uart_put_hex(task_saved_sp(t));
+            uart_puts(" stack ");
+            uart_put_hex(base);
+            uart_puts("+");
+            uart_put_dec(w * 4u);
+            uart_puts(task_stack_intact(t) ? " guard ok\n" : " GUARD BROKEN\n");
+        }
     }
 
     /* How deep the PHY got before dying. Meaningless unless a PHY call was in

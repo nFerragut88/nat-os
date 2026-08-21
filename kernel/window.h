@@ -31,6 +31,7 @@ uint32_t win_call_vendor(uint32_t depth, uint32_t seed);
  * needing no linking and no environment. This makes every one of them callable.
  * crc32_le lives at 0x4005CFEC and is a pure function, which is why it is the
  * first vendor code this kernel runs. */
+void win_spill_call0(void);   /* push this task's windows to its own stack */
 uint32_t rom_call3(uint32_t fn, uint32_t a, uint32_t b, uint32_t c);
 
 /* Four arguments, for rom_i2c_writeReg(). See clock.c. */

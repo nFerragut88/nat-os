@@ -21,6 +21,7 @@ uint32_t blob_call_contended(void);   /* must stay 0 with a single caller */
 /* -1, or the task the scheduler must not switch away from because it is
  * inside windowed vendor code. See task.c. */
 int      blob_pinned_task(void);
+uint32_t blob_pin_seq(void);
 void     blob_pin(void);
 void     blob_unpin(void);
 

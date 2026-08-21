@@ -45,7 +45,14 @@ void phy_enter_critical(void)
 void phy_exit_critical(void)
 {
     if (g_crit_depth > 0 && --g_crit_depth == 0) {
-        __asm__ volatile ("wsr.ps %0; rsync" :: "a"(g_crit_saved));
+        /* Interrupt level only, for the reason given in wifi_osi_stubs.c's
+         * osi_s_wifi_int_restore: the rest of PS is the kernel's execution
+         * mode, and restoring a whole saved word can put WOE back as it was at
+         * capture time rather than as it must be now. */
+        uint32_t ps;
+        __asm__ volatile ("rsr.ps %0" : "=a"(ps));
+        ps = (ps & ~0xFu) | (g_crit_saved & 0xFu);
+        __asm__ volatile ("wsr.ps %0; rsync" :: "a"(ps));
     }
 }
 
