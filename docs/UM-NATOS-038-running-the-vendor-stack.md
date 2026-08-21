@@ -607,3 +607,51 @@ reduces a blocking task from seven frames to one, measured. **The last live fram
 is the part that has never worked, and it is now the only part left.**
 
 **Nothing has been on air.**
+
+---
+
+## 13. The mask is advisory (rev 1.5)
+
+Rev 1.4 recorded that windowed frames do not survive preemption and that the pin
+is what prevents it. Rev 1.5 records why a masked call is not the same as an
+uninterruptible one.
+
+### 13.1 Measurement
+
+`phy_stack_call` switches to a private 6 KB stack, masks to `INTLEVEL 3`, calls
+the blob, and switches back. A task was nevertheless found saved with `sp` inside
+that private stack. Capturing the PS the handler saved from the interrupted
+context:
+
+```
+eps3 0x00060320   intlevel 0
+```
+
+The mask was gone. `phy_enter_critical`/`phy_exit_critical` were called **0/0**
+times, so the blob did not go through the adapter — its PHY code writes PS
+directly, as IDF's does.
+
+### 13.2 The consequence
+
+`phy_stack_call`'s safety rests on no context switch occurring while execution is
+on the shared buffer, and the only thing preventing that switch is a mask the
+callee is free to discard. Under IDF nothing depends on the level staying raised;
+under nat-os the private stack does.
+
+**A mask taken before calling vendor code is advisory.** Anything whose
+correctness depends on it is unsound, and this applies to `phy_stack_call`,
+`crit_enter()` and the blob lock equally when blob code is on the other side.
+
+### 13.3 A methodological failure worth recording
+
+The value that led here, `0x3ffc0020`, was identified as `_phy_stack_top` from an
+`nm` dump taken many steps earlier. The symbol had since moved to `0x3ffc00d0`.
+Four subsequent steps used "the arithmetic refuses this" arguments built on the
+stale constant to retire a diagnosis that was correct, and a probe was written
+that compared against the same stale value — so its silence was a tautology read
+as evidence.
+
+The rule: **a constant read once and carried forward is an assumption.** It
+survived precisely because the reasoning on top of it was careful.
+
+**Nothing has been on air.**

@@ -63,6 +63,7 @@ volatile uint32_t g_phytop_epc, g_phytop_a0;
 volatile int      g_badsp_task = -1;
 volatile uint32_t g_badsp_val, g_badsp_lo, g_badsp_hi;
 volatile uint32_t g_badsp_osi = 0xFFFFFFFFu, g_badsp_tick;
+volatile uint32_t g_badsp_eps;
 
 /* ---- who owns which window position ------------------------------------
  *
@@ -775,6 +776,12 @@ uint32_t task_schedule(uint32_t current_sp)
                  * bracketing it to one entry is the whole remaining question. */
                 g_badsp_osi  = g_woe_prev_hit;
                 g_badsp_tick = timer_ticks();
+                /* The PS in force at the instant the tick was taken. EPS3 is
+                 * what the handler saved from the interrupted context, so its
+                 * INTLEVEL says whether phy_stack_call's rsil was actually in
+                 * effect. If it reads 3, the mask held and the tick fired
+                 * anyway; if it reads 0, the mask was never in force. */
+                g_badsp_eps  = ((const uint32_t *)sp)[TASK_FRAME_IDX_EPS3];
 
                 /* Say so IMMEDIATELY, once.
                  *
@@ -789,6 +796,11 @@ uint32_t task_schedule(uint32_t current_sp)
                 uart_puts(" sp ");
                 uart_put_hex(sp);
                 uart_puts(" left its stack\n");
+                uart_puts("    eps3 ");
+                uart_put_hex(g_badsp_eps);
+                uart_puts("  intlevel ");
+                uart_put_dec(g_badsp_eps & 0xFu);
+                uart_puts("\n");
             }
         }
     }

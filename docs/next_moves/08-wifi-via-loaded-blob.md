@@ -4692,3 +4692,62 @@ Same family as steps 45, 54 and 63: an instrument that cannot report the thing
 it is being trusted to rule out.
 
 **Nothing has been on air.**
+
+---
+
+## Step 69 — yes, the blob re-enables interrupts. Directly.
+
+Capturing `EPS3` — the PS the handler saved from the interrupted context — at the
+instant the tick lands:
+
+```
+[!] task 5 sp 0x3ffc0020 left its stack
+    eps3 0x00060320  intlevel 0
+```
+
+**INTLEVEL 0.** The mask was not in force. `phy_stack_call` executes
+`rsil a9, 3`, `g_phy_call_mask` is confirmed `1`, and the interrupted context was
+nevertheless running at level 0.
+
+Step 67 measured that `phy_enter_critical`/`phy_exit_critical` are called 0/0
+times, and that remains true. The blob does not lower the level through the
+adapter. **It lowers it directly** — its own PHY code writes PS, as ESP-IDF's PHY
+does via `XTOS_SET_INTLEVEL`, and nothing in this kernel is consulted.
+
+So the answer to "did the blob turn interrupts back on" is **yes**, and step 67's
+"no" was correct only about the route it tested. Measuring one path and reporting
+it as the whole answer is the same error as step 28 and step 59.
+
+### What this actually means
+
+`phy_stack_call`'s mask is not a guarantee. It masks on entry, and the callee is
+free to unmask — which vendor PHY code does as a matter of course, because under
+IDF it runs on a FreeRTOS task with a normal stack and nothing depends on the
+level staying raised.
+
+Under nat-os something does: the private PHY stack. The whole design of
+`phy_stack_call` — switch to `_phy_stack`, run, switch back — is safe only while
+no context switch can occur, and the thing preventing that switch is a mask the
+callee discards.
+
+That is why a task ends up saved with `sp` inside `_phy_stack`: entirely
+predictable, once the mask is known to be advisory rather than binding.
+
+### What follows
+
+The private stack and the mask cannot both be kept. Either:
+
+1. **Drop the private stack.** Run PHY init on the caller's own task stack, as
+   `blob_call` already does for `esp_wifi_init_internal` since step 28. Measured:
+   the PHY used 1296 bytes, which a 2 KB task stack cannot absorb — so this needs
+   the caller to be a task with a bigger stack, which `task_create_with_stack()`
+   now provides.
+2. **Keep the private stack and make the switch survivable** — teach the
+   scheduler that a task can legitimately be on `_phy_stack`, which means the
+   stack-guard and bad-sp checks need to know about it, and two contexts must
+   still be excluded by the blob lock rather than by the mask.
+
+(1) is smaller, matches what was already done for the WiFi init path, and removes
+a shared buffer rather than adding bookkeeping around it.
+
+**Nothing has been on air.**
