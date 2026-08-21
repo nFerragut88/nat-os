@@ -14,13 +14,24 @@
  *      WINDOWBASE/WINDOWSTART, so the concern was a context switch landing
  *      while windowed frames were live.
  *
- *      That concern was MEASURED and does not hold. `wintorture` holds eight
- *      live windowed frames across real context switches -- confirmed by the
- *      switch counter, which is the control -- and the checksum is correct
- *      6/6. A call0 task cannot disturb them: the handler saves and restores
- *      the sixteen registers at the current WINDOWBASE and never moves
- *      WINDOWBASE, and call0 code never rotates the window, so a windowed
- *      task's caller frames sit at window positions no other task can reach.
+ *      THAT CLAIM WAS WRONG, and stood here for many steps. It read: "the
+ *      concern was MEASURED and does not hold", citing wintorture's switch
+ *      counter as the control.
+ *
+ *      The counter was not a control. It incremented on every tick, including
+ *      the ones where the scheduler resumed the SAME task -- and `rom_call3`
+ *      takes the blob lock, which pins, so during wintorture the scheduler
+ *      cannot switch away at all. Six "switches" were six ticks of one task
+ *      resuming itself. See next_moves/08 steps 54-55.
+ *
+ *      With the counter fixed, wintorture reports 0 switches and prints its own
+ *      "NONE, so this proves nothing". With the pin disabled so preemption can
+ *      actually occur, it PANICS -- StoreProhibited inside _WindowOverflow12.
+ *
+ *      So windowed frames do NOT survive preemption on this kernel. The pin is
+ *      not an optimisation; it is the only thing keeping windowed code alive,
+ *      and every result that looked like surviving preemption was obtained
+ *      while the pin silently prevented preemption from happening.
  *
  *      The real hazard is TWO CONTEXTS inside windowed code at once, which is
  *      an exclusion problem, not a preemption problem.

@@ -520,3 +520,90 @@ header was right; it never proved the entries resolve. A computed dispatch off a
 table base the host never finished wiring is exactly the shape of this fault.
 
 **Nothing has been on air.**
+
+---
+
+## 12. A control that was not one (rev 1.4)
+
+Rev 1.3 recorded the concurrency work and a fault that took twelve steps to
+name. Continuing it overturned something older and more important than the fault.
+
+### 12.1 The instrument class
+
+Three instruments in this work returned a value that was indistinguishable from
+"nothing to report":
+
+| instrument | silent because | cost |
+|---|---|---|
+| `real osi forwarded calls: 0` | counts a table deliberately not in use | one step chasing a healthy zero |
+| window diagnostics | gated on `exccause == 0`, then `0 or 2` | hid a changed fault twice |
+| `multiframe` counter | reads a global register, cannot attribute owners | a wrong conclusion in step 31 |
+
+The rule earned: **an instrument whose silence is indistinguishable from a result
+is worse than no instrument**, because the silence reads as confirmation.
+
+### 12.2 The control that was not one
+
+`wintorture` has printed this since step 14:
+
+```
+switches during the call: 6  (preemption really happened)
+```
+
+and it is why "windowed frames survive preemption" was treated as established.
+The counter incremented on **every tick**, including those where the scheduler
+resumed the same task — and `rom_call3` takes the blob lock, which pins, so
+during `wintorture` the scheduler cannot switch away at all.
+
+With the counter corrected to count distinct switches:
+
+```
+switches during the call: 0  -- NONE, so this proves nothing
+```
+
+The test's own fallback wording, added at step 14 to guard against exactly this,
+had never been reachable.
+
+### 12.3 The experiment, finally run
+
+With the pin disabled so preemption can genuinely occur:
+
+```
+exccause 29 (StoreProhibited)   DEPC 0x40080115   excvaddr 0x00000190
+DOUBLE EXCEPTION   windowbase 6   windowstart 0x0000a248
+```
+
+`wintorture` panics inside `_WindowOverflow12`.
+
+**Windowed frames do not survive preemption on this kernel.** The pin is not an
+optimisation. It is the only thing keeping windowed code alive, and every result
+that looked like surviving preemption was obtained while the pin silently
+prevented preemption from occurring. `blobcall.c`'s header has been rewritten
+against this measurement.
+
+### 12.4 Window ownership
+
+`WINDOWSTART` is 16 bits of "a frame lives here" with no owner field, and more
+than one task holds frames in the register file at once. Assignment on restore
+destroys frames a task is still using; OR never clears, so bits accumulate until
+one names a frame `entry` never created. Both measured.
+
+The kernel now records what the hardware does not — a per-task mask, claimed only
+when the hardware confirms a frame at that task's own base, with a same-task
+resume left untouched because a pinned task is resumed as itself on every tick
+and any narrowing rule would delete its deep frames.
+
+### 12.5 Where it stands
+
+```
+boot 11 PASS 0 FAIL   wintorture CORRECT   wincollide runs=120 wrong=0
+blobphy rc=0   wifiinit 0x101   blobtx force 0x3004
+```
+
+`wifiinit task` panics in `_WindowOverflow12`. The driver needs a task that
+blocks and resumes inside windowed code — precisely the case the pin cannot
+cover, and which §12.3 shows the kernel cannot survive without it. The spill
+reduces a blocking task from seven frames to one, measured. **The last live frame
+is the part that has never worked, and it is now the only part left.**
+
+**Nothing has been on air.**
