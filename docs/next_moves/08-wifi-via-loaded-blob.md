@@ -4205,3 +4205,65 @@ enough that a 30 s read can miss the tail. Worth trimming once the scaffolding
 comes out, and worth remembering before reading a short dump as a short answer.
 
 **Nothing has been on air.**
+
+---
+
+## Step 60 — the race fix did not close it, and the value says what did
+
+Step 59 closed a real race and then claimed the `bad sp` was fixed, on the
+strength of "no regressions". That claim was not checked, because the capture
+window truncated the dump. Checked properly:
+
+```
+bad sp : task 5 sp 0x3ffc0000 outside 0x3ffb9e88..0x3ffba688
+```
+
+Unchanged. The reordering was correct and necessary; it was not this.
+
+### The value was the clue all along
+
+`phy_stack_call` builds its frame at `a8 = _phy_stack_top - 64` and switches `a1`
+to *that*. A task caught mid-switch would show `0x3ffbffc0`. The recorded value is
+`0x3ffc0000` — `_phy_stack_top` exactly, which `a1` never holds.
+
+It is the **sentinel**:
+
+```asm
+movi a9, _phy_stack_top
+addi a10, a8, -12
+s32i a9,  a10, 0        /* make the call0 base frame look windowed */
+```
+
+written so `_WindowOverflow8/12` finds a plausible caller sp. `_WindowUnderflow8/12`
+recovers `a1` from that same slot with `l32e a1, a13, -12`, so a frame that
+underflows through the base frame gets `a1 = _phy_stack_top` by construction —
+and if a switch lands while that value is live, the task is saved pointing at the
+top of a shared buffer it does not own.
+
+So the sentinel that makes a call0 frame survive an *overflow* is the same value
+that corrupts a task's `sp` on the matching *underflow*. It was introduced to fix
+a StoreProhibited and has been carrying this since.
+
+### What to do with that
+
+The sentinel needs to be a stack pointer the underflow can legitimately restore,
+not a marker. Two shapes:
+
+1. Write the **caller's real sp** into the base save area instead of
+   `_phy_stack_top` — it is already saved at `[a8 + 0]`, so it costs a load.
+   Then an underflow through the base frame restores something true.
+2. Keep the sentinel but ensure no switch can observe it, which is what the mask
+   is for — and step 59 shows the mask now covers the switch, so whatever path
+   exposes it is outside the masked region.
+
+(1) is the honest fix: the value should be correct rather than merely
+unobservable.
+
+### Method note
+
+Two claims in two steps were made without their own measurement — step 59's
+"race closed" and step 28's "PHY stack sharing eliminated". Both were true of the
+path under test and generalised past it. The `bad sp` check exists precisely to
+catch that class, and it did.
+
+**Nothing has been on air.**
