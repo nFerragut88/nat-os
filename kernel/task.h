@@ -198,6 +198,7 @@ int      task_multiframe_task(void);
 uint32_t task_win_union(void);         /* live window positions, by owner */
 uint32_t task_win_mask(int id);
 uint32_t task_win_base(int id);
+uint32_t task_sp_addr(int id);         /* address of that field */
 uint32_t task_saved_sp(int id);        /* saved sp of a non-running task */
 uint32_t task_stack_span(int id, uint32_t *words);  /* base; size via out-param */
 int      task_stack_intact(int id);    /* guard word still present? */

@@ -146,6 +146,17 @@ int phyinit_run_at(uint32_t fn)
      * stage; this says whether it happens inside the call itself. Sampling the
      * SAVED sp, not the live one -- no switch can occur here, so the stored
      * value should be untouched across the call. */
+    {
+        extern uint32_t _phy_stack[], _phy_stack_top[];
+        uart_puts("   [phy] &tasks[5].sp ");
+        uart_put_hex(task_sp_addr(5));
+        uart_puts("   _phy_stack ");
+        uart_put_hex((uint32_t)_phy_stack);
+        uart_puts("..");
+        uart_put_hex((uint32_t)_phy_stack_top);
+        uart_puts("\n");
+    }
+
     int      me      = task_current();
     uint32_t sp_pre  = task_saved_sp(me);
 

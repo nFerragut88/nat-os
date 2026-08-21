@@ -4636,3 +4636,59 @@ would be wrong if the assumption were. Print `&g_tasks[5].sp` alongside
 that costs one line and has never been done.
 
 **Nothing has been on air.**
+
+---
+
+## Step 68 — the value was never `_phy_stack_top`, and four steps rest on that
+
+Printing the addresses instead of assuming them:
+
+```
+[phy] &tasks[5].sp 0x3ffb0158   _phy_stack 0x3ffbe8d0..0x3ffc00d0
+```
+
+Two results.
+
+**No aliasing.** The task table is at `0x3ffb0158`, far below the PHY stack. The
+assumption that `g_tasks[5].sp` is where the code thinks it is was correct.
+
+**The constant was wrong.** `_phy_stack_top` is `0x3ffc00d0`. The reported bad
+value is `0x3ffc0020` — **inside** the PHY stack, 176 bytes below the top, not
+the top itself.
+
+`0x3ffc0000` came from an `nm` dump taken many steps ago and was never re-read
+after the symbol moved. Every "the arithmetic refuses this" argument since has
+been built on it:
+
+- step 60 retired the mid-switch race because "a1 would be top-64, never the top
+  exactly" — but the value was never the top
+- step 61 replaced the base-save-area sentinel to stop it being restored as an sp
+- step 62 concluded the scheduler "never saved it", from a `phytop` check that
+  compares against `_phy_stack_top` and so could never match a value that is not
+  it
+- step 67 repeated the same arithmetic to retire the tick-on-the-PHY-stack
+  reading
+
+**So the original diagnosis was right all along.** `0x3ffc0020` is a perfectly
+ordinary stack pointer *within* `_phy_stack`, which is exactly what a task caught
+by a tick during `phy_stack_call` would be saved with. Steps 58 and 59 had it,
+and a mis-transcribed constant argued it away.
+
+### What is actually still open
+
+Why a tick is serviced at all during a call that takes `rsil a9, 3`, with
+`g_phy_call_mask` confirmed `1` and the mask taken before the switch since
+step 59. That is the one question, and it is now a narrow one.
+
+### The lesson, stated plainly
+
+A constant read once and carried forward is an assumption, not a measurement.
+This one survived four steps of reasoning *because* the reasoning was careful —
+each argument was internally valid and every one of them was wrong at the root.
+The `phytop` probe built on it could not have fired, so its silence was read as
+evidence when it was a tautology.
+
+Same family as steps 45, 54 and 63: an instrument that cannot report the thing
+it is being trusted to rule out.
+
+**Nothing has been on air.**

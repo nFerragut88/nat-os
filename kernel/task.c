@@ -808,6 +808,18 @@ uint32_t task_switch_count(int id)
  * Diagnostic. A blocked task resuming with a zero sp is the whole question in
  * next_moves/08 step 26, and this is the only way to see whether the damage is
  * in the task table or happens on the way back out. */
+/* The ADDRESS of a task's saved sp field.
+ *
+ * Step 67. Every conclusion since step 62 assumes this field is where the code
+ * thinks it is, and the check that would catch a wrong assumption reads it back
+ * through the same expression. This lets the assumption be tested against the
+ * PHY stack's actual extent instead. */
+uint32_t task_sp_addr(int id)
+{
+    if (id < 0 || id >= TASK_MAX) { return 0u; }
+    return (uint32_t)&g_tasks[id].sp;
+}
+
 uint32_t task_saved_sp(int id)
 {
     if (id < 0 || id >= TASK_MAX) { return 0u; }
