@@ -441,6 +441,24 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
                 uart_puts("\n");
             }
 
+            {
+                extern volatile int g_badsp_task;
+                extern volatile uint32_t g_badsp_val, g_badsp_lo, g_badsp_hi;
+                uart_puts("  bad sp    : ");
+                if (g_badsp_task < 0) { uart_puts("none -- every saved sp was inside its own stack"); }
+                else {
+                    uart_puts("task ");
+                    uart_put_dec((unsigned int)g_badsp_task);
+                    uart_puts(" sp ");
+                    uart_put_hex(g_badsp_val);
+                    uart_puts(" outside ");
+                    uart_put_hex(g_badsp_lo);
+                    uart_puts("..");
+                    uart_put_hex(g_badsp_hi);
+                }
+                uart_puts("\n");
+            }
+
             uart_puts("  woe watch : ");
             if (g_woe_lost_at == 0xFFFFFFFFu) {
                 uart_puts("never seen clear at an adapter entry");

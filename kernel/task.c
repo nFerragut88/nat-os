@@ -41,6 +41,10 @@ static uint32_t g_stacks[TASK_MAX][TASK_STACK_WORDS];
  * live somewhere base-independent while WINDOWBASE is written. See vectors.S. */
 volatile uint32_t g_switch_sp;
 
+/* First task whose saved sp fell outside its own stack. See task_schedule(). */
+volatile int      g_badsp_task = -1;
+volatile uint32_t g_badsp_val, g_badsp_lo, g_badsp_hi;
+
 /* ---- who owns which window position ------------------------------------
  *
  * next_moves/08 steps 49-50. WINDOWSTART is 16 bits of "a frame lives here"
@@ -698,6 +702,30 @@ uint32_t task_schedule(uint32_t current_sp)
                     (const uint32_t *)g_tasks[next].sp, fabricated);
     }
 #endif
+
+    /* The stack pointer this returns is loaded straight into a1 by
+     * _handler_level3, which then restores sixteen registers through it. A bad
+     * value faults INSIDE the handler -- measured, `l32i.n a8, a1, 28` at
+     * 0x400891b0 -- one restore after the corruption, with nothing left to say
+     * where it came from.
+     *
+     * Checked here instead, where the owning task is still known. Recorded and
+     * not corrected: substituting a plausible sp would hide the bug and hand the
+     * handler a stack that is not the task's. */
+    {
+        uint32_t sp = g_tasks[next].sp;
+        uint32_t base = (uint32_t)g_tasks[next].stack_base;
+        if (base != 0u) {
+            uint32_t lo = base;
+            uint32_t hi = base + g_tasks[next].stack_words * 4u;
+            if ((sp < lo || sp > hi) && g_badsp_task < 0) {
+                g_badsp_task = next;
+                g_badsp_val  = sp;
+                g_badsp_lo   = lo;
+                g_badsp_hi   = hi;
+            }
+        }
+    }
 
     return g_tasks[next].sp;
 }

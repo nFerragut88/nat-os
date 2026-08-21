@@ -4113,3 +4113,52 @@ front. What remains is a fault that no longer has anything to do with the
 frames' bookkeeping.
 
 **Nothing has been on air.**
+
+---
+
+## Step 58 — the bad sp is the PHY stack, again
+
+Validating every saved stack pointer against its owning task's stack, at the
+point the scheduler hands it over rather than one restore later:
+
+```
+bad sp : task 5 sp 0x3ffc0000 outside 0x3ffb9e88..0x3ffba688
+```
+
+`0x3ffc0000` is `_phy_stack_top`. The shell is being switched out while executing
+on the **shared private PHY stack**, with `sp` at its very top — the moment
+`phy_stack_call` has just switched onto it or is about to switch off.
+
+That is the same shared buffer as step 27, which was supposedly retired at
+step 28 by routing `blob_call` through `rom_call4` so blockable driver code runs
+on the caller's own task stack. It did do that — and something else still enters
+`phy_stack_call` during `wifiinit task`. `phyinit_run_at` completes before the
+init call, so the remaining user is inside the blob's own execution.
+
+### Why this breaks everything downstream
+
+A task parked on `_phy_stack` is outside its own stack, so:
+
+- its stack guard cannot protect it — the guard word is in the task stack, and
+  the frames are not
+- the window bookkeeping keyed to "this task's base" has no relationship to where
+  its frames actually live
+- a second context entering `phy_stack_call` overwrites them, which is exactly
+  the hazard `blobcall.c`'s header has documented from the beginning
+
+The handler then faults restoring through it (`l32i.n a8, a1, 28` at
+`0x400891b0`, step 57), one switch after the damage.
+
+### Next
+
+Find the remaining caller. `phy_stack_call` is reached from `phyinit_run_at` and
+from `win_call_vendor`; the OSI entries that route PHY work through it are the
+likely path, and `osiused` plus the `last osi` print can name it. Then either
+give that path the caller's stack as step 28 did for `blob_call`, or make
+`phy_stack_call` non-blocking by construction so a switch cannot land on it.
+
+The measurement to keep: `bad sp` must read "none -- every saved sp was inside
+its own stack". That is a property worth asserting permanently, not just while
+this bug is open.
+
+**Nothing has been on air.**
