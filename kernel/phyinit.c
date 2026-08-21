@@ -23,6 +23,7 @@
 
 #include "phyinit.h"
 #include "window.h"
+#include "blobcall.h"
 #include "task.h"
 #include "uart.h"
 #include "efuse.h"
@@ -160,11 +161,27 @@ int phyinit_run_at(uint32_t fn)
     int      me      = task_current();
     uint32_t sp_pre  = task_saved_sp(me);
 
+    /* PINNED, not merely masked.
+     *
+     * phy_stack_call raises INTLEVEL to 3 and the blob lowers it again -- not
+     * through the adapter (phy_enter/exit_critical run 0/0 times) but by writing
+     * PS directly, as IDF's PHY does. Measured at step 69: the tick that caught
+     * a task on the private stack was taken with eps3 intlevel 0.
+     *
+     * So the mask is advisory. The pin is not: it lives in task_schedule(),
+     * which decides which task runs, and no amount of PS writing on the blob's
+     * side can reach it. The tick still fires; the scheduler simply declines to
+     * switch away, so nothing is ever saved with an sp on _phy_stack.
+     *
+     * blob_lock() also excludes a second context from the shared 6 KB buffer,
+     * which the mask never did either. */
+    blob_lock();
     g_phy_result = phy_stack_call(fn,
                                   (uint32_t)g_phy_init_data,
                                   (uint32_t)g_phy_cal_data,
                                   PHY_RF_CAL_FULL,
                                   0u);
+    blob_unlock();
 
     {
         uint32_t sp_post = task_saved_sp(me);

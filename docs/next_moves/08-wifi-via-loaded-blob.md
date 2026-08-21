@@ -4751,3 +4751,57 @@ The private stack and the mask cannot both be kept. Either:
 a shared buffer rather than adding bookkeeping around it.
 
 **Nothing has been on air.**
+
+---
+
+## Step 70 — the `bad sp` was never a defect
+
+Pinning the PHY call did not silence the check:
+
+```
+[!] task 5 sp 0x3ffc0020 left its stack   eps3 intlevel 0
+[phy] saved sp of task 5 changed across the call: 0x3ffba820 -> 0x3ffc0020
+phyinit rc=0     wintorture CORRECT     wincollide runs=119 wrong=0
+```
+
+And the reason is the point. `blob_pin()` stops the scheduler switching to a
+**different** task. It does not stop the current task's context being *saved*
+every tick — with `sp` legitimately on `_phy_stack`, because that is genuinely
+where it is executing — and then restored to the same task on the way out.
+
+That save and restore are symmetric. Nothing is lost. **A task saved with `sp`
+on the private stack is not a bug**; it is what running on a private stack looks
+like from the scheduler's side.
+
+So the check I added at step 58 — "a saved sp outside the owning task's stack" —
+encodes an assumption that was never true of this kernel: that a task only ever
+executes on its own stack. `phy_stack_call` exists precisely to violate that.
+
+### What the thread was worth anyway
+
+Steps 58-69 chased this as corruption and it was not corruption. But the chase
+produced two things that stand independently:
+
+- **The mask is advisory** (step 69, rev 1.5 §13). The blob writes PS directly
+  and drops `INTLEVEL` to 0 inside a region the kernel masked. That is real,
+  measured, and applies to anything relying on a mask across a blob call.
+- **A stale constant survived four steps of careful reasoning** (step 68), and
+  the probe built on it could not fire, so its silence read as evidence.
+
+Neither would have been found without the false trail, which is not a defence of
+the false trail.
+
+### What to do with the check
+
+Teach it the exception rather than delete it: a saved `sp` inside `_phy_stack`
+while that task holds the blob lock is expected. Anything else outside the
+owning task's stack is still worth catching — that property is what would have
+caught a real corruption, and it has never actually been violated.
+
+### Where that leaves `wifiinit task`
+
+Unchanged, and now without a spurious explanation attached to it. The failure is
+still `IllegalInstruction` reaching `_queue_recv`, with the window bookkeeping
+consistent, the phantom frame gone, and the PHY path pinned and excluded.
+
+**Nothing has been on air.**
