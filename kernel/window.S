@@ -693,7 +693,6 @@ phy_stack_call:
     addi    a10, a8, -12            /* s32i takes no negative offset */
     s32i    a9,  a10, 0
 
-    mov     a1,  a8                 /* switch */
 
     /* Mask interrupts for the duration.
      *
@@ -738,12 +737,30 @@ phy_stack_call:
      * single shared buffer, so two contexts here would corrupt each other
      * regardless of window state. */
     rsr.ps  a9
-    s32i    a9,  a1, 24
-    movi    a8, g_phy_call_mask
-    l32i    a8, a8, 0
-    beqz    a8, .Lphy_no_mask
+    s32i    a9,  a8, 24                 /* a8, not a1 -- see the switch below */
+    movi    a10, g_phy_call_mask        /* a10, not a8 -- a8 is still the frame */
+    l32i    a10, a10, 0
+    beqz    a10, .Lphy_no_mask
     rsil    a9, 3
 .Lphy_no_mask:
+
+    /* SWITCH LAST, after the mask is in force.
+     *
+     * This used to run before the masking, and the gap was a real race: for the
+     * half-dozen instructions between them, a1 pointed at `_phy_stack` while the
+     * timer could still fire. A tick landing there saves the task with a stack
+     * pointer outside its own stack -- measured, `task 5 sp 0x3ffc0000 outside
+     * 0x3ffb9e88..0x3ffba688`, and 0x3ffc0000 is exactly _phy_stack_top.
+     *
+     * A task parked on the shared PHY stack has no guard protecting its frames,
+     * window bookkeeping keyed to a base unrelated to where those frames live,
+     * and a second context free to overwrite them. The handler then faults
+     * restoring through it, one switch after the damage (step 57).
+     *
+     * Latent since PHY init first worked. It needed a path that keeps running
+     * long enough afterwards for the bad saved sp to be restored through, and
+     * `wifiinit task` is the first one. */
+    mov     a1,  a8                     /* switch */
 
     /* Declare exactly one live frame: this one.
      *

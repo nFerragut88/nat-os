@@ -4162,3 +4162,46 @@ its own stack". That is a property worth asserting permanently, not just while
 this bug is open.
 
 **Nothing has been on air.**
+
+---
+
+## Step 59 — the PHY stack race, closed
+
+`phy_stack_call` switched `a1` onto the shared `_phy_stack` and *then* masked
+interrupts. For the half-dozen instructions between, the stack pointer pointed at
+a shared buffer while the timer could still fire — and a tick landing there saves
+the task with a stack pointer outside its own stack.
+
+That is step 58's measurement exactly: `task 5 sp 0x3ffc0000 outside
+0x3ffb9e88..0x3ffba688`, and `0x3ffc0000` is `_phy_stack_top`.
+
+The order is now: build the frame, save PS relative to `a8`, take the mask, and
+switch **last**. PS is stored through `a8` rather than `a1` because `a1` is not
+the new stack yet, and the mask test uses `a10` so `a8` survives to the switch.
+
+```
+boot 11 PASS 0 FAIL   wintorture CORRECT   wincollide runs=138 wrong=0   blobphy rc=0
+```
+
+### What this was, and was not
+
+It was a genuine latent race, present since PHY init first worked. It stayed
+invisible because it needs a path that keeps running long enough afterwards for
+the bad saved `sp` to be restored through — and `wifiinit task` is the first one.
+
+It was **not** the remaining `wifiinit task` failure. That is unchanged in
+identity — `InstructionFetchError`, `DEPC 0x3ffd4020` — though `epc1` moved to
+`0x4008926c`.
+
+It also settles step 58's framing: there is no second caller leaking onto the
+shared buffer. Step 28's fix was sound, and what remained was an ordering bug
+inside `phy_stack_call` itself.
+
+### Note on the diagnostics
+
+The panic dump in this run printed only its first few lines before the capture
+window closed — the block is unconditional since step 53, but it is now long
+enough that a 30 s read can miss the tail. Worth trimming once the scaffolding
+comes out, and worth remembering before reading a short dump as a short answer.
+
+**Nothing has been on air.**
