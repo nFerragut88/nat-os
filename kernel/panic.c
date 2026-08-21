@@ -399,7 +399,11 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
                     uint32_t ob, of;
                     __asm__ volatile ("rsr.excsave6 %0" : "=r"(ob));
                     __asm__ volatile ("rsr.excsave7 %0" : "=r"(of));
-                    uart_puts("  overflow  : frame sp ");
+                    uint32_t pf;
+                    __asm__ volatile ("rsr.excsave5 %0" : "=r"(pf));
+                    uart_puts("  overflow  : prev good frame sp ");
+                    uart_put_hex(pf);
+                    uart_puts("   this frame sp ");
                     uart_put_hex(of);
                     uart_puts("  recovered base ");
                     uart_put_hex(ob);

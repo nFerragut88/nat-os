@@ -5013,3 +5013,50 @@ over that are *not* those three: `blob_call()` itself, and the shell command fra
 beneath it — both compiled `-mabi=call0`, both never writing `[sp-12]`.
 
 **Nothing has been on air.**
+
+---
+
+## Step 75 — the frame is named: a call0 frame on the shell's own stack
+
+Recording the frame pointer two deep, so the last good value survives the store
+that kills the handler:
+
+```
+overflow  : prev good frame sp 0x3ffba520   this frame sp 0x3ffba520
+            recovered base 0xeeeeeeee
+task 5      sp 0x3ffba4a0  stack 0x3ffba0c4+2048  win 0x00002000@13  guard ok
+```
+
+**The frame pointer is valid.** `0x3ffba520` sits inside task 5's stack
+(`0x3ffba0c4 .. 0x3ffba8c4`). It is a real call0 frame, not a garbage register —
+step 74's `0x19` was a stale `EXCSAVE` read from before the two-deep record
+existed, and reading it as "a counter used as a frame pointer" was wrong.
+
+**And `[0x3ffba520 - 12]` is `0xeeeeeeee`.** That is `STACK_FILL`
+(`kernel/task.c:30`), which `task_create()` writes across every stack. So the
+base save area of that frame was **never written** — the memory still holds the
+fill pattern from task creation.
+
+That is the whole fault, and it is the class `phy_stack_call`'s comment has
+described since rev 1.1: a call0 function whose frame windowed code rotates over,
+which never populated `[sp-12]`, so `_WindowOverflow8/12` recovers fill and
+stores through it.
+
+### Which function
+
+The frame is on the **shell task's** stack, at a shallower address than the
+task's saved `sp` (`0x3ffba4a0`), so it is a caller of whatever was executing.
+The call0 frames on that path during `wifiinit` are the shell command frame,
+`blob_call()`, and `rom_call4` — and `rom_call4` has written its save area since
+step 37.
+
+So the site is `blob_call()` or the shell frame above it. Both are C compiled
+`-mabi=call0`, which will never emit that store, so the fix needs an asm shim or
+for the bridge to establish the boundary on their behalf.
+
+Naming it by address rather than by argument is the point of this step: five
+instruments in this investigation reported something other than what they were
+trusted for, and patching the likelier-looking of two candidates would have had
+even odds of producing another correct-but-irrelevant fix.
+
+**Nothing has been on air.**

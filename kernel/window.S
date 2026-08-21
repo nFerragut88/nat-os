@@ -80,7 +80,16 @@ _WindowOverflow8:
      * when the frame pointer is not a pointer. The probe never ran. Recorded
      * first, so a frame with a bogus sp names itself instead of taking the
      * handler down before it can be seen. See next_moves/08 step 74. */
-    wsr.excsave7 a9
+    /* Two deep: keep the PREVIOUS frame pointer as well as this one.
+     *
+     * When a bogus frame kills the handler mid-store, the value that survives
+     * in EXCSAVE5 is the LAST GOOD frame pointer -- and a good sp names a
+     * stack, which names the function whose base save area was never written.
+     * EXCSAVE5 is free: the underflow probe that used it is gone from here.
+     * See next_moves/08 step 75. */
+    xsr.excsave7 a9          /* swap: excsave7 <- this frame, a9 <- previous */
+    wsr.excsave5 a9
+    xsr.excsave7 a9          /* swap back, leaving this frame in excsave7 */
     s32e    a0, a9, -16
     l32e    a0, a1, -12             /* a0 <- call[j-1]'s sp */
     /* step 48: the caller sp this handler just recovered, and the frame it came
@@ -133,7 +142,16 @@ _WindowOverflow12:
      * when the frame pointer is not a pointer. The probe never ran. Recorded
      * first, so a frame with a bogus sp names itself instead of taking the
      * handler down before it can be seen. See next_moves/08 step 74. */
-    wsr.excsave7 a13
+    /* Two deep: keep the PREVIOUS frame pointer as well as this one.
+     *
+     * When a bogus frame kills the handler mid-store, the value that survives
+     * in EXCSAVE5 is the LAST GOOD frame pointer -- and a good sp names a
+     * stack, which names the function whose base save area was never written.
+     * EXCSAVE5 is free: the underflow probe that used it is gone from here.
+     * See next_moves/08 step 75. */
+    xsr.excsave7 a13          /* swap: excsave7 <- this frame, a13 <- previous */
+    wsr.excsave5 a13
+    xsr.excsave7 a13          /* swap back, leaving this frame in excsave7 */
     s32e    a0,  a13, -16
     l32e    a0,  a1,  -12
     /* step 48: the caller sp this handler just recovered, and the frame it came
