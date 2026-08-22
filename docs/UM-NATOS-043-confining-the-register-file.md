@@ -114,6 +114,50 @@ works, and it is not why the arena model succeeds.
 
 ---
 
+## 3A. The book specified this failure before the kernel existed
+
+Chapter 2 of the book (`docs/book/02-abi.md` §2.2), written to justify choosing
+call0 *before the first line of kernel code*, lists three consequences of the
+windowed ABI for an operating system. All three are the last seventy steps:
+
+| §2.2, at design time | Measured, steps 115–126 |
+|---|---|
+| "Live windows belonging to the outgoing task exist in the physical register file and must be spilled first, or restored state will be silently wrong." | Step 121: `task 5 held 0x0000aa8a granted 0x00000008 LOST 0x0000aa82` |
+| "The spill mechanism must work during the switch itself, which constrains what the switch code may touch." | Five sweep placements, steps 115–119; and §8.1's flaw in this report's own plan |
+| "Failures do not manifest at the switch. They manifest several returns later, in a function that did nothing wrong, with a corrupted frame." | `epc 0x6eeeeeee` — a `retw`, several returns downstream, in code that did nothing wrong |
+
+It also quotes UM-NATOS-003 §2: *"This is the single hardest part of writing an
+Xtensa kernel and the point at which such projects most often stall."*
+
+nat-os chose call0 to avoid that entirely, and §2.5.2 records the price —
+"Any third-party library compiled as windowed cannot be linked in" — with
+UM-NATOS-024 concluding contentedly that "WiFi will never run and ADC2 is
+permanently free". The bridges in §2.7 overturned that, and in doing so
+reintroduced precisely the problem call0 was selected to avoid. This report is
+the bill for that.
+
+### 3A.1 The distinction that decides Tier B
+
+§2.2 says live windows "must be **spilled** first". That is the standard answer,
+and it is what steps 115–126 attempted in five placements.
+
+**A spill trusts `WINDOWSTART`.** It walks the set bits and writes each claimed
+frame out through the frame's own stack pointer. Step 124 measured a bit that no
+frame backs, whose `a1` is `0xeeeeeeee`. So every spill-based approach was
+doomed by the data, not by where it was placed — which is why five placements
+produced five failures and one withdrawn conclusion.
+
+**A wholesale save does not trust `WINDOWSTART`.** It copies 64 registers
+because they exist, indifferent to what any bit claims about them. A phantom is
+saved and restored as faithfully as a real frame, and a frame that is wrong in
+private harms nobody.
+
+That is the deepest reason to prefer Tier B, and it is stronger than the cost
+argument in §5: **the sweep was not merely awkward to place, it was asking a
+register that has been proven to lie.**
+
+---
+
 ## 4. Tier B: give each windowed task its own register file
 
 On every switch involving a task that uses windows, save all 64 physical address
