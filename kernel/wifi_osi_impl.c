@@ -129,7 +129,12 @@ static void wake_all(uint32_t *mask)
  * and setting it to 460 moved excvaddr from 0x170 to 0x1ac exactly. That
  * identified the word the window handler mistakes for a stack pointer as `spent`,
  * the loop counter below. Changing this constant changes that fault address. */
-#define OSI_FOREVER_CAP 400u        /* ~4 s at the current tick */
+/* Derived from OSI_FOREVER_CAP_MS. Still 400 ticks at the current tick
+ * period, so nothing about this path changes; what changes is that the
+ * windowed copy in vendor/windowed/wifi_osi_stubs.c now derives its own
+ * bound from the same milliseconds instead of copying these digits into a
+ * loop with a different period. See kernel/osi_wait.h. */
+#include "osi_wait.h"
 
 uint32_t g_osi_capped;              /* times a "forever" wait was cut short */
 uint32_t g_osi_capped_where;        /* 1 = sem, 2 = queue_recv, 3 = evt, 4 = queue_send */

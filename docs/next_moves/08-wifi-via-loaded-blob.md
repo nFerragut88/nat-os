@@ -7479,4 +7479,84 @@ spill against frame creation. What step 113 buys is certainty about what that
 fix has to accomplish, and a system that runs long enough to work on the next
 problem.
 
+## Step 114 — the forever-cap meant three different things
+
+Noticed from the outside: "600 ms sounds like a hardcoded value." It was not
+hardcoded, and chasing where it came from turned up two further errors behind
+the first.
+
+**One: the unit was dropped.** `OSI_FOREVER_CAP` is `400u` in
+kernel/wifi_osi_impl.c, commented "~4 s at the current tick", and correct there
+-- `spent` counts ticks, which is why it is compared against `ticks` two lines
+earlier. Step 111 rebuilt the blocking path in windowed code and carried the
+digits without the unit: `rounds` counts 120000-cycle spins, so `rounds >= 400u`
+meant 600 ms where the constant it was copied from meant 4 s. The comment I put
+on that line said "the forever-cap, unchanged in meaning". It was 6.7x shorter.
+
+It was also a *second* copy: after step 111 the blocking path no longer reads
+`OSI_FOREVER_CAP`, so changing that constant no longer changes the blocking
+path -- the exact knob step 103 turned to prove `excvaddr` was `spent`
+(UM-NATOS-042 section 7). That experiment would now read as a null result for a
+reason unrelated to its hypothesis.
+
+**Two: the windowed directory had no include path.** `$wflags` in build.ps1
+carried no `-I` at all, so a windowed file could only ever restate a kernel
+constant, never share one. That is the mechanism by which the cap came to mean
+two things. Fixed, with the constraint written down: macros only may cross, as a
+call0 static inline pulled into windowed code is an ABI crossing with no bridge.
+
+The first build after adding `#include "osi_wait.h"` therefore failed -- and was
+reported clean, because the error filter matched `": error"` and GCC writes
+`fatal error:` with no preceding colon. The board kept running the stale image
+and reported `calls=5 timeouts=4`, identical to the previous build. What caught
+it was arithmetic: with a 6.7x longer timeout the budget must be reached on call
+3, not call 5. Disassembly confirmed `movi a3, 0x7d0` -- the old 2000 -- still in
+the image. **Eleventh instrument in this investigation to report a result it was
+not able to observe.**
+
+**Three: a round is not a spin.** With the arithmetic fixed the nominal wait was
+4 s, and the budget fired at t=152.5 s -- 19 ms per round against a 1.5 ms spin.
+A round also runs `win_spill_all()`, and the task is unpinned across the wait, so
+a scheduling round trip lands in the middle of every one. The nominal 4 s was
+really ~51 s. Same class of error as the first, reached from the other side: a
+count cannot express a duration unless the thing counted has a fixed cost.
+
+### The fix
+
+`kernel/osi_wait.h` -- macros only, shared by both ABIs. One number with a
+meaning, `OSI_FOREVER_CAP_MS = 4000`; each side derives its own bound:
+
+```
+OSI_FOREVER_CAP         = 400 ticks          (impl side, unchanged)
+OSI_FOREVER_CAP_CYCLES  = 320,000,000        (windowed side, elapsed cycles)
+```
+
+The windowed path now bounds itself by `(now - wait_t0) >= OSI_FOREVER_CAP_CYCLES`
+read from `ccount`, which needs no assumption about what a round costs. `rounds`
+survives as a diagnostic that is never a bound. Static asserts cover the u32
+overflow, a period exceeding the whole wait, and the ccount wrap period; kmain.c
+asserts its tick period still equals the one the header derives from.
+
+Verified with the real preprocessor, not by inspection: `OSI_FOREVER_CAP == 400`
+and, before it was retired, `OSI_FOREVER_ROUNDS == 2666`.
+
+### Measured
+
+```
+[qr] budget spent, still waiting  calls=4 timeouts=3 lastosi=29 rounds/wait=204 osin=20
+report at t=12.7 s          three 4 s waits -- predicted ~12
+rounds/wait=204             4000 ms / 204 = 19.6 ms per round
+```
+
+Two independent numbers agree, and the second is the one that exposed the third
+error. Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0,
+`blobtx force` 0x3004, `wifiinit` no fault and no reset over 120 s.
+
+### Left alone deliberately
+
+`osi_impl_queue_recv`'s own `spent >= OSI_FOREVER_CAP` still assumes one tick per
+iteration, because `wait_on()` blocks until woken. Nothing on the blocking path
+reaches it now, so the assumption is untested rather than wrong. It should get
+the same treatment when interrupts are wired and that path is live again.
+
 **Nothing has been on air.**

@@ -21,6 +21,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdarg.h>
+/* Macros only -- see the header. No call0 declaration may be pulled in here. */
+#include "osi_wait.h"
 
 #define CONFIG_IDF_TARGET_ESP32 1
 #define ESP_WIFI_OS_ADAPTER_VERSION  0x00000008
@@ -272,7 +274,12 @@ volatile uint32_t g_qr_caller, g_qr_caller_raw;
 extern void uart_puts(const char *s);
 extern void uart_put_dec(unsigned int v);
 volatile uint32_t g_qr_blk_calls, g_qr_blk_rounds, g_qr_timeouts;
-#define QR_BLK_BUDGET  2000u
+/* Report once the blob has been waiting three full timeouts, measured the same
+ * way the timeout is -- by the clock. g_qr_last_rounds records how many rounds
+ * the last full wait actually took, which is the number that revealed a round
+ * costs ~19 ms rather than the 1.5 ms it was assumed to. */
+#define QR_BLK_REPORT_CALLS  3u
+volatile uint32_t g_qr_last_rounds;
 
 /* [step 112] The spill probe, pointed at the BLOCKING path.
  *
@@ -740,7 +747,9 @@ static int32_t osi_s_queue_recv(void *queue, void *item, uint32_t block_time_tic
     g_qr_blk_calls++;
 
     blk_sample(0u);
-    uint32_t rounds = 0u;
+    uint32_t rounds = 0u;             /* diagnostics only -- never a bound */
+    uint32_t wait_t0;
+    __asm__ volatile ("rsr.ccount %0" : "=r"(wait_t0));
     for (;;) {
         /* [step 111] Release through WINDOWED code -- no bridge, no callx0, so
          * nothing moves this frame's a1. The wake it may owe goes back through
@@ -808,7 +817,7 @@ static int32_t osi_s_queue_recv(void *queue, void *item, uint32_t block_time_tic
             __asm__ volatile ("rsr.ccount %0" : "=r"(t0));
             for (;;) {
                 __asm__ volatile ("rsr.ccount %0" : "=r"(now));
-                if ((now - t0) > 120000u) { break; }
+                if ((now - t0) > OSI_SPIN_CYCLES) { break; }
             }
         }
 
@@ -827,7 +836,7 @@ static int32_t osi_s_queue_recv(void *queue, void *item, uint32_t block_time_tic
             }
         }
         g_qr_blk_rounds++;
-        if (g_qr_blk_rounds == QR_BLK_BUDGET) {
+        if (g_qr_timeouts == QR_BLK_REPORT_CALLS && rounds == 1u) {
             /* [step 113] One-shot liveness report, bridged.
              *
              * The first budget attempt returned 0 immediately once spent, which
@@ -846,14 +855,22 @@ static int32_t osi_s_queue_recv(void *queue, void *item, uint32_t block_time_tic
             (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" lastosi=");
             (void)w2c_call1((uint32_t)&uart_put_dec,
                             g_osi_trace_n ? g_osi_trace[g_osi_trace_n - 1u] : 0u);
+            (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" rounds/wait=");
+            (void)w2c_call1((uint32_t)&uart_put_dec, g_qr_last_rounds);
             (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" osin=");
             (void)w2c_call1((uint32_t)&uart_put_dec, g_osi_trace_n);
             (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)"\n");
         }
-        if (++rounds >= 400u) {
-            blk_sample(2u);
-            g_qr_timeouts++;
-            return 0;
+        rounds++;
+        {
+            uint32_t now;
+            __asm__ volatile ("rsr.ccount %0" : "=r"(now));
+            if ((now - wait_t0) >= OSI_FOREVER_CAP_CYCLES) {
+                blk_sample(2u);
+                g_qr_timeouts++;
+                g_qr_last_rounds = rounds;
+                return 0;
+            }
         }
     }
 }

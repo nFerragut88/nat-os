@@ -62,6 +62,13 @@
 
 #define TICK_INTERVAL_CYCLES  800000u   /* ~10 ms at the measured ~80 MHz */
 
+/* osi_wait.h derives the OSI forever-cap in ticks from this period. It
+ * cannot include kmain.c, so it restates the value and this checks it --
+ * a tick change must not silently rescale how long the radio waits. */
+#include "osi_wait.h"
+_Static_assert(TICK_INTERVAL_CYCLES == OSI_TICK_CYCLES,
+               "tick period changed; osi_wait.h still assumes the old one");
+
 extern char _vecbase;
 
 static volatile uint32_t work_a_count, work_a_bad;

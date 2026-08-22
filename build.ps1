@@ -131,8 +131,14 @@ foreach ($src in (Get-ChildItem "$root\kernel" -Include *.c,*.S -Recurse)) {
 $winsrc = Get-ChildItem "$root\vendor\windowed\*.c" -ErrorAction SilentlyContinue
 if ($winsrc) {
     Write-Host "== compiling windowed ABI ==" -ForegroundColor Cyan
+    # -I kernel: this directory had no include path at all, so a windowed file
+    # could only ever restate a kernel constant rather than share it -- which is
+    # how the OSI forever-cap came to mean 4 s on one side of the boundary and
+    # 600 ms on the other. Only MACROS may be taken across: a call0 static inline
+    # pulled in here would be an ABI crossing with no bridge.
     $wflags = @("-mabi=windowed", "-mlongcalls", "-ffreestanding", "-fno-builtin",
-                "-fno-stack-protector", "-Os", "-Wall", "-Wextra", "-std=c11")
+                "-fno-stack-protector", "-Os", "-Wall", "-Wextra", "-std=c11",
+                "-I", "$root\kernel")
     foreach ($src in $winsrc) {
         $obj = Join-Path $build ($src.BaseName + ".o")
         Write-Host ("  {0}  [windowed]" -f $src.Name)
