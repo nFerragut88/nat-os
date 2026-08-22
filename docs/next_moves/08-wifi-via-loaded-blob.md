@@ -8408,4 +8408,69 @@ instrumentation spans three files and has to come out together.
 Suite after the full revert: boot 11 PASS 0 FAIL, `wintorture` CORRECT,
 `blobphy` rc=0, `wifiinit` no fault and no reset.
 
+## Step 130 — the forced placement does not boot
+
+Step 129's diagnosis was acted on. The save moved into the prologue, after the
+window-state save and **before any `call0`**; the restore to `.Lresume`, after
+the last one. Two defects of the previous attempt were removed on the way:
+
+- the pointer is now staged with `movi a0, g_regsave` **inside** each block,
+  after that window's `a0` is already in EXCSAVE2, so **no register is clobbered
+  before it is recorded**. Step 129's `movi a2, g_regsave` preamble destroyed the
+  task's `a2`;
+- EXCSAVE3 is no longer used, retiring an assumption that was never checked.
+
+**The board does not boot.** 0 PASS, against 11 PASS before. Not a fault in a
+test — the kernel does not reach the end of its own startup. Reverted; suite
+green.
+
+### What this does and does not tell us
+
+It is a worse symptom than step 128's and therefore a *cheaper* one to chase: a
+failure at boot is reproducible in eighteen seconds with no command typed, and
+whatever it is, it happens on one of the first few ticks rather than deep inside
+a torture run.
+
+What is **not** in doubt, from step 129's diff: the save loop's rotation,
+offsets, window mapping and store sequence are correct, and `a1` came back
+bit-exact. This step changed *where* the loop runs, not what it does.
+
+So the fault is in the new placement, and the two candidates are the two things
+placement changed:
+
+1. **The prologue runs on every interrupt from the very first tick**, including
+   before the scheduler exists and before any task has a valid frame. The old
+   site at `.Lsched` was reached only when a switch was actually being
+   considered; the new one is not gated at all. `task_schedule` is not even
+   called on the H1 defer path, but the save now runs there too.
+2. **The restore at `.Lresume` writes the outgoing task's windows 1–3 into the
+   register file after the scheduler has chosen a different task**, because
+   there is still only one shared buffer. Across a real switch that is not an
+   identity — it is task A's registers landing in task B's file. Step 1 was
+   designed as an identity on the assumption that save and restore bracket the
+   same task, and with a single buffer that assumption fails the moment the
+   scheduler actually switches.
+
+(2) is the more likely of the two and is *structural*: the identity-pair test
+cannot be run with one buffer at these two sites, because the sites straddle the
+switch. It needs either per-task slots — step 2, brought forward — or both halves
+placed on the same side of `task_schedule`.
+
+That is a design error in the plan rather than in the code, and it is mine:
+UM-NATOS-043 §8 sequenced "identity pair" before "per-task slots" without
+noticing that the forced placement of the pair puts a context switch between its
+two halves.
+
+### Next
+
+Bring per-task slots forward: index `g_regsave` by the outgoing task on save and
+by the incoming task on restore, which is what makes the pair an identity again
+and is required by the design regardless. `g_current` is `static` in `task.c` and
+will need exposing — the accessor that already exists, `task_current()`, is a
+`call0` function and cannot be called from the prologue, so this wants a plain
+non-static variable rather than a call.
+
+Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0, `wifiinit` no
+fault and no reset.
+
 **Nothing has been on air.**
