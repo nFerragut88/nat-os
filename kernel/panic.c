@@ -304,6 +304,28 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
     uart_put_hex(ps);
     uart_puts("\n");
 
+    /* [X15] What does the CPU actually see at the bridge helpers RIGHT NOW?
+     * Three benign instructions (mov.n, s32i.n, retw.n) cannot raise
+     * IllegalInstruction under any PS state, yet the fault PCs land on them.
+     * Either runtime bytes differ from the linked image, or they do not.
+     * Dump both helpers and compare offline against objdump of this exact
+     * build. 12 words covers w2c_call1 (0x24 bytes) fully and w2c_call2
+     * past its retw.n. */
+    {
+        extern uint32_t w2c_call1(uint32_t fn, uint32_t a);
+        extern uint32_t w2c_call2(uint32_t fn, uint32_t a, uint32_t b);
+        const volatile uint32_t *p;
+        int i;
+        p = (const volatile uint32_t *)(uintptr_t)&w2c_call1;
+        uart_puts("  exec-bytes1: ");
+        for (i = 0; i < 12; i++) { uart_put_hex(p[i]); uart_puts(" "); }
+        uart_puts("\n");
+        p = (const volatile uint32_t *)(uintptr_t)&w2c_call2;
+        uart_puts("  exec-bytes2: ");
+        for (i = 0; i < 12; i++) { uart_put_hex(p[i]); uart_puts(" "); }
+        uart_puts("\n");
+    }
+
     /* EXCVADDR: the address the faulting instruction tried to reach.
      *
      * For exccause 3, 9, 28 and 29 the interesting question is never "where
@@ -346,6 +368,64 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
         uart_put_hex(g_win_sp);
         uart_puts(((g_win_a0 | g_win_sp) == 0u) ? "   BOTH ZERO -- context clobbered\n"
                                                 : "   non-zero -- context survived\n");
+        /* [X16] PS read inside w2c_call2 a few instructions before the
+         * trapping retw.n. bit18 = WOE, bit4 = EXCM, bit5 = UM. */
+        {
+            extern volatile uint32_t g_win_ps[3];
+            uint32_t wps = g_win_ps[0], wws = g_win_ps[1], wwb = g_win_ps[2];
+            uart_puts("  win-exit-ps: ");
+            uart_put_hex(wps);
+            uart_puts("   bit18(WOE) ");
+            uart_puts(((wps >> 18) & 1u) ? "SET" : "CLEAR");
+            uart_puts("  bit4(EXCM) ");
+            uart_puts(((wps >> 4) & 1u) ? "SET\n" : "CLEAR\n");
+            /* [X17] window state in the same instant. caller-bit checks the
+             * frame one below base: if CLEAR, this retw.n needs an underflow
+             * refill, and whatever answers that refill is our suspect. */
+            uart_puts("  win-exit-ws: ");
+            uart_put_hex(wws);
+            uart_puts("  wb ");
+            uart_put_dec(wwb);
+            uart_puts("  caller-bit ");
+            uart_puts(((wws >> ((wwb + 15u) & 15u)) & 1u) ? "SET\n" : "CLEAR\n");
+            /* [X18] entry-side state of the most recent crossing + counter. */
+            extern volatile uint32_t g_win_in[3];
+            extern volatile uint32_t g_win_seq;
+            uart_puts("  win-seq    : ");
+            uart_put_dec(g_win_seq);
+            uart_puts("  in-ps ");
+            uart_put_hex(g_win_in[0]);
+            uart_puts("  in-ws ");
+            uart_put_hex(g_win_in[1]);
+            uart_puts("  in-wb ");
+            uart_put_dec(g_win_in[2]);
+            uart_puts("\n");
+            /* [X19] state right before callx0 into the vendor callee. */
+            extern volatile uint32_t g_win_mid[3];
+            uart_puts("  win-mid    : ps ");
+            uart_put_hex(g_win_mid[0]);
+            uart_puts("  ws ");
+            uart_put_hex(g_win_mid[1]);
+            uart_puts("  wb ");
+            uart_put_dec(g_win_mid[2]);
+            uart_puts("\n");
+        }
+        /* [X17] exception-machinery registers at panic time: vecbase must be
+         * 0x40080000; excsave1 nonzero means another handler ran first; depc
+         * nonzero means a previous exception was taken with EXCM set. */
+        {
+            uint32_t vb, es1, dp;
+            __asm__ volatile ("rsr.vecbase %0"  : "=r"(vb));
+            __asm__ volatile ("rsr.excsave1 %0" : "=r"(es1));
+            __asm__ volatile ("rsr.depc %0"     : "=r"(dp));
+            uart_puts("  vecbase: ");
+            uart_put_hex(vb);
+            uart_puts("  excsave1: ");
+            uart_put_hex(es1);
+            uart_puts("  depc: ");
+            uart_put_hex(dp);
+            uart_puts("\n");
+        }
         /* The faulting task's saved switch frame, as it sits in memory.
          *
          * This splits the last two possibilities apart. Good values here mean
@@ -367,6 +447,17 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
              * deeper frames of the faulting task's saved view. */
             uart_puts("\n  saved hi  @ ");
             for (int w = 8; w < 16; w++) {
+                uart_puts(" ");
+                uart_put_hex(((volatile uint32_t *)fsp)[w]);
+            }
+            /* [X13] the victim's own control state: SAR/EPC3/EPS3/LBEG/LEND/
+             * LCOUNT. EPS3 is the ps this task is resumed WITH -- the header
+             * 'ps' line is panic-path state and says nothing about the faulting
+             * context. EPC3 is where execution resumes; comparing it with the
+             * fatal epc shows whether death happened at the frozen resume
+             * point or after control wandered there. */
+            uart_puts("\n  saved ctl @");
+            for (int w = 15; w < 21; w++) {
                 uart_puts(" ");
                 uart_put_hex(((volatile uint32_t *)fsp)[w]);
             }
@@ -701,6 +792,65 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
             uart_put_hex(task_multiframe_ws());
         }
         uart_puts("\n");
+
+        {
+            /* [X11] EXCM contamination watch: see task.c. A nonzero count
+             * names the exact switch-out that stored a poisoned resume ps. */
+            extern volatile uint32_t g_excm_count, g_excm_seq, g_excm_ps;
+            extern volatile int      g_excm_task;
+            uart_puts("  excm-watch: ");
+            uart_put_dec(g_excm_count);
+            uart_puts(" switch-outs with EXCM set in EPS3");
+            if (g_excm_count) {
+                uart_puts(", last task ");
+                uart_put_dec((unsigned int)g_excm_task);
+                uart_puts(" seq ");
+                uart_put_dec(g_excm_seq);
+                uart_puts(" ps ");
+                uart_put_hex(g_excm_ps);
+            }
+            uart_puts("\n");
+        }
+
+        {
+            /* [X13] WOE-clear watch: see task.c. */
+            extern volatile uint32_t g_woec_count, g_woec_seq, g_woec_ps;
+            extern volatile int      g_woec_task;
+            uart_puts("  woec-watch: ");
+            uart_put_dec(g_woec_count);
+            uart_puts(" switch-outs with WOE clear in EPS3");
+            if (g_woec_count) {
+                uart_puts(", last task ");
+                uart_put_dec((unsigned int)g_woec_task);
+                uart_puts(" seq ");
+                uart_put_dec(g_woec_seq);
+                uart_puts(" ps ");
+                uart_put_hex(g_woec_ps);
+            }
+            uart_puts("\n");
+        }
+
+        {
+            /* [X12] .text integrity watch: see task.c. A nonzero count means
+             * kernel code bytes changed under the loader's copy -- the trap
+             * sites were never the ELF's opcodes at all. */
+            extern volatile uint32_t g_txt_bad_ticks, g_txt_seq, g_txt_exp, g_txt_act;
+            extern volatile int      g_txt_off;
+            uart_puts("  txt-watch : ");
+            uart_put_dec(g_txt_bad_ticks);
+            uart_puts(" ticks with .text diffs");
+            if (g_txt_off >= 0) {
+                uart_puts(", first seq ");
+                uart_put_dec(g_txt_seq);
+                uart_puts(" word ");
+                uart_put_dec((unsigned int)g_txt_off);
+                uart_puts(" exp ");
+                uart_put_hex(g_txt_exp);
+                uart_puts(" act ");
+                uart_put_hex(g_txt_act);
+            }
+            uart_puts("\n");
+        }
 
         {
             /* [H1 experiment] ticks that arrived mid-window-handler and were

@@ -125,6 +125,40 @@ uint32_t task_multiframe_worst(void) { return g_multiframe_worst; }
 uint32_t task_multiframe_ws(void)    { return g_multiframe_ws; }
 int      task_multiframe_task(void)  { return g_multiframe_task; }
 
+/* [X11] EXCM contamination watch. A stored resume PS with EXCM set makes the
+ * first windowed instruction (entry/retw) trap IllegalInstruction on resume.
+ * Interrupt entry sets EXCM in the live ps; any save path that copies THAT
+ * value into EPS3 instead of a clean ps poisons its victim. Zero is the
+ * design; anything else names the moment of contamination. */
+volatile uint32_t g_excm_count;
+volatile int      g_excm_task = -1;
+volatile uint32_t g_excm_seq, g_excm_ps;
+
+/* [X13] WOE-clear watch. entry/retw trap IllegalInstruction with WOE clear
+ * exactly as with EXCM set; the X11 watch only covered bit 4. A stored resume
+ * ps without bit 18 names the same class of poison from the other side. */
+volatile uint32_t g_woec_count;
+volatile int      g_woec_task = -1;
+volatile uint32_t g_woec_seq, g_woec_ps;
+
+/* [X12] .text integrity watch over the window-bridge helpers.
+ *
+ * Cause-0 traps have landed on opcodes that are legal and aligned in the ELF
+ * image (w2c_call1+3 s32i.n twice-built, w2c_call2+0x17 retw.n twice). A legal
+ * opcode cannot trap IllegalInstruction under any live ps state -- windowed
+ * instructions trap only via WOE/EXCM and plain stores never do -- so the
+ * leading explanation is that IRAM no longer holds what the loader copied:
+ * something rewrites kernel .text at runtime. Snapshot the region on the first
+ * scheduler pass and re-compare every tick; a mismatch names the writer's
+ * reach directly. Region is symbol-derived so it survives address shifts. */
+extern uint32_t rom_call4(uint32_t fn, uint32_t a, uint32_t b, uint32_t c, uint32_t d);
+#define TXT_WATCH_WORDS 128u
+static uint32_t g_txt_base[TXT_WATCH_WORDS];
+static int      g_txt_ready;
+volatile uint32_t g_txt_bad_ticks;
+volatile uint32_t g_txt_seq, g_txt_exp, g_txt_act;
+volatile int      g_txt_off = -1;
+
 /* -1 means "no task is running yet": the boot context is about to be abandoned
  * and its stack pointer must NOT be saved, because doing so would overwrite the
  * fabricated frame of whichever task occupies that slot.
@@ -554,8 +588,51 @@ uint32_t task_schedule(uint32_t current_sp)
             g_multiframe_ws   = ws;
             if (bits > g_multiframe_worst) { g_multiframe_worst = bits; }
         }
+
+        /* [X11] see the block comment at the declaration. */
+        {
+            extern volatile uint32_t g_rout_seq;
+            uint32_t eps = ((const uint32_t *)current_sp)[TASK_FRAME_IDX_EPS3];
+            if (eps & 0x10u) {
+                g_excm_count++;
+                g_excm_task = g_current;
+                g_excm_seq  = g_rout_seq;
+                g_excm_ps   = eps;
+            }
+            /* [X13] see the block comment at the declarations. */
+            if ((eps & 0x40000u) == 0u) {
+                g_woec_count++;
+                g_woec_task = g_current;
+                g_woec_seq  = g_rout_seq;
+                g_woec_ps   = eps;
+            }
+        }
     }
     g_slice_start = now;
+
+    /* [X12] see the block comment at the declarations. */
+    {
+        extern volatile uint32_t g_rout_seq;
+        volatile uint32_t *p = (volatile uint32_t *)(uintptr_t)&rom_call4;
+        if (!g_txt_ready) {
+            for (uint32_t i = 0; i < TXT_WATCH_WORDS; i++) { g_txt_base[i] = p[i]; }
+            g_txt_ready = 1;
+        } else {
+            for (uint32_t i = 0; i < TXT_WATCH_WORDS; i++) {
+                uint32_t noww = p[i];
+                if (noww != g_txt_base[i]) {
+                    g_txt_bad_ticks++;
+                    if (g_txt_off < 0) {
+                        g_txt_off = (int)i;
+                        g_txt_seq = g_rout_seq;
+                        g_txt_exp = g_txt_base[i];
+                        g_txt_act = noww;
+                    }
+                    break;
+                }
+            }
+        }
+    }
 
 
     /* Round robin from the one after current, so no task can starve another.

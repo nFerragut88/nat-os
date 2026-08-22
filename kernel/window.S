@@ -607,10 +607,32 @@ w2c_call1:                          /* uint32_t w2c_call1(fn, a) */
     .type w2c_call2, @function
 w2c_call2:                          /* uint32_t w2c_call2(fn, a, b) */
     entry   a1, 32
+    /* [X18] capture at ENTRY too, plus a crossing counter: the exit-side
+     * samples are overwritten by every healthy pass, so without these we
+     * cannot tell whether the dumped state belongs to the fatal crossing. */
+    rsr.ps  a9
+    movi    a11, g_win_in
+    s32i    a9, a11, 0
+    rsr.windowstart a9
+    s32i    a9, a11, 4
+    rsr.windowbase  a9
+    s32i    a9, a11, 8
+    movi    a10, g_win_seq
+    l32i    a9, a10, 0
+    addi    a9, a9, 1
+    s32i    a9, a10, 0
     s32i    a0, a1, 0
     mov     a8, a2
     mov     a2, a3
     mov     a3, a4
+    /* [X19] bracket the vendor call: state immediately before callx0. */
+    rsr.ps  a9
+    movi    a11, g_win_mid
+    s32i    a9, a11, 0
+    rsr.windowstart a9
+    s32i    a9, a11, 4
+    rsr.windowbase  a9
+    s32i    a9, a11, 8
     callx0  a8
     l32i    a0, a1, 0
     /* Diagnostic: a0 and a1 as they are on the way out. The blocking adapter
@@ -620,6 +642,19 @@ w2c_call2:                          /* uint32_t w2c_call2(fn, a, b) */
     movi    a9, g_win_a0
     s32i    a0, a9, 0
     s32i    a1, a9, 4
+    /* [X16] PS as it stands immediately before the retw.n that traps.
+     * Splits "WOE was cleared somewhere between resume and here" from
+     * "retw.n trapped under a clean PS" (which would mean the exccause
+     * itself is lying). */
+    rsr.ps  a10
+    movi    a11, g_win_ps
+    s32i    a10, a11, 0
+    /* [X17] Window state in the same instant: is the caller-frame bit set,
+     * i.e. will this retw.n need an underflow refill at all? */
+    rsr.windowstart a10
+    s32i    a10, a11, 4
+    rsr.windowbase  a10
+    s32i    a10, a11, 8
     retw
     .size w2c_call2, . - w2c_call2
 

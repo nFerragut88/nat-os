@@ -65,6 +65,10 @@ extern uint32_t g_phy_call_mask;     /* window.S */
 /* Written by w2c_call2 in window.S -- see there. */
 volatile uint32_t g_win_a0;
 volatile uint32_t g_win_sp;
+volatile uint32_t g_win_ps[3];       /* [X16/X17] PS, WINDOWSTART, WINDOWBASE just before retw.n */
+volatile uint32_t g_win_in[3];       /* [X18] same triple right after entry */
+volatile uint32_t g_win_mid[3];      /* [X19] same triple right before callx0 */
+volatile uint32_t g_win_seq;         /* [X18] crossings of w2c_call2 */
 
 static mutex_t g_blob_mutex;
 static int     g_ready;
