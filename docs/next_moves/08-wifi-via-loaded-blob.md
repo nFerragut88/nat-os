@@ -8212,4 +8212,77 @@ for since step 102.
 Suite unchanged: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0,
 `wifiinit` no fault and no reset.
 
+## Step 126 — the guard is in, and it moves the fault rather than removing it
+
+Both halves of step 125's plan executed.
+
+**The probes are gone.** `_WindowOverflow8` and `_WindowOverflow12` each carried
+five special-register writes from steps 48, 74 and 75, filtering for hypotheses
+long retired. Removed, and `panic.c`'s "overflow" line now says so rather than
+printing `excsave5` -- which the UNDERFLOW handlers still write, so leaving it
+would have reported one handler's data under another's heading.
+
+**The guard is in**, on OF4, OF8 and OF12:
+
+```
+40080080 <_WindowOverflow8>:
+40080080:  bbsi  a9, 31, 400800a1     <- frame pointer not DRAM: skip the stores
+40080083:  s32e  a0, a9, -16
+...
+40080092:  bbsi  a0, 31, 400800a1     <- recovered caller sp, same test
+...
+400800a1:  rfwo
+```
+
+One instruction per guard, because the skip target is the `rfwo` that was already
+there. `bbsi ..., 31` is exact for this machine: DRAM is `0x3FFxxxxx` with bit 31
+clear, and every fill value this kernel uses has it set. 36 bytes of a 64-byte
+slot. Suite with the guard alone: **unchanged**.
+
+### On the bench, it does not fix it
+
+```
+result   : PANIC   exccause 0 (IllegalInstruction)   epc 0x6eeeeeee
+frames   : no task was ever granted less than it held
+pspill   : sweeps=1 pre_ws=0x0000aa8a post_ws=0x00000008
+```
+
+And `0x6eeeeeee` now explains itself. `retw` computes its target as
+`(PC & 0xC0000000) | (a0 & 0x3FFFFFFF)`. With `a0 = 0xEEEEEEEE` that is
+`0x40000000 | 0x2EEEEEEE` = **`0x6EEEEEEE`** exactly. The faulting return is one
+whose `a0` came back as stack fill.
+
+So the guard stops the phantom being **written** through, which was real -- but
+`rfwo` still clears its WINDOWSTART bit, so a later underflow tries to
+**restore** a frame that was never saved, reads an unwritten save area, and
+returns through the poison in it.
+
+**Containment at the handler moved the failure from the write to the read.** The
+same guard cannot be applied to the underflow: an overflow that skips has nothing
+to save, but an underflow that skips has nothing to return to. There is no value
+it could substitute.
+
+### What that settles
+
+A phantom window can be neither spilled nor restored. Any scheme that leaves a
+bit set in WINDOWSTART for a window holding no real frame will fail the moment
+something walks it -- and the sweep is exactly such a thing. **The phantom has to
+be eliminated at its source; it cannot be contained downstream.** Step 125's
+option (2) is therefore closed, and option (1) is the only one left.
+
+That is the older question steps 53, 54 and 57 were circling and the X7 comment
+in vectors.S names outright: which code path sets a WINDOWSTART bit for a window
+that never held a frame. It is now the single blocker for spill-on-preemption,
+and through that for unpinned windowed execution.
+
+### Kept
+
+The guard stays. It is defensively correct on its own terms -- refusing to store
+through a value that cannot be a pointer is better than faulting on it -- it costs
+one instruction in three handlers, and the suite is unchanged with it in. The
+probes it replaced were debt UM-NATOS-042 section 9.3 had already flagged.
+
+Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0, `blobtx force`
+0x3004, `wifiinit` no fault and no reset.
+
 **Nothing has been on air.**

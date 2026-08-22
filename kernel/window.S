@@ -45,10 +45,28 @@
     .align 4
     .global _WindowOverflow4
 _WindowOverflow4:
+    /* [step 126] Refuse to store through a frame pointer that is not DRAM.
+     *
+     * Step 124 measured the sweep spilling a window whose a1 was 0xeeeeeeee --
+     * stack fill, not a pointer. WINDOWSTART said a frame lived there; nothing
+     * real did. The handler wrote through the poison and the matching underflow
+     * later read the garbage back, which is the epc 0x6eeeeeee panic.
+     *
+     * `bbsi ..., 31` is the whole test, and it is exact for this machine: DRAM
+     * is 0x3FFxxxxx with bit 31 clear, and every fill/poison value this kernel
+     * uses has it set. It costs ONE instruction because the skip target is the
+     * rfwo that was already there -- which matters, since these vectors are
+     * 64-byte slots and an earlier attempt to grow one failed to link.
+     *
+     * Skipping the stores is correct for a phantom: there is nothing to save.
+     * rfwo still clears the WINDOWSTART bit, so the window stops being claimed.
+     */
+    bbsi    a5, 31, .Lof4_skip
     s32e    a0, a5, -16             /* save a0 to call[j+1]'s stack frame */
     s32e    a1, a5, -12
     s32e    a2, a5,  -8
     s32e    a3, a5,  -4
+.Lof4_skip:
     rfwo                            /* rotate back to call[i] */
 
     .section .vectors.window.uf4, "ax"
@@ -73,39 +91,34 @@ _WindowUnderflow4:
     .align 4
     .global _WindowOverflow8
 _WindowOverflow8:
-    /* Record the frame pointer BEFORE the first store.
+    /* [step 126] Refuse to store through a frame pointer that is not DRAM.
      *
-     * This probe used to sit at the l32e, which is the second instruction -- and
-     * the first instruction is `s32e a0, a9, -16`, which is exactly what faults
-     * when the frame pointer is not a pointer. The probe never ran. Recorded
-     * first, so a frame with a bogus sp names itself instead of taking the
-     * handler down before it can be seen. See next_moves/08 step 74. */
-    /* Two deep: keep the PREVIOUS frame pointer as well as this one.
+     * Step 124 measured the sweep spilling a window whose a1 was 0xeeeeeeee --
+     * stack fill, not a pointer. WINDOWSTART said a frame lived there; nothing
+     * real did. The handler wrote through the poison and the matching underflow
+     * later read the garbage back, which is the epc 0x6eeeeeee panic.
      *
-     * When a bogus frame kills the handler mid-store, the value that survives
-     * in EXCSAVE5 is the LAST GOOD frame pointer -- and a good sp names a
-     * stack, which names the function whose base save area was never written.
-     * EXCSAVE5 is free: the underflow probe that used it is gone from here.
-     * See next_moves/08 step 75. */
-    xsr.excsave7 a9          /* swap: excsave7 <- this frame, a9 <- previous */
-    wsr.excsave5 a9
-    xsr.excsave7 a9          /* swap back, leaving this frame in excsave7 */
+     * `bbsi ..., 31` is the whole test, and it is exact for this machine: DRAM
+     * is 0x3FFxxxxx with bit 31 clear, and every fill/poison value this kernel
+     * uses has it set. It costs ONE instruction because the skip target is the
+     * rfwo that was already there -- which matters, since these vectors are
+     * 64-byte slots and an earlier attempt to grow one failed to link.
+     *
+     * Skipping the stores is correct for a phantom: there is nothing to save.
+     * rfwo still clears the WINDOWSTART bit, so the window stops being claimed.
+     */
+    bbsi    a9, 31, .Lof8_skip
     s32e    a0, a9, -16
     l32e    a0, a1, -12             /* a0 <- call[j-1]'s sp */
-    /* step 48: the caller sp this handler just recovered, and the frame it came
-     * from. A near-null base here is a call0 frame whose base save area was
-     * never written -- the class phy_stack_call documents and step 37 fixed in
-     * only three of its places. EXCSAVE 6/7 because these vectors have no stack
-     * and no literal pool. Filtered in the stub, where there is room. */
-    wsr.excsave6 a0
-    wsr.excsave7 a1
     s32e    a1, a9, -12
     s32e    a2, a9,  -8
     s32e    a3, a9,  -4
+    bbsi    a0, 31, .Lof8_skip      /* the recovered caller sp, same test */
     s32e    a4, a0, -32
     s32e    a5, a0, -28
     s32e    a6, a0, -24
     s32e    a7, a0, -20
+.Lof8_skip:
     rfwo
 
     .section .vectors.window.uf8, "ax"
@@ -135,35 +148,29 @@ _WindowUnderflow8:
     .align 4
     .global _WindowOverflow12
 _WindowOverflow12:
-    /* Record the frame pointer BEFORE the first store.
+    /* [step 126] Refuse to store through a frame pointer that is not DRAM.
      *
-     * This probe used to sit at the l32e, which is the second instruction -- and
-     * the first instruction is `s32e a0, a13, -16`, which is exactly what faults
-     * when the frame pointer is not a pointer. The probe never ran. Recorded
-     * first, so a frame with a bogus sp names itself instead of taking the
-     * handler down before it can be seen. See next_moves/08 step 74. */
-    /* Two deep: keep the PREVIOUS frame pointer as well as this one.
+     * Step 124 measured the sweep spilling a window whose a1 was 0xeeeeeeee --
+     * stack fill, not a pointer. WINDOWSTART said a frame lived there; nothing
+     * real did. The handler wrote through the poison and the matching underflow
+     * later read the garbage back, which is the epc 0x6eeeeeee panic.
      *
-     * When a bogus frame kills the handler mid-store, the value that survives
-     * in EXCSAVE5 is the LAST GOOD frame pointer -- and a good sp names a
-     * stack, which names the function whose base save area was never written.
-     * EXCSAVE5 is free: the underflow probe that used it is gone from here.
-     * See next_moves/08 step 75. */
-    xsr.excsave7 a13          /* swap: excsave7 <- this frame, a13 <- previous */
-    wsr.excsave5 a13
-    xsr.excsave7 a13          /* swap back, leaving this frame in excsave7 */
+     * `bbsi ..., 31` is the whole test, and it is exact for this machine: DRAM
+     * is 0x3FFxxxxx with bit 31 clear, and every fill/poison value this kernel
+     * uses has it set. It costs ONE instruction because the skip target is the
+     * rfwo that was already there -- which matters, since these vectors are
+     * 64-byte slots and an earlier attempt to grow one failed to link.
+     *
+     * Skipping the stores is correct for a phantom: there is nothing to save.
+     * rfwo still clears the WINDOWSTART bit, so the window stops being claimed.
+     */
+    bbsi    a13, 31, .Lof12_skip
     s32e    a0,  a13, -16
     l32e    a0,  a1,  -12
-    /* step 48: the caller sp this handler just recovered, and the frame it came
-     * from. A near-null base here is a call0 frame whose base save area was
-     * never written -- the class phy_stack_call documents and step 37 fixed in
-     * only three of its places. EXCSAVE 6/7 because these vectors have no stack
-     * and no literal pool. Filtered in the stub, where there is room. */
-    wsr.excsave6 a0
-    wsr.excsave7 a1
     s32e    a1,  a13, -12
     s32e    a2,  a13,  -8
     s32e    a3,  a13,  -4
+    bbsi    a0, 31, .Lof12_skip     /* the recovered caller sp, same test */
     s32e    a4,  a0,  -48
     s32e    a5,  a0,  -44
     s32e    a6,  a0,  -40
@@ -172,6 +179,7 @@ _WindowOverflow12:
     s32e    a9,  a0,  -28
     s32e    a10, a0,  -24
     s32e    a11, a0,  -20
+.Lof12_skip:
     rfwo
 
     .section .vectors.window.uf12, "ax"

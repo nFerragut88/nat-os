@@ -607,12 +607,14 @@ uart_puts("  pre-spill : ps ");
                     __asm__ volatile ("rsr.excsave7 %0" : "=r"(of));
                     uint32_t pf;
                     __asm__ volatile ("rsr.excsave5 %0" : "=r"(pf));
-                    uart_puts("  overflow  : prev good frame sp ");
-                    uart_put_hex(pf);
-                    uart_puts("   this frame sp ");
-                    uart_put_hex(of);
-                    uart_puts("  recovered base ");
-                    uart_put_hex(ob);
+                    /* [step 126] The overflow probe was removed to make room for
+                     * the frame-pointer guard in the same 64-byte slot. excsave5
+                     * is still written by the UNDERFLOW handlers, so printing
+                     * these under an "overflow" heading would report one
+                     * handler's data as another's -- the exact mistake this log
+                     * keeps cataloguing. Named for what they now are. */
+                    (void)pf; (void)of; (void)ob;
+                    uart_puts("  overflow  : probe removed (step 126 guard took the slot)");
                     uart_puts("\n");
                 }
                 {
