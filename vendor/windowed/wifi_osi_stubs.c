@@ -261,6 +261,19 @@ volatile uint32_t g_of_bad_when;
 /* [step 99] the blob's return address into osi_s_queue_recv. */
 volatile uint32_t g_qr_caller, g_qr_caller_raw;
 
+/* [step 113] Total blocking budget, so `wifiinit` always returns to the shell.
+ *
+ * The leaf test removed the fault but init now runs without returning, and the
+ * shell task is the one inside the blob -- so no counter can be read afterwards.
+ * This bounds the SUM of blocking waits across all recv calls; past it, every
+ * blocking recv reports empty immediately. The blob then either finishes init
+ * with a return code or reveals an unbounded loop, and either way control comes
+ * back and `osiused` can be read. Not a fix -- an instrument. */
+extern void uart_puts(const char *s);
+extern void uart_put_dec(unsigned int v);
+volatile uint32_t g_qr_blk_calls, g_qr_blk_rounds, g_qr_timeouts;
+#define QR_BLK_BUDGET  2000u
+
 /* [step 112] The spill probe, pointed at the BLOCKING path.
  *
  * The same walk that step 98 ran on the synthetic chain -- follow the saved a1
@@ -724,6 +737,8 @@ static int32_t osi_s_queue_recv(void *queue, void *item, uint32_t block_time_tic
         }
     }
 
+    g_qr_blk_calls++;
+
     blk_sample(0u);
     uint32_t rounds = 0u;
     for (;;) {
@@ -777,7 +792,25 @@ static int32_t osi_s_queue_recv(void *queue, void *item, uint32_t block_time_tic
 
         *pinp = -1;                     /* UNPIN */
 
-        osi_windowed_idle(4u, 120000u); /* wait in windowed frames, unpinned */
+        /* [step 113] LEAF TEST. No call at all.
+         *
+         * Step 112 found the faulting frame BELOW the spill's starting point:
+         * win_spill_all() walks upward into callers, and osi_windowed_idle() is
+         * entered afterwards, so its frames are created in territory the spill
+         * could not have covered. This removes them -- the wait now happens in
+         * this frame, which is the one live frame the spill deliberately leaves
+         * and the restore is known to handle.
+         *
+         * If the fault survives this, "frames created below the spill point" is
+         * not the mechanism and step 112's reading is wrong. */
+        {
+            uint32_t t0, now;
+            __asm__ volatile ("rsr.ccount %0" : "=r"(t0));
+            for (;;) {
+                __asm__ volatile ("rsr.ccount %0" : "=r"(now));
+                if ((now - t0) > 120000u) { break; }
+            }
+        }
 
         pinp = &g_pinned;               /* RE-DERIVE, do not trust a register */
         *pinp = me_v;                   /* REPIN before any call0 excursion */
@@ -793,8 +826,33 @@ static int32_t osi_s_queue_recv(void *queue, void *item, uint32_t block_time_tic
                 return 1;
             }
         }
-        if (++rounds >= 400u) {         /* the forever-cap, unchanged in meaning */
+        g_qr_blk_rounds++;
+        if (g_qr_blk_rounds == QR_BLK_BUDGET) {
+            /* [step 113] One-shot liveness report, bridged.
+             *
+             * The first budget attempt returned 0 immediately once spent, which
+             * made the blob's retry a tight loop that never yielded and let the
+             * TG0 watchdog reset the chip -- an artifact of the instrument, not
+             * a finding. This reports and then keeps waiting normally, so the
+             * blob's own pacing is undisturbed.
+             *
+             * Legal here: the lock is held and we are pinned, so no switch can
+             * land inside the call0 excursion. */
+            (void)w2c_call1((uint32_t)&uart_puts,
+                            (uint32_t)"\n   [qr] budget spent, still waiting  calls=");
+            (void)w2c_call1((uint32_t)&uart_put_dec, g_qr_blk_calls);
+            (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" timeouts=");
+            (void)w2c_call1((uint32_t)&uart_put_dec, g_qr_timeouts);
+            (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" lastosi=");
+            (void)w2c_call1((uint32_t)&uart_put_dec,
+                            g_osi_trace_n ? g_osi_trace[g_osi_trace_n - 1u] : 0u);
+            (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" osin=");
+            (void)w2c_call1((uint32_t)&uart_put_dec, g_osi_trace_n);
+            (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)"\n");
+        }
+        if (++rounds >= 400u) {
             blk_sample(2u);
+            g_qr_timeouts++;
             return 0;
         }
     }

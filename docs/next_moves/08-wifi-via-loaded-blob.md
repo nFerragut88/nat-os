@@ -7399,4 +7399,84 @@ Nothing may be created below the spill point while unpinned. Either:
 (3) remains the answer. (2) is the cheap test of this step's finding: make
 `osi_windowed_idle` a leaf and see whether the fault moves.
 
+## Step 113 — the leaf test. The fault is gone.
+
+Step 112's option (2), run as written: remove every windowed frame created
+during the unpinned wait.
+
+The change is smaller than "make `osi_windowed_idle` a leaf". A leaf still
+executes `entry` and still allocates one frame below the spill point. So the
+wait was moved into the stub's *own* frame -- an inline `ccount` spin, no call
+of any kind:
+
+```c
+*pinp = -1;                     /* UNPIN */
+{
+    uint32_t t0, now;
+    __asm__ volatile ("rsr.ccount %0" : "=r"(t0));
+    for (;;) {
+        __asm__ volatile ("rsr.ccount %0" : "=r"(now));
+        if ((now - t0) > 120000u) { break; }
+    }
+}
+```
+
+That leaves exactly one live frame across the preemption -- the frame
+`win_spill_all()` deliberately leaves live, and the one the restore is known to
+handle correctly.
+
+**Result: `wifiinit` no longer faults.** It was panicking at ~1.1 s in every run
+since step 86. It now runs indefinitely -- 200 s observed -- with no exception,
+no double exception, and the rest of the OS scheduling normally throughout.
+
+Step 112's reading is confirmed. The mechanism was windowed frames created
+*below* the spill point while unpinned: `win_spill_all()` walks upward into
+callers, so anything entered after it returns is outside the range it covered,
+and a preemption there leaves the restore walking save areas nobody wrote.
+
+### What the run says now
+
+```
+[qr] budget spent, still waiting  calls=5 timeouts=4 lastosi=29 osin=21
+```
+
+Twenty-one OSI calls, then `_queue_recv` (entry 29) called repeatedly, each one
+timing out at 400 rounds and reporting empty. Nothing ever posts to that queue,
+because `_set_intr` clamps and counts rather than wiring an interrupt and the
+timer entries are stubs. This is UM-NATOS-042 §9.5's wall, arrived at rather
+than argued about.
+
+Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0, `blobtx force`
+0x3004. `wincollide` still panics inside its own step-107 fault injector, which
+remains contamination to be removed.
+
+### Two instrument mistakes, both recorded rather than quietly fixed
+
+**The first budget attempt caused a watchdog reset.** Bounding the *total*
+blocking rounds and returning empty immediately once spent turned the blob's
+retry into a tight loop that never yielded, and TG0WDT reset the chip at ~10 s.
+The reset was mine, not the blob's; the un-budgeted run before it had spun for
+150 s with the OS fully alive. Replaced with a one-shot bridged report that
+leaves the blob's pacing alone.
+
+**The 150-second run was misread first.** It was recorded as "no fault, no
+return" because the capture was grepped for panic lines only. Reading the whole
+log in order showed `rst:0x7 (TG0WDT_SYS_RESET)` partway through, with
+everything after it a fresh boot. Same failure mode as the 50-second capture in
+UM-NATOS-042 §8: a filter that could not report the thing it was trusted to
+rule out.
+
+### What this is and is not
+
+It is a **confirmed diagnosis**, not a finished fix. The spin is a busy-wait: it
+burns 600 ms of CPU per `_queue_recv` and only works because the task is
+unpinned, so other tasks still run. It cannot survive a real wait -- one that
+must sleep until an interrupt arrives.
+
+The proper fix is unchanged and is step 108's: **spill on preemption**. That
+covers this case and every other one, and does not require hand-ordering the
+spill against frame creation. What step 113 buys is certainty about what that
+fix has to accomplish, and a system that runs long enough to work on the next
+problem.
+
 **Nothing has been on air.**
