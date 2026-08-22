@@ -6112,3 +6112,65 @@ supposed to write `[0x3ffb2800]`?** The answer is one disassembly and one
 comparison against `rom_call3`'s known frame size, not another hypothesis.
 
 **Nothing has been on air.**
+
+---
+
+## Step 92 — the bridges' save areas were half-written; the bad frame is the blob's
+
+### A real gap, closed
+
+`_WindowUnderflow8` reads **both** halves of a base save area:
+
+```
+l32e a0, a9, -16      <- the return address
+l32e a1, a9, -12      <- the caller's sp
+```
+
+Step 37 taught the call0 bridges to write `[sp-12]`, because
+`_WindowOverflow8/12` recover the caller's sp from there. Nothing ever wrote
+`[sp-16]`. Confirmed in the emitted `rom_call3`:
+
+```
+4008c1eb  addi a8, a1, 48
+4008c1ee  addi a9, a1, -12
+4008c1f1  s32i.n a8, a9, 0      <- [sp-12] only
+```
+
+So any underflow unwinding into a bridge frame recovered an uninitialised word as
+its return address. `rom_call3` and `rom_call4` now write `[sp-16]` too, pointing
+at `win_chain_trap` — whose own address doubles as a valid CALLINC-1 return
+encoding, since kernel code lives at `0x4008xxxx` and bits 31:30 are already 01.
+
+No regressions: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `wincollide`
+runs=121 wrong=0, `blobphy` rc=0.
+
+### It does not fix this fault, and that is the useful part
+
+```
+underflow : recovered a0 0x3ffd8f78 from save area 0x3ffb2810
+```
+
+Unchanged. If `0x3ffb2810` were a bridge frame, `[0x3ffb2800]` would now read
+`0x4008....` — the trap. It still reads the blob `.bss` address.
+
+The arithmetic agrees: `blob_task_entry`'s frame is 16 bytes and `rom_call3`'s is
+48, so the chain reaches `0x3ffb2880` at the deepest bridge frame. `0x3ffb2810`
+is a further **112 bytes down** — inside the blob's own windowed code.
+
+**So the frame with the corrupt save area belongs to the blob, not to us.**
+
+### Which puts it back on the ownership question
+
+A windowed frame's save area is written by the overflow handler when the frame is
+spilled. If the frame was never spilled, the underflow should never read it —
+`WINDOWSTART` would say it is live in registers. But the dump reports
+`bit(base) CLEAR`: the window state claims the frame is *not* live, so the
+hardware underflows and reads memory nobody wrote.
+
+That is step 88's candidate (2), and steps 89-92 have now excluded everything
+around it: the chain terminates, the bridges' save areas are complete, and the
+frame is the blob's own. What remains is why the window state disowns a frame
+whose registers are still in use — the same question steps 53-57 circled, now
+arriving with the surrounding possibilities eliminated rather than assumed.
+
+**Nothing has been on air.**

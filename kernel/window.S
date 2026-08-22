@@ -357,6 +357,10 @@ rom_call4:
     addi    a8, a1, 32
     addi    a9, a1, -12
     s32i    a8, a9, 0
+    /* [step 92] and the a0 slot, which the underflow also reads. */
+    movi    a10, win_chain_trap
+    addi    a11, a1, -16
+    s32i    a10, a11, 0
 
     s32i    a0,  a1, 0
     s32i    a12, a1, 4              /* callee-saved under call0; CALL8 eats them */
@@ -476,6 +480,35 @@ win_spill_call0:
     ret
     .size win_spill_call0, . - win_spill_call0
 
+/* Where an underflow lands if it unwinds into a call0 bridge's frame.
+ *
+ * next_moves/08 step 92. The bridges write [sp-12] -- the caller's sp, which
+ * _WindowOverflow8/12 recover with `l32e a0, a1, -12` -- but never [sp-16].
+ * _WindowUnderflow8 reads BOTH: `l32e a0, a9, -16` then `l32e a1, a9, -12`. So
+ * the a0 slot was uninitialised and the handler recovered whatever the blob had
+ * left there. Measured: 0x3ffd8f78, an address inside the blob's .bss, used as a
+ * return address.
+ *
+ * The address of this label doubles as its own return encoding: kernel code
+ * lives at 0x4008xxxx, so bits 31:30 are already 01 -- CALLINC 1 -- and `retw`
+ * accepts it without any arithmetic. */
+    .align 4
+    .global win_chain_trap
+    .type win_chain_trap, @function
+win_chain_trap:
+    movi    a2, .Lchainmsg
+    movi    a3, 0
+    call0   kernel_panic_msg
+1:  j       1b
+    .size win_chain_trap, . - win_chain_trap
+
+    .section .rodata
+    .align 4
+.Lchainmsg:
+    .asciz "windowed chain unwound into a call0 bridge frame"
+    .section .text
+    .align 4
+
     .global rom_call3
     .type rom_call3, @function
     .align 4
@@ -491,6 +524,10 @@ rom_call3:
     addi    a8, a1, 48
     addi    a9, a1, -12
     s32i    a8, a9, 0
+    /* [step 92] and the a0 slot, which the underflow also reads. */
+    movi    a10, win_chain_trap
+    addi    a11, a1, -16
+    s32i    a10, a11, 0
 
     s32i    a0,  a1, 0
     s32i    a12, a1, 4              /* callee-saved under call0; CALL8 eats them */
