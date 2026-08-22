@@ -5324,3 +5324,66 @@ means the callee wrote through into the frame; different means the reload is
 sourcing from a moved a1.
 
 **Nothing has been on air.**
+
+---
+
+## Step 79 — step 78's diagnosis is falsified, by its own instrument
+
+Step 78 concluded the `retw.n` is illegal because `a0` held 13 (callinc 0). Two
+measurements later, that is wrong on both legs.
+
+### Leg 1: the value was never paired to an invocation
+
+The first attempt recorded a0/a1 at the entry save and again at the reload, into
+singleton globals, and compared them:
+
+```
+a0 trace : saved 0x8008d129 @ 0x3ffb91c0   reloaded 0x8008d227 @ 0x3ffb2760   ADDRESS MOVED
+```
+
+`0x3ffb91c0` is on task 5's stack and `0x3ffb2760` on task 9's. They are
+different invocations — another task calls through `w2c_call2` between our entry
+and our reload, and each pass overwrites the globals. "ADDRESS MOVED" measured
+nothing. Both values are in fact *valid* windowed encodings (bit 31 set,
+callinc 2).
+
+That is the eighth instrument of this class in this investigation, and I wrote it
+in the same step that documented the seventh. The lesson has to be structural
+rather than remembered: **a singleton global written on a hot path cannot
+attribute anything, and pairing two of them is worse than reading one.**
+
+### Leg 2: `a0` is never illegal where it is read
+
+Replaced with a self-contained sticky latch — at the reload, `a1` *is* this
+frame's pointer and `[a1+0]` is the slot just read, so a0 and a1 together need no
+pairing. Latch only `a0[31:30] == 0`, only the first, so the record must belong
+to the fatal crossing:
+
+```
+a0 trace : no illegal a0 latched
+```
+
+It never fires. `a0` is a valid windowed return encoding on every reload, and
+nothing between the reload and the `retw` writes it. So `a0 = 0x0000000d` in the
+step-78 dump was a stale singleton, exactly like leg 1.
+
+### What that leaves, and what not to assert
+
+The `retw.n` at `w2c_call2`'s exit faults with `IllegalInstruction`, with
+`WOE` set and `EXCM` clear per the exit capture — though that capture is a
+singleton too, and now carries the same caveat.
+
+Step 78 also asserted the three ISA conditions for `retw` raising
+IllegalInstruction from memory. Two of them (WOE clear, EXCM set) are
+well-founded; the third — callinc 0 — was stated with more confidence than a
+recalled ISA rule deserves, and it is the one the measurement just removed. It
+should be checked against the ISA reference rather than re-argued.
+
+### Next
+
+A ring, not a singleton: latch `a0`, `a1` and `WINDOWBASE` for the last N
+crossings of `w2c_call2`, tagged with `g_win_seq`, so the fatal pass is
+identifiable rather than assumed. The same shape Tortoise used for the restore
+history in X7, which is the one instrument in this codebase that has not lied.
+
+**Nothing has been on air.**

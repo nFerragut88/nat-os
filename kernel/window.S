@@ -586,6 +586,34 @@ w2c_call0f:                         /* uint32_t w2c_call0f(fn) */
     mov     a8, a2
     callx0  a8
     l32i    a0, a1, 0
+    /* [step 79] What came BACK, and from where. Same address + different value
+     * means the callee wrote into this frame; different address means the
+     * reload sourced from a moved a1. */
+    /* [step 79, corrected] STICKY, and self-contained.
+     *
+     * The first attempt wrote singleton globals at entry and at the reload and
+     * compared them. Those are different invocations whenever another task
+     * calls through here in between -- which it does: the pair came back as
+     * 0x3ffb91c0 and 0x3ffb2760, two different task stacks. Comparing them
+     * measured nothing.
+     *
+     * No pairing is needed. At the reload, a1 IS this frame's pointer and
+     * [a1+0] is the slot it just read, so a0 and a1 together are self-contained
+     * evidence. Latch only the ILLEGAL case -- callinc 0, which is what makes
+     * the retw fault -- and only the first, so the record belongs to the
+     * fatal crossing and nothing overwrites it afterwards. */
+    extui   a9, a0, 30, 2           /* a0[31:30], the callinc field */
+    bnez    a9, 1f                  /* legal encoding: nothing to record */
+    movi    a10, g_a0trace
+    l32i    a11, a10, 0
+    bnez    a11, 1f                 /* already latched the first one */
+    movi    a11, 1
+    s32i    a11, a10, 0
+    s32i    a0, a10, 4              /* the illegal a0 */
+    s32i    a1, a10, 8              /* the frame it was read from */
+    rsr.windowbase a11
+    s32i    a11, a10, 12
+1:
     retw
     .size w2c_call0f, . - w2c_call0f
 
@@ -622,6 +650,9 @@ w2c_call2:                          /* uint32_t w2c_call2(fn, a, b) */
     addi    a9, a9, 1
     s32i    a9, a10, 0
     s32i    a0, a1, 0
+    /* [step 79] What was SAVED, and where. a0 = 13 at the retw (callinc 0) is
+     * why that instruction is illegal; this says whether 13 was already in the
+     * slot at entry, or arrived while the call0 callee ran. */
     mov     a8, a2
     mov     a2, a3
     mov     a3, a4
@@ -1045,6 +1076,12 @@ _phy_stack_top:
     .global g_phy_call_mask
 g_phy_call_mask:
     .word 1
+
+/* [step 79] {a0_saved, slot_addr, a0_reloaded, reload_addr} for w2c_call2. */
+    .align 4
+    .global g_a0trace
+g_a0trace:
+    .word 0, 0, 0, 0
 
 /* [X20 experiment] probe state, zero-init. Read back by the "x20" shell
  * command; layout mirrors what each store site above documents. */

@@ -468,7 +468,21 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
             extern volatile uint32_t g_woe_lost_ps, g_woe_lost_at;
             extern volatile uint32_t g_woe_prev_hit, g_woe_seen_ok;
             extern volatile uint32_t g_stub_ps_pre_spill;
-            uart_puts("  pre-spill : ps ");
+                {
+        extern uint32_t g_a0trace[4];
+        uart_puts("  a0 trace  : ");
+        if (!g_a0trace[0]) { uart_puts("no illegal a0 latched\n"); }
+        else {
+            uart_put_hex(g_a0trace[1]);
+            uart_puts(" read from frame ");
+            uart_put_hex(g_a0trace[2]);
+            uart_puts(" at wb ");
+            uart_put_dec(g_a0trace[3]);
+            uart_puts("\n");
+        }
+    }
+
+uart_puts("  pre-spill : ps ");
             uart_put_hex(g_stub_ps_pre_spill);
             if (g_stub_ps_pre_spill != 0xFFFFFFFFu) {
                 uart_puts((g_stub_ps_pre_spill & 0x10u)
