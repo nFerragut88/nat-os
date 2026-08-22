@@ -1,7 +1,7 @@
 # UM-NATOS-041 — The Callback That Cannot Block
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.1 · 2026-08-22 · Status: **Failure isolated to a single measured mechanism. Not fixed. The remaining callback architecture is scoped and largely unbuilt.** Rev 1.1 corrects a task attribution in section 3 and adds section 3.4.
+Revision 2.0 · 2026-08-22 · Status: **FIXED and verified on hardware. `esp_wifi_init_internal` executes without faulting for the first time since the vendor stack began running from flash. Two consequences follow, both scoped in section 9.** Rev 2.0 supersedes the mechanism proposed in section 3.3.
 
 ---
 
@@ -117,6 +117,56 @@ makes the union reading decisive.
 where the printer emits eight. The value is suspect until the print is fixed, so
 no conclusion is drawn here about whether `win_spill_all()` reduced task 9's
 frame count in the stub.
+
+---
+
+## 3.5 The cause, and the correction to 3.3
+
+Section 3.3 proposed that the frames were disclaimed by the restore rule and
+their registers reused. **That was wrong**, and two measurements retired it:
+
+- the switch frame's saved `a0` is *never* anomalous, at save or at restore, so
+  the context switch does not corrupt it;
+- `a0` is written exactly once in `w2c_call2` — by `l32i a0, a1, 0` — so `a0` at
+  the `retw` *is* whatever `[a1+0]` holds.
+
+The word itself was then watched: stamped at the entry save, compared at the
+reload, guarded on `a1` so both samples provably belong to the same frame.
+
+```
+slot watch: frame 0x3ffb9280  stamped 0x8008d40d  came back 0x0000000d
+neighbours +4 0x00000700  +8 0x3ffb0c78  +12 0x00000000
+```
+
+Moving the save from `[sp+0]` to `[sp+4]` did not move the corruption — the same
+four values stayed at the same addresses and the readback followed the *writer*
+rather than the stamp. So it was a block write, not a targeted store. And the
+payload identifies its owner: `0x700` is 1792, which is `BLOB_TASK_STACK_WORDS`,
+and `0x3ffb0c78` lies inside the blob task's stack.
+
+**`[sp+0]` upward is the call0 caller-provided argument and spill area.** The
+callee is entitled to write there. All four `w2c_*` bridges were saving the
+windowed `a0` into it across `callx0`, and the callee overwrote it exactly as the
+ABI permits. The bridges never had a right to that memory.
+
+`a12..a15` are callee-saved under call0, so the callee must preserve them:
+
+```asm
+    mov     a12, a0         /* was: s32i a0, a1, 0 */
+    callx0  a8
+    mov     a0, a12         /* was: l32i a0, a1, 0 */
+```
+
+Applied to `w2c_call0f`, `w2c_call1`, `w2c_call2`, `w2c_call3`. Verified:
+
+```
+boot 11 PASS 0 FAIL   wintorture CORRECT   wincollide runs=121 wrong=0
+blobphy rc=0          blobtx force 0x00003004
+wifiinit  -- no fault, no reset, system alive
+```
+
+The bug could only surface once a callee large enough to use that scratch ran on
+the far side of the bridge, which is why every earlier path crossed it safely.
 
 ---
 
