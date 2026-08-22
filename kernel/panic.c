@@ -626,6 +626,21 @@ uart_puts("  pre-spill : ps ");
                     uart_puts("\n");
                 }
                 {
+                    extern volatile uint32_t g_sa_addr, g_sa_after_spill, g_sa_have;
+                    uart_puts("  sa watch  : ");
+                    if (!g_sa_have) { uart_puts("never sampled"); }
+                    else {
+                        uint32_t now = ((const uint32_t *)g_sa_addr)[0];
+                        uart_puts("@"); uart_put_hex(g_sa_addr);
+                        uart_puts("  after spill "); uart_put_hex(g_sa_after_spill);
+                        uart_puts("  now "); uart_put_hex(now);
+                        uart_puts((g_sa_after_spill == now)
+                                  ? "   UNCHANGED -- the spill wrote this"
+                                  : "   CHANGED since the spill");
+                    }
+                    uart_puts("\n");
+                }
+                {
                     extern volatile uint32_t g_qr_caller, g_qr_caller_raw;
                     uart_puts("  qr caller : ");
                     if (!g_qr_caller) { uart_puts("never entered"); }

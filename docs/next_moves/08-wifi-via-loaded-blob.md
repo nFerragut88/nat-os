@@ -6678,3 +6678,60 @@ Those two have entirely different culprits, and no amount of further reading
 distinguishes them.
 
 **Nothing has been on air.**
+
+---
+
+## Step 102 — the watch was placed on the wrong word
+
+Sampled a save-area word immediately after `win_spill_all()` in the blocking
+stub, to separate "the spill wrote it wrong" from "the spill wrote it right and
+something changed it".
+
+```
+sa watch  : @0x3ffb2880  after spill 0x4008c530  now 0x4008c530   UNCHANGED
+uf frame  : @0x3ffb2820  a0-16 0x3ffd8f78  a1-12 0x3ffb27e0 ...
+```
+
+**Different addresses.** The watch is on `0x3ffb2880`; the failing save area is at
+`0x3ffb2820`, 96 bytes lower. So the test did not run on the word in question.
+
+### The arithmetic error
+
+The stub computed the caller's stack pointer as `[my_sp - 12]`. That is wrong:
+the base save area at `[sp-16..sp-4]` holds the `a0..a3` of the frame whose sp
+*is* `sp` — so `[my_sp - 12]` is this frame's own `a1`, which is `my_sp` itself.
+Reading it as the caller's sp is circular, and the address it produced happened
+to land on a different, healthy frame.
+
+The relationship the panic dump reports is also not what step 100 derived:
+`a1-12 = 0x3ffb27e0` and the frame address is `0x3ffb2820`, a difference of 64,
+not the 48 that `ppTask`'s `entry a1, 48` implies. Step 100 read that difference
+as 48 in an earlier build and treated `ppTask sp + 48 = save area` as
+established. **It is not**, and the discrepancy was visible in this run's own
+numbers.
+
+### What the run did establish
+
+The word actually sampled — `0x3ffb2880`, on a neighbouring frame — held a valid
+kernel code address after the spill and **still held it at the fault**. That is
+consistent with step 98: the spill writes correct save areas and nothing
+disturbs them. It is one more frame's worth of evidence for a conclusion already
+reached, and nothing about the failing frame.
+
+### What to fix before retrying
+
+The stub cannot compute `ppTask`'s save-area address from its own frame without
+the relationship being right, and this step shows the relationship is not
+understood well enough to hard-code. Two ways out, both cheap:
+
+1. Record `a0` at the stub's entry — it is `ppTask`'s return encoding — and
+   derive nothing; instead have the *panic* handler, which already knows the
+   failing address from `excsave5`, print what the stub sampled at that same
+   address by sampling a small window rather than a single word.
+2. Or sample the whole 64-byte region above the stub's own frame after the spill,
+   and compare it word-for-word at the fault. Heavier, but it needs no
+   arithmetic at all — and arithmetic is what failed here.
+
+(2) is the safer of the two given the record.
+
+**Nothing has been on air.**

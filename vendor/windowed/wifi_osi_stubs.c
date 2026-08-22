@@ -252,6 +252,11 @@ volatile uint32_t g_of_bad_when;
 /* [step 99] the blob's return address into osi_s_queue_recv. */
 volatile uint32_t g_qr_caller, g_qr_caller_raw;
 
+/* [step 102] The save-area word the underflow later reads, sampled where the
+ * spill writes it. {addr, after_spill, latched} -- so "the spill wrote it wrong"
+ * and "the spill wrote it right and something changed it" can be told apart. */
+volatile uint32_t g_sa_addr, g_sa_after_spill, g_sa_have;
+
 /* [X4 experiment] Window-state coherence across the voluntary block.
  *
  * H1 is eliminated: no tick ever lands mid-window-handler. The only remaining
@@ -686,6 +691,23 @@ static int32_t osi_s_queue_recv(void *queue, void *item, uint32_t block_time_tic
     blk_sample(0u); uf_sample(1u); of_sample(1u);
     win_spill_all();
     blk_sample(1u); uf_sample(2u); of_sample(2u);
+    /* [step 102] ppTask's save area is at (its sp + its 48-byte frame) - 16.
+     * Our caller IS ppTask, and a0 here is its return encoding, so its sp is
+     * one frame out from ours -- read it from our own base save area, which the
+     * spill has just written, and record the a0 slot the underflow will later
+     * read. Sampled here because this is the instant after the spill and before
+     * anything else runs. */
+    if (!g_sa_have) {
+        uint32_t my_sp;
+        __asm__ volatile ("mov %0, a1" : "=r"(my_sp));
+        uint32_t pp_sp = ((volatile uint32_t *)(my_sp - 12u))[0];   /* caller's sp */
+        if (pp_sp >= 0x3ff00000u && pp_sp < 0x40000000u) {
+            uint32_t sa = pp_sp + 48u - 16u;
+            g_sa_addr = sa;
+            g_sa_after_spill = ((volatile uint32_t *)sa)[0];
+            g_sa_have = 1u;
+        }
+    }
     (void)w2c_call0f((uint32_t)&blob_unlock);
     int32_t r = (int32_t)w2c_call3((uint32_t)&osi_impl_queue_recv, (uint32_t)queue,
                                    (uint32_t)item, (uint32_t)block_time_tick);
