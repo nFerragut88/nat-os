@@ -1388,6 +1388,34 @@ static void execute(char *line)
         uart_put_dec(want);
         uart_puts(got == want ? "  CORRECT\n" : "  WRONG - frames were corrupted\n");
     }
+    else if (str_eq(line, "x20")) {
+        extern void x20_run(void);
+        extern uint32_t g_x20_outcome;
+        extern uint32_t g_x20_pre[3];
+        extern uint32_t g_x20_post_ws;
+        extern uint32_t g_x20_recovered[4];
+        uart_puts("   [X20] call8 -> entry(+2) -> WS:=own-bit -> retw.n\n");
+        x20_run();
+        uart_puts("   SURVIVED. outcome=");
+        uart_put_dec(g_x20_outcome);
+        uart_puts(" pre(ps/ws/wb)=");
+        uart_put_hex(g_x20_pre[0]);
+        uart_putc('/');
+        uart_put_hex(g_x20_pre[1]);
+        uart_putc('/');
+        uart_put_dec(g_x20_pre[2]);
+        uart_puts(" wiped=");
+        uart_put_hex(g_x20_post_ws);
+        uart_puts(" rec(a2/a3/e4/e5)=");
+        uart_put_hex(g_x20_recovered[0]);
+        uart_putc('/');
+        uart_put_hex(g_x20_recovered[1]);
+        uart_putc('/');
+        uart_put_hex(g_x20_recovered[2]);
+        uart_putc('/');
+        uart_put_hex(g_x20_recovered[3]);
+        uart_putc('\n');
+    }
     else if (str_eq(line, "vendorcall")) {
         int d = parse_int(arg);
         if (d < 0) { d = 20; }
@@ -1751,7 +1779,11 @@ static void execute(char *line)
          *
          * This is the smallest experiment that distinguishes the two, and its
          * answer is a number rather than an impression. */
-        enum { MANY_H = 24u };
+        /* 12 transfers rather than 24: the buffer pair here and the txwatch
+         * sampler together overflowed DRAM, and this half still measures
+         * exactly what it did -- where the LAST of N contiguous transfers
+         * lands, against a 16 px ruler. Only N changed. */
+        enum { MANY_H = 12u };
         static uint16_t one_row[DISP_W];
         static uint16_t many[DISP_W * MANY_H];
 
@@ -1761,7 +1793,7 @@ static void execute(char *line)
         for (uint32_t row = 0; row < MANY_H; row++) {
             for (uint32_t col = 0; col < DISP_W; col++) {
                 /* Only the LAST row carries the marker, so what is measured is
-                 * where the 24th transfer landed, not a smear of all of them. */
+                 * where the final transfer landed, not a smear of all of them. */
                 many[row * DISP_W + col] =
                     (row == MANY_H - 1u && col < 16u) ? COLOR_GREEN : COLOR_BLACK;
             }
@@ -1781,7 +1813,7 @@ static void execute(char *line)
         /* one -- a single full-width blit row */
         display_blit(0u, 82u, DISP_W, 1u, one_row, DISP_W);
 
-        /* many -- the 24th row of a 24-row contiguous blit */
+        /* many -- the last row of a MANY_H-row contiguous blit */
         display_blit(0u, 94u, DISP_W, MANY_H, many, DISP_W);
 
         display_text(4u, 140u, "RED=FILLRECT",  COLOR_WHITE, COLOR_BLACK, 1u);
@@ -3326,20 +3358,24 @@ static void execute(char *line)
             0x3FF73D84u, 0x3FF73D88u, 0x3FF73D8Cu,   /* the three counters */
             0x3FF73DACu, 0x3FF73DB0u, 0x3FF73DB8u,   /* the state block    */
         };
-        /* 768 samples, not 64.
+        /* 384 samples.
          *
-         * The first version used 64 and would have produced a wrong answer. On
+         * Originally 64, which produced a wrong answer once already: on
          * ESP-IDF the state reaches 0x258 quickly and only completes --
-         * 0x258 -> 0x220 -> 0x020 -> 0x000 -- about 320 us later. 64 samples is
-         * roughly 100 us, so it would have shown nat-os reaching 0x258 and
-         * stopping, and "stopping" would have been this instrument's window
-         * ending rather than the hardware's behaviour.
+         * 0x258 -> 0x220 -> 0x020 -> 0x000 -- about 320 us later, and 64
+         * samples is roughly 100 us, so the window ended before the event
+         * did. At ~1.56 us per sample (measured below via ccount), 384
+         * covers ~600 us -- nearly twice the event, with room to spare.
          *
-         * That is the same error UM-NATOS-034 §18 made with one frame per
-         * window, and it is worth stating twice: a measurement that ends before
+         * That same error UM-NATOS-034 A18 made with one frame per window,
+         * and it is worth stating twice: a measurement that ends before
          * the event cannot be told apart from an event that never happens,
-         * unless somebody checks the timescales. */
-        enum { NW = 6, NS = 768 };
+         * unless somebody checks the timescales.
+         *
+         * Halved again from 768 purely for DRAM: snap plus the display
+         * buffers overflowed .bss by ~12.9 KB and nothing else could give
+         * it back without degrading an instrument further. */
+        enum { NW = 6, NS = 384 };
         static uint32_t snap[NS][NW];
         uint32_t t0, t1;
 

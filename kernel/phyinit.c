@@ -27,6 +27,11 @@
 #include "task.h"
 #include "uart.h"
 #include "efuse.h"
+/* BOARD_HAS_WIFI gates phyinit_run() below. Without this header the macro is
+ * undefined, evaluates to 0, and the definition silently vanishes -- while
+ * shell.c's guarded callers (which DO see board.h) compile in and the link
+ * fails. First -WiFi build after 3e405b4 exposed it. */
+#include "board.h"
 
 #define DPORT_WIFI_CLK_EN_REG        0x3FF000CCu
 #define DPORT_WIFI_CLK_WIFI_BT_COMMON 0x000003C9u

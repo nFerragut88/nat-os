@@ -639,13 +639,13 @@ int wifimac_set_channel(uint32_t ch)
     uart_puts("   deinit_mac...");
     deinit_mac();
     uart_puts(" ok\n   set_chan_nomac...");
-    phy_stack_call((uint32_t)&chip_v7_set_chan_nomac, ch, 0u);
+    phy_stack_call((uint32_t)&chip_v7_set_chan_nomac, ch, 0u, 0u, 0u);
     uart_puts(" ok\n   disable_agc...");
-    phy_stack_call((uint32_t)&disable_wifi_agc, 0u, 0u);
+    phy_stack_call((uint32_t)&disable_wifi_agc, 0u, 0u, 0u, 0u);
     uart_puts(" ok\n   init_mac...");
     *(volatile uint32_t *)WIFIMAC_CTRL_REG &= MAC_INIT_MASK;
     uart_puts(" ok\n   enable_agc...");
-    phy_stack_call((uint32_t)&enable_wifi_agc, 0u, 0u);
+    phy_stack_call((uint32_t)&enable_wifi_agc, 0u, 0u, 0u, 0u);
     uart_puts(" ok\n");
 
     g_channel = ch;
@@ -1194,7 +1194,7 @@ extern void lmacInitAc(uint32_t ac);
 
 void wifimac_lmac_init(void)
 {
-    phy_stack_call((uint32_t)&lmacInit, 0u, 0u);
+    phy_stack_call((uint32_t)&lmacInit, 0u, 0u, 0u, 0u);
 }
 
 /* The four EDCA access categories. open-mac calls lmacInit and lmacInitAc
@@ -1202,7 +1202,7 @@ void wifimac_lmac_init(void)
  * and the caller sweeps. Free: lmacInitAc came into the image with lmacInit. */
 void wifimac_lmac_init_ac(uint32_t ac)
 {
-    phy_stack_call((uint32_t)&lmacInitAc, ac, 0u);
+    phy_stack_call((uint32_t)&lmacInitAc, ac, 0u, 0u, 0u);
 }
 
 
@@ -1293,7 +1293,7 @@ uint32_t wifimac_tx_reap(void)
      * PHY on the same private stack. */
     extern int tx_pwctrl_background(int, int);
     if ((g_tx_done & 3u) == 0u) {
-        phy_stack_call((uint32_t)&tx_pwctrl_background, 1u, 0u);
+        phy_stack_call((uint32_t)&tx_pwctrl_background, 1u, 0u, 0u, 0u);
     }
     return st;
 }
@@ -1407,7 +1407,7 @@ int wifimac_txpwr_init(void)
     if (!g_attempted) {
         return -1;
     }
-    phy_stack_call((uint32_t)&tx_pwctrl_init, 0u, 0u);
+    phy_stack_call((uint32_t)&tx_pwctrl_init, 0u, 0u, 0u, 0u);
     return 0;
 }
 
@@ -1423,7 +1423,7 @@ int wifimac_txpwr_cal(void)
     if (!g_attempted) {
         return -1;
     }
-    phy_stack_call((uint32_t)&tx_pwctrl_cal, 0u, 0u);
+    phy_stack_call((uint32_t)&tx_pwctrl_cal, 0u, 0u, 0u, 0u);
     return 0;
 }
 
@@ -1435,14 +1435,14 @@ int wifimac_txpwr_set(uint32_t tpw)
     if (!g_attempted) {
         return -1;
     }
-    phy_stack_call((uint32_t)&phy_set_most_tpw, tpw, 0u);
+    phy_stack_call((uint32_t)&phy_set_most_tpw, tpw, 0u, 0u, 0u);
     return 0;
 }
 
 uint32_t wifimac_txpwr_get(void)
 {
     extern int phy_get_most_tpw(void);
-    return phy_stack_call((uint32_t)&phy_get_most_tpw, 0u, 0u);
+    return phy_stack_call((uint32_t)&phy_get_most_tpw, 0u, 0u, 0u, 0u);
 }
 
 /* ---- the MAC hardware init chain ---------------------------------------
@@ -1500,13 +1500,13 @@ int wifimac_hwinit_step(uint32_t step)
     }
 
     switch (step) {
-    case 0: phy_stack_call((uint32_t)&ic_mac_init, 0u, 0u);       break;
-    case 1: phy_stack_call((uint32_t)&hal_init, 0u, 0u);          break;
-    case 2: phy_stack_call((uint32_t)&ic_enable_rx, 0u, 0u);      break;
-    case 3: phy_stack_call((uint32_t)&hal_mac_tsf_reset, 0u, 0u); break;
-    case 4: phy_stack_call((uint32_t)&hal_mac_rate_autoack_init, 0u, 0u); break;
-    case 5: phy_stack_call((uint32_t)&hal_attenna_init, 0u, 0u);  break;
-    case 6: phy_stack_call((uint32_t)&hal_mac_disable_low_rate, 0u, 0u); break;
+    case 0: phy_stack_call((uint32_t)&ic_mac_init, 0u, 0u, 0u, 0u);       break;
+    case 1: phy_stack_call((uint32_t)&hal_init, 0u, 0u, 0u, 0u);          break;
+    case 2: phy_stack_call((uint32_t)&ic_enable_rx, 0u, 0u, 0u, 0u);      break;
+    case 3: phy_stack_call((uint32_t)&hal_mac_tsf_reset, 0u, 0u, 0u, 0u); break;
+    case 4: phy_stack_call((uint32_t)&hal_mac_rate_autoack_init, 0u, 0u, 0u, 0u); break;
+    case 5: phy_stack_call((uint32_t)&hal_attenna_init, 0u, 0u, 0u, 0u);  break;
+    case 6: phy_stack_call((uint32_t)&hal_mac_disable_low_rate, 0u, 0u, 0u, 0u); break;
     default: return -2;
     }
     if ((int)step >= g_hw_stage) {

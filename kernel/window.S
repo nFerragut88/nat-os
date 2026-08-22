@@ -673,6 +673,131 @@ w2c_call3:                          /* uint32_t w2c_call3(fn, a, b, c) */
     retw
     .size w2c_call3, . - w2c_call3
 
+/* ---- [X20 experiment] retw.n with a cleared caller bit -------------------
+ *
+ * Failure 2's last measured state: a retw.n whose target WINDOWSTART bit had
+ * been erased by the wake-side single-bit grant (vectors.S .Lresume), with
+ * PS.WOE=1 EXCM=0 -- yet no window exception ever ran (excsave4/5 stayed
+ * task-9-stale). Per ISA that retw.n must raise WindowUnderflow8. Crossings
+ * 1-8 never hit the condition because their caller bit was still set.
+ *
+ * This probe asks the silicon directly, isolated from tasks and grants:
+ *   x20_run (call0 wrapper) --call8--> x20_windowed
+ * entry rotates +2 exactly like the bridges do; x20_windowed then wipes
+ * WINDOWSTART down to its own bit only -- precisely what grant #4103 did to
+ * bit 11 -- plants a call8 save image below its sp in _WindowUnderflow8's
+ * exact load layout, records pre/post state, and executes retw.n.
+ *
+ * Outcome A (silicon quirk): cause 0 AT this retw.n -- panic names exccause
+ * 0 inside x20_windowed. Mechanism closed.
+ * Outcome B (ISA holds): uf8 fires, refills the planted image, control
+ * lands on x20_landing; excsave4/5 name the handler run and g_x20_recovered
+ * carries the planted magics 0x5a1/0x5a2 as proof. The fatal path then
+ * differs somewhere else and the hunt continues there.
+ *
+ * Isolated and removable; everything is tagged X20.
+ */
+
+    .section .text, "ax"
+    .align 4
+    .global x20_run
+    .type x20_run, @function
+x20_run:
+    /* call0 wrapper, win_spill_call0's shape: CALL8 eats a8..a15, so save
+     * what matters and write this frame's base save area first. That chain
+     * word doubles as the refill's T pointer: uf8 fetches caller a4..a7 via
+     * [fake_a1 - 12], which lands here -- it reads stale bytes from inside
+     * the shell frame, harmless, nothing dereferences them before landing
+     * restores the real registers. */
+    addi    a1, a1, -32
+    addi    a8, a1, 32              /* the shell caller's sp */
+    addi    a9, a1, -12
+    s32i    a8, a9, 0               /* [a1_R-12] = C_sp: doubles as T */
+    s32i    a0,  a1, 0
+    s32i    a12, a1, 4
+    s32i    a13, a1, 8
+    s32i    a14, a1, 12
+    s32i    a15, a1, 16
+
+    movi    a9, g_x20_outcome
+    movi    a10, 1                  /* entered */
+    s32i    a10, a9, 0
+
+    call8   x20_windowed
+
+x20_landing:
+    /* Reached only if the underflow fired: the refilled a0 points here.
+     * If the wipe somehow failed and rotation was clean we also arrive
+     * here -- the magics recorded below tell the two cases apart.
+     * a1 = planted fake a1 = this frame's adjusted sp. */
+    movi    a9, g_x20_outcome
+    movi    a10, 2                  /* landed */
+    s32i    a10, a9, 0
+    movi    a9, g_x20_recovered
+    s32i    a2, a9, 0               /* expect 0x5a1 iff the image was consumed */
+    s32i    a3, a9, 4               /* expect 0x5a2 */
+    rsr.excsave4 a10
+    s32i    a10, a9, 8              /* handler-recovered return address */
+    rsr.excsave5 a10
+    s32i    a10, a9, 12             /* handler-recovered save-area base */
+
+    l32i    a0,  a1, 0              /* normal epilogue: real state restored */
+    l32i    a12, a1, 4
+    l32i    a13, a1, 8
+    l32i    a14, a1, 12
+    l32i    a15, a1, 16
+    addi    a1, a1, 32
+    ret
+    .size x20_run, . - x20_run
+
+    .align 4
+    .global x20_windowed
+    .type x20_windowed, @function
+x20_windowed:
+    entry   a1, 48
+    s32i    a0, a1, 0
+
+    /* pre-wipe record */
+    rsr.ps  a9
+    movi    a10, g_x20_pre
+    s32i    a9, a10, 0
+    rsr.windowstart a9
+    s32i    a9, a10, 4
+    rsr.windowbase  a9
+    s32i    a9, a10, 8
+
+    /* plant the call8 refill image below this frame:
+     *   [-16] landing   <- refills a0
+     *   [-12] fake a1   <- this+48 == x20_run's adjusted sp
+     *   [ -8] 0x5a1     <- refills a2
+     *   [ -4] 0x5a2     <- refills a3
+     * The a4..a7 leg goes through [fake_a1 - 12] = x20_run's base save
+     * area chain word, already written by the wrapper.
+     */
+    movi    a9, x20_landing
+    addi    a6, a1, -16
+    s32i    a9, a6, 0
+    addi    a9, a1, 48
+    s32i    a9, a6, 4
+    movi    a9, 0x5a1
+    s32i    a9, a6, 8
+    movi    a9, 0x5a2
+    s32i    a9, a6, 12
+
+    /* THE WIPE: WINDOWSTART := own bit only -- grant #4103 semantics */
+    rsr.windowbase  a9
+    movi    a10, 1
+    ssl     a9
+    sll     a10, a10
+    wsr.windowstart a10
+    rsync
+    movi    a9, g_x20_post_ws
+    s32i    a10, a9, 0
+
+    l32i    a0, a1, 0
+    retw.n                          /* THE TEST INSTRUCTION */
+    .size x20_windowed, . - x20_windowed
+
     .align 4
     .global win_call_bridge
     .type win_call_bridge, @function
@@ -920,3 +1045,20 @@ _phy_stack_top:
     .global g_phy_call_mask
 g_phy_call_mask:
     .word 1
+
+/* [X20 experiment] probe state, zero-init. Read back by the "x20" shell
+ * command; layout mirrors what each store site above documents. */
+    .section .bss
+    .align 4
+    .global g_x20_outcome
+g_x20_outcome:
+    .space 4                        /* 1 = entered wrapper, 2 = landed */
+    .global g_x20_pre
+g_x20_pre:
+    .space 12                       /* ps, ws, wb at probe entry */
+    .global g_x20_post_ws
+g_x20_post_ws:
+    .space 4                        /* wiped word */
+    .global g_x20_recovered
+g_x20_recovered:
+    .space 16                       /* a2, a3, excsave4, excsave5 at landing */
