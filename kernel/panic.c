@@ -651,13 +651,26 @@ uart_puts("  pre-spill : ps ");
                     uint32_t fa;
                     __asm__ volatile ("rsr.excsave5 %0" : "=r"(fa));
                     if (fa >= 0x3ff00000u && fa < 0x40000000u) {
-                        const uint32_t *w = (const uint32_t *)(fa - 16u);
+                        /* [step 101] Two words either side of the save area.
+                         *
+                         * Step 100 found a value of a0's expected shape two
+                         * slots along, which is either a coincidence or a
+                         * shifted save area. Widening the read distinguishes
+                         * them: if the layout is shifted, the correct a0/a1 pair
+                         * appears at a consistent offset; if it is a
+                         * coincidence, the neighbours are unremarkable. */
+                        const uint32_t *w = (const uint32_t *)(fa - 24u);
                         uart_puts("  uf frame  : @");
                         uart_put_hex(fa);
-                        uart_puts("  a0 "); uart_put_hex(w[0]);
-                        uart_puts("  a1 "); uart_put_hex(w[1]);
-                        uart_puts("  a2 "); uart_put_hex(w[2]);
-                        uart_puts("  a3 "); uart_put_hex(w[3]);
+                        uart_puts("  -24 "); uart_put_hex(w[0]);
+                        uart_puts("  -20 "); uart_put_hex(w[1]);
+                        uart_puts("\n            a0-16 ");
+                        uart_put_hex(w[2]);
+                        uart_puts("  a1-12 "); uart_put_hex(w[3]);
+                        uart_puts("  a2-8 "); uart_put_hex(w[4]);
+                        uart_puts("  a3-4 "); uart_put_hex(w[5]);
+                        uart_puts("  +0 "); uart_put_hex(w[6]);
+                        uart_puts("  +4 "); uart_put_hex(w[7]);
                         uart_puts("\n");
                     }
                 }

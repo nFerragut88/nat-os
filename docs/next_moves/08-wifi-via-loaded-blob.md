@@ -6630,3 +6630,51 @@ Recorded as an observation, not a conclusion. Twelve accounts have died here, an
 several died on exactly this kind of pattern-match.
 
 **Nothing has been on air.**
+
+---
+
+## Step 101 — not a shift: `a1` lands exactly where arithmetic says it should
+
+Widened the save-area read two words either side, to distinguish "the layout is
+shifted" from "a value of `a0`'s shape happens to sit nearby":
+
+```
+uf frame @0x3ffb2820
+  -24 0x8008d987   -20 0x3ffb4278
+  a0-16 0x3ffd8f78   a1-12 0x3ffb27e0   a2-8 0x8008d994   a3-4 0x4008c5f8
+  +0 0x00000003      +4 0xffffffff
+```
+
+There is real structure — `(-24, -20)` is an `(encoding, pointer)` pair of
+exactly the shape a saved `(a0, a1)` has, which is what a shifted layout would
+produce.
+
+**But the layout is not shifted.** `a1-12` holds `0x3ffb27e0`, and step 100
+established by arithmetic that `ppTask`'s sp *is* `0x3ffb27e0` — `ppTask sp + its
+48-byte frame = the save area address`. If the window were shifted, `a1` would
+not land exactly where the frame size says it must.
+
+So the `(-24, -20)` pair belongs to the next frame out, and the save area under
+examination is at the right address with the right layout. One word inside it is
+wrong and its three neighbours are right.
+
+### What that rules out, and what it costs to finish
+
+The shift hypothesis is dead, which was the last structural explanation
+available. What remains is that **something writes one specific word**, and every
+candidate on our side has been individually cleared: the spill writes valid save
+areas eleven frames deep (98), `a12` survives every callee (97), the restore
+never drops a frame (94), the bridges' save areas are complete (92), the chain
+terminates (90), and `bit(base) CLEAR` is routine (94).
+
+The decisive test is the one that has worked every time it was used in this
+investigation and failed every time it was skipped: **watch that word.** Its
+address is computable at the moment `win_spill_all` returns in the blocking stub
+— the spill is what writes the save area — so recording the value there and
+comparing it at the underflow separates "the spill wrote it wrong" from "the
+spill wrote it right and something later changed it".
+
+Those two have entirely different culprits, and no amount of further reading
+distinguishes them.
+
+**Nothing has been on air.**
