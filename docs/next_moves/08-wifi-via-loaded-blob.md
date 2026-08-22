@@ -8932,4 +8932,67 @@ believing any of this.
 Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0, `wifiinit` no
 fault and no reset.
 
+## Step 139/140 — Tier B assembled; a real defect found, and it is not finished
+
+Full assembly: save (step 131) + valid flag + restore (verified in 136) + union
+deleted. Pin off, and `LOST` did **not** move: still `0x0000aa82`.
+
+### The defect that exposed
+
+`LOST` is computed against the **grant**, and the grant was synthesised:
+
+```asm
+ssl  a2
+sll  a3, a3          /* 1 << saved WINDOWBASE */
+```
+
+**The task's real `WINDOWSTART` sits in the frame at offset 88 and was never read
+back.** Not by Tier B, and not by any version of this handler since it was
+written. The restore has always discarded it and rebuilt a grant from the base
+bit plus `g_win_union`.
+
+With a shared register file that was survivable, because the union handed the
+other frames back. With Tier B it is fatal in a specific way: **all 64 registers
+are restored correctly — step 136 verified every one — and then the hardware is
+told only one window is live.** The other six frames are present and unclaimed,
+so the first `retw` past them underflows into a save area nobody wrote and
+returns through poison. That is `epc 0x6eeeeeee`.
+
+**`LOST 0x0000aa82` was measuring exactly this, and I read it as frame loss for
+twenty steps.** The frames were never lost. The grant was refusing to admit them.
+
+### The correction, and where it got to
+
+Taking the grant from `frame[88]` instead moved the fault from
+`_WindowUnderflow12` to `_WindowOverflow8 + 0x09`, `StoreProhibited` — a
+different failure, not a fix. Admitting seven frames means the overflow path now
+runs on them, and one of those frames is step 124's phantom, whose `a1` is
+`0xeeeeeeee`. Step 126's guard skips the store; something after it does not.
+
+Also noted: the `frames :` line still printed `granted 0x00000008` after the
+change, because `task.c` recomputes the grant independently rather than reading
+what the handler actually wrote. **That diagnostic is now wrong and will mislead
+the next reader** — it must be made to report the real value or be deleted.
+
+### Position
+
+Reverted. Suite green: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy`
+rc=0, `blobtx force` 0x3004, `wifiinit` no fault and no reset. Kept in: step
+131's save pass, step 126's overflow guard, step 138's disown.
+
+Tier B is **not finished**, and this is the honest state of it:
+
+| piece | state |
+|---|---|
+| save, per-task | in, green, verified bit-exact |
+| restore | verified — all 64 land |
+| union deletion | correct |
+| grant from `frame[88]` | **found, necessary, and not enough** |
+| the phantom | still there, now on the overflow path |
+
+What changed today is that the last unexamined assumption in the restore has
+been found and named. What has not changed is the phantom, which is now the only
+thing standing between this and a working unpinned switch — exactly where step
+137 said it would be, reached one step sooner than expected.
+
 **Nothing has been on air.**
