@@ -7921,4 +7921,62 @@ Nothing was built or changed in this step. Suite unchanged: boot 11 PASS 0 FAIL,
 `wintorture` CORRECT-but-meaningless, `blobphy` rc=0, `wifiinit` no fault and no
 reset.
 
+## Step 121 — the baseline, at last: what the pin has been hiding
+
+`BLOB_PIN_DISABLE 1`, no sweep. This is the run every claim since step 115
+needed and none of them had.
+
+```
+*** KERNEL PANIC ***
+  exccause : 0  (IllegalInstruction)   epc 0x6eeeeeee   ps 0x00070130
+  windowbase: 14   windowstart: 0x00004000
+  frames    : task 5 held 0x0000aa8a granted 0x00000008 LOST 0x0000aa82
+  a0/sp out : 0x00000000 / 0x00000000   BOTH ZERO -- context clobbered
+```
+
+`wintorture` dies immediately, reproducing UM-NATOS-038 section 12.3. And unlike
+every run in steps 115-120, the failure states its own mechanism:
+
+**Task 5 held seven windowed frames, was granted one, and lost six.** `0xaa8a`
+in, `0x8` out, `0xaa82` gone. `epc 0x6eeeeeee` is stack poison executed as an
+instruction address -- a `retw` returning through a save area nobody wrote,
+because the frames it wanted were in registers the next task reused.
+
+That is spill-on-preemption's entire reason for existing, finally on screen.
+
+### Two questions answered for free
+
+**`granted 0x00000008` -- the union is empty when it matters.** The restore
+computes `(1 << base) | g_win_union` and the grant came out as the base bit
+alone, so `g_win_union` was zero at the moment six frames needed covering. The
+partitioning design does not merely have a hole (step 117); with the pin off it
+contributes nothing at all.
+
+**Step 119's open question is settled: the seven bits are one task's.**
+`0x0000aa8a` here is attributed by name -- `task 5 held` -- and is bit-for-bit
+the `pre_ws` the sweep saw in steps 118 and 119. So "one task, one sweep" is the
+right model, and step 119's worry that a sweep might be spilling several tasks'
+frames through several stacks does not apply.
+
+### What the bench is now
+
+With the pin off, this is a reproducible, immediate, self-describing failure with
+a named quantity to drive to zero: **LOST**. A correct sweep makes
+`held == granted` and `LOST 0x00000000`, and `wintorture`'s checksum becomes
+meaningful because switches genuinely occur during the windowed call.
+
+Every previous step judged the sweep by a checksum that could not move. This one
+can.
+
+### Next
+
+Step 119's conclusion, now testable: spill with `a1` on the task's OWN stack,
+below the switch frame rather than beside it, so the save areas land where the
+restore looks. Judge on `frames: ... LOST`, with the switch count quoted -- not
+on the word CORRECT.
+
+Reverted to `BLOB_PIN_DISABLE 0`. Suite green with the pin on: boot 11 PASS 0
+FAIL, `blobphy` rc=0, `wifiinit` no fault and no reset, `wintorture` CORRECT and
+still meaningless.
+
 **Nothing has been on air.**
