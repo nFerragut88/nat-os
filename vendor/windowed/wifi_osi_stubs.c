@@ -702,11 +702,32 @@ static int32_t osi_s_queue_recv(void *queue, void *item, uint32_t block_time_tic
         (void)w2c_call0f((uint32_t)&blob_unlock_only);
 
         win_spill_all();                /* one live frame before we let go */
-        g_pinned = -1;                  /* UNPIN: a single store, from here */
+
+        /* [step 109, Tortoise's H-windowed-reg-loss] Nothing live in a register
+         * across the wait.
+         *
+         * Step 106 found `a6` holding &g_pinned across `call8 osi_windowed_idle`
+         * and coming back 0x1000. This re-derives the address afterwards and
+         * routes the value through memory, so if the fault is register loss it
+         * must move or vanish. Three outcomes discriminate:
+         *
+         *   gone            -> register preservation across an unpinned call8 is
+         *                      the mechanism
+         *   moves to the next register used  -> the whole frame is clobbered
+         *   reverts to excvaddr 0x170-shaped double fault -> a6 was a symptom and
+         *                      w2c_call3's entry/callx0 moving a1 is the cause
+         *
+         * Volatile forces both to the stack, which the frame carries in memory
+         * rather than in the register file. */
+        volatile int me_v = me;
+        volatile int * volatile pinp = &g_pinned;
+
+        *pinp = -1;                     /* UNPIN */
 
         osi_windowed_idle(4u, 120000u); /* wait in windowed frames, unpinned */
 
-        g_pinned = me;                  /* REPIN before any call0 excursion */
+        pinp = &g_pinned;               /* RE-DERIVE, do not trust a register */
+        *pinp = me_v;                   /* REPIN before any call0 excursion */
 
         if (!w2c_call0f((uint32_t)&blob_trylock)) {
             continue;                   /* someone else holds it; wait again */

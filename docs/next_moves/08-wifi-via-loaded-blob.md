@@ -7134,3 +7134,70 @@ Reverted to the state at step 107: the reproducer reports the loss, `wincollide`
 runs clean, and nothing pretends the rule is fixed.
 
 **Nothing has been on air.**
+
+---
+
+## Step 109 — Tortoise's discriminator: `a6` was a symptom (outcome 3)
+
+Tortoise proposed testing **H-windowed-reg-loss** by re-deriving `&g_pinned`
+after the wait instead of holding it across, with three outcomes that
+discriminate between mechanisms. Step 106 had declined this as "masking"; that
+was the wrong reading — masking a symptom to see what is behind it is a
+measurement, and the three-way split is what makes it one.
+
+Baseline re-verified first rather than assumed: `StoreProhibited`,
+`excvaddr 0x00001000`, at 1.0 s. Then the change — address re-derived after the
+wait, value routed through a volatile local so nothing lives in a register across
+`call8 osi_windowed_idle`.
+
+```
+exccause 28 (LoadProhibited)   epc 0x400800cf   (_WindowUnderflow8 + 0xf)
+DOUBLE EXCEPTION               excvaddr 0x000000f3
+uf frame @0x3ffb2810   a0-16 0x3ffd8f78   a1-12 0x000000ff
+```
+
+**Outcome 3.** The `0x1000` store fault is gone and the fault reverts to the
+window-handler double exception, with `a1` a small integer and `[a1-12]` read as
+a stack pointer — the same shape as `0x170`/`0x1ac`, differing only in which
+call0 local now occupies the slot (`0xff` rather than `spent`, because the code
+around it changed).
+
+Per the experiment's own discriminator, that means:
+
+> `a6` was a symptom, and the cause is `w2c_call3`'s `entry`/`callx0` moving the
+> windowed `a1` — requiring fix (2): compile `wifi_osi_impl.c` windowed, or have
+> `w2c_call3` allocate its own window.
+
+### What this settles
+
+Step 106's register-loss finding was real but downstream. The `a6` clobber and
+the underflow fault are the same defect seen at two depths, and step 104's
+diagnosis — a call0 callee moving a windowed frame's `a1` — is the one that
+survives.
+
+It also closes fix (1) as a direction. Steps 105, 106 and 108 each removed one
+instance of the pattern and each found another behind it, because the pattern is
+not in the adapter's waits but in the **bridge**: `w2c_call3` does `entry a1, 32`
+and then `callx0`, and every call0 callee it reaches moves that frame's `a1`.
+Nothing arranged around the bridge fixes what the bridge itself does.
+
+### The change is kept
+
+Re-deriving rather than trusting a register across an unpinned call is defensively
+correct on its own terms, and with it in place the fault that shows is the real
+one rather than a symptom eight instructions downstream. That makes the next
+measurement easier to read, not harder.
+
+### Next: fix (2)
+
+Two forms, from step 104:
+
+1. **`w2c_call3` allocates its own window for the callee** — so the callee's `a1`
+   adjustments happen inside a frame the bridge owns, not the one the chain
+   depends on.
+2. **Compile `kernel/wifi_osi_impl.c` `-mabi=windowed`** — then `call8` rotates,
+   the callee gets a real frame, and no call0 code touches the windowed `a1`.
+   The boundary moves down onto `mutex_lock`, `task_sleep` and `heap_alloc`,
+   which need the same treatment — but those are ours and mostly non-blocking.
+
+**Nothing has been on air.**
