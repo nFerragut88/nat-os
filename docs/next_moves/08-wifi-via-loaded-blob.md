@@ -5940,3 +5940,60 @@ whose chain terminates cannot corrupt memory outside its own stack while (2) is
 being investigated.
 
 **Nothing has been on air.**
+
+---
+
+## Step 89 — the terminator is correct, and something overwrites it
+
+Implemented step 88's candidate (1): `task_create_with_stack()` now writes a
+valid base save area into the 16 bytes at `[top-16..top-1]` for **every** task —
+`a0` a well-formed CALLINC-1 return encoding aimed at a trap, `a1` the top
+itself so `[a1-12]` stays inside the task's own stack and cannot fault, `a2`/`a3`
+zero. Those are frame offsets 96..111, past the 92 bytes the initial context
+frame actually uses, so nothing collides.
+
+No regressions:
+
+```
+boot 11 PASS 0 FAIL   wintorture CORRECT   wincollide runs=123 wrong=0
+blobphy rc=0          blobtx force 0x00003004
+```
+
+### It does not hold
+
+The fault is byte-identical — `excvaddr 0x170`, same instruction — and the probe
+says why:
+
+```
+underflow : recovered a0 0x3ffd8f78 from save area 0x3ffb2810
+```
+
+`0x3ffb2810` is exactly where the terminator was written, and `[0x3ffb2810-16]`
+should now read `0x4008....` — the trap encoding. It reads `0x3ffd8f78`, an
+address inside the blob's `.bss`.
+
+**So the terminator is being overwritten between task creation and the
+underflow**, and by something that deals in blob `.bss` pointers.
+
+That is a new fact and a better one than the guard would have been. The write
+lands 96 bytes *above* the blob task's initial stack pointer (`0x3ffb27a0`),
+which no correct code should touch: a task's own frames grow downward from there.
+
+### What it does not mean
+
+It does not mean the guard is wrong, and the guard stays. The invariant — a
+task's windowed chain terminates inside its own stack — is correct independently,
+costs four stores at creation, and will hold for every task that is not being
+scribbled on. It converts this failure from "reads unknown memory" into "reads
+memory somebody else wrote", which is a strictly better starting point.
+
+### Next
+
+Watch the terminator the way step 83 watched the frame word: it is at a fixed
+address per task, known at creation, and it has exactly one legitimate writer
+(none, after creation). Sampling it per switch and latching the first change —
+with the running task recorded — names the writer by task rather than by
+inference, which is the move that has worked every time it has been used here and
+the one that failed every time it was skipped.
+
+**Nothing has been on air.**

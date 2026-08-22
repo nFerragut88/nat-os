@@ -301,6 +301,17 @@ void win_probe_seed(void)
     __asm__ volatile ("wsr.excsave7 %0" :: "r"(sentinel));
 }
 
+/* Where a windowed chain goes if it ever unwinds past a task's entry.
+ *
+ * Reaching this is a bug by construction -- a task entry must not return -- but
+ * it is a bug that now announces itself at the moment it happens, instead of
+ * spilling through whatever the padding at the top of the stack happened to
+ * hold. See the terminator in task_create_with_stack(). */
+static void task_chain_end(void)
+{
+    kernel_panic_msg("windowed chain unwound past a task entry", 0u);
+}
+
 int task_create_with_stack(const char *name, task_entry_fn entry,
                            uint32_t *stack_in, uint32_t words_in)
 {
@@ -373,6 +384,39 @@ int task_create_with_stack(const char *name, task_entry_fn entry,
         g_tasks[id].switches   = 0;
         g_tasks[id].waiting    = 0;
         g_tasks[id].name       = name;
+        /* TERMINATE THE WINDOWED CHAIN.
+         *
+         * next_moves/08 step 88. _WindowUnderflow8 recovers a caller's frame
+         * with `l32e a1, a9, -12` and then dereferences it with
+         * `l32e a7, a1, -12`. At the outermost frame of a task there is no
+         * caller, and nothing had ever written that save area -- so the handler
+         * read the padding above the initial context frame and followed it.
+         * Measured: a9 exactly `top & ~15`, recovering 0x3ffd8f78 (the blob's
+         * .bss) as a return address and 0x190 as a stack pointer, then faulting.
+         *
+         * The 16 bytes at [top-16..top-1] are frame offsets 96..111. The frame
+         * proper is TASK_FRAME_WORDS = 23 words = 92 bytes, so this is padding
+         * the initial frame never uses and cannot collide with.
+         *
+         * a1 points at the top itself, which keeps `[a1-12]` inside the task's
+         * own stack and readable, so the second dereference cannot fault. a0 is
+         * a well-formed windowed return encoding -- CALLINC 1, so `retw` accepts
+         * it -- aimed at a trap, because a chain that unwinds this far is wrong
+         * and should say so rather than continue.
+         *
+         * This is a GUARD, not the cure. It converts a wild read outside the
+         * task into a contained, named failure; whatever makes the chain unwind
+         * this far is still open (step 88, candidate 2). */
+        {
+            uint32_t top_addr = (uint32_t)&stack[words];
+            top_addr &= ~15u;
+            uint32_t *t = (uint32_t *)top_addr;
+            t[-4] = (1u << 30) | ((uint32_t)&task_chain_end & 0x3FFFFFFFu);
+            t[-3] = top_addr;      /* a1: readable, and [a1-12] is too */
+            t[-2] = 0u;
+            t[-1] = 0u;
+        }
+
         g_tasks[id].stack_base  = stack;
         g_tasks[id].stack_words = words;
         return id;
