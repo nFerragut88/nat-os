@@ -144,6 +144,150 @@ _handler_level3:
     rsr.windowstart a2
     s32i       a2,  a1, 88
 
+    /* ==== [step 131] TIER B: save the register file into THIS task's slot ===
+     *
+     * Placement is forced by step 129: before any call0, while a0..a15 still
+     * hold what the tick interrupted. Indexed by g_current, which at this point
+     * is still the OUTGOING task -- task_schedule has not run.
+     *
+     * Step 130 failed because one shared buffer cannot bracket a switch: the
+     * restore at .Lresume ran after the scheduler had chosen a different task,
+     * so it wrote task A's windows into task B's file. Per-task slots are what
+     * make the pair an identity again, and the design needs them regardless.
+     *
+     * Each block re-derives the slot rather than holding it across ROTW, because
+     * a register carrying it would be one of the registers being saved. */
+    wsr.excsave2 a0
+    movi     a0, g_current
+    l32i     a0, a0, 0
+    bgez     a0, .Ltb_save
+    rsr.excsave2 a0                 /* no outgoing task yet -- first switch */
+    j        .Ltb_saved
+.Ltb_save:
+    rsr.excsave2 a0
+
+    wsr.excsave2 a0
+    wsr.excsave3 a1
+    movi    a0, g_current
+    l32i    a0, a0, 0
+    slli    a0, a0, 8
+    movi    a1, g_regsave
+    add     a0, a0, a1
+    s32i    a2,  a0, 8
+    s32i    a3,  a0, 12
+    s32i    a4,  a0, 16
+    s32i    a5,  a0, 20
+    s32i    a6,  a0, 24
+    s32i    a7,  a0, 28
+    s32i    a8,  a0, 32
+    s32i    a9,  a0, 36
+    s32i    a10, a0, 40
+    s32i    a11, a0, 44
+    s32i    a12, a0, 48
+    s32i    a13, a0, 52
+    s32i    a14, a0, 56
+    s32i    a15, a0, 60
+    rsr.excsave2 a1
+    s32i    a1,  a0, 0
+    rsr.excsave3 a1
+    s32i    a1,  a0, 4
+    mov     a1,  a0
+    l32i    a0,  a1, 0
+    l32i    a1,  a1, 4
+    rotw    4
+
+    wsr.excsave2 a0
+    wsr.excsave3 a1
+    movi    a0, g_current
+    l32i    a0, a0, 0
+    slli    a0, a0, 8
+    movi    a1, g_regsave
+    add     a0, a0, a1
+    s32i    a2,  a0, 72
+    s32i    a3,  a0, 76
+    s32i    a4,  a0, 80
+    s32i    a5,  a0, 84
+    s32i    a6,  a0, 88
+    s32i    a7,  a0, 92
+    s32i    a8,  a0, 96
+    s32i    a9,  a0, 100
+    s32i    a10, a0, 104
+    s32i    a11, a0, 108
+    s32i    a12, a0, 112
+    s32i    a13, a0, 116
+    s32i    a14, a0, 120
+    s32i    a15, a0, 124
+    rsr.excsave2 a1
+    s32i    a1,  a0, 64
+    rsr.excsave3 a1
+    s32i    a1,  a0, 68
+    mov     a1,  a0
+    l32i    a0,  a1, 64
+    l32i    a1,  a1, 68
+    rotw    4
+
+    wsr.excsave2 a0
+    wsr.excsave3 a1
+    movi    a0, g_current
+    l32i    a0, a0, 0
+    slli    a0, a0, 8
+    movi    a1, g_regsave
+    add     a0, a0, a1
+    s32i    a2,  a0, 136
+    s32i    a3,  a0, 140
+    s32i    a4,  a0, 144
+    s32i    a5,  a0, 148
+    s32i    a6,  a0, 152
+    s32i    a7,  a0, 156
+    s32i    a8,  a0, 160
+    s32i    a9,  a0, 164
+    s32i    a10, a0, 168
+    s32i    a11, a0, 172
+    s32i    a12, a0, 176
+    s32i    a13, a0, 180
+    s32i    a14, a0, 184
+    s32i    a15, a0, 188
+    rsr.excsave2 a1
+    s32i    a1,  a0, 128
+    rsr.excsave3 a1
+    s32i    a1,  a0, 132
+    mov     a1,  a0
+    l32i    a0,  a1, 128
+    l32i    a1,  a1, 132
+    rotw    4
+
+    wsr.excsave2 a0
+    wsr.excsave3 a1
+    movi    a0, g_current
+    l32i    a0, a0, 0
+    slli    a0, a0, 8
+    movi    a1, g_regsave
+    add     a0, a0, a1
+    s32i    a2,  a0, 200
+    s32i    a3,  a0, 204
+    s32i    a4,  a0, 208
+    s32i    a5,  a0, 212
+    s32i    a6,  a0, 216
+    s32i    a7,  a0, 220
+    s32i    a8,  a0, 224
+    s32i    a9,  a0, 228
+    s32i    a10, a0, 232
+    s32i    a11, a0, 236
+    s32i    a12, a0, 240
+    s32i    a13, a0, 244
+    s32i    a14, a0, 248
+    s32i    a15, a0, 252
+    rsr.excsave2 a1
+    s32i    a1,  a0, 192
+    rsr.excsave3 a1
+    s32i    a1,  a0, 196
+    mov     a1,  a0
+    l32i    a0,  a1, 192
+    l32i    a1,  a1, 196
+    rotw    4
+
+.Ltb_saved:
+
     /* [X6 experiment] switch-OUT recorder: the raw window state as the task
      * was interrupted, before any bookkeeping narrows it. Paired with the
      * switch-IN recorder at the restore: if a task leaves two bits live and
@@ -550,3 +694,11 @@ g_rin_junksrc:
     .global g_rjunk
 g_rjunk:
     .space 16 * 12
+
+/* [step 131] Tier B: one register file per task slot. 12 * 64 * 4 = 3,072 B,
+ * the figure costed in UM-NATOS-043 section 5.1. */
+    .section .bss, "aw", @nobits
+    .align 16
+    .global g_regsave
+g_regsave:
+    .space 3072

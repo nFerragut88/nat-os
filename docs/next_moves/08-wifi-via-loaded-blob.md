@@ -8473,4 +8473,61 @@ non-static variable rather than a call.
 Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0, `wifiinit` no
 fault and no reset.
 
+## Step 131 — Tier B's save pass is in, per-task, and green
+
+First piece of Tier B that works in place.
+
+```
+boot 11 PASS 0 FAIL   wintorture CORRECT   blobphy rc=0
+blobtx force 0x3004   wifiinit no fault, no reset
+heap 76,496 B usable  (was 79,568 -- exactly the 3,072 costed)
+```
+
+The save runs on **every** switch, in the prologue **before any `call0`**, into
+the outgoing task's own 256-byte slot. It is a no-op when correct, and the suite
+says it is.
+
+### What made it work, in order
+
+**Step 129** — a register-by-register diff, rather than pass/fail: `a1` matched
+bit-exact, `a0` did not, and `a0` is the call0 return-address register. The loop
+was right; it was reading the file two `call0`s too late.
+
+**Step 130** — the forced placement alone did not boot, because a single shared
+buffer cannot bracket a context switch. The restore at `.Lresume` ran after the
+scheduler had chosen a different task, so it wrote task A's windows into task
+B's file. That was an error in my plan, not the code: UM-NATOS-043 §8 ordered
+"identity pair" before "per-task slots" without noticing the pair straddles the
+switch.
+
+**This step** — per-task slots brought forward, and the save proven alone.
+
+Three properties earned along the way, each of which had to be discovered:
+
+- **`ROTW` rotates by an immediate**, so no general register moves the window.
+  That retires §8.1's objection *and* makes a save-only pass a genuine no-op,
+  which is what allowed the two loops to be tested separately at all.
+- **Nothing is clobbered before it is recorded.** Each block stashes its `a0` in
+  EXCSAVE2 and only then loads a pointer into it. Step 129's `movi a2, ...`
+  preamble destroyed the task's `a2`.
+- **The slot is re-derived per block** rather than carried across `ROTW`, because
+  a register holding it would be one of the registers being saved.
+
+`g_current` is no longer `static`. The prologue cannot call `task_current()` --
+it is `call0` -- so a variable is the only option, not a preference.
+
+### What is not done
+
+**The restore.** Nothing reads `g_regsave` yet, so this buys no behaviour; it
+proves the hard half is sound and costs the 3,072 bytes up front. The restore
+goes at `.Lresume`, after the last `call0`, indexed by `g_current` -- which by
+then is the INCOMING task, because `task_schedule` has run. That asymmetry is the
+whole reason per-task slots were needed, and it is what makes the pair an
+identity again.
+
+After that: take `WINDOWBASE`/`WINDOWSTART` from the saved file rather than the
+frame, delete `g_win_mask`/`g_win_union`/the grant, then `BLOB_PIN_DISABLE 1` and
+`wintorture` **read with its control line** (step 120) against step 121's
+baseline of an immediate `IllegalInstruction`.
+
 **Nothing has been on air.**

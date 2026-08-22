@@ -226,7 +226,11 @@ volatile int      g_txt_off = -1;
  * come into existence — fabricated and captured — and only the fabricated path
  * worked: tasks 1 and 2 ran, task 0 never resumed. Deleting the second path was
  * cheaper than debugging it, and leaves one code path to be correct about. */
-static int g_current = -1;
+/* [step 131] Not static: the interrupt prologue indexes the Tier B register-file
+ * slots by it, and task_current() is a call0 function that cannot be called from
+ * there. A variable rather than an accessor is the only option, not a
+ * preference. */
+int g_current = -1;
 
 /* ---- CPU time accounting ------------------------------------------------
  *
