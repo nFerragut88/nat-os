@@ -6059,3 +6059,56 @@ matched from memory of an older layout. That specific mistake — carrying an
 address across a rebuild — cost four steps at 68.
 
 **Nothing has been on air.**
+
+---
+
+## Step 91 — it does not walk off the top: the bad frame is mid-chain
+
+Step 90's contradiction is resolved by comparing against **this build's** task
+table rather than an address remembered from an older one:
+
+```
+task 9  sp 0x3ffb2710   stack 0x3ffb0cdc + 7168  ->  0x3ffb0cdc .. 0x3ffb28dc
+underflow save area     0x3ffb2810
+terminator (top & ~15, less the 16 reserved)  0x3ffb28c0
+```
+
+`0x3ffb2810` **is** inside task 9's stack — so both readings were true and not in
+conflict. It is simply not the terminator: it sits 256 bytes *above* task 9's
+current stack pointer and 176 bytes *below* the terminator.
+
+### This corrects step 88
+
+Step 88 concluded the underflow "walks off the top of the task's stack" because
+`a9` matched `top & ~15` in that build. It does not. The chain dies at a frame
+**in the middle** of task 9's own call chain, well inside the stack, and never
+reaches the end at all.
+
+The match at step 88 was a coincidence of that build's layout — the same class of
+error as step 68's stale `_phy_stack_top`, and caught this time only because the
+address was re-derived from the live task table instead of recalled.
+
+### What the terminator work was, then
+
+Steps 89 and 90 fixed a real defect — a task's chain had no terminator, and the
+one added was being overwritten by the task's own first frame until 16 bytes were
+reserved for it. That is correct and it stays. But it was never going to fix
+*this* fault, because this fault never reaches the terminator.
+
+Its measurable contribution: the panic moved from near-immediate to 68.5 s, which
+is the driver getting much further through init. Whether that is the reservation
+or the `OSI_FOREVER_CAP` timeouts accumulating is not established.
+
+### Where the fault actually is
+
+A frame at `0x3ffb2810` in task 9's chain has a base save area holding
+`0x3ffd8f78` — an address inside the blob's `.bss` — where a return address
+belongs. Task 9's chain from the top down is `blob_task_entry` (call0) ->
+`blob_lock` -> `rom_call3` (call0, writes its own save area) -> the blob's
+windowed code.
+
+So the next question is narrow: **which frame is at `0x3ffb2810`, and who was
+supposed to write `[0x3ffb2800]`?** The answer is one disassembly and one
+comparison against `rom_call3`'s known frame size, not another hypothesis.
+
+**Nothing has been on air.**
