@@ -5878,3 +5878,65 @@ and it either finds a real ordering bug or removes the largest remaining
 candidate.
 
 **Nothing has been on air.**
+
+---
+
+## Step 88 — the underflow walks off the top of the task's stack
+
+### The static check clears `rom_call3`
+
+Step 87 flagged the CALL8 ordering as the largest remaining candidate:
+`rom_call3` uses `a9` as scratch for the base-save-area write immediately before
+`call8`, and under CALL8 the caller's `a9` becomes the callee's `a1`.
+
+It is harmless. CALL8 makes `a8` the callee's `a0` — which the instruction itself
+writes with the return address — and `a9` the callee's `a1`, which `ENTRY`
+overwrites on the callee's very first instruction, computing it from the caller's
+`a1`. Junk in either register never survives to be read. Candidate removed, with
+no board time.
+
+### Where the fault actually points
+
+```
+task 9 stack   0x3ffb0c1c .. 0x3ffb281c
+top & ~15      0x3ffb2810
+initial sp     0x3ffb27a0     (task_create: top-112)
+underflow a9   0x3ffb2810     <- exactly top & ~15
+reads          [0x3ffb2800 .. 0x3ffb280c]
+```
+
+`a9` is **the aligned top of the stack**, not a frame within it. The underflow is
+using the top of the task's stack as a frame pointer and reading the last 16
+bytes of the initial context frame as though they were a windowed base save area.
+
+Those bytes are frame offsets 96..111. `TASK_FRAME_WORDS` is 23 — 92 bytes — so
+`task_create_with_stack()` zeroes 0..91 and leaves 92..111 as padding it never
+writes. The underflow is reading padding and following it as a chain.
+
+### What that means
+
+The blob task's windowed chain has **no terminator**. Nothing marks its outermost
+frame as the end, so an underflow that unwinds one frame too far walks off the
+top of the stack into memory that was never a save area — which is exactly the
+`0x3ffd8f78` (blob `.bss`) and `0x190` the handler recovered.
+
+This is the same family as steps 37, 85 and 87, and it is the last boundary in
+the chain: not a bridge that forgot to write its save area, but the *end* of the
+chain having no save area to write.
+
+### Two candidate fixes
+
+1. **Terminate the chain.** Have `task_create_with_stack()` — or the blob task's
+   entry — write a valid base save area at the top of the stack, so an underflow
+   that reaches it finds a sane caller pointer instead of padding. Cheap, and it
+   makes the failure survivable rather than preventing it.
+2. **Stop the unwind.** The chain should never unwind past the entry frame in the
+   first place. `bit(base) CLEAR` in the dump says the window state believed the
+   current frame was not live, which is what forces the underflow — so this is
+   the same window-ownership question, arriving from a new direction.
+
+(1) is a guard; (2) is the cause. Worth doing (1) first anyway, because a task
+whose chain terminates cannot corrupt memory outside its own stack while (2) is
+being investigated.
+
+**Nothing has been on air.**
