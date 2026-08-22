@@ -6802,3 +6802,81 @@ Two things, in order:
    and a call0 frame are adjacent. Its own frame is where the boundary sits.
 
 **Nothing has been on air.**
+
+---
+
+## Step 104 — why the chain always ends up in call0, and what actually fixes it
+
+The observation that prompted this: *the chain will point back into call0 no
+matter what the blob does, because that boundary is inherent.* That is correct,
+and the disassembly gives the mechanism exactly.
+
+```asm
+w2c_call3:            entry a1, 32        windowed frame
+                      callx0 a8           does NOT rotate the window
+
+osi_impl_queue_recv:  addi a1, a1, -64    moves the WINDOWED frame's a1
+                      s32i.n a3, a1, 0    locals at [a1+0]; no 16-byte reserve
+```
+
+Three facts compose into the defect:
+
+1. **`callx0` does not rotate.** The call0 callee shares the windowed frame's
+   register window, `a1` included.
+2. **call0 code moves `a1` freely** and reserves nothing below it, because
+   `-mabi=call0` has no windows to reserve for.
+3. **A window exception during the callee captures whatever `a1` currently is**
+   — a call0 stack pointer — and writes it into the windowed frame's save area
+   as that frame's `a1`.
+
+Later, an underflow walks the chain and reads `[saved_a1 - 12]` expecting the
+next caller's stack pointer. It gets a call0 local. Step 103 proved that local is
+`spent` by changing a constant and watching the fault address follow.
+
+### Why the obvious fixes do not work
+
+**Spill before `callx0`.** The stub already spills, but `w2c_call3`'s frame is
+created *after* it, so it is live. Moving the spill inside the bridge does not
+help either: `win_spill_all` returns, the frame is reloaded and live again, and a
+later overflow spills it with the moved `a1`. The spill only helps if the frame
+stays dead, and it cannot — the bridge has to return through it.
+
+**Reserve 16 bytes in the bridge.** The window machinery always uses
+`[current_a1 - 16]`, and `a1` is whatever the callee has made it. Reserving at
+the bridge's own depth changes nothing.
+
+**Mask window exceptions during the callee.** The callee blocks. Masking across a
+block is a deadlock, and UM-NATOS-038 §13 already established that a mask taken
+before vendor code is advisory anyway.
+
+### What does fix it
+
+The root cause is narrower than "call0 and windowed are mixed": it is
+**a call0 function that BLOCKS while holding a windowed frame's `a1`.** A call0
+callee that returns promptly is harmless — `a1` is restored before any spill can
+capture it, which is why every non-blocking adapter entry has worked for months.
+
+Two designs follow, and they differ in cost rather than correctness:
+
+1. **Move the wait into windowed code.** Make the `osi_impl_*` functions
+   non-blocking — poll and return — and put the wait loop in the windowed stub,
+   which already spills before it sleeps. No call0 frame is then live across a
+   block. This is the smaller change and it matches the structure the blocking
+   stubs already have.
+2. **Compile the `osi_impl_*` layer `-mabi=windowed`.** Then `call8` rotates, the
+   callee gets its own frame, and the chain is ABI-consistent throughout. But
+   those functions call `mutex_lock`, `task_sleep` and `heap_alloc`, which are
+   call0 — so the boundary moves down rather than disappearing, and the blocking
+   ones reintroduce the same problem one level deeper.
+
+(1) is the recommendation. It removes the condition rather than relocating it,
+and it is a restructure of code we own with no new ABI surface.
+
+### What this explains retroactively
+
+Every non-blocking adapter entry has worked since the table was accepted. Only
+the five blocking entries route through `wait_on`, and only those hold a call0
+frame across a park. The fault has always been on `_semphr_take` or
+`_queue_recv` — never on the other 113.
+
+**Nothing has been on air.**
