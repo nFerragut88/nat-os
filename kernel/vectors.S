@@ -284,10 +284,20 @@ _handler_level3:
     movi     a3, 1
     ssl      a2
     sll      a3, a3                     /* 1 << saved WINDOWBASE */
-    /* Every OTHER task's live frames, by recorded ownership rather than by
-     * whatever happens to be set. See g_win_mask in task.c: the hardware bit is
-     * "a frame lives here" with no owner, so reading it back cannot tell a live
-     * frame from an abandoned one. The union does. */
+    /* [step 115] The grant is now this task's own base bit and nothing else.
+     *
+     * It used to be OR'd with g_win_union -- every other task's recorded live
+     * frames -- because tasks left frames in the register file and the restore
+     * had to avoid stepping on them. Since task_schedule() sweeps the outgoing
+     * task down to one frame, no task has anything left in the file to protect,
+     * and a union that is always zero is a union that can only add phantoms.
+     *
+     * g_win_union is still computed in task.c, as a check: it should now stay
+     * zero, and if it does not, some path is parking frames without spilling.
+     *
+     * [step 115b] RESTORED pending evidence. Removing it broke wintorture in the
+     * same build that added the sweep, and those are two changes with one
+     * symptom. The union goes back so the sweep can be judged alone. */
     movi     a6, g_win_union
     l32i     a6, a6, 0
     or       a3, a3, a6

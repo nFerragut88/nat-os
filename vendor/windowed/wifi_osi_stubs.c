@@ -271,6 +271,9 @@ volatile uint32_t g_qr_caller, g_qr_caller_raw;
  * blocking recv reports empty immediately. The blob then either finishes init
  * with a return code or reveals an unbounded loop, and either way control comes
  * back and `osiused` can be read. Not a fix -- an instrument. */
+/* [step 115] spill-on-preemption outcome, reported from the one place that
+ * already prints during a live wifiinit. Data only -- no call0 call. */
+extern volatile uint32_t g_pspill_count, g_pspill_bad, g_pspill_worst, g_pspill_post_ws;
 extern void uart_puts(const char *s);
 extern void uart_put_dec(unsigned int v);
 volatile uint32_t g_qr_blk_calls, g_qr_blk_rounds, g_qr_timeouts;
@@ -859,6 +862,15 @@ static int32_t osi_s_queue_recv(void *queue, void *item, uint32_t block_time_tic
             (void)w2c_call1((uint32_t)&uart_put_dec, g_qr_last_rounds);
             (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" osin=");
             (void)w2c_call1((uint32_t)&uart_put_dec, g_osi_trace_n);
+            (void)w2c_call1((uint32_t)&uart_puts,
+                            (uint32_t)"\n   [pspill] sweeps=");
+            (void)w2c_call1((uint32_t)&uart_put_dec, g_pspill_count);
+            (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" bad=");
+            (void)w2c_call1((uint32_t)&uart_put_dec, g_pspill_bad);
+            (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" worst_frames=");
+            (void)w2c_call1((uint32_t)&uart_put_dec, g_pspill_worst);
+            (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" last_post_ws=");
+            (void)w2c_call1((uint32_t)&uart_put_dec, g_pspill_post_ws);
             (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)"\n");
         }
         rounds++;

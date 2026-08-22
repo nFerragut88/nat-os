@@ -61,6 +61,13 @@ volatile int      g_phytop_task = -1;   /* who was saved at _phy_stack_top */
 volatile uint32_t g_phytop_epc, g_phytop_a0;
 
 static uint32_t   g_out_ws[TASK_MAX], g_out_base[TASK_MAX];
+
+/* [step 115] Spill-on-preemption outcome. g_pspill_pre_ws is what the task held
+ * when the tick landed; g_pspill_post_ws is what the sweep left. The design says
+ * post must always be a single bit, and that bit the task's own base. */
+volatile uint32_t g_pspill_count, g_pspill_pre_ws, g_pspill_post_ws, g_pspill_worst;
+volatile int      g_pspill_task = -1;
+volatile uint32_t g_pspill_bad;      /* sweeps that did NOT reduce to one frame */
 volatile int      g_lost_task = -1;
 volatile uint32_t g_lost_had, g_lost_grant, g_lost_bits;
 
@@ -663,6 +670,40 @@ uint32_t task_schedule(uint32_t current_sp)
 
         /* [step 94] What this task actually HELD on the way out. */
         g_out_ws[g_current]   = ((const uint32_t *)current_sp)[TASK_FRAME_IDX_WSTART];
+
+        /* ---- [step 115] SPILL ON PREEMPTION -- attempted, reverted ----------
+         *
+         * The sweep went here: if the outgoing task's saved WINDOWSTART had
+         * more than one bit, call win_spill_call0() and rewrite the saved word
+         * to 1 << base, so every task leaves with one frame and the restore
+         * needs no cross-task union.
+         *
+         * It broke `wintorture` -- LoadProhibited at 0x40080155, inside the
+         * window vectors. The same build also removed g_win_union from the
+         * restore grant, which is two changes with one symptom, so the union
+         * was put back on its own: wintorture still panicked. The sweep is the
+         * cause, and the grant simplification is untested rather than wrong.
+         *
+         * Not a refutation of spill-on-preemption -- a placement problem. This
+         * site runs AFTER _handler_level3 has done `addi a1, a1, -112` and
+         * built the switch frame on the task's own stack, so at spill time a1
+         * no longer holds the interrupted task's stack pointer and the frame
+         * occupies the 112 bytes directly below it. Spilling with the task's
+         * real sp instead is not a fix either: win_spill_call0 writes at
+         * sp-32-12, which lands inside that frame.
+         *
+         * So the sweep needs somewhere the task's sp is intact AND nothing is
+         * written below it -- the handler prologue before the frame is built,
+         * which in turn needs the spill's register clobbers (a2..a11) dealt
+         * with first. That is an assembly change to the interrupt prologue and
+         * wants its own step, tested against wintorture with the switch count
+         * as the control.
+         *
+         * Measured while it was in: during `wifiinit`, sweeps=0. The blob task
+         * is pinned whenever it holds more than one frame and unpinned only in
+         * the step-113 leaf spin, where it holds exactly one -- so the sweep
+         * had nothing to do on the path it was built for. wintorture is a
+         * different workload and did trigger it. */
         g_out_base[g_current] = ((const uint32_t *)current_sp)[TASK_FRAME_IDX_WBASE] & 15u;
 
         g_tasks[g_current].sp = current_sp;

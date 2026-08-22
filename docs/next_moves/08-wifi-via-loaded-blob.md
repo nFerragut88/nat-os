@@ -7559,4 +7559,53 @@ iteration, because `wait_on()` blocks until woken. Nothing on the blocking path
 reaches it now, so the assumption is untested rather than wrong. It should get
 the same treatment when interrupts are wired and that path is live again.
 
+## Step 115 — spill on preemption: attempted, reverted, placement diagnosed
+
+The sweep went into `task_schedule()`: if the outgoing task's saved WINDOWSTART
+has more than one bit, call `win_spill_call0()` and rewrite the saved word to
+`1 << base`. Then every task leaves with one frame, no task's frames occupy a
+slot another task needs, and the restore can grant a single bit instead of
+guessing at `g_win_union`. The same build removed the union from the grant.
+
+The preconditions the site needs are genuinely there, and worth recording since
+they were the reason to try C rather than assembly: `_handler_level3` already
+clears `PS.EXCM` at entry, so window exceptions are taken normally rather than
+becoming double faults; the H1 defer branch means the scheduler is never entered
+mid-window-handler; and the frame is built on the interrupted task's own stack.
+
+**It broke `wintorture`** -- LoadProhibited, `epc 0x40080155`, inside the window
+vectors. Two changes, one symptom, so the union went back on its own:
+`wintorture` still panicked. **The sweep is the cause; the grant simplification
+is untested rather than wrong.**
+
+### Why the placement cannot work
+
+`task_schedule()` runs after the handler has done `addi a1, a1, -112` and built
+the switch frame. At spill time `a1` is the frame, not the task's stack pointer,
+and the frame occupies the 112 bytes directly below the task's sp.
+
+Spilling with the task's real sp instead is not the fix either: `win_spill_call0`
+writes its base save area at `sp-32-12`, which lands inside that frame.
+
+So the sweep needs a point where the task's sp is intact AND nothing has been
+written below it -- the handler prologue, before the frame is built. That in turn
+needs the spill's clobbers (a2..a11) handled, since the registers it destroys are
+the ones not yet saved. An assembly change to the interrupt prologue, and it
+wants its own step with `wintorture` as the test and the switch count as the
+control.
+
+### One measurement worth keeping
+
+With the sweep in, `wifiinit` reported `sweeps=0`. The blob task is pinned
+whenever it holds more than one frame, and unpinned only in the step-113 leaf
+spin where it holds exactly one -- so on the path this was built for, the sweep
+had nothing to do. `wintorture` is a different workload and did trigger it.
+
+That is not an argument against the fix. It says step 113's spin is currently
+carrying the invariant that spill-on-preemption is meant to carry properly, and
+that `wintorture` -- not `wifiinit` -- is the test that will judge it.
+
+Suite after the revert: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy`
+rc=0, `blobtx force` 0x3004, `wifiinit` no fault and no reset.
+
 **Nothing has been on air.**
