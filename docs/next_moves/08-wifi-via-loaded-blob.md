@@ -8815,4 +8815,70 @@ That is the next thing, and it is no longer avoidable by design choice.
 Reverted. Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0,
 `wifiinit` no fault and no reset. Step 131's save pass remains in and green.
 
+## Step 137 — the phantom's source, named in the code's own comment
+
+Three places write `WINDOWSTART` outside the scheduler, all in `window.S`, and
+all do the same thing: **wipe it to the current window's bit alone.**
+`x20_windowed` (line 967), and `phy_stack_call` before and after its `callx8`
+(1172, 1192).
+
+`phy_stack_call` says why, and in saying why it describes the phantom exactly:
+
+> `WINDOWSTART` is deliberately **NOT** restored afterwards. The bits describe
+> frames whose registers this excursion has already overwritten, so putting them
+> back would re-mark frames whose contents are gone. A call0 kernel's correct
+> steady state is one live frame, and that is what this leaves behind.
+
+That comment is correct about its own behaviour and correct about the danger. The
+defect is that **the kernel then does the very thing the comment refuses to do.**
+
+`g_win_mask[]` still records those frames as owned by their tasks. The excursion
+does not clear them — it has no idea they exist. So at the next switch the
+restore computes:
+
+```
+grant = (1 << base) | g_win_union
+```
+
+and `g_win_union` re-marks exactly the frames whose registers `phy_stack_call`
+overwrote. **A bit set for a window whose contents are gone is a phantom**, and
+this is a mechanism that produces one, by construction, every time a windowed
+excursion runs while another task holds frames.
+
+### Why this closes the arc
+
+- Step 124 measured a `WINDOWSTART` bit whose `a1` is `0xeeeeeeee` — a frame
+  that is claimed and empty. This produces precisely that.
+- Steps 53, 54, 57, 94 and 108 all failed to fix the ownership rule. They could
+  not: the rule's *inputs* are wrong, because `g_win_mask` is never told when an
+  excursion destroys what it is tracking.
+- Step 126 showed a phantom can be neither spilled nor restored. Nothing
+  downstream could have helped.
+- Step 136 showed Tier B's register save/restore is provably correct and *still*
+  faults — because Tier B preserves registers, and this defect is about a bit
+  claiming registers that were legitimately overwritten by someone else.
+
+### What follows
+
+The excursions and the bookkeeping have to agree. Three shapes, in order of
+size:
+
+1. **Tell the bookkeeping.** `phy_stack_call`/`x20_windowed` clear
+   `g_win_mask[]` for every task when they wipe, since that is precisely what
+   the wipe means. Small, and it makes `g_win_union` truthful rather than
+   optimistic.
+2. **Do not wipe.** Spill the frames the excursion is about to overwrite instead
+   of disowning them. Larger, and it is spill-on-preemption again in a different
+   place.
+3. **Tier B makes the question moot** — with the register file private per task,
+   an excursion cannot overwrite another task's frames at all, so there is
+   nothing to disown. This is the argument UM-NATOS-043 §3A.1 makes, arriving
+   from a third direction.
+
+(1) is the cheap test of this account and can be done in one build: if clearing
+`g_win_mask` at the wipe removes the phantom, the mechanism is confirmed.
+
+**No code changed in this step.** Suite: boot 11 PASS 0 FAIL, `wintorture`
+CORRECT, `blobphy` rc=0, `wifiinit` no fault and no reset.
+
 **Nothing has been on air.**
