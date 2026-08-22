@@ -5101,6 +5101,22 @@ Neither costs a build.
 
 **Nothing has been on air.**
 
+### Note on numbering — two series, deliberately not renumbered
+
+From here the log carries **two independent step sequences** that collided at the
+merge, and they are told apart by heading level:
+
+* `### Step NN (branch dev)` — Tortoise's, written on `dev` before the merge.
+  Covers 77.5 and 78, the phantom-sweep work that became UM-NATOS-039/040.
+* `## Step NN` — Hare's, written on `main` after the merge. Restarts at 78 and
+  runs to 86.
+
+So `### Step 78` and `## Step 78` are different entries about different things.
+Neither series is renumbered: commit messages, UM-NATOS-041 and the debug notes
+all cite these numbers, and rewriting them would break every cross-reference to
+fix a cosmetic clash. Anything after the merge that cites a bare step number
+without a branch means the `##` series.
+
 ### Step 77.5 (branch `dev`) — H1 implemented as a controlled experiment, and refuted by its own instrumentation
 
 **What changed** (kernel/vectors.S + panic.c + intr.c, all marked
@@ -5638,6 +5654,33 @@ concluded "ADDRESS MOVED" from it. This compares only when the frame pointer is
 identical, so stamp and readback are provably the same frame.
 
 **Nothing has been on air.**
+
+---
+
+## Step 84 — no switch frame ever lands on the watched frame
+
+Step 83 noticed that the corrupted word's neighbours resembled a context-switch
+frame, and flagged it as a resemblance rather than an identification. The test
+that settles it needs no interpretation: `task_schedule()` already holds
+`current_sp`, which *is* the switch frame's base, and the handler writes 112
+bytes up from it. Latch whenever that range covers the frame `w2c_call2` is
+watching.
+
+```
+overlap : no switch frame ever landed on the watched frame
+```
+
+Never fires. **Step 83's hypothesis is dead** — the byte-pattern match was
+coincidence, exactly as it was recorded to be.
+
+That is the whole content of the step, and it is worth its own entry because it
+is the measurement that stopped a plausible wrong answer from being adopted.
+Recorded late: it was originally folded into step 85's prose, which buried a
+clean negative result inside the write-up of a positive one.
+
+Its real value was directional. With switch frames excluded and the writer still
+unknown, the only remaining move was to stop hunting the writer and change one
+variable instead — which is what step 85 did, and what found the bug.
 
 ---
 
