@@ -7201,3 +7201,65 @@ Two forms, from step 104:
    which need the same treatment — but those are ours and mostly non-blocking.
 
 **Nothing has been on air.**
+
+---
+
+## Step 110 — fix (2) implemented on the queue path; still faults
+
+`w2c_call3` cannot "allocate its own window" for a call0 callee — rotation
+requires the callee to have an `entry`. So fix (2) had to be the windowed-compile
+form, and the check that made it tractable: `crit_enter`/`crit_exit` are
+`static inline`, `copy_n` and `wake_all` are file-statics, and with `ticks = 0`
+the poll never reaches `wait_on`. A windowed poll therefore needs **zero call0
+calls**.
+
+`vendor/windowed/wifi_osi_queue.c` — compiled `-mabi=windowed`, reached by a real
+CALL8 so the window rotates and the callee gets its own frame:
+
+- dequeue and copy under a hand-rolled `rsil`/`wsr.ps` rather than the inline
+  `crit_enter`, because "it would very likely inline cleanly" is not a property
+  this investigation has been well served by;
+- `_Static_assert(sizeof(osi_queue_t) == 36)` so a layout drift from
+  `kernel/wifi_osi_impl.c` is a build error rather than a silent one;
+- **no** `task_wake()` — that is call0, and calling it from here would reinstate
+  the boundary the file exists to remove. The poll reports a wake is owed and the
+  caller does it through a bridge, pinned.
+
+Whole-file compilation was rejected deliberately: it would turn every kernel call
+in `wifi_osi_impl.c` (`task_sleep`, `heap_alloc`, `task_wake`) into a CALL8 to a
+call0 function, which is the bit-31 fault hit four times in this project.
+
+### Result
+
+```
+boot 11 PASS 0 FAIL   wintorture CORRECT   blobphy rc=0
+wifiinit  PANIC at 1.1 s -- StoreProhibited, excvaddr 0x1c0
+          a0-16 0x3ffd8f78  a1-12 0x3ffbdaa8  a2-8 0x0000002c
+```
+
+The bridge is gone from the poll path and the fault persists, in the same family:
+`a0` still `&adc_ana_conf_org`, `a2` now a small integer.
+
+### wincollide's panic is mine, not a regression
+
+`wincollide` panics — **inside the step-107 unpin test**, which is a deliberate
+fault injector that creates the frame-loss condition on purpose. It reaches and
+passes the spill test first (`7 frames -> 1, as designed`), then enters the unpin
+test and faults there.
+
+That is the reproducer working. It is also a mistake: putting a fault injector
+inside the regression command destroyed `wincollide` as a pass/fail signal, and
+for one step I read its panic as a possible regression from fix (2). The unpin
+test needs its own command before the suite means anything again.
+
+### Where that leaves fix (2)
+
+Implemented and correct on the poll path, and not sufficient. The remaining call0
+excursions on the blocking path are `blob_unlock_only`, `blob_trylock` and the
+wake — all reached through `w2c_call0f`/`w2c_call1`, which have the identical
+`entry`/`callx0` shape as `w2c_call3` did.
+
+Fix (2) applied to *one* callee removes one bridge. The bridges themselves are
+the pattern, and there are four of them.
+
+**Nothing has been on air.**

@@ -202,6 +202,8 @@ extern void blob_lock(void);
 extern void blob_unlock(void);
 extern void win_spill_all(void);
 extern unsigned int osi_windowed_idle(unsigned int depth, unsigned int spin);
+extern int  osi_qpoll_w(void *h, void *item, uint32_t *woke);   /* windowed: CALL8, no bridge */
+extern void osi_impl_wake_senders(void);                        /* address only */
 extern void blob_trylock(void);        /* address only -- through the bridge */
 extern void blob_unlock_only(void);
 extern volatile int g_pinned;          /* written DIRECTLY from here; see below */   /* windowed; callable directly from here */
@@ -690,9 +692,22 @@ static int32_t osi_s_queue_recv(void *queue, void *item, uint32_t block_time_tic
                                   (uint32_t)item, 0u);
     }
 
-    if (w2c_call3((uint32_t)&osi_impl_queue_recv, (uint32_t)queue,
-                  (uint32_t)item, 0u)) {
-        return 1;                       /* uncontended: no spill, no lock traffic */
+    /* [step 110] fix (2): the poll is WINDOWED and reached by CALL8.
+     *
+     * This was `w2c_call3(&osi_impl_queue_recv, ...)` -- a bridge that does
+     * `entry a1, 32` then `callx0`, so the call0 callee shared this frame's
+     * register window and moved its a1. Steps 103 and 109 established that as
+     * the cause. Calling a windowed function instead rotates properly: the
+     * callee gets its own frame and never touches ours.
+     *
+     * The wake goes back through a bridge, deliberately -- task_wake() is call0,
+     * and this runs pinned, so no switch can land in it. */
+    {
+        uint32_t woke = 0u;
+        if (osi_qpoll_w(queue, item, &woke)) {
+            if (woke) { (void)w2c_call1((uint32_t)&osi_impl_wake_senders, (uint32_t)queue); }
+            return 1;                   /* uncontended: no spill, no lock traffic */
+        }
     }
 
     blk_sample(0u);
@@ -732,10 +747,13 @@ static int32_t osi_s_queue_recv(void *queue, void *item, uint32_t block_time_tic
         if (!w2c_call0f((uint32_t)&blob_trylock)) {
             continue;                   /* someone else holds it; wait again */
         }
-        if (w2c_call3((uint32_t)&osi_impl_queue_recv, (uint32_t)queue,
-                      (uint32_t)item, 0u)) {
-            blk_sample(2u);
-            return 1;
+        {
+            uint32_t woke = 0u;
+            if (osi_qpoll_w(queue, item, &woke)) {
+                if (woke) { (void)w2c_call1((uint32_t)&osi_impl_wake_senders, (uint32_t)queue); }
+                blk_sample(2u);
+                return 1;
+            }
         }
         if (++rounds >= 400u) {         /* the forever-cap, unchanged in meaning */
             blk_sample(2u);

@@ -83,7 +83,9 @@ typedef struct {
 } osi_timer_t;
 
 static osi_sem_t   g_sem[OSI_SEM_MAX];
-static osi_queue_t g_queue[OSI_QUEUE_MAX];
+/* NOT static: vendor/windowed/wifi_osi_queue.c polls it from windowed code,
+ * which is how the queue receive avoids a call0 bridge entirely. See that file. */
+osi_queue_t g_queue[OSI_QUEUE_MAX];
 static osi_evt_t   g_evt[OSI_EVT_MAX];
 static osi_timer_t g_timer[OSI_TIMER_MAX];
 static uint32_t    g_rng = 0x12345678u;
@@ -297,6 +299,20 @@ int32_t osi_impl_queue_send(void *h, void *item, uint32_t ticks, int to_front)
         }
         wait_on(&q->waiters_send, 1u);
     }
+}
+
+/* Wake senders blocked on a queue.
+ *
+ * Split out because vendor/windowed/wifi_osi_queue.c does the dequeue in
+ * windowed code and must not call task_wake() -- that is call0, and calling it
+ * from there reintroduces the very boundary that file exists to remove. The
+ * windowed poll reports that a wake is owed; this does it, from call0, with the
+ * caller pinned so no switch can land inside. */
+void osi_impl_wake_senders(void *h);
+void osi_impl_wake_senders(void *h)
+{
+    if (!H_OK(h, OSI_QUEUE_MAX)) { return; }
+    wake_all(&g_queue[H_INDEX(h)].waiters_send);
 }
 
 int32_t osi_impl_queue_recv(void *h, void *item, uint32_t ticks)
