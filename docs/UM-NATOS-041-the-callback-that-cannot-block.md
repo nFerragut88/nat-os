@@ -1,7 +1,7 @@
 # UM-NATOS-041 — The Callback That Cannot Block
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.0 · 2026-08-22 · Status: **Failure isolated to a single measured mechanism. Not fixed. The remaining callback architecture is scoped and largely unbuilt.**
+Revision 1.1 · 2026-08-22 · Status: **Failure isolated to a single measured mechanism. Not fixed. The remaining callback architecture is scoped and largely unbuilt.** Rev 1.1 corrects a task attribution in section 3 and adds section 3.4.
 
 ---
 
@@ -78,6 +78,45 @@ Steps 56-57 of `next_moves/08` established that a resumed task is granted
 union. That is correct when the task truly holds one frame and wrong when it
 holds seven. The caller frames' physical registers are then free for another
 context to reuse, which is exactly what happens before this task resumes.
+
+**3.4 Correction to rev 1.0, and a second failure alongside it.**
+
+Rev 1.0 read `last osi : entry 29 _queue_recv` as belonging to the faulting
+task. It does not: that counter is global, and the blocking instrumentation
+proves the two are different tasks.
+
+```
+blk-window: pre ws 0xa00a wb 3 | spill ws ...a2b wb 3 | wake ws 0xdeadbeef | union 0x00000000
+sbp-last  : task 9 wb 3 ws 0x0000000a
+sbp-post  : wb 3 ws 0x00000008  single-bit ok
+retw ring : a1 0x3ffb9240  (inside task 5's stack, 0x3ffb8cf0 + 2048)
+```
+
+`blk-window` and `sbp-*` carry `wb 3`, which is task 9 — the blob task. The
+faulting `retw` is task 5, the shell. So `_queue_recv` is what task 9 last
+called; it is not what task 5 was doing when it died.
+
+Three things follow.
+
+- **`wake ws 0xdeadbeef` is the sentinel: the post-wait sample never ran.** Task
+  9 entered the blocking `_queue_recv` and never returned from it. That is a
+  second, distinct failure — a callback that blocks forever — and it is not the
+  one this report characterises.
+- **`sbp-post` reports `single-bit ok`.** The park machinery *does* reduce a
+  task to one live frame, for task 9 at least. So the spill is not simply absent.
+- **`union 0x00000000`.** With an empty union, a resuming task is granted exactly
+  `1 << its own base` and nothing else. That is the disclaiming mechanism of 3.3,
+  now confirmed from the other side: task 5 held seven frames, its recorded mask
+  was one bit, and the union carried none of the rest.
+
+The mechanism in 3.1-3.3 stands unchanged. What rev 1.0 got wrong was implying a
+single task walked the whole path; two are involved, and separating them is what
+makes the union reading decisive.
+
+**Not read as fact:** `spill ws 0x0000000a2b` is printed with ten hex digits
+where the printer emits eight. The value is suspect until the print is fixed, so
+no conclusion is drawn here about whether `win_spill_all()` reduced task 9's
+frame count in the stub.
 
 ---
 

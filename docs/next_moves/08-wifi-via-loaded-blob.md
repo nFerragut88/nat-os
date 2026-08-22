@@ -5446,3 +5446,66 @@ report the spill's own view; correlating them with `g_xseq` is the next
 measurement, and the ring is already tagged for it.
 
 **Nothing has been on air.**
+
+---
+
+## Step 81 — two tasks, two failures, and the union confirms the mechanism
+
+Read Tortoise's `blk_sample(0/1/2)` brackets — pre-spill, post-spill, post-wait —
+which already exist in the blocking stubs and answer the question step 80 left
+open:
+
+```
+blk-window: pre ws 0xa00a wb 3 | spill ws ...a2b wb 3 | wake ws 0xdeadbeef | union 0x00000000
+sbp-last  : task 9 wb 3 ws 0x0000000a
+sbp-post  : wb 3 ws 0x00000008  single-bit ok
+retw ring : a1 0x3ffb9240  -> inside task 5's stack (0x3ffb8cf0 + 2048)
+```
+
+### The two are different tasks
+
+`blk-window` and `sbp-*` carry `wb 3`, which `sbp-last` names as task 9, the blob
+task. The faulting `retw` is task 5, the shell. So `last osi : entry 29
+_queue_recv` is what task **9** last called — it is a global counter, and step 80
+and UM-NATOS-041 rev 1.0 both read it as belonging to the dying task. Corrected
+in 041 rev 1.1.
+
+### Three results
+
+1. **`wake ws 0xdeadbeef` is the sentinel — the post-wait sample never ran.**
+   Task 9 entered the blocking `_queue_recv` and never came back. That is a
+   second, distinct failure: a callback that blocks forever. It is not the fault
+   the panic reports, and it deserves its own investigation rather than being
+   folded into this one.
+
+2. **`sbp-post : single-bit ok`.** The park machinery does reduce a task to one
+   live frame — for task 9. So the spill is not simply missing, which was step
+   80's leading hypothesis for why seven bits were live.
+
+3. **`union 0x00000000` — this confirms step 80's mechanism from the other
+   side.** With an empty union, a resuming task is granted exactly
+   `1 << its own base`. Task 5 held seven frames, its recorded mask was one bit
+   by the step-56 rule, and the union carried none of the rest. The frames were
+   disclaimed, not unwound, and that is now measured at both ends rather than
+   inferred at one.
+
+### Not read as fact
+
+`spill ws 0x0000000a2b` prints ten hex digits where the printer emits eight. Until
+that print is fixed, no conclusion is drawn about whether `win_spill_all()`
+reduced task 9's frame count inside the stub — which is exactly the quantity
+step 80 wanted. Reading a malformed field as data is how the last nine
+instruments went wrong.
+
+### Next
+
+Two separable threads, and they should not be merged again:
+
+- **A.** Task 5's disclaimed frames — the restore must grant what the task held.
+  That means recording the count at spill time rather than inferring one bit at
+  restore, and `sbp-post` already proves the spill knows the number.
+- **B.** Task 9's `_queue_recv` never returning. Whoever was meant to post to
+  that queue either never ran or never posted; `sbp-skip` reads 0, so the park
+  itself was not skipped.
+
+**Nothing has been on air.**
