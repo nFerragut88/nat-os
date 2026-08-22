@@ -172,3 +172,35 @@ unsigned int vendor_spilltest(unsigned int depth)
     for (unsigned int i = 0; i < 6u; i++) { sum += local[i]; }
     return sum;
 }
+
+
+/* ---- a windowed place to wait -------------------------------------------
+ *
+ * next_moves/08 step 106. The waiting on a blocking adapter entry happens here,
+ * in real nested windowed frames, so a context switch landing anywhere in it
+ * finds a1 belonging to a windowed frame with a proper save area beneath it.
+ *
+ * It also keeps the register window genuinely rotating while the driver waits --
+ * frames spilling and refilling -- which is the state the blob expects of a task
+ * blocked on a queue, rather than a frozen register file. */
+unsigned int osi_windowed_idle(unsigned int depth, unsigned int spin);
+
+unsigned int osi_windowed_idle(unsigned int depth, unsigned int spin)
+{
+    unsigned int local[4];
+    for (unsigned int i = 0; i < 4u; i++) { local[i] = depth * 3u + i; }
+
+    if (depth == 0u) {
+        unsigned int t0, now;
+        __asm__ volatile ("rsr.ccount %0" : "=r"(t0));
+        for (;;) {
+            __asm__ volatile ("rsr.ccount %0" : "=r"(now));
+            if ((now - t0) > spin) { break; }
+        }
+        return 0u;
+    }
+    unsigned int deeper = osi_windowed_idle(depth - 1u, spin);
+    unsigned int sum = deeper;
+    for (unsigned int i = 0; i < 4u; i++) { sum += local[i]; }
+    return sum;
+}

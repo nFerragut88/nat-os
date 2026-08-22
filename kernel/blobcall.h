@@ -27,6 +27,8 @@ void     blob_unpin(void);
 
 void     blob_lock(void);
 void     blob_unlock(void);
+int      blob_trylock(void);      /* non-blocking; safe while pinned */
+void     blob_unlock_only(void);  /* mutex only, leaves the pin alone */
 void     blob_task_enable(int on);
 uint32_t blob_task_count(void);
 uint32_t blob_task_stack_short(void);  /* requests larger than a nat-os stack */

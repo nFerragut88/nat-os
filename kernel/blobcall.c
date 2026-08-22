@@ -143,7 +143,14 @@ uint32_t blob_call(uint32_t fn, uint32_t a, uint32_t b, uint32_t c, uint32_t d)
  * task_schedule() refuses to switch away from it. Set on entry, cleared on
  * exit and around any voluntary block -- the two moments at which switching
  * away is safe, because the window is either not in use or has been spilled. */
-static volatile int g_pinned = -1;
+/* NOT static: windowed code writes this directly.
+ *
+ * next_moves/08 step 106. Pinning through a call0 helper is self-defeating on
+ * the blocking path -- the helper is itself a call0 frame that can be switched
+ * away from with the windowed frame's a1 moved, which is the whole defect. A
+ * single store issued from windowed code has no frame and no return sequence,
+ * so there is no window in which it can be caught half-done. */
+volatile int g_pinned = -1;
 
 /* Bumped by every pin so the scheduler's runaway bound can be PER PIN.
  *
@@ -168,6 +175,16 @@ void     blob_pin(void)         { g_pinned = task_current(); g_pin_seq++; }
 void     blob_unpin(void)       { g_pinned = -1; g_pin_seq++; }
 
 void blob_lock(void)   { blob_call_init(); mutex_lock(&g_blob_mutex); blob_pin(); }
+
+/* Non-blocking halves, for callers that must not block inside call0.
+ *
+ * blob_lock() reaches mutex_lock(), which calls task_block() and task_yield() --
+ * a call0 function that blocks, and therefore the very condition step 104
+ * identified. These let windowed code do the waiting itself: try, and if it
+ * fails, go back to windowed frames and try again. Neither blocks, so both are
+ * safe to call while pinned. */
+int  blob_trylock(void)      { blob_call_init(); return mutex_try_lock(&g_blob_mutex); }
+void blob_unlock_only(void)  { mutex_unlock(&g_blob_mutex); }
 void blob_unlock(void) { blob_unpin(); mutex_unlock(&g_blob_mutex); }
 
 uint32_t blob_call_count(void)     { return g_calls; }

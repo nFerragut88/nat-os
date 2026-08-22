@@ -200,7 +200,11 @@ extern void osi_impl_queue_delete(void);
 extern void blob_task_create(void);
 extern void blob_lock(void);
 extern void blob_unlock(void);
-extern void win_spill_all(void);   /* windowed; callable directly from here */
+extern void win_spill_all(void);
+extern unsigned int osi_windowed_idle(unsigned int depth, unsigned int spin);
+extern void blob_trylock(void);        /* address only -- through the bridge */
+extern void blob_unlock_only(void);
+extern volatile int g_pinned;          /* written DIRECTLY from here; see below */   /* windowed; callable directly from here */
 extern void osi_impl_queue_recv(void);
 extern void osi_impl_delay(void);
 extern void osi_impl_evt_wait(void);
@@ -658,62 +662,65 @@ static int32_t osi_s_queue_send_to_front(void *queue, void *item, uint32_t block
 static int32_t osi_s_queue_recv(void *queue, void *item, uint32_t block_time_tick)
 {
     osi_hit(29u);
-    /* [step 99] Who in the blob calls us, and where does it expect to return?
+
+    /* [step 106] Complete form: no call0 frame is EVER live across a switch.
      *
-     * a0 here is the windowed return encoding the blob supplied. Masking to 30
-     * bits and OR-ing the PC region gives the actual blob address, which names
-     * the calling function in the image -- the starting point step 98 asked
-     * for. Latched once; every later call would overwrite it. */
-    if (!g_qr_caller) {
-        uint32_t a0;
-        __asm__ volatile ("mov %0, a0" : "=r"(a0));
-        g_qr_caller_raw = a0;
-        g_qr_caller = 0x40000000u | (a0 & 0x3FFFFFFFu);
+     * Step 104 traced the fault to a call0 function blocking while it holds a
+     * windowed frame's a1; step 105 moved the queue wait out of call0 and still
+     * failed, because two call0 excursions remained -- blob_unlock returning
+     * unpinned, and blob_lock reaching mutex_lock, which itself blocks.
+     *
+     * The invariant this enforces is exact:
+     *
+     *   every call0 excursion runs PINNED   -> no switch can land in one
+     *   every wait runs UNPINNED in WINDOWED frames -> switches land where a1
+     *                                                  belongs to a windowed
+     *                                                  frame with a save area
+     *   pin and unpin are DIRECT STORES from windowed code -> no frame, no
+     *                                                          return sequence,
+     *                                                          nothing to catch
+     *   the lock is acquired by TRY, never by mutex_lock -> no call0 block
+     *
+     * We are pinned on entry (the blob was called with the lock held), so the
+     * task id can be read safely once and reused for the direct stores. */
+    int me = g_pinned;
+    if (me < 0) {
+        /* Not pinned: nothing to protect, so the simple path is correct. */
+        return (int32_t)w2c_call3((uint32_t)&osi_impl_queue_recv, (uint32_t)queue,
+                                  (uint32_t)item, 0u);
     }
-    /* Same shape as _semphr_take: try without blocking, and only if that
-     * fails spill the window, unpin and release so another context -- notably
-     * the blob's own task -- can run while we wait. Without this the pinned
-     * caller waits for a task the pin itself is preventing from running. */
-    if (w2c_call3((uint32_t)&osi_impl_queue_recv, (uint32_t)queue, (uint32_t)item, 0u)) {
-        return 1;
+
+    if (w2c_call3((uint32_t)&osi_impl_queue_recv, (uint32_t)queue,
+                  (uint32_t)item, 0u)) {
+        return 1;                       /* uncontended: no spill, no lock traffic */
     }
-    if (g_stub_ps_pre_spill == 0xFFFFFFFFu) {
-        uint32_t ps;
-        __asm__ volatile ("rsr.ps %0" : "=r"(ps));
-        g_stub_ps_pre_spill = ps;
-    }
-    {
-        uint32_t sp;
-        __asm__ volatile ("mov %0, a1" : "=r"(sp));
-        g_stub_sp_pre_spill = sp;
-        if (sp < g_stub_sp_min) { g_stub_sp_min = sp; }
-    }
-    blk_sample(0u); uf_sample(1u); of_sample(1u);
-    win_spill_all();
-    blk_sample(1u); uf_sample(2u); of_sample(2u);
-    /* [step 102] ppTask's save area is at (its sp + its 48-byte frame) - 16.
-     * Our caller IS ppTask, and a0 here is its return encoding, so its sp is
-     * one frame out from ours -- read it from our own base save area, which the
-     * spill has just written, and record the a0 slot the underflow will later
-     * read. Sampled here because this is the instant after the spill and before
-     * anything else runs. */
-    if (!g_sa_have) {
-        uint32_t my_sp;
-        __asm__ volatile ("mov %0, a1" : "=r"(my_sp));
-        uint32_t pp_sp = ((volatile uint32_t *)(my_sp - 12u))[0];   /* caller's sp */
-        if (pp_sp >= 0x3ff00000u && pp_sp < 0x40000000u) {
-            uint32_t sa = pp_sp + 48u - 16u;
-            g_sa_addr = sa;
-            g_sa_after_spill = ((volatile uint32_t *)sa)[0];
-            g_sa_have = 1u;
+
+    blk_sample(0u);
+    uint32_t rounds = 0u;
+    for (;;) {
+        /* Release, while still pinned -- mutex only, the pin stays ours. */
+        (void)w2c_call0f((uint32_t)&blob_unlock_only);
+
+        win_spill_all();                /* one live frame before we let go */
+        g_pinned = -1;                  /* UNPIN: a single store, from here */
+
+        osi_windowed_idle(4u, 120000u); /* wait in windowed frames, unpinned */
+
+        g_pinned = me;                  /* REPIN before any call0 excursion */
+
+        if (!w2c_call0f((uint32_t)&blob_trylock)) {
+            continue;                   /* someone else holds it; wait again */
+        }
+        if (w2c_call3((uint32_t)&osi_impl_queue_recv, (uint32_t)queue,
+                      (uint32_t)item, 0u)) {
+            blk_sample(2u);
+            return 1;
+        }
+        if (++rounds >= 400u) {         /* the forever-cap, unchanged in meaning */
+            blk_sample(2u);
+            return 0;
         }
     }
-    (void)w2c_call0f((uint32_t)&blob_unlock);
-    int32_t r = (int32_t)w2c_call3((uint32_t)&osi_impl_queue_recv, (uint32_t)queue,
-                                   (uint32_t)item, (uint32_t)block_time_tick);
-    blk_sample(2u);
-    (void)w2c_call0f((uint32_t)&blob_lock);
-    return r;
 }
 
 static uint32_t osi_s_queue_msg_waiting(void *queue)

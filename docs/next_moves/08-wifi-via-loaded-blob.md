@@ -6945,3 +6945,74 @@ is unproven, it converts a sleep into a spin, and keeping an unproven restructur
 on the failing path would make the next measurement harder to read.
 
 **Nothing has been on air.**
+
+---
+
+## Step 106 — the complete form, and it turns the fault into a clean reproducer
+
+Implemented the full version of step 104's fix (1), with the invariant stated
+exactly:
+
+```
+every call0 excursion runs PINNED            -> no switch can land in one
+every wait runs UNPINNED in WINDOWED frames  -> switches land where a1 belongs
+                                                to a windowed frame
+pin and unpin are DIRECT STORES from windowed code -> no frame, no return
+                                                      sequence, nothing to catch
+the lock is acquired by TRY, never mutex_lock      -> no call0 block
+```
+
+New in the kernel: `g_pinned` is no longer static (windowed code writes it
+directly), plus `blob_trylock()` and `blob_unlock_only()` — non-blocking halves,
+because `blob_lock()` reaches `mutex_lock()`, which blocks, and step 105 showed
+that is the same defect one level along.
+
+No regressions: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `wincollide`
+runs=118 wrong=0, `blobphy` rc=0.
+
+### The failure mode changed completely
+
+```
+exccause 29 (StoreProhibited)   epc 0x4008da92   excvaddr 0x00001000
+```
+
+**No double exception. Not in a window vector.** A first-level fault in our own
+code, and the instruction is exact:
+
+```asm
+4008da87  s32i.n a2, a6, 0          ; UNPIN   -- a6 = &g_pinned, correct here
+4008da89  call8  osi_windowed_idle  ; the unpinned wait
+4008da92  s32i.n a7, a6, 0          ; REPIN   -- a6 is now 0x1000
+```
+
+`a6` holds `&g_pinned` across the call, is caller-saved in this frame, and **did
+not survive**. That is the corruption itself, observed directly, in a single
+register, in code we wrote — rather than inferred from a window handler walking a
+broken chain eight steps later.
+
+### Why this is worth keeping
+
+For a hundred steps the fault has been visible only as a window handler
+dereferencing something it should not. It is now visible as a plain invariant
+violation with a one-line statement: *a register in a windowed frame did not
+survive a windowed call made while the task was unpinned.*
+
+That is a far better reproducer. It is first-level rather than a double
+exception, it names the exact register and the exact instruction pair either side
+of the call, and it does not depend on the underflow handler running at all.
+
+**The underlying defect is unchanged** — a frame's spill and reload across an
+unpinned window is losing register state — but it is now observable at the
+moment it happens instead of at the moment something trips over it.
+
+### What this does not do
+
+It does not fix `wifiinit`, and the failure is now at 1.0 s rather than 68 s
+because the spin-based wait cycles far faster than the old sleep. Neither number
+is a measure of progress through init.
+
+The obvious mitigation — re-derive `&g_pinned` after the wait instead of holding
+it in a register — would **mask** this, not fix it, and would throw away the
+clearest reproducer this investigation has produced. Left alone deliberately.
+
+**Nothing has been on air.**
