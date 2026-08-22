@@ -109,6 +109,24 @@ static void wake_all(uint32_t *mask)
  * this kernel can audit for that. A sleeping task woken early returns early; a
  * missed wake costs one tick of latency and the caller re-checks its condition
  * anyway. The pessimism is deliberate. */
+/* A ceiling on "wait forever".
+ *
+ * The driver passes OSI_MAX_DELAY for its main queue, which is correct FreeRTOS
+ * usage: the WiFi task sleeps until the ISR or a timer posts work. nat-os has
+ * neither yet -- _set_intr clamps and counts, the timer entries are stubs -- so
+ * nothing can ever post, and both the blob task and the caller that is waiting
+ * on it block permanently. Measured: the shell stops answering entirely.
+ *
+ * An infinite wait for an event that cannot occur is a hang, and a hang reports
+ * nothing. Capping it turns that into a timeout the driver already knows how to
+ * handle, and lets esp_wifi_init_internal return an error we can read. The cap
+ * is a bring-up scaffold, not a design: when interrupts are wired it should go,
+ * and the counter below is what will say whether it still fires. */
+#define OSI_FOREVER_CAP 400u        /* ~4 s at the current tick */
+
+uint32_t g_osi_capped;              /* times a "forever" wait was cut short */
+uint32_t g_osi_capped_where;        /* 1 = sem, 2 = queue_recv, 3 = evt, 4 = queue_send */
+
 static void wait_on(uint32_t *mask, uint32_t ticks)
 {
     int me = task_current();
@@ -294,6 +312,11 @@ int32_t osi_impl_queue_recv(void *h, void *item, uint32_t ticks)
         }
         crit_exit(crit);
         if (ticks != OSI_MAX_DELAY && spent >= ticks) {
+            return 0;
+        }
+        if (ticks == OSI_MAX_DELAY && spent >= OSI_FOREVER_CAP) {
+            g_osi_capped++;
+            g_osi_capped_where = 2u;
             return 0;
         }
         wait_on(&q->waiters_recv, 1u);

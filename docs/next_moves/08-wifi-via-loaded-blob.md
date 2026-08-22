@@ -5707,3 +5707,69 @@ just the first that changed one variable and watched whether the *evidence*
 followed the change rather than the story.
 
 **Nothing has been on air.**
+
+---
+
+## Step 86 — the hang is a wait for hardware that was never wired
+
+### Why it hangs
+
+`osi_impl_queue_recv` honours its timeout correctly. The driver simply passes
+`OSI_MAX_DELAY`, which is correct FreeRTOS usage: the WiFi task sleeps until an
+ISR or a timer posts work. nat-os has neither — `_set_intr` clamps and counts,
+the timer entries are stubs — so nothing can ever post.
+
+Both sides then block permanently: the blob task inside `_queue_recv`, and the
+shell inside `esp_wifi_init_internal` waiting on it. Measured — the shell stops
+answering the UART entirely.
+
+An infinite wait for an event that cannot occur is a hang, and a hang reports
+nothing at all.
+
+### The scaffold
+
+`OSI_FOREVER_CAP` (400 ticks, ~4 s) cuts a "forever" wait short and returns a
+timeout the driver already knows how to handle, with `g_osi_capped` counting how
+often it fires. This is bring-up scaffolding, not design: when interrupts are
+wired it comes out, and the counter is what will say whether it still triggers.
+
+It works. `blk-window` now reads `wake ws 0x00002800 wb 13` where it read
+`0xdeadbeef` before — the post-wait sample runs, so the blocking call returns.
+
+**Read with care.** Past this point the driver is doing *what it does when its
+queue times out*, not what it does normally. Anything downstream is informative
+about our OS and much weaker evidence about the driver.
+
+### The next fault
+
+```
+exccause 28 (LoadProhibited)   DEPC 0x400800d5   excvaddr 0x00000170
+DOUBLE EXCEPTION   epc1 0x4008c1da
+windowbase 1   windowstart 0x00000008   bit(base) CLEAR
+underflow : recovered a0 0x3ffd8f78 from save area 0x3ffb2810
+```
+
+`0x400800d5` is inside `_WindowUnderflow8` (vector at `0x400800c0`), faulting on
+a load through a near-null base.
+
+Two things stand out and neither should be run with yet:
+
+- `bit(base) CLEAR` — the current frame's own `WINDOWSTART` bit is *not* set,
+  which is an inconsistent window state rather than a merely surprising one.
+- the underflow recovered `0x3ffd8f78` as a return address, which is inside the
+  blob's `.bss` (`0x3ffd5018..0x3ffd90f8`) — data, not code.
+
+The retw ring is clean this run (`n=2` on every entry including #9), the slot
+watch reports `[sp+0] never diverged`, and `a0` is valid at save and restore. So
+the step-85 fix is holding and this is a different failure, not a return of the
+old one.
+
+### State
+
+```
+boot 11 PASS 0 FAIL   wintorture CORRECT   wincollide runs=121 wrong=0
+blobphy rc=0          blobtx force 0x00003004
+wifiinit  -- reaches deeper, faults in _WindowUnderflow8
+```
+
+**Nothing has been on air.**
