@@ -568,13 +568,55 @@ void osi_impl_timer_service(void)
 
 /* ---- memory ------------------------------------------------------------- */
 
-void *osi_impl_malloc(uint32_t n) { return heap_alloc(n ? n : 1u); }
-void  osi_impl_free(void *p)      { heap_free(p); }
+/* [step 127] What the radio actually asks for.
+ *
+ * The question is whether 79,680 B of heap is enough for an initialised WiFi
+ * stack, and it has never been answerable: init stops at OSI call 21, long
+ * before the driver allocates in earnest. These make the answer accumulate as
+ * init gets further, so the day it does complete the number is already there.
+ *
+ * Requests are recorded separately from the heap's own accounting on purpose.
+ * heap_high_water() is the truth about occupancy; g_osi_alloc_bytes is the
+ * truth about demand, and a large gap between them is fragmentation or churn
+ * rather than pressure. Neither substitutes for the other.
+ *
+ * The heap snapshot is taken inside the allocator rather than sampled later,
+ * because the peak this is looking for may not survive to any point a shell
+ * command could read it. */
+uint32_t g_osi_alloc_calls, g_osi_alloc_bytes, g_osi_alloc_max, g_osi_alloc_fails;
+uint32_t g_osi_free_calls;
+uint32_t g_osi_heap_used, g_osi_heap_hw, g_osi_heap_largest, g_osi_heap_minfree;
+
+static void osi_alloc_note(uint32_t n, const void *p)
+{
+    g_osi_alloc_calls++;
+    g_osi_alloc_bytes += n;
+    if (n > g_osi_alloc_max) { g_osi_alloc_max = n; }
+    if (!p) { g_osi_alloc_fails++; }
+
+    g_osi_heap_used    = heap_used_bytes();
+    g_osi_heap_hw      = heap_high_water();
+    g_osi_heap_largest = heap_largest_free();
+    {
+        uint32_t f = heap_free_bytes();
+        if (!g_osi_heap_minfree || f < g_osi_heap_minfree) { g_osi_heap_minfree = f; }
+    }
+}
+
+void *osi_impl_malloc(uint32_t n)
+{
+    void *p = heap_alloc(n ? n : 1u);
+    osi_alloc_note(n, p);
+    return p;
+}
+
+void  osi_impl_free(void *p)      { g_osi_free_calls++; heap_free(p); }
 
 void *osi_impl_calloc(uint32_t count, uint32_t size)
 {
     uint32_t n = count * size;
     uint8_t *p = heap_alloc(n ? n : 1u);
+    osi_alloc_note(n, p);
     if (p) {
         for (uint32_t i = 0; i < n; i++) {
             p[i] = 0;

@@ -274,6 +274,10 @@ volatile uint32_t g_qr_caller, g_qr_caller_raw;
 /* [step 115] spill-on-preemption outcome, reported from the one place that
  * already prints during a live wifiinit. Data only -- no call0 call. */
 extern volatile uint32_t g_pspill_count, g_pspill_bad, g_pspill_worst, g_pspill_post_ws;
+/* [step 127] the radio's memory demand, read as data -- no call0 call. */
+extern uint32_t g_osi_alloc_calls, g_osi_alloc_bytes, g_osi_alloc_max, g_osi_alloc_fails;
+extern uint32_t g_osi_free_calls, g_osi_heap_used, g_osi_heap_hw;
+extern uint32_t g_osi_heap_largest, g_osi_heap_minfree;
 extern void uart_puts(const char *s);
 extern void uart_put_dec(unsigned int v);
 volatile uint32_t g_qr_blk_calls, g_qr_blk_rounds, g_qr_timeouts;
@@ -871,6 +875,26 @@ static int32_t osi_s_queue_recv(void *queue, void *item, uint32_t block_time_tic
             (void)w2c_call1((uint32_t)&uart_put_dec, g_pspill_worst);
             (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" last_post_ws=");
             (void)w2c_call1((uint32_t)&uart_put_dec, g_pspill_post_ws);
+            (void)w2c_call1((uint32_t)&uart_puts,
+                            (uint32_t)"\n   [mem] alloc calls=");
+            (void)w2c_call1((uint32_t)&uart_put_dec, g_osi_alloc_calls);
+            (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" bytes=");
+            (void)w2c_call1((uint32_t)&uart_put_dec, g_osi_alloc_bytes);
+            (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" largest_req=");
+            (void)w2c_call1((uint32_t)&uart_put_dec, g_osi_alloc_max);
+            (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" fails=");
+            (void)w2c_call1((uint32_t)&uart_put_dec, g_osi_alloc_fails);
+            (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" frees=");
+            (void)w2c_call1((uint32_t)&uart_put_dec, g_osi_free_calls);
+            (void)w2c_call1((uint32_t)&uart_puts,
+                            (uint32_t)"\n   [mem] heap used=");
+            (void)w2c_call1((uint32_t)&uart_put_dec, g_osi_heap_used);
+            (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" high_water=");
+            (void)w2c_call1((uint32_t)&uart_put_dec, g_osi_heap_hw);
+            (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" min_free=");
+            (void)w2c_call1((uint32_t)&uart_put_dec, g_osi_heap_minfree);
+            (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" largest_free=");
+            (void)w2c_call1((uint32_t)&uart_put_dec, g_osi_heap_largest);
             (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)"\n");
         }
         rounds++;
