@@ -6455,3 +6455,59 @@ blobphy rc=0          wifiinit  -- runs ~68 s into init, faults in _WindowUnderf
 ```
 
 **Nothing has been on air.**
+
+---
+
+## Step 98 — our spill writes valid save areas; the defect is blob-path-specific
+
+`WINDOWSTART` going 7 -> 1 (step 32) proved frames left the register file. It
+never proved *what was written for them*. `_WindowUnderflow8` restores `a0` from
+`[sp-16]`, so after a correct spill that word must be a windowed return encoding
+for every frame on the chain.
+
+The blob-free probe now walks the chain from the spilled frame upward through the
+saved `a1` links and checks each `a0`:
+
+```
+spill: windowstart 0x0000aa8a (7 frames) -> 0x00000008 (1 frames)
+spill: walked 11 frames, 1 with a non-encoding a0   first 0x00000000 at 0x3ffbb640
+```
+
+**Ten of eleven frames carry a valid encoding.** The single exception is
+`0x00000000` at the end of the walk — the chain's terminus, where a zero is what
+an unwritten slot looks like and the walk stops anyway.
+
+So `win_spill_all` writes correct save areas, eleven frames deep, with no blob
+involved. Our window machinery is not the defect.
+
+### What that eliminates
+
+Combined with step 97, two assumptions underpinning the recent work are now
+measured rather than assumed:
+
+- `a12` survives every call0 callee on the bridge path (step 97), so step 85's
+  fix is sound.
+- The spill writes valid save areas for our own windowed code (here), so the
+  overflow handlers and `win_spill_all` are correct.
+
+The corrupt `a0` on the `_queue_recv` path is therefore **specific to the blob's
+own chain**, not a general failure of the spill, the bridges, the restore or the
+scheduler — each of which has now been individually cleared by measurement.
+
+### What remains, and what it would take
+
+A frame on the blob's chain has `a0` holding `&adc_ana_conf_org` where a return
+encoding belongs, with `a1` plausible and `a2`/`a3` code-shaped, reproducibly and
+at three different addresses across builds.
+
+Everything on our side of that boundary has been eliminated. What has *not* been
+examined is the blob's own frames: how deep its chain runs, whether it uses
+CALL12 (112 sites in the image), and whether any of its functions manipulate `a0`
+in ways a windowed frame permits but our spill assumptions do not anticipate.
+
+That is a different kind of work from the last twenty steps — reading vendor
+disassembly along a specific call path rather than instrumenting our own — and it
+should start from the return address the chain *should* have had, which
+`osi_s_queue_recv`'s caller supplies.
+
+**Nothing has been on air.**

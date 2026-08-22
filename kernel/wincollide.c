@@ -24,6 +24,7 @@ static volatile uint32_t g_runs, g_bad;
 /* Written by vendor_spilltest() in the windowed test file. */
 volatile unsigned int g_spill_ws_before;
 volatile unsigned int g_spill_ws_after;
+volatile unsigned int g_spill_walked, g_spill_bad, g_spill_bad_a0, g_spill_bad_at;
 static volatile int   g_spill_done;
 
 static unsigned int bitcount(unsigned int v)
@@ -66,6 +67,18 @@ void wincollide_entry(void)
         uart_puts(bitcount(g_spill_ws_after) == 1u
                   ? "   spill reduces to ONE frame as designed\n"
                   : "   SPILL DOES NOT REDUCE TO ONE FRAME\n");
+        uart_puts("   spill: walked ");
+        uart_put_dec(g_spill_walked);
+        uart_puts(" frames, ");
+        uart_put_dec(g_spill_bad);
+        uart_puts(" with a non-encoding a0");
+        if (g_spill_bad) {
+            uart_puts("  first ");
+            uart_put_hex(g_spill_bad_a0);
+            uart_puts(" at ");
+            uart_put_hex(g_spill_bad_at);
+        }
+        uart_puts("\n");
     }
 
     for (;;) {

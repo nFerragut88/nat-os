@@ -121,6 +121,7 @@ unsigned int vendor_torture(unsigned int depth, unsigned int spin_ms)
  * it again. Two numbers, no driver, no blob. */
 extern volatile unsigned int g_spill_ws_before;
 extern volatile unsigned int g_spill_ws_after;
+extern volatile unsigned int g_spill_walked, g_spill_bad, g_spill_bad_a0, g_spill_bad_at;
 extern void win_spill_all(void);
 
 unsigned int vendor_spilltest(unsigned int depth);
@@ -137,6 +138,32 @@ unsigned int vendor_spilltest(unsigned int depth)
         win_spill_all();
         __asm__ volatile ("rsr.windowstart %0" : "=r"(ws));
         g_spill_ws_after = ws;
+
+        /* [step 98] Did the spill write CORRECT save areas?
+         *
+         * WINDOWSTART going 7 -> 1 says frames left the register file. It does
+         * not say what was written for them. _WindowUnderflow8 restores a0 from
+         * [sp-16], so after a spill that word must be a windowed return encoding
+         * -- bit 31 set -- for every frame on the chain.
+         *
+         * Walks the chain from this frame's own sp upward through the saved a1
+         * links, checking each a0. No blob involved: if this fails, the spill is
+         * wrong for our own code too. */
+        {
+            unsigned int sp;
+            __asm__ volatile ("mov %0, a1" : "=r"(sp));
+            g_spill_bad = 0u;
+            g_spill_walked = 0u;
+            for (unsigned int k = 0; k < 12u; k++) {
+                if (sp < 0x3ff00000u || sp >= 0x40000000u) { break; }
+                unsigned int a0 = ((volatile unsigned int *)(sp - 16u))[0];
+                unsigned int a1 = ((volatile unsigned int *)(sp - 12u))[0];
+                g_spill_walked++;
+                if ((a0 >> 30) == 0u) { g_spill_bad++; if (!g_spill_bad_a0) { g_spill_bad_a0 = a0; g_spill_bad_at = sp; } }
+                if (a1 <= sp) { break; }        /* chain must ascend */
+                sp = a1;
+            }
+        }
         return 0u;
     }
 
