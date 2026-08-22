@@ -485,6 +485,20 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
         }
 
         {
+            extern volatile int g_lost_task;
+            extern volatile uint32_t g_lost_had, g_lost_grant, g_lost_bits;
+            uart_puts("  frames    : ");
+            if (g_lost_task < 0) { uart_puts("no task was ever granted less than it held"); }
+            else {
+                uart_puts("task "); uart_put_dec((unsigned)g_lost_task);
+                uart_puts(" held "); uart_put_hex(g_lost_had);
+                uart_puts(" granted "); uart_put_hex(g_lost_grant);
+                uart_puts(" LOST "); uart_put_hex(g_lost_bits);
+            }
+            uart_puts("\n");
+        }
+
+        {
             extern volatile int g_term_hit, g_term_by;
             extern volatile uint32_t g_term_was, g_term_now;
             uart_puts("  terminator: ");

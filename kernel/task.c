@@ -60,6 +60,10 @@ volatile uint32_t g_switch_sp;
 volatile int      g_phytop_task = -1;   /* who was saved at _phy_stack_top */
 volatile uint32_t g_phytop_epc, g_phytop_a0;
 
+static uint32_t   g_out_ws[TASK_MAX], g_out_base[TASK_MAX];
+volatile int      g_lost_task = -1;
+volatile uint32_t g_lost_had, g_lost_grant, g_lost_bits;
+
 static uint32_t   g_term_addr[TASK_MAX], g_term_val[TASK_MAX];
 volatile int      g_term_hit = -1, g_term_by = -1;
 volatile uint32_t g_term_was, g_term_now;
@@ -657,6 +661,10 @@ uint32_t task_schedule(uint32_t current_sp)
             }
         }
 
+        /* [step 94] What this task actually HELD on the way out. */
+        g_out_ws[g_current]   = ((const uint32_t *)current_sp)[TASK_FRAME_IDX_WSTART];
+        g_out_base[g_current] = ((const uint32_t *)current_sp)[TASK_FRAME_IDX_WBASE] & 15u;
+
         g_tasks[g_current].sp = current_sp;
         g_run_cycles[g_current] += now - g_slice_start;
 
@@ -1098,6 +1106,28 @@ uint32_t task_schedule(uint32_t current_sp)
         if (a0_in != 0u && a0_in < 0x40000000u && g_a0bad_in_task < 0) {
             g_a0bad_in_task = next;
             g_a0bad_in_val  = a0_in;
+        }
+    }
+
+    /* [step 94] ...and what the restore is about to GRANT it.
+     *
+     * The handler assigns `1 << saved_base | g_win_union`. Anything the task
+     * held at switch-out that is not in that grant is a frame the hardware will
+     * no longer believe in -- its window position free for another context, its
+     * registers reused, and an unwind that reaches it reading whatever now lives
+     * at that stack address. Step 93's account predicts this is non-zero for the
+     * blob task; if it is always zero, that account is wrong.
+     *
+     * Latched once, with the task, so it names rather than suggests. */
+    if (g_lost_task < 0 && g_out_ws[next] != 0u) {
+        uint32_t base_in = ((const uint32_t *)g_tasks[next].sp)[TASK_FRAME_IDX_WBASE] & 15u;
+        uint32_t grant   = (1u << base_in) | g_win_union;
+        uint32_t lost    = g_out_ws[next] & ~grant;
+        if (lost != 0u) {
+            g_lost_task  = next;
+            g_lost_had   = g_out_ws[next];
+            g_lost_grant = grant;
+            g_lost_bits  = lost;
         }
     }
 

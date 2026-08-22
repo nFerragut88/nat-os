@@ -6225,3 +6225,56 @@ grants — for the blob task specifically, which is the only multi-frame windowe
 program in the system.
 
 **Nothing has been on air.**
+
+---
+
+## Step 94 — the restore never drops a frame, and `bit(base) CLEAR` was never a clue
+
+### The discriminating test, run
+
+Every switch now compares what a task held on the way out against what the
+restore is about to grant it — `1 << saved_base | g_win_union` — and latches the
+first shortfall with the task named:
+
+```
+frames : no task was ever granted less than it held
+```
+
+**Never.** Not once, across an entire `wifiinit` run to the fault at 68 seconds.
+
+Step 93's account is refuted, and with it step 80's mechanism: frames are not
+being disowned by the restore. That is the eleventh account in this
+investigation that fitted all the evidence available at the time and was wrong.
+
+### A false clue, removed
+
+Every dump of this fault reports `bit(base) CLEAR`, and steps 88, 92 and 93 each
+treated that as evidence of an inconsistent window state.
+
+It is not. `retw` rotates `WINDOWBASE` back to the caller's position and takes an
+underflow *precisely because* that position's `WINDOWSTART` bit is clear — that
+is the mechanism by which a spilled frame gets reloaded from memory. The panic
+handler reads the window state from inside the underflow handler, so
+`bit(base) CLEAR` is the **normal, expected** condition there.
+
+Reading it as an anomaly put a false plank under three steps of reasoning. Worth
+recording as its own class: *a value that is abnormal in one context and routine
+in another, read without asking which context produced it.*
+
+### What that leaves
+
+If no frames are lost and the bit is legitimately clear, then the frame at
+`0x3ffb2810` **was** spilled, and its save area **was** written — by the overflow
+handler, with that frame's real `a0`. And the value there is `0x3ffd8f78`, a
+pointer into the blob's `.bss`.
+
+So the question narrows again, and this time away from the scheduler entirely:
+**why would a windowed frame's `a0` be a data pointer at spill time?** Either the
+blob keeps a non-return value in `a0` across a call — legal in call0 code, not in
+windowed code — or the frame being spilled was not windowed and something marked
+it live anyway.
+
+That is answerable by disassembling the blob around the return address the chain
+*should* have had, which is static work on the image and needs no board time.
+
+**Nothing has been on air.**
