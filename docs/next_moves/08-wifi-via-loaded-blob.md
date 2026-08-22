@@ -8648,4 +8648,62 @@ mine and are recorded as such.
 Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0, `wifiinit` no
 fault and no reset.
 
+## Step 134 — the valid flag changes nothing; the unpopulated-slot account is wrong
+
+One word per task, set at the end of the save, checked before the restore. Step
+133 named it as the indicated fix.
+
+```
+boot 11 PASS 0 FAIL        wintorture FAIL/PANIC
+blobphy rc=0               wifiinit   PANIC
+```
+
+**Byte-for-byte the same as step 133.** Reverted; suite green with the save pass
+still in.
+
+### What is now excluded
+
+Step 133's account was: a task scheduled for the first time has a slot of zeros,
+the restore writes those zeros over windows 1–3, and with the union gone nothing
+hands the frames back. Skipping the restore for an unwritten slot makes that
+impossible — and the result did not move at all.
+
+**So restoring an unpopulated slot is not the defect.** That was a plausible,
+specific, testable account and it is now retired. It cost one build, which is
+what a hypothesis of that shape should cost.
+
+### What the shape of the result says
+
+Boot passes 11 of 11 with the full restore active. That is not a small thing: the
+restore runs on every switch during startup, across ten tasks, and startup is
+clean. Whatever is wrong is **specific to the windowed paths** — `wintorture` and
+`wifiinit` — and not to the mechanism of copying 64 registers per switch.
+
+The distinguishing feature of those two paths is the only one left standing: they
+are the paths where **more than one window is live at a time**. Every other task
+runs call0 with a single frame, and for those the restore demonstrably works.
+
+Which suggests the next thing to read is not another hypothesis but the same
+instrument that settled step 129 — a diff, this time on the **restore** side:
+save a task's slot, let it be scheduled, and compare the register file it comes
+back with against the slot it should have come back with. That turns "the
+windowed paths fail" into "this register, this window, this offset", exactly as
+step 129 turned "the pair is wrong" into "a0, and here is why".
+
+### Position after six builds
+
+Tier B is not working. What is established:
+
+- the save is in, green, per-task, and proven bit-exact (steps 129, 131);
+- the union deletion is required and correct (steps 132, 133);
+- the restore's placement after `wsr.windowbase` is right (boot proves it);
+- the restore's *contents* are wrong, and it is **not** the unpopulated-slot case;
+- 3,072 bytes, exactly as costed.
+
+Four accounts of the restore failure have now been proposed and three retired.
+The remaining work is a measurement, not another attempt.
+
+Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0, `wifiinit` no
+fault and no reset.
+
 **Nothing has been on air.**
