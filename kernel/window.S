@@ -969,6 +969,21 @@ x20_windowed:
     movi    a9, g_x20_post_ws
     s32i    a10, a9, 0
 
+    /* [step 138] Tell the bookkeeping what the wipe just did.
+     *
+     * The comment above is right that these bits must not be put back -- the
+     * registers behind them are gone. But g_win_mask[] still records those
+     * frames as owned, so the next restore ORs them straight back in via
+     * g_win_union, re-marking frames whose contents this excursion destroyed.
+     * That is the phantom of step 124: a bit set for a window holding nothing.
+     *
+     * A flag rather than the array itself, because g_win_mask is static to
+     * task.c and the clearing wants to happen where the scheduler can see it. */
+    movi    a9, g_win_disowned
+    movi    a10, 1
+    s32i    a10, a9, 0
+
+
     l32i    a0, a1, 0
     retw.n                          /* THE TEST INSTRUCTION */
     .size x20_windowed, . - x20_windowed
@@ -1172,6 +1187,20 @@ phy_stack_call:
     wsr.windowstart a11
     rsync
 
+    /* [step 138] Tell the bookkeeping what the wipe just did.
+     *
+     * The comment above is right that these bits must not be put back -- the
+     * registers behind them are gone. But g_win_mask[] still records those
+     * frames as owned, so the next restore ORs them straight back in via
+     * g_win_union, re-marking frames whose contents this excursion destroyed.
+     * That is the phantom of step 124: a bit set for a window holding nothing.
+     *
+     * A flag rather than the array itself, because g_win_mask is static to
+     * task.c and the clearing wants to happen where the scheduler can see it. */
+    movi    a9, g_win_disowned
+    movi    a11, 1
+    s32i    a11, a9, 0
+
     mov     a10, a3
     mov     a11, a4
     mov     a12, a5
@@ -1191,6 +1220,20 @@ phy_stack_call:
     sll     a11, a11
     wsr.windowstart a11
     rsync
+
+    /* [step 138] Tell the bookkeeping what the wipe just did.
+     *
+     * The comment above is right that these bits must not be put back -- the
+     * registers behind them are gone. But g_win_mask[] still records those
+     * frames as owned, so the next restore ORs them straight back in via
+     * g_win_union, re-marking frames whose contents this excursion destroyed.
+     * That is the phantom of step 124: a bit set for a window holding nothing.
+     *
+     * A flag rather than the array itself, because g_win_mask is static to
+     * task.c and the clearing wants to happen where the scheduler can see it. */
+    movi    a9, g_win_disowned
+    movi    a11, 1
+    s32i    a11, a9, 0
 
     l32i    a9,  a1, 24
     wsr.ps  a9

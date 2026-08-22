@@ -144,6 +144,14 @@ static uint32_t g_win_mask[TASK_MAX];
 static uint8_t  g_win_base[TASK_MAX];   /* the base each claim was made at */
 volatile uint32_t g_win_union;          /* read by _handler_level3 */
 
+/* [step 138] Set by the WINDOWSTART wipes in window.S -- phy_stack_call and
+ * x20_windowed -- which overwrite registers belonging to other tasks' frames
+ * and then disown the bits. Without this, g_win_mask still claims those frames
+ * and the restore hands them back: a bit for a window whose contents are gone,
+ * which is exactly step 124's phantom. */
+volatile uint32_t g_win_disowned;
+uint32_t g_disown_hits;
+
 /* [X5 experiment] last multi-frame sighting at a park point. See
  * spill_before_parking. 0xFFFFFFFF = never seen (WS is 16-bit, WB <= 15). */
 /* [X8 DIAGNOSTIC CLAMP -- NOT A FIX] count of parks where the forced
@@ -847,6 +855,14 @@ uint32_t task_schedule(uint32_t current_sp)
                 g_of_bad_frame = frame;
                 g_of_bad_when  = 3u;          /* 3 = caught by the scheduler */
             }
+        }
+
+        /* [step 138] An excursion destroyed frames it did not own. Believe it. */
+        if (g_win_disowned) {
+            for (int t = 0; t < TASK_MAX; t++) { g_win_mask[t] = 0u; }
+            g_win_union   = 0u;
+            g_win_disowned = 0u;
+            g_disown_hits++;
         }
 
         /* Claim what this task changed while it ran. */

@@ -8881,4 +8881,55 @@ size:
 **No code changed in this step.** Suite: boot 11 PASS 0 FAIL, `wintorture`
 CORRECT, `blobphy` rc=0, `wifiinit` no fault and no reset.
 
+## Step 138 — option (1) is in and harmless, and the bench cannot judge it
+
+The three `WINDOWSTART` wipes in `window.S` now set `g_win_disowned`, and
+`task_schedule` clears `g_win_mask[]` and `g_win_union` when it sees the flag.
+Three stores in assembly and five lines of C, making the bookkeeping believe what
+the wipe already did.
+
+**Pin on:** boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0,
+`blobtx force` 0x3004, `wifiinit` no fault. No regression.
+
+**Pin off:** identical to step 121's baseline.
+
+```
+frames : task 5 held 0x0000aa8a granted 0x00000008 LOST 0x0000aa82
+exccause 28   epc 0x40080155
+```
+
+### Why that is not a verdict on option (1)
+
+`LOST 0x0000aa82` is **frame loss** — six windows held and not granted back —
+which is the shared-register-file problem. Option (1) does not address it and was
+never going to: it targets the phantom, a bit set for a window whose *contents*
+are gone, which is a different defect.
+
+With the pin off, frame loss dominates and fails first. So the bench cannot
+isolate the phantom while the register file is still shared. **Step 137's account
+remains untested**, not refuted.
+
+That is the answer to "is Tier B still worth it", and it is a firmer yes than
+before: **Tier B is now a prerequisite for testing the phantom fix at all**, not
+merely a competing approach to it. The order is forced —
+
+1. Tier B, so tasks stop losing frames and `LOST` reaches zero;
+2. *then* the phantom becomes the first failure rather than the second, and
+   option (1) becomes testable.
+
+### What is kept, and on what basis
+
+Option (1) stays in. It is green across the full suite, it costs three stores,
+and it makes `g_win_union` honest about something `phy_stack_call`'s own comment
+says must not be put back. **It is retained as a correctness alignment, not as a
+verified fix** — nothing has shown it changes any outcome, and the log should not
+later mistake its presence for evidence.
+
+`g_disown_hits` counts the wipes, so the next pin-off run can say whether the
+path is even exercised during `wintorture` — which is worth knowing before
+believing any of this.
+
+Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0, `wifiinit` no
+fault and no reset.
+
 **Nothing has been on air.**
