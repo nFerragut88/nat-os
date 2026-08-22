@@ -8530,4 +8530,60 @@ frame, delete `g_win_mask`/`g_win_union`/the grant, then `BLOB_PIN_DISABLE 1` an
 `wintorture` **read with its control line** (step 120) against step 121's
 baseline of an immediate `IllegalInstruction`.
 
+## Step 132 — the restore cannot be enabled while the union grant exists
+
+Restore added at `.Lresume`, after the last `call0`, indexed by `g_current` --
+by then the incoming task. Structurally the mirror of step 131's save.
+
+**Boot drops to 10 PASS and `wintorture` fails.** Reverted to the save-only
+state, which is green.
+
+### Why, and it is the same lesson as step 130
+
+The restore writes windows 1–3 from the **incoming** task's slot. For a task that
+has never been switched out, that slot is zeros — so the restore erases whatever
+those windows held.
+
+Under the current design that is fatal, because the restore also still computes
+`(1 << base) | g_win_union` and hands tasks back frames that are **expected to
+have survived in the register file**. Two contradictory models of who owns the
+register file are now both live: per-task slots say "your windows come from
+memory", the union says "your windows are still in the file where you left them".
+The first erases what the second promises.
+
+So step 2 and step 3 of UM-NATOS-043 §8 — "switch the restore over" and "delete
+the bookkeeping" — **cannot be separated.** Enabling the per-task restore
+*requires*, in the same build:
+
+- taking `WINDOWBASE`/`WINDOWSTART` from the saved register file rather than from
+  the frame, and
+- deleting the `| g_win_union` grant,
+
+because the union's promise is exactly what the restore invalidates.
+
+### The pattern worth naming
+
+This is the third time the plan has assumed two pieces were separable when the
+mechanism couples them:
+
+- §8.1 — save and restore, separable only once `ROTW` removed the clobber;
+- step 130 — identity pair before per-task slots, when the pair straddles a
+  switch;
+- here — restore before deleting the union, when the union is what the restore
+  contradicts.
+
+Each was a sequencing error in a plan I wrote, found by building it. The code has
+been sound at every step since 129; **the ordering has been the recurring
+defect**, and the reason is consistent: I keep decomposing by *what the change
+touches* rather than by *what the mechanism guarantees*.
+
+The remaining Tier B work is therefore **one build, not three**: restore +
+window-state-from-slot + union deletion, together, judged on `wintorture` with
+the pin off and its control line read (step 120) against step 121's baseline.
+That is a bigger single step than this log prefers, and it is what the mechanism
+requires.
+
+Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0, `wifiinit` no
+fault and no reset. The save pass from step 131 remains in and green.
+
 **Nothing has been on air.**
