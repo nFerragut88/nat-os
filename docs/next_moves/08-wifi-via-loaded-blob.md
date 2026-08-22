@@ -6570,3 +6570,63 @@ corrupt, its stack pointer is the one being handed to us, and its chain is the
 one the underflow is walking.
 
 **Nothing has been on air.**
+
+---
+
+## Step 100 — the save area is `ppTask`'s own, and only `a0` is wrong
+
+`ppTask`'s prologue and call profile, from the vendor image:
+
+```
+4036baec <ppTask>:
+4036baec  entry a1, 48            <- a 48-byte frame
+...
+entry 1   retw 1
+call8 13  callx8 21
+call4 0   call12 0   callx4 0   callx12 0
+```
+
+A single windowed function, 177 instructions, **CALL8 exclusively** — no CALL12
+anywhere, which retires the "the blob uses call widths our spill does not
+anticipate" strand before it was ever pursued.
+
+### The arithmetic closes
+
+```
+ppTask sp   0x3ffb27e0
++ frame           48
+=           0x3ffb2810     <- exactly the corrupt save area address
+```
+
+So the save area at `0x3ffb2810` describes **`ppTask`'s own** `a0..a3`, and its
+`a1` slot holds `0x3ffb27e0` — `ppTask`'s stack pointer, correct. The layout is
+right, the frame is the right frame, and the address is where it should be.
+
+**Only `a0` is wrong**, and that is now established by arithmetic rather than by
+resemblance.
+
+### What `a0` should contain
+
+`ppTask` is the function `blob_task_create` was handed, so the chain into it is
+`blob_task_entry` -> `blob_lock` -> `rom_call3` -> `call8` -> `ppTask`. Its `a0`
+should therefore be a windowed return encoding into `rom_call3` — a `0x8008....`
+value, since our kernel lives at `0x4008xxxx` and CALL8 sets bits 31:30 to `10`.
+
+The save area holds:
+
+```
+[a9-16]  0x3ffd8f78   a blob .bss global          <- a0, wrong
+[a9-12]  0x3ffb27e0   ppTask's sp                 <- a1, correct
+[a9-8]   0x8008d950   a 0x8008.... encoding       <- a2
+[a9-4]   0x4008c5b4   a kernel code address       <- a3
+```
+
+A value of exactly the shape `a0` should have is sitting two slots along. That is
+either a coincidence of what `ppTask` happened to hold in `a2`, or the save area
+is shifted — and the two are distinguishable by reading `[a9-20]` and `[a9]` as
+well, extending the window rather than arguing about it.
+
+Recorded as an observation, not a conclusion. Twelve accounts have died here, and
+several died on exactly this kind of pattern-match.
+
+**Nothing has been on air.**
