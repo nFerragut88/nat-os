@@ -7861,4 +7861,64 @@ for what this operation even does.
 Reverted. Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0,
 `wifiinit` no fault and no reset.
 
+## Step 120 — wintorture has been proving nothing, and says so in its own output
+
+Looking for a reporting surface on a passing run, rather than a panicking one,
+turned up this as the whole of `wintorture`'s output:
+
+```
+spun 60 ms with 8 windowed frames live, interrupts ENABLED
+switches during the call: 0  -- NONE, so this proves nothing
+checksum 1632 expected 1632  CORRECT
+```
+
+**Zero switches during the call.** The command's own control says the run is
+meaningless, in a line written when the test was built, and every check in steps
+115-119 grepped for `CORRECT` and discarded it.
+
+### What this invalidates
+
+`wintorture` was the judge in four consecutive steps. It cannot be:
+
+- **"wintorture CORRECT" on HEAD does not establish that windowed frames survive
+  preemption.** No preemption occurs during the windowed section, so the
+  checksum only proves the frames survive *not* being switched away from.
+- **"wintorture PANIC" with the sweep in was a real regression, but not about
+  wintorture's frames.** No switch happens inside its windowed call, so the
+  sweep's single firing -- task 5, seven frames -- came from elsewhere in the
+  system. The sweep broke something real; the evidence never said what.
+- Step 116's plan ("wintorture with the switch count as the control") was right
+  in form and I then failed to read the control it named.
+
+The reason is the pin: `rom_call3` takes the blob lock, which pins, so the tick
+declines to switch for the whole call. `wintorture` and the pin were introduced
+to answer different questions and have been silently cancelling each other out.
+
+### The instrument catalogue gains its worst entry
+
+UM-NATOS-041 section 7 and UM-NATOS-042 section 8 record ten and then twelve
+instruments that reported what they could not observe. This one is different in
+kind and worse: **the instrument reported its own invalidity correctly, in
+plain language, and the filter reading it threw that line away.** Nothing was
+wrong with the measurement. Four steps of conclusions rested on a `grep` for the
+word CORRECT.
+
+The rule this earns: when a test prints a control, the control is part of the
+result. A pass/fail extracted without it is not a reading.
+
+### What to do next
+
+`BLOB_PIN_DISABLE` already exists in `kernel/blobcall.c` and turns the pin off.
+That is the missing test bench, and the order is now:
+
+1. `BLOB_PIN_DISABLE 1`, no sweep. Confirm `switches during the call` is
+   non-zero and that `wintorture` fails -- reproducing UM-NATOS-038 section
+   12.3's measurement, which is the baseline every later claim needs.
+2. Add the sweep, on the task's own stack below the switch frame (step 119).
+3. Judge it on the checksum WITH the switch count beside it, both quoted.
+
+Nothing was built or changed in this step. Suite unchanged: boot 11 PASS 0 FAIL,
+`wintorture` CORRECT-but-meaningless, `blobphy` rc=0, `wifiinit` no fault and no
+reset.
+
 **Nothing has been on air.**
