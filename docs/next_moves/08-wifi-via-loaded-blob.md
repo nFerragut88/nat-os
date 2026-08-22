@@ -6399,3 +6399,59 @@ check: a call0 callee must preserve `a12..a15`, and the blob's own functions are
 what runs on the far side.
 
 **Nothing has been on air.**
+
+---
+
+## Step 97 — `a12` is preserved; step 85's assumption is sound
+
+Step 85 moved the windowed `a0` into `a12` on the grounds that the call0 ABI
+makes `a12..a15` callee-saved. That was an assumption about every function
+reached through the bridges, and it had never been tested. `w2c_call3` now
+verifies it directly — a restored `a0` whose top two bits are zero is not a
+windowed return encoding, so `a12` did not survive — and latches the offender.
+
+```
+a12 check : a12 survived every call0 callee
+```
+
+Never fires, across a full run to the fault. **The assumption holds** and step 85
+is sound.
+
+Worth noting what the callee actually is on this path: `w2c_call3` reaches
+`osi_impl_queue_recv`, which is *our* code compiled `-mabi=call0`, not the blob's.
+The blob is on the other side — it calls *into* `osi_s_queue_recv`, which is
+windowed. So the question "does the blob preserve `a12`" does not arise on this
+particular path; what was tested is the callee that is actually there.
+
+### The fault is unchanged, and the save area still does not decode
+
+```
+uf frame @0x3ffb2820   a0 0x3ffd8f78   a1 0x3ffb27e0   a2 0x8008d850   a3 0x4008c4dc
+```
+
+Neither candidate frame explains all four words:
+
+- If this were **`w2c_call3`'s** frame, after its argument shuffle `a2` would be
+  the queue handle and `a3` the item pointer. They are a windowed return encoding
+  and a `w2c_call3` code address instead.
+- If it were **`osi_s_queue_recv`'s** frame, `a2`/`a3` would be its own arguments
+  (queue, item) and `a0` a return encoding into blob code. `a0` is a blob `.bss`
+  global.
+
+So `a1` is consistently plausible, `a2`/`a3` are consistently code-shaped, and
+`a0` is consistently a data pointer — across three separate runs at three
+different addresses as the build shifts. That regularity is itself information:
+the pattern is stable, so it is produced by something systematic, not by a race.
+
+A shifted or misaligned view of the save area would produce exactly this shape,
+and it has not been ruled out. Neither has the possibility that the frame belongs
+to a function neither of the two considered.
+
+### Standing
+
+```
+boot 11 PASS 0 FAIL   wintorture CORRECT   wincollide runs=121 wrong=0
+blobphy rc=0          wifiinit  -- runs ~68 s into init, faults in _WindowUnderflow8
+```
+
+**Nothing has been on air.**

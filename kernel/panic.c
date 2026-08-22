@@ -616,6 +616,16 @@ uart_puts("  pre-spill : ps ");
                     uart_puts("\n");
                 }
                 {
+                    extern volatile uint32_t g_a12bad[3];
+                    uart_puts("  a12 check : ");
+                    if (!g_a12bad[0]) { uart_puts("a12 survived every call0 callee"); }
+                    else {
+                        uart_puts("CLOBBERED -- came back "); uart_put_hex(g_a12bad[1]);
+                        uart_puts(" after callee "); uart_put_hex(g_a12bad[2]);
+                    }
+                    uart_puts("\n");
+                }
+                {
                     /* [step 96] The WHOLE save area, read HERE.
                      * The vector slot is 64 bytes and could not hold the
                      * extra loads -- it failed to link. It does not need

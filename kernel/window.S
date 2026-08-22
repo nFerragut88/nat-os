@@ -819,6 +819,24 @@ w2c_call3:                          /* uint32_t w2c_call3(fn, a, b, c) */
     mov     a4, a5
     callx0  a8
     mov     a0, a12
+    /* [step 97] Did a12 survive the call0 callee?
+     *
+     * Step 85 moved the windowed a0 into a12 because the call0 ABI makes
+     * a12..a15 callee-saved. That is an assumption about every function reached
+     * through this bridge, and it has never been tested. A restored a0 whose top
+     * two bits are zero is not a windowed return encoding, which means a12 did
+     * not survive -- latched once, with the callee's address, so the offender is
+     * named rather than inferred. */
+    extui   a9, a0, 30, 2
+    bnez    a9, 3f                  /* valid encoding: a12 survived */
+    movi    a10, g_a12bad
+    l32i    a11, a10, 0
+    bnez    a11, 3f                 /* already latched */
+    movi    a11, 1
+    s32i    a11, a10, 0
+    s32i    a0,  a10, 4             /* what a12 came back as */
+    s32i    a8,  a10, 8             /* the callee we had just run */
+3:
     retw
     .size w2c_call3, . - w2c_call3
 
@@ -1209,6 +1227,12 @@ g_xseq:
     .global g_xring
 g_xring:
     .space 128
+
+/* [step 97] {latched, a0-from-a12, callee} -- did a12 survive a call0 callee? */
+    .align 4
+    .global g_a12bad
+g_a12bad:
+    .word 0, 0, 0
 
 /* [step 83] {frame, stamped, latched, was, now, frame_at_fault} */
     .align 4
