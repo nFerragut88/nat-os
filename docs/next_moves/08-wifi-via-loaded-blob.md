@@ -5387,3 +5387,62 @@ identifiable rather than assumed. The same shape Tortoise used for the restore
 history in X7, which is the one instrument in this codebase that has not lied.
 
 **Nothing has been on air.**
+
+---
+
+## Step 80 — the ring names it: six window bits dropped across a switch
+
+Eight entries of `{seq, a0, a1, WINDOWSTART}` recorded at `w2c_call2`'s `retw`
+itself, so the newest entry *is* the faulting crossing:
+
+```
+#5  a0 0x8008cfa8  n=2  a1 0x3ffb9240  ws 0x00002aaa
+#6  a0 0x8008d08d  n=2  a1 0x3ffb9240  ws 0x00002aaa
+#7  a0 0x8008d03c  n=2  a1 0x3ffb9220  ws 0x00002aaa
+#8  a0 0x8008d14a  n=2  a1 0x3ffb9240  ws 0x00002aaa
+#9  a0 0x0000000d  n=0  a1 0x3ffb9240  ws 0x00002000
+```
+
+### Step 78 was right; step 79 was the wrong measurement
+
+`a0 = 0x0000000d`, callinc **n=0**, on the fatal crossing. That is step 78's
+original claim, and step 79 retracted it on the strength of a sticky latch that
+never fired.
+
+The latch was placed at the **reload** (`l32i a0, a1, 0`); the ring records at
+the **retw**. `a0` is legal at the reload and illegal a few instructions later —
+which is only possible if a context switch lands between them. The latch was
+correct about its own instant and wrong about the one that matters, and step 79
+generalised from it. Ninth instrument, same family, and the first where the flaw
+was *where* it sampled rather than *what* it read.
+
+Both retractions now stand corrected: the callinc-0 condition is real and
+measured on this silicon, not recalled.
+
+### What actually happens
+
+`ws` drops **0x00002aaa -> 0x00002000** between the last good crossing and the
+fatal one. `0x2aaa` is bits 1,3,5,7,9,11,13 — seven live frames. `0x2000` is bit
+13 alone. Six frames' bits are gone, `a1` is unchanged, so it is the same frame
+on the same stack.
+
+That is the restore path narrowing a resumed task to its own base bit and
+dropping its caller frames — steps 56-57's ownership rule. Their registers are
+then reused by whatever ran in between, so when the task resumes and executes
+`retw`, `a0` is no longer a return address.
+
+It also matches step 55 exactly: windowed frames do not survive preemption. The
+pin exists to stop that, and `last osi : entry 29 _queue_recv` is the blocking
+path — which by design spills and calls `blob_unlock()` before waiting, releasing
+the pin with frames still live.
+
+### Next
+
+The spill is supposed to reduce the task to one live frame before it parks, which
+would make the one-bit restore correct. The ring says it had seven bits live at
+crossings #5-#8. So either the spill did not run on this path, or it ran and the
+frames were re-established before the switch. `sbp-last`/`sbp-post` already
+report the spill's own view; correlating them with `g_xseq` is the next
+measurement, and the ring is already tagged for it.
+
+**Nothing has been on air.**

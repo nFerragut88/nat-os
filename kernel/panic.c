@@ -470,6 +470,26 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
             extern volatile uint32_t g_stub_ps_pre_spill;
                 {
         extern uint32_t g_a0trace[4];
+        {
+            extern uint32_t g_xseq, g_xring[8][4];
+            uart_puts("  retw ring : (newest last)\n");
+            for (int k = 7; k >= 0; k--) {
+                uint32_t idx = (g_xseq - (uint32_t)k) & 7u;
+                if (!g_xring[idx][0]) { continue; }
+                uart_puts("     #");
+                uart_put_dec(g_xring[idx][0]);
+                uart_puts("  a0 ");
+                uart_put_hex(g_xring[idx][1]);
+                uart_puts("  n=");
+                uart_put_dec((g_xring[idx][1] >> 30) & 3u);
+                uart_puts("  a1 ");
+                uart_put_hex(g_xring[idx][2]);
+                uart_puts("  ws ");
+                uart_put_hex(g_xring[idx][3]);
+                uart_puts("\n");
+            }
+        }
+
         uart_puts("  a0 trace  : ");
         if (!g_a0trace[0]) { uart_puts("no illegal a0 latched\n"); }
         else {

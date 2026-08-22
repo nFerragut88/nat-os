@@ -686,6 +686,30 @@ w2c_call2:                          /* uint32_t w2c_call2(fn, a, b) */
     s32i    a10, a11, 4
     rsr.windowbase  a10
     s32i    a10, a11, 8
+    /* [step 80] RING, not a singleton.
+     *
+     * Every previous capture here was a global overwritten by the next healthy
+     * crossing, so the dumped value need not belong to the fatal one -- that
+     * error was made twice in this file (steps 78, 79). Eight entries of
+     * {seq, a0, a1, WINDOWSTART} recorded at the retw itself, so the newest
+     * entry IS the faulting crossing: identifiable rather than assumed. Same
+     * shape as X7's restore history, the one instrument here that has not lied.
+     *
+     * idx*16 with no multiply: addx8 twice. */
+    movi    a10, g_xseq
+    l32i    a9, a10, 0
+    addi    a9, a9, 1
+    s32i    a9, a10, 0
+    extui   a11, a9, 0, 3           /* idx = seq & 7 */
+    movi    a10, g_xring
+    addx8   a10, a11, a10
+    addx8   a10, a11, a10           /* g_xring + idx*16 */
+    s32i    a9, a10, 0
+    s32i    a0, a10, 4              /* a0 exactly as the retw will see it */
+    s32i    a1, a10, 8
+    rsr.windowstart a9
+    s32i    a9, a10, 12
+
     retw
     .size w2c_call2, . - w2c_call2
 
@@ -1082,6 +1106,15 @@ g_phy_call_mask:
     .global g_a0trace
 g_a0trace:
     .word 0, 0, 0, 0
+
+/* [step 80] 8 x {seq, a0, a1, ws} recorded at w2c_call2's retw. */
+    .align 4
+    .global g_xseq
+g_xseq:
+    .word 0
+    .global g_xring
+g_xring:
+    .space 128
 
 /* [X20 experiment] probe state, zero-init. Read back by the "x20" shell
  * command; layout mirrors what each store site above documents. */
