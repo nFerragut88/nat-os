@@ -8751,4 +8751,68 @@ in this step says how.
 Reverted. Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0,
 `wifiinit` no fault and no reset. Step 131's save pass remains in and green.
 
+## Step 136 — the restore is provably correct: all 64 landed
+
+Instrument fixed the way step 123's was: both sides captured in the same event.
+The prologue now **holds off re-saving** while `g_diff_pending` is set, so the
+slot survives untouched until the comparison runs. One task carries one stale
+slot for one switch, which costs nothing while no slot is load-bearing.
+
+```
+restore : all 64 landed
+```
+
+**Every one of the 64 registers matches the slot exactly.** First positive
+verification in the whole Tier B effort, and it settles the largest open
+question: the save writes the right values (step 129, `a1` bit-exact), and the
+restore puts them back — correctly, in the right physical registers, for all four
+windows.
+
+So of the four pieces, three are now *proven* rather than merely not-crashing:
+
+| piece | state |
+|---|---|
+| save, per-task, before any `call0` | proven (129, 131) |
+| restore, after `wsr.windowbase` | **proven — all 64 landed** |
+| union deletion | required and correct (132, 133) |
+| **what else the switch needs** | **the remaining defect** |
+
+### The fault changed, and that is the finding
+
+`wintorture` still panics, but no longer as `_WindowUnderflow12 + 0x15`
+(`exccause 28`). It is now:
+
+```
+exccause 0 (IllegalInstruction)   epc 0x6eeeeeee
+```
+
+That is **step 121's pin-off baseline signature** — a `retw` whose `a0` came back
+as stack fill, `(PC & 0xC0000000) | (0xEEEEEEEE & 0x3FFFFFFF)`. With the pin still
+ON.
+
+Which says what remains. The register *file* is now private per task, and
+demonstrably so. `WINDOWSTART` is not: it still comes from the frame, and the
+phantom bit step 124 found is still in it. Tier B confines the registers; it does
+nothing about a bit claiming a frame that never existed. Restoring 64 correct
+registers alongside a `WINDOWSTART` that lies still produces an underflow into an
+unwritten save area.
+
+UM-NATOS-043 §6 said this plainly — "It does not eliminate the phantom window" —
+and predicted containment rather than repair. What it did not anticipate is that
+with `g_win_union` deleted, the phantom stops being survivable: the union was
+handing frames back and papering over it. So Tier B and the phantom have to be
+solved together, not in sequence.
+
+### Position after eight builds
+
+Not working, and now for a *named* reason rather than an unknown one. The
+mechanism is verified end to end; what defeats it is the same defect steps 53,
+54, 57, 124 and 126 kept arriving at from different directions — a `WINDOWSTART`
+bit that no frame backs, whose source has never been found.
+
+That is the next thing, and it is no longer avoidable by design choice.
+
+Reverted. Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0,
+`wifiinit` no fault and no reset. Step 131's save pass remains in and green.
+
 **Nothing has been on air.**
