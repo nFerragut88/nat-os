@@ -203,6 +203,9 @@ extern void blob_unlock(void);
 extern void win_spill_all(void);
 extern unsigned int osi_windowed_idle(unsigned int depth, unsigned int spin);
 extern int  osi_qpoll_w(void *h, void *item, uint32_t *woke);   /* windowed: CALL8, no bridge */
+extern int      blob_trylock_w(int me);                        /* windowed */
+extern uint32_t blob_unlock_w(int me);                         /* windowed */
+extern void     blob_wake_waiters(void);                       /* address only */
 extern void osi_impl_wake_senders(void);                        /* address only */
 extern void blob_trylock(void);        /* address only -- through the bridge */
 extern void blob_unlock_only(void);
@@ -713,8 +716,13 @@ static int32_t osi_s_queue_recv(void *queue, void *item, uint32_t block_time_tic
     blk_sample(0u);
     uint32_t rounds = 0u;
     for (;;) {
-        /* Release, while still pinned -- mutex only, the pin stays ours. */
-        (void)w2c_call0f((uint32_t)&blob_unlock_only);
+        /* [step 111] Release through WINDOWED code -- no bridge, no callx0, so
+         * nothing moves this frame's a1. The wake it may owe goes back through
+         * a bridge below, pinned. */
+        {
+            uint32_t owed = blob_unlock_w(me);
+            if (owed) { (void)w2c_call1((uint32_t)&blob_wake_waiters, owed); }
+        }
 
         win_spill_all();                /* one live frame before we let go */
 
@@ -744,7 +752,7 @@ static int32_t osi_s_queue_recv(void *queue, void *item, uint32_t block_time_tic
         pinp = &g_pinned;               /* RE-DERIVE, do not trust a register */
         *pinp = me_v;                   /* REPIN before any call0 excursion */
 
-        if (!w2c_call0f((uint32_t)&blob_trylock)) {
+        if (!blob_trylock_w(me)) {      /* [step 111] windowed, no bridge */
             continue;                   /* someone else holds it; wait again */
         }
         {

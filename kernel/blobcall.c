@@ -70,7 +70,9 @@ volatile uint32_t g_win_in[3];       /* [X18] same triple right after entry */
 volatile uint32_t g_win_mid[3];      /* [X19] same triple right before callx0 */
 volatile uint32_t g_win_seq;         /* [X18] crossings of w2c_call2 */
 
-static mutex_t g_blob_mutex;
+/* NOT static: vendor/windowed/blob_lock_w.c takes and releases it from windowed
+ * code, which is how the blocking path avoids a call0 bridge. See that file. */
+mutex_t g_blob_mutex;
 static int     g_ready;
 
 static uint32_t g_calls;             /* blob entries made through here */
@@ -183,6 +185,19 @@ void blob_lock(void)   { blob_call_init(); mutex_lock(&g_blob_mutex); blob_pin()
  * identified. These let windowed code do the waiting itself: try, and if it
  * fails, go back to windowed frames and try again. Neither blocks, so both are
  * safe to call while pinned. */
+/* Wake the tasks blob_unlock_w() reported as owed.
+ *
+ * Split out for the same reason as osi_impl_wake_senders: task_unblock() is
+ * call0 and reaches the scheduler, so the windowed release cannot do it. This
+ * runs from call0 with the caller pinned, where no switch can land inside. */
+void blob_wake_waiters(uint32_t owed);
+void blob_wake_waiters(uint32_t owed)
+{
+    for (int id = 0; id < TASK_MAX && owed; id++, owed >>= 1) {
+        if (owed & 1u) { task_unblock(id); }
+    }
+}
+
 int  blob_trylock(void)      { blob_call_init(); return mutex_try_lock(&g_blob_mutex); }
 void blob_unlock_only(void)  { mutex_unlock(&g_blob_mutex); }
 void blob_unlock(void) { blob_unpin(); mutex_unlock(&g_blob_mutex); }

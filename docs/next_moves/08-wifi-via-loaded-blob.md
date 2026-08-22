@@ -7263,3 +7263,69 @@ Fix (2) applied to *one* callee removes one bridge. The bridges themselves are
 the pattern, and there are four of them.
 
 **Nothing has been on air.**
+
+---
+
+## Step 111 — all four bridges removed from the blocking path
+
+`vendor/windowed/blob_lock_w.c`, compiled windowed: `blob_trylock_w()` and
+`blob_unlock_w()` operate on `g_blob_mutex` directly — a compare and a store
+under a masked interrupt, nothing else — so the stub takes and releases the lock
+without a `callx0` anywhere.
+
+Two things it deliberately does not do, both for the same reason:
+
+- **No waking.** `task_unblock()` is call0 and reaches the scheduler.
+  `blob_unlock_w()` returns the waiter mask and the caller does the wake through
+  a bridge, pinned, where no switch can land inside.
+- **No ownership hand-off.** `mutex_unlock()` transfers the lock to the
+  longest-waiting task so a spinner cannot steal it, and that needs
+  `task_unblock()`. Here the lock is released and a waiter takes it on its next
+  try. The cost is fairness, not correctness, and the blocking path retries in
+  windowed frames anyway.
+
+`_Static_assert(sizeof(mutex_w_t) == 28)` guards the layout, because a silent
+wrong-offset write is the failure mode that cost this project a session on
+`wifi_init_config_t`.
+
+### Result
+
+```
+boot 11 PASS 0 FAIL   wintorture CORRECT   blobphy rc=0
+wifiinit  PANIC at 1.1 s
+  a0-16 0xeeeeeeee   a1-12 0xeeeeeeee   a2-8 0x00000000   a3-4 0x4008b8c6
+  +0 0x3ffd8f78      +4 0x3ffbdaa8
+```
+
+The blocking path now contains **no call0 bridge at all**, and the fault
+persists — but the signature has changed in a way that matters. The save area is
+`STACK_FILL` in both the `a0` and `a1` slots: not call0 locals, not a stale
+pointer, but **memory nothing ever wrote**.
+
+Every previous variant of this fault read *something* out of that slot — `spent`,
+`0xff`, a blob global. Reading fill means the frame the handler is unwinding to
+was never spilled there at all, which is a different failure from every earlier
+one and is not explained by anything in steps 103-110.
+
+### What is established
+
+Fix (2) is now applied to the whole blocking path — the queue poll, the lock, the
+unlock — and the bridges it was meant to eliminate are gone. **That was not
+sufficient**, and the diagnosis in step 104 therefore does not account for the
+whole fault, however well it accounted for the `spent` identity in step 103.
+
+Two readings remain open, and they are distinguishable:
+
+1. The blob's own frames have the same problem, and removing our bridges only
+   removed our contribution. `ppTask` is windowed throughout (step 100), but what
+   it calls may not be.
+2. The frame is genuinely never spilled — a gap in coverage rather than a
+   corrupted value — which would point back at when `win_spill_all` runs relative
+   to frames created after it.
+
+Reading (2) is testable with the instruments already present: the spill probe
+walks the chain and reports each frame's `a0`. Pointing it at the blocking path
+rather than the synthetic one would say whether the frame in question is on the
+chain the spill actually covers.
+
+**Nothing has been on air.**
