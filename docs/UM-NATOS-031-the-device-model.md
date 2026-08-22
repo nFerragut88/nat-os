@@ -326,3 +326,5 @@ reproducible and unexplained; and transmit still does not reach the air.
 ---
 
 *Twelve services, and then any number.*
+
+Written by: Hare

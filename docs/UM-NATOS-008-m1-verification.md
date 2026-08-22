@@ -357,3 +357,5 @@ were not arriving. Eleven self-tests pass, zero fail.
 - UM-NATOS-004 — memory map; `.vectors` now leads the IRAM region
 - UM-NATOS-006 — M0 verification, whose assertions still pass here
 - UM-NATOS-007 §3 — M1 as originally specified
+
+Written by: Hare

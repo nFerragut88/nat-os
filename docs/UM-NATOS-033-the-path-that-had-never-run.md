@@ -245,3 +245,5 @@ path is one of Chapter 12's "mechanisms that had never fired", and this is the
 second time it has been fired deliberately. The screen renders and every line is
 legible. The fix is invisible by construction, which is the correct outcome for
 removing a constant the driver was already compensating for.
+
+Written by: Hare

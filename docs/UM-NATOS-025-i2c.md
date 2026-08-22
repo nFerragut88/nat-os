@@ -145,3 +145,5 @@ Everything else on this board is spoken for: display (2, 12–15, 21), touch (25
 - UM-NATOS-024 — the ADC, and the discipline of fetching constants rather than
   recalling them, which this driver's pad definitions follow
 - `kernel/i2c.c` — the driver, the self-test and the scan
+
+Written by: Hare

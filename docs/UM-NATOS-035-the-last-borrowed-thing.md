@@ -601,3 +601,5 @@ GPIO0 low at reset and does not depend on anything in flash.
 *Filed 2026-08-19. Written, flashed, verified on hardware the same session.
 Revision 1.1 corrected §8's verification claim; revision 1.2 added §14, because
 the report explained itself well and documented itself badly.*
+
+Written by: Hare

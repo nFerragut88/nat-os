@@ -289,3 +289,5 @@ Open, and explicitly not claimed:
 - **No image identity.** Until it exists this is containment, not security (§3).
 - **`store` banks are keyed on a reusable slot** (§3). Same fix, same
   prerequisite.
+
+Written by: Hare

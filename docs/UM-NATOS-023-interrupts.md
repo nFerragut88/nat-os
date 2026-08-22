@@ -222,3 +222,5 @@ semantics to get wrong.
 - `kernel/intr.c` — routing, dispatch, the hang defence, `irqtest`
 - `kernel/gpio.h` — the interrupt registers, and the measured bit 15
 - `kernel/touch.c` — the masking of §5.2/§5.3 and the disabled wait of §7
+
+Written by: Hare

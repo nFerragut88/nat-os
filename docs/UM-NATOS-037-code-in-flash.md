@@ -267,3 +267,5 @@ them looked like a bug that depended on WiFi.
 ---
 
 *Filed 2026-08-19.*
+
+Written by: Hare

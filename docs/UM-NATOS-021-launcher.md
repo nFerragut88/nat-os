@@ -438,3 +438,5 @@ strip reports which. Confirmed on hardware by the user.
   `desktop_overlay_into()`
 - `kernel/raycast.c` — calls the overlay immediately before its blit
 - `kernel/shell.c` — `shell_launch()`, the single lookup path
+
+Written by: Hare

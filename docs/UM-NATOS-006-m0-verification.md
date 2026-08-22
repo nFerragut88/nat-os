@@ -150,3 +150,5 @@ segment loading would overwrite the executing bootloader, and M1 will cross it.
 - UM-NATOS-002 — boot chain and interpretation of the ROM trace
 - UM-NATOS-004 §5 — the open overlap risk
 - UM-NATOS-005 §8 — capture harness
+
+Written by: Hare

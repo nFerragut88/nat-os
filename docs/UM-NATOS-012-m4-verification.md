@@ -364,3 +364,5 @@ slice would only make an application slower for asking.
 - `kernel/vm.h` — ISA definition and isolation rationale
 - `kernel/vm.c` — dispatch loop and checked accessors
 - `tools/vasm.py` — the producer
+
+Written by: Hare

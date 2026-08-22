@@ -251,3 +251,5 @@ one's flash step. Copying both into `nat-os/boot/` removes the coupling — abou
 - UM-NATOS-003 §6 — why M2 is tractable
 - UM-NATOS-004 §5 — the risk blocking M1
 - UM-NATOS-006 — what M0 established
+
+Written by: Hare

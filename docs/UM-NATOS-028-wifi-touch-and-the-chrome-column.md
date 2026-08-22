@@ -798,3 +798,5 @@ If it does not repair, the remaining suspect is the SPI/DMA stream itself.
 ---
 
 *Filed under: things that were not the WiFi's fault.*
+
+Written by: Hare

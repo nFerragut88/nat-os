@@ -415,3 +415,5 @@ needs the instrument to exist before the first frame does.
 *The Scheduler was right about the priorities and wrong about the transfer. The
 Touch Controller never got its context switch. `drawskip` is at 4,844 and
 climbing.*
+
+Written by: Hare

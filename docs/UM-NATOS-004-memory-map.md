@@ -204,3 +204,5 @@ the other party's link script, not to move our own.
 - UM-NATOS-002 §4 — measured boot trace containing the overlapping load address
 - UM-NATOS-006 — hardware confirmation of the addresses in §3.1
 - ESP32 Technical Reference Manual — system address mapping
+
+Written by: Hare

@@ -451,3 +451,5 @@ tasks with no common boundary to batch across.
 - `kernel/critical.h` — masking, and why it is wrong for long sections
 - `kernel/mutex.c` — handoff, the `granted` bitmask, and §5
 - `kernel/console.c` — message-granularity arbitration
+
+Written by: Hare

@@ -361,6 +361,15 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
                 uart_puts(" ");
                 uart_put_hex(((volatile uint32_t *)fsp)[w]);
             }
+            /* [X10 experiment] upper half of the interrupted context: a8-a15.
+             * With a clean window grant and a clean sweep, a corrupted return
+             * chain has to show up HERE -- garbage link registers in the
+             * deeper frames of the faulting task's saved view. */
+            uart_puts("\n  saved hi  @ ");
+            for (int w = 8; w < 16; w++) {
+                uart_puts(" ");
+                uart_put_hex(((volatile uint32_t *)fsp)[w]);
+            }
             uart_puts("\n");
         }
 
@@ -586,7 +595,7 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
                 extern volatile uint32_t g_ring_task;
                 extern volatile uint32_t g_rout_seq;
                 uart_puts("  win-ring   :");
-                for (uint32_t k = 8u; k >= 1u; k--) {
+                for (uint32_t k = 24u; k >= 1u; k--) {
                     if (g_rout_seq < k) { continue; }
                     uint32_t s   = g_rout_seq - k + 1u;
                     uint32_t idx = s & 63u;

@@ -187,3 +187,5 @@ than diverting it, so attaching a host does not change what the panel shows.
 - UM-NATOS-017 §7.4 — the calibration fix that made 80 px keys a choice
 - `kernel/term.c` — the app; `kernel/shell.c` — `shell_run_line()`;
   `kernel/uart.c` — the tee
+
+Written by: Hare

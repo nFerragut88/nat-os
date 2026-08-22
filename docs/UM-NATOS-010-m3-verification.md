@@ -300,3 +300,5 @@ not the constraint; cache configuration is.
 - `kernel/heap.c` — allocator and `heap_check()` invariants
 - `kernel/arena.c` — arena lifecycle and `arena_contains()`
 - `kernel/linker.ld` — `_heap_start` / `_heap_end` placement
+
+Written by: Hare

@@ -259,3 +259,5 @@ Two cases, both of which would otherwise create a channel nobody asked for:
 - `kernel/app.c` — table, lifecycle, and the single `retire()` path
 - `kernel/shell.c` — console
 - `tools/app_rogue.vasm` — the escape attempt of §5.2
+
+Written by: Hare

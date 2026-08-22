@@ -532,3 +532,5 @@ its own viewport — which is the entire point of the syscall.
 - UM-NATOS-016 §3.4 — the frozen marker, the first instance of the §6 pattern
 - `kernel/gpio.h` — the two-bank split of §3.1
 - `kernel/touch.c` — PENIRQ detection, PD handling, and the measured mapping
+
+Written by: Hare

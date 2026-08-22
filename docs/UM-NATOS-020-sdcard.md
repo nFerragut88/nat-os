@@ -186,3 +186,5 @@ byte-addressing path that a modern card would have skipped entirely.
 - UM-NATOS-018 — the flash record, the other half of storage
 - `kernel/sd.c` — `spi1_xfer` equivalent, the pad table note, per-stage codes
 - `kernel/sd.h` — mode reasoning and the error enum
+
+Written by: Hare

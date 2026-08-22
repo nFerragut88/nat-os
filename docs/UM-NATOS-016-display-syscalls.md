@@ -266,3 +266,5 @@ looking, and it distinguishes "confined" from "confined so far".
 - UM-NATOS-009 §6 — the other standing rule about unconditional register writes
 - `kernel/task.c` — `task_yield()` and the earlier-only rule
 - `kernel/vm.c` — `vp_fill`, `vp_text`, `copy_string`, and the escape counters
+
+Written by: Hare

@@ -532,3 +532,5 @@ self-tests all still passing.
 - UM-NATOS-009 §6 — the multi-variable bring-up this driver's staging avoids
 - `kernel/gpio.h` — the two layers that must agree before a pin drives anything
 - `kernel/display.c` — SPI, init sequence, span rendering, font
+
+Written by: Hare

@@ -253,3 +253,5 @@ absence.**
 
 *The Scheduler was right that the renderer was mid-transfer. He was wrong about
 which one, and so was everyone else.*
+
+Written by: Hare

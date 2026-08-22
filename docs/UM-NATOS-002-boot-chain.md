@@ -247,3 +247,5 @@ the banner.
 - UM-NATOS-006 — Milestone 0 Verification Report
 - **UM-NATOS-035 — The Last Borrowed Thing** (L1 replaced; §14 is the reference)
 - **UM-NATOS-036 — The Half-Speed Board** (what §6 item 3 cost when unread)
+
+Written by: Hare

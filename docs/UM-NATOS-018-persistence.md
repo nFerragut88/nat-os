@@ -362,3 +362,5 @@ the flash sees more erases per hour than this report's wear analysis assumed.
 - UM-NATOS-015 §5 — the SPI2 user-mode path this driver's framing borrows from
 - `kernel/flash.c` — `spi1_xfer()`, register save/restore, `FLASH_USER_CLOCK`
 - `kernel/store.c` — record layout, checksum, load/save
+
+Written by: Hare

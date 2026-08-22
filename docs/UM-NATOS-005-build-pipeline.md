@@ -160,3 +160,5 @@ Recorded because both are easy to hit again.
 - UM-NATOS-003 — why `-mabi=call0` is mandatory and cannot be mixed
 - UM-NATOS-004 — the memory map the linker script implements
 - UM-NATOS-002 §8 — reproduction in the context of the boot chain
+
+Written by: Hare

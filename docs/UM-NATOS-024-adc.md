@@ -159,3 +159,5 @@ It happened to be right. The point is that it is no longer an assumption.
   first-conversion defect this driver's discard exists to avoid
 - UM-NATOS-023 §5.1, §5.4 — the two earlier recalled-layout failures
 - `kernel/adc.c` — the driver and all four probes
+
+Written by: Hare

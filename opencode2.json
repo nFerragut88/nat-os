@@ -1,0 +1,88 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "default_agent": "os-dev",
+  "instructions": [
+    "AGENTS.md",
+    "docs/README.md"
+  ],
+  "references": {
+    "docs": {
+      "path": "docs",
+      "description": "Engineering reports for nat-os. Read docs/README.md for index and reading order."
+    },
+    "kernel": {
+      "path": "kernel",
+      "description": "Kernel source — scheduler, heap, VM, drivers, display, touch, storage."
+    }
+  },
+  "provider": {
+    "ollama": {
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "baseURL": "http://localhost:11434/v1"
+      },
+      "models": {
+        "qwen3-coder:30b": {
+          "id": "qwen3-coder:30b",
+          "tool_call": true,
+          "reasoning": true
+        }
+      }
+    }
+  },
+  "agent": {
+    "os-dev": {
+      "description": "Bare-metal ESP32 OS developer. Writes C and Xtensa assembly for the nat-os kernel.",
+      "mode": "primary",
+      "model": "ollama/qwen3-coder:30b",
+      "permission": {
+        "edit": "allow",
+        "bash": {
+          "git *": "allow",
+          ".\\build.ps1*": "allow",
+          "powershell *": "allow",
+          "*": "ask"
+        }
+      }
+    },
+    "os-debugger": {
+      "description": "Read-only embedded debugger. Investigates panics, crashes, and serial output without modifying code.",
+      "mode": "subagent",
+      "model": "ollama/qwen3-coder:30b",
+      "permission": {
+        "edit": "deny",
+        "bash": {
+          "git log*": "allow",
+          "git diff*": "allow",
+          "git show*": "allow",
+          "*": "ask"
+        }
+      }
+    }
+  },
+  "command": {
+    "build": {
+      "description": "Build the nat-os image. Usage: /build [-WiFi] [-Board cyd|lora32]",
+      "template": "Execute the workspace build script '.\\build.ps1' with your optional flags: $ARGUMENTS. Review output console logs and fix compilation bugs if any fail.",
+      "agent": "os-dev"
+    },
+    "flash": {
+      "description": "Build and flash to ESP32. Usage: /flash [-Port COM5] [-Board cyd]",
+      "template": "Compile and flash the firmware binary using your flags: $ARGUMENTS. Verify port connections and confirm when upload completes successfully.",
+      "agent": "os-dev"
+    },
+    "panic": {
+      "description": "Investigate a kernel panic or crash. Usage: /panic <panic message or serial output>",
+      "template": "Analyze this specific kernel crash log or serial panic dump: $ARGUMENTS. Read relevant scheduler, heap, or driver source files via references to track down the root fault.",
+      "agent": "os-debugger"
+    }
+  },
+  "permission": {
+    "edit": "ask",
+    "bash": {
+      "git *": "allow",
+      ".\\build.ps1*": "allow",
+      "*": "ask"
+    }
+  }
+}

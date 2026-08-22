@@ -419,3 +419,5 @@ stop on a missed match rather than writing an unchanged file.
 - `kernel/store.c` — `store_record_fault()`, written from the panic path
 - `kernel/display.c` — `display_enter_panic_mode()`, `draw_lock()`, the bounded FIFO wait
 - `kernel/panic.c` — `panic_screen()` and the ordering in `halt_forever()`
+
+Written by: Hare

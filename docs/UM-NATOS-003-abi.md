@@ -157,3 +157,5 @@ commands; the driver uses it to select compatible internal libraries.
 - UM-NATOS-001 §4 — application isolation model
 - UM-NATOS-005 — full compiler and linker flag list
 - Xtensa Instruction Set Architecture Reference Manual — window exception behaviour
+
+Written by: Hare

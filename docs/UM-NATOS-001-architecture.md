@@ -164,3 +164,5 @@ driver tasks, not for applications.
 - UM-NATOS-003 — Xtensa ABI Selection
 - UM-NATOS-004 — Memory Map and Allocation Policy
 - ESP32 Technical Reference Manual, "System Address Mapping"
+
+Written by: Hare

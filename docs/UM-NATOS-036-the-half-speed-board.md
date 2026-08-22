@@ -357,3 +357,5 @@ rounded to "80 MHz confirmed".
 What the measurement establishes is not the third significant figure. It is that
 the board runs at roughly 80 and not at roughly 40, measured by something with no
 stake in the answer.
+
+Written by: Hare

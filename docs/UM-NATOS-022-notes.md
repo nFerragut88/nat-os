@@ -249,3 +249,5 @@ nothing *enforces* the agreement, it is merely adjacent.
   VM program
 - `kernel/notes.c` — keypad, multi-tap, the two views
 - `kernel/messages.c` — the flash-backed store
+
+Written by: Hare

@@ -503,3 +503,5 @@ not recorded as one.
 - `kernel/vectors.S` — handler, frame layout, and the `EXCM` clear of §6.6
 - `kernel/task.c` — scheduler, fabricated frames, and `task_select_probe()`
 - `kernel/watchdog.c` — disable sequence and register addresses
+
+Written by: Hare

@@ -149,3 +149,5 @@ consequences arrive later than the change:
 - UM-NATOS-010 §7.3 — the analysis that made this a prerequisite for M4
 - UM-NATOS-001 §3 — the borrowed-L1 boundary this change leans on
 - `kernel/linker.ld` — `drom` region and `.flash.rodata`
+
+Written by: Hare

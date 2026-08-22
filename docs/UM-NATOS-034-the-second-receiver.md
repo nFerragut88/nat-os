@@ -2507,3 +2507,5 @@ identical. The correct statement is narrower:
 That is a materially better description of where the fault could be hiding, and
 it reopens exactly one thing Â§25 declared exhausted: the possibility that the
 reconstruction is incomplete in a way no end-state comparison can show.
+
+Written by: Hare

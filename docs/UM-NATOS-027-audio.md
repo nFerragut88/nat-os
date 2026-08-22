@@ -155,3 +155,5 @@ open notes, tap keys  -> the same
 - UM-NATOS-023 §5.1, §7 — the halted-CPU delivery, and why PCM waits on interrupts
 - UM-NATOS-024 §3 — the ADC attached to nothing; the same shape as §3.3
 - `kernel/audio.c` — the driver, and the probes with their limits recorded
+
+Written by: Hare

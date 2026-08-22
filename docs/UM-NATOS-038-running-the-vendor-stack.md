@@ -655,3 +655,5 @@ The rule: **a constant read once and carried forward is an assumption.** It
 survived precisely because the reasoning on top of it was careful.
 
 **Nothing has been on air.**
+
+Written by: Hare
