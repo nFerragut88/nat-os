@@ -615,6 +615,31 @@ uart_puts("  pre-spill : ps ");
                     uart_put_hex(ob);
                     uart_puts("\n");
                 }
+                {
+                    /* [step 96] The WHOLE save area, read HERE.
+                     * The vector slot is 64 bytes and could not hold the
+                     * extra loads -- it failed to link. It does not need
+                     * to: excsave5 already holds the frame address, so
+                     * the panic handler can read all four words itself.
+                     *
+                     * a0 alone could not distinguish "the blob stored
+                     * data in a0" from "this memory was never a save
+                     * area". A real spilled frame has a plausible stack
+                     * pointer at [sp-12]; four words of ordinary data
+                     * means it never was one. */
+                    uint32_t fa;
+                    __asm__ volatile ("rsr.excsave5 %0" : "=r"(fa));
+                    if (fa >= 0x3ff00000u && fa < 0x40000000u) {
+                        const uint32_t *w = (const uint32_t *)(fa - 16u);
+                        uart_puts("  uf frame  : @");
+                        uart_put_hex(fa);
+                        uart_puts("  a0 "); uart_put_hex(w[0]);
+                        uart_puts("  a1 "); uart_put_hex(w[1]);
+                        uart_puts("  a2 "); uart_put_hex(w[2]);
+                        uart_puts("  a3 "); uart_put_hex(w[3]);
+                        uart_puts("\n");
+                    }
+                }
                 uart_puts("  underflow : recovered a0 ");
                 uart_put_hex(ua0);
                 uart_puts(" from save area ");

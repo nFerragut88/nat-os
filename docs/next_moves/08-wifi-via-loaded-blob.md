@@ -6345,3 +6345,57 @@ a real spilled frame has a plausible `a1` at `[sp-12]`, and the step-83 watch
 already showed how to read a range rather than a single word.
 
 **Nothing has been on air.**
+
+---
+
+## Step 96 — it IS a save area, on our own blocking path, and only `a0` is wrong
+
+The vector slot is 64 bytes and would not hold the extra loads — the build
+failed to link, which is a useful reminder that these handlers have no room.
+They do not need any: `excsave5` already carries the frame address, so the panic
+handler reads the whole save area itself.
+
+```
+uf frame @0x3ffb2810   a0 0x3ffd8f78   a1 0x3ffb27d0   a2 0x8008d7f0   a3 0x4008c490
+```
+
+Resolved:
+
+| slot | value | what it is |
+|---|---|---|
+| `a0` | `0x3ffd8f78` | `&adc_ana_conf_org`, a blob `.bss` global — **wrong** |
+| `a1` | `0x3ffb27d0` | a valid stack pointer inside task 9 — plausible |
+| `a2` | `0x8008d7f0` | a windowed return encoding into **`osi_s_queue_recv`** |
+| `a3` | `0x4008c490` | **`w2c_call3`** |
+
+### This kills step 93
+
+Three of the four words are exactly what a genuine spilled frame holds, and two
+of them name our own code on the blocking path — `osi_s_queue_recv` calls
+`w2c_call3` to reach `osi_impl_queue_recv`. That memory **is** a save area, it
+belongs to a frame we created, and step 93's account — "never a save area at
+all" — is refuted.
+
+Twelfth account retired. It fitted the evidence available at step 93 because only
+one word had been read; reading four settled it immediately. The lesson is not
+subtle: *a single word cannot distinguish a corrupt frame from something that was
+never a frame, and step 83 had already demonstrated reading a range.*
+
+### What is left
+
+One register, in a frame on a path we own, holding a pointer to a PHY global
+where a return address belongs. Everything around it is intact: the stack pointer
+is right, the neighbouring saved registers are right, the frame is where it
+should be, the restore never dropped it, and the chain terminates.
+
+So the question is now as small as it has been: **what writes `&adc_ana_conf_org`
+into `a0` of a windowed frame on the `_queue_recv` blocking path?**
+
+`w2c_call3` is the bridge in that frame, and since step 85 it keeps the windowed
+`a0` in `a12` across `callx0` rather than on the stack — a change made to
+`w2c_call0f`, `w2c_call1`, `w2c_call2` and `w2c_call3` together. Whether `a12`
+survives *this* callee is the obvious next question, and it is one instruction to
+check: a call0 callee must preserve `a12..a15`, and the blob's own functions are
+what runs on the far side.
+
+**Nothing has been on air.**
