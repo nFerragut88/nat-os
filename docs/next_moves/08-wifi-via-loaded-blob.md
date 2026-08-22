@@ -8093,4 +8093,61 @@ Instrumentation kept: one `wsr` in the interrupt prologue and a latch in
 `task_schedule`, no behaviour change. Suite: boot 11 PASS 0 FAIL, `wintorture`
 CORRECT, `blobphy` rc=0, `blobtx force` 0x3004, `wifiinit` no fault and no reset.
 
+## Step 124 — the sweep is spilling a frame that does not exist
+
+Sweep back on the bench, pin off, and the whole panic dump read rather than a
+chosen field. Two lines answer it:
+
+```
+overflow  : prev good frame sp 0xeeeeeeee   this frame sp 0x3ffb9180  recovered base 0x3ffb9290
+underflow : recovered a0 0x00000000 from save area 0xeeeeeeee
+```
+
+The underflow followed an `a1` link of **`0xeeeeeeee`** -- stack poison used as
+an address -- and recovered `a0 = 0`. And during the sweep itself, an overflow
+found the previous frame's `sp` already poison.
+
+So the defect is not placement, not addressing, and not what the sweep wrote.
+**One of the seven windows in `pre_ws 0x0000aa8a` is not a live frame at all.**
+Its `a1` is stack fill. The sweep spills it because WINDOWSTART says a frame
+lives there, the overflow handler writes through the poison it holds, and the
+matching underflow later reads back a garbage chain -- `epc 0x6eeeeeee` is that
+`a0` jumped to.
+
+This is the same "ownerless phantom frame set" the X7 comment in vectors.S names
+and that steps 53, 54 and 57 kept measuring from the other side. It was survivable
+while the frames stayed in registers and `g_win_union` handed the bits back --
+nothing ever walked them. A sweep walks them, which is why spill-on-preemption
+surfaces a defect that predates it.
+
+### What that means for the fix
+
+`win_spill_all` cannot be pointed at WINDOWSTART and trusted, because
+WINDOWSTART is not a list of live frames -- it is a list of windows with their
+bit set, and at least one of those has never held a real frame. Either:
+
+1. the phantom bit must be found and stopped at its source, which is the older
+   and larger problem; or
+2. the sweep must refuse to spill a window whose `a1` is not inside the owning
+   task's stack -- a check the kernel already knows how to make, since
+   `task_schedule` runs exactly that test on saved stack pointers ("bad sp:
+   none -- every saved sp was inside its own stack").
+
+(2) is testable immediately and does not require understanding (1). If the sweep
+skips phantom windows and `wintorture` then passes on the bench with `LOST` still
+zero, the phantom is isolated rather than merely avoided, and (1) becomes a
+separate, bounded question.
+
+### One instrument note
+
+`ih a1 : raw=0 calc=0 AGREE ws=0 wb=0 bit(base)=0` -- step 123's latch never
+fired this run. Its condition is `ws & (ws - 1)` read from the frame, and the
+sweep rewrites that word to a single bit before `task_schedule` sees it. Exactly
+the self-erasure of step 116, in a probe written two steps after learning it.
+With the sweep present the latch must read `g_pspill_pre_ws` instead. Step 123's
+AGREE stands -- it was measured with no sweep in.
+
+Reverted. Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0,
+`wifiinit` no fault and no reset.
+
 **Nothing has been on air.**
