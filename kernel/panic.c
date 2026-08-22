@@ -649,6 +649,17 @@ uart_puts("  pre-spill : ps ");
                         extern volatile uint32_t g_pspill_walked, g_pspill_badframes;
                         extern volatile uint32_t g_pspill_bad_a0, g_pspill_bad_at;
                         extern volatile uint32_t g_pspill_sp, g_pspill_wb;
+                        {
+                            extern volatile uint32_t g_ih_a1_raw, g_ih_a1_calc, g_ih_a1_latched;
+                            extern volatile uint32_t g_ih_ws, g_ih_wb, g_ih_bitset;
+                            uart_puts("  ih a1     : raw="); uart_put_hex(g_ih_a1_latched);
+                            uart_puts(" calc="); uart_put_hex(g_ih_a1_calc);
+                            uart_puts(g_ih_a1_latched == g_ih_a1_calc ? "  AGREE" : "  DIFFER");
+                            uart_puts("  ws="); uart_put_hex(g_ih_ws);
+                            uart_puts(" wb="); uart_put_dec(g_ih_wb);
+                            uart_puts(" bit(base)="); uart_put_dec(g_ih_bitset);
+                            uart_puts("\n");
+                        }
                         uart_puts("  pspill    : sweeps=");
                         uart_put_dec(g_pspill_count);
                         uart_puts(" pre_ws="); uart_put_hex(g_pspill_pre_ws);

@@ -97,6 +97,14 @@ volatile uint32_t g_pspill_bad_a0, g_pspill_bad_at, g_pspill_sp, g_pspill_wb;
  * first underflow will read -- so "never written" and "written wrong" can be
  * told apart instead of inferred. */
 volatile uint32_t g_pspill_bs_enc, g_pspill_bs_sp, g_pspill_link, g_pspill_a0slot;
+
+/* [step 123] The interrupted a1 as the machine had it, written by
+ * _handler_level3's first instruction, plus what the frame arithmetic claims.
+ * If these agree, `current_sp + TASK_FRAME_BYTES` is sound and three steps of
+ * assumption are retired; if they differ, every walk that started there was
+ * reading the wrong address. */
+volatile uint32_t g_ih_a1_raw, g_ih_a1_calc, g_ih_ws, g_ih_wb, g_ih_bitset;
+volatile uint32_t g_ih_a1_latched;
 volatile int      g_lost_task = -1;
 volatile uint32_t g_lost_had, g_lost_grant, g_lost_bits;
 
@@ -739,6 +747,28 @@ uint32_t task_schedule(uint32_t current_sp)
                 }
                 if (fa1 <= sp) { break; }         /* the chain must ascend */
                 sp = fa1;
+            }
+        }
+
+        /* [step 123] the comparison, latched on the first multiframe switch-out
+         * so it describes a case where windowed frames are actually live. */
+        {
+            const uint32_t *fr = (const uint32_t *)current_sp;
+            uint32_t ws   = fr[TASK_FRAME_IDX_WSTART];
+            uint32_t base = fr[TASK_FRAME_IDX_WBASE] & 15u;
+            if (!g_ih_ws && (ws & (ws - 1u))) {
+                g_ih_ws      = ws;
+                g_ih_wb      = base;
+                g_ih_bitset  = (ws >> base) & 1u;
+                g_ih_a1_calc = (uint32_t)current_sp + TASK_FRAME_BYTES;
+                /* [step 123 fix] latch raw HERE, in the same event.
+                 * _handler_level3 rewrites g_ih_a1_raw on every interrupt, so
+                 * reading it at panic time compared this event's `calc` against
+                 * some later tick's `raw` -- and duly reported DIFFER, with a
+                 * raw that was not even inside this task's stack. The handler
+                 * has already written it for THIS interrupt by the time we run,
+                 * so copying it now pins both to one event. */
+                g_ih_a1_latched = g_ih_a1_raw;
             }
         }
 

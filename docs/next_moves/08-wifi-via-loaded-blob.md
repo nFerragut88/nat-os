@@ -8036,4 +8036,61 @@ configuration and does not stay in, despite `LOST` going to zero. Reverted.
 Suite after revert: boot 11 PASS 0 FAIL, `wintorture` CORRECT (and still
 meaningless with the pin on), `blobphy` rc=0, `wifiinit` no fault and no reset.
 
+## Step 123 — the innermost frame's a1, measured: the assumption was right
+
+Captured by `_handler_level3`'s first instruction, `wsr.excsave2 a1`, before the
+prologue moves it. `wsr` writes a special register and clobbers no AR, so it is
+free and needs no register saved first.
+
+```
+ih a1 : raw=0x3ffb9250 calc=0x3ffb9250  AGREE  ws=0x0000aa8a wb=3 bit(base)=1
+```
+
+**`current_sp + TASK_FRAME_BYTES` IS the interrupted a1.** The assumption steps
+118, 119 and 122 rested on is sound, and `bit(base)=1` says a windowed frame
+genuinely lives at the base. So `task_sp` is a real windowed frame boundary and
+every walk that started there was starting in the right place.
+
+### The lead it kills
+
+Step 122 proposed this measurement because `[task_sp-16]` reads poison, and
+argued that if `task_sp` were a real frame boundary `entry` would have written
+it. **That argument was wrong.** `entry` allocates a frame and rotates the
+window; it writes no memory. A frame's base save area is filled LAZILY, by the
+overflow handler, when the frame is actually spilled. `post_ws` keeps bit 3, so
+the innermost frame never overflowed, so its save area was never written.
+
+Poison at `[task_sp-16]` is therefore the correct and expected state, and it has
+now sent two steps down blind alleys -- 119 read it as "the frames went to the
+borrowed stack", 122 read it as "task_sp is not a frame boundary". Neither
+followed from it. The word means only "this frame has not been spilled".
+
+### And one more instrument fixed mid-run
+
+The first version of this measurement reported `DIFFER`, with
+`raw=0x3ffb8dc0 calc=0x3ffb9240`. `g_ih_a1_raw` is rewritten by every interrupt
+while `calc` is latched once, so it compared one event's `calc` against a later
+tick's `raw`. What gave it away was not the mismatch but the value: `raw` was
+below task 5's stack base, so it belonged to another task and could not be the
+answer to any question being asked. Latching both in the same event gives AGREE.
+
+Thirteenth entry in the catalogue, caught in one run this time, by checking
+whether the number was even in the right address range before believing what it
+implied.
+
+### Where this leaves the sweep
+
+Step 122 stands: on the task's own stack the sweep drives `LOST` to zero, and it
+still panics `wintorture` on the bench with `epc 0x6eeeeeee` and regresses
+`wifiinit` with the pin on. What is now excluded is that the walk or the spill
+was aimed at the wrong address. The remaining fault is downstream of both.
+
+The next thing to read is which frame's `retw` faults and what its save area
+holds -- the frames are no longer lost, so the defect is in what was written to
+them, not in whether they were written at all.
+
+Instrumentation kept: one `wsr` in the interrupt prologue and a latch in
+`task_schedule`, no behaviour change. Suite: boot 11 PASS 0 FAIL, `wintorture`
+CORRECT, `blobphy` rc=0, `blobtx force` 0x3004, `wifiinit` no fault and no reset.
+
 **Nothing has been on air.**

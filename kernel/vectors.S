@@ -89,6 +89,15 @@ _vector_double:
     .type _handler_level3, @function
 
 _handler_level3:
+    /* [step 123] The interrupted a1, before the prologue moves it.
+     *
+     * Three steps have assumed `current_sp + TASK_FRAME_BYTES` is the task's a1
+     * at interrupt. It is arithmetically forced, but the thing that matters is
+     * whether a WINDOWED FRAME starts there, and that has never been read from
+     * the machine. wsr writes a special register and clobbers no AR, so this is
+     * free and can be the first instruction. excsave2 is otherwise unused. */
+    wsr.excsave2 a1
+
     addi     a1, a1, -112
     s32i     a0,  a1, 0
     s32i     a2,  a1, 4
@@ -123,6 +132,11 @@ _handler_level3:
     s32i       a2,  a1, 76
     rsr.lcount a2
     s32i       a2,  a1, 80
+
+    /* [step 123] park the captured a1 where C can read it */
+    rsr.excsave2 a2
+    movi     a3, g_ih_a1_raw
+    s32i     a2, a3, 0
 
     /* Per-task window state. See TASK_FRAME_IDX_WBASE in task.h. */
     rsr.windowbase  a2
