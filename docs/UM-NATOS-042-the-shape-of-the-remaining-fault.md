@@ -1,7 +1,7 @@
 # UM-NATOS-042 — The Shape of the Remaining Fault
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.0 · 2026-08-22 · Status: **Diagnostic. The init-time crash is fixed; one fault remains, its surroundings exhaustively eliminated. A new correlation is recorded that has not been tested.**
+Revision 1.1 · 2026-08-22 · Status: **Diagnostic. The init-time crash is fixed; one fault remains. Section 7's correlation has since been tested and CONFIRMED — the window handler is reading a call0 local as a stack pointer.**
 
 ---
 
@@ -179,7 +179,7 @@ That is the entire remaining defect.
 
 ---
 
-## 7. A correlation not yet tested
+## 7. A correlation, now CONFIRMED
 
 `excvaddr` is `0x00000170` in **every** run of this fault, across builds in which
 every address moves. The faulting instruction is `l32e a4, a7, -32`, so:
@@ -218,7 +218,13 @@ The test is cheap and decisive: change `OSI_FOREVER_CAP` to a distinctive value 
 proven. If it stays `0x170`, the correlation is a coincidence and this section
 should be struck.
 
-**No conclusion should be drawn from §7 until that run exists.**
+**The run exists.** `OSI_FOREVER_CAP` 400 -> 460 moved `excvaddr` from `0x170`
+to `0x1ac` — exactly `0x1CC - 32`. The identity is proven: `a7` is `spent`, and
+the window handler is reading a call0 function's local variable as a stack
+pointer. The chain has an `a1` link pointing into a frame that was never windowed.
+
+See `next_moves/08` step 103. §5's eliminations are unaffected — they concern
+frames that *are* windowed; this is a link pointing at one that never was.
 
 ---
 

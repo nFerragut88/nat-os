@@ -122,6 +122,11 @@ static void wake_all(uint32_t *mask)
  * handle, and lets esp_wifi_init_internal return an error we can read. The cap
  * is a bring-up scaffold, not a design: when interrupts are wired it should go,
  * and the counter below is what will say whether it still fires. */
+/* 400. The value is arbitrary scaffolding, but it is also a probe: UM-NATOS-042
+ * section 7 predicted that the underflow's faulting address tracks this constant,
+ * and setting it to 460 moved excvaddr from 0x170 to 0x1ac exactly. That
+ * identified the word the window handler mistakes for a stack pointer as `spent`,
+ * the loop counter below. Changing this constant changes that fault address. */
 #define OSI_FOREVER_CAP 400u        /* ~4 s at the current tick */
 
 uint32_t g_osi_capped;              /* times a "forever" wait was cut short */

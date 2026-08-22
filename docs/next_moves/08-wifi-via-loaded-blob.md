@@ -6735,3 +6735,70 @@ understood well enough to hard-code. Two ways out, both cheap:
 (2) is the safer of the two given the record.
 
 **Nothing has been on air.**
+
+---
+
+## Step 103 — CONFIRMED: the handler is reading a call0 local as a stack pointer
+
+UM-NATOS-042 §7 recorded that `excvaddr` is `0x00000170` in every run of this
+fault, across builds in which every other address moves, and that
+`a7 = 0x170 + 32 = 400` is exactly `OSI_FOREVER_CAP`. It was written up as a
+correlation with three ways it could mislead, and the one-constant experiment
+that would settle it.
+
+Run. `OSI_FOREVER_CAP` 400 -> 460:
+
+```
+prediction:  excvaddr becomes 0x1AC   (0x1CC - 32)
+measured  :  excvaddr : 0x000001ac    a7 = 0x1cc = 460
+```
+
+Exact. **`a7` is `spent`** — the loop counter in `osi_impl_queue_recv` — and the
+fault address is a function of a constant in our own C source.
+
+### What that establishes
+
+The chain the underflow walks is:
+
+```
+a9 = 0x3ffb2820                     the frame being unwound
+a0 = [a9-16] = 0x3ffd8f78           a blob .bss global
+a1 = [a9-12] = 0x3ffb27e0           taken as the caller's stack pointer
+a7 = [a1-12] = 460                  <- spent, a local of osi_impl_queue_recv
+a4 = [a7-32]                        <- faults
+```
+
+So `[a9-12]` does not point at a windowed frame. It points **into
+`osi_impl_queue_recv`'s call0 frame**, and `[a1-12]` — where the handler expects
+the next caller's stack pointer — is that function's loop counter.
+
+`osi_impl_queue_recv` is our own code, compiled `-mabi=call0`, reached through
+`w2c_call3`'s `callx0`. A call0 frame has no windowed base save area: nothing
+below it was ever written by an `entry` or by an overflow handler, because call0
+frames do not participate in the windowed chain at all.
+
+**The windowed chain has an `a1` link that points into a call0 frame.** That is
+the defect, stated positively for the first time, and it is the hazard this
+project has documented since rev 1.1 — appearing at a boundary nobody had
+examined.
+
+### Why every previous elimination still stands
+
+Nothing in §5 of UM-NATOS-042 is contradicted. The restore does not drop frames,
+the spill writes valid save areas, the bridges' save areas are complete, `a12`
+survives. All of that is about frames that *are* windowed. This is a chain link
+pointing at a frame that never was.
+
+### Next
+
+Two things, in order:
+
+1. **Which frame's `a1` slot holds `0x3ffb27e0`, and who wrote it.** The frame at
+   `0x3ffb2820` is one link out; its `a1` slot is what points into the call0
+   frame. If an overflow handler wrote it, the value came from a register that
+   held a call0 frame pointer at spill time.
+2. `w2c_call3` is the bridge between the windowed stub and the call0
+   implementation, and it is the only place in the chain where a windowed frame
+   and a call0 frame are adjacent. Its own frame is where the boundary sits.
+
+**Nothing has been on air.**
