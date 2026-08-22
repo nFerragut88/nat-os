@@ -23,6 +23,24 @@ The cost is **3,072 bytes of DRAM and roughly 2 µs per context switch**, which 
 failed designs, the removal of the pin, and containment of a defect that has
 blocked WiFi since step 86.
 
+But the cost is not the argument. The argument is this:
+
+> **A spill trusts `WINDOWSTART`. A wholesale save does not.**
+>
+> A spill walks the set bits and writes each claimed frame out through that
+> frame's own stack pointer, so it can only be as correct as the register is
+> truthful. Step 124 measured a bit that no frame backs, whose `a1` is
+> `0xeeeeeeee`. Every spill-based approach was therefore doomed by the data
+> rather than by where it was placed, which is why five placements produced five
+> failures and one withdrawn conclusion.
+>
+> **A wholesale save copies 64 registers because they exist, indifferent to what
+> any bit claims about them. A phantom is saved and restored as faithfully as a
+> real frame — and a frame that is wrong in private harms nobody.**
+
+That is the whole of it. The sweep was not awkward to place; it was
+interrogating a register that has been proven to lie.
+
 ---
 
 ## 2. Why the question changed
@@ -383,10 +401,18 @@ is why the tree is green after eleven failed attempts.
 
 **Implement Tier B.**
 
-It costs 3,072 bytes of a 79,680-byte heap and 0.02% of CPU. It deletes more code
-than it adds. It retires five failed designs, removes the pin, and contains a
-defect that has blocked this work since step 86 — without pretending to have
-fixed it.
+Not primarily because it is cheap, though it is: 3,072 bytes of a 79,680-byte
+heap, 0.02% of CPU, and it deletes more code than it adds.
+
+**Because it does not ask `WINDOWSTART` anything.** Every previous approach
+began by reading that register to learn which frames were live, and step 124
+proved it contains a bit that no frame backs. A design whose first act is to
+consult a lying oracle cannot be rescued by better placement — steps 115 through
+126 are the proof, five placements and one withdrawn conclusion. Copying all 64
+registers because they exist asks no question and so cannot be told a lie.
+
+It retires five failed designs, removes the pin, and contains a defect that has
+blocked this work since step 86 — without pretending to have fixed it.
 
 The decision it reverses is step 115's, where saving the whole register file was
 set aside as expensive without being costed. That was the wrong call, and it was

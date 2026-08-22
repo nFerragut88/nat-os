@@ -8285,4 +8285,67 @@ probes it replaced were debt UM-NATOS-042 section 9.3 had already flagged.
 Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0, `blobtx force`
 0x3004, `wifiinit` no fault and no reset.
 
+## Step 128 — Tier B step 1: ROTW solves the clobber problem, the identity does not hold yet
+
+UM-NATOS-043 rev 1.2 §8.1 said the save and restore are only correct as a pair,
+because the scratch registers a save needs belong to the window being saved and
+`wsr.windowbase` makes the clobber unrepairable.
+
+**`ROTW` dissolves that.** It adds an *immediate* to `WINDOWBASE`, so no general
+register is involved in rotating at all. Each window can be left exactly as
+found before moving on, and four `rotw 4` steps advance by 16 and wrap to the
+start, so `WINDOWBASE` needs no saving either. Confirmed in the disassembly:
+eight `rotw` present, four per pass.
+
+The sequence asks `WINDOWSTART` nothing, which is the whole point of Tier B.
+
+**The identity pair does not hold.** `wintorture` fails and `wifiinit` panics —
+the latter having been clean since step 113. Reverted; suite green again.
+
+### What is known, and what is only suspected
+
+Known: `rotw` assembles and is present, and the block structure produces the
+right offsets — a0 at `k*64`, a1..a15 at `k*64 + i*4`, four windows over 256
+bytes.
+
+Suspected, and **not verified**: the sequence opens with
+
+```
+    movi     a2, g_regsave
+    wsr.excsave3 a2
+```
+
+which destroys the current window's `a2` **before** the first block saves it. For
+the current window that should be harmless — the handler already wrote the task's
+`a2` to the switch frame, and `.Lresume` reloads a0..a15 from there — so it
+should be benign, and if it is, the fault is elsewhere. It is the first thing to
+eliminate, not the answer.
+
+Two other candidates, in order of how cheaply they can be excluded:
+
+1. **`excsave3` may not be free.** The sequence assumes it, and the assumption
+   was never checked against the underflow/overflow probes, `panic.c`, or
+   `win_probe_seed`. Step 123 took `excsave2` on the same basis and that one was
+   verified; this one was not.
+2. **Rotating to a window whose `WINDOWSTART` bit is clear.** No window
+   instruction executes while rotated, so it should be legal, but "should be" is
+   a phrase this log has been punished for. The architecture requires the bit at
+   `WINDOWBASE` to be set for a valid current frame, and four of the stops will
+   not have it.
+
+The discipline that applies: name it by address and read a range, rather than
+reasoning about which line must be responsible. The next run should dump
+`g_regsave` after one identity pass and compare it against the switch frame,
+which turns "the pair is wrong" into "this register, at this offset, differs".
+
+### Not a setback to the design
+
+`ROTW` removing the clobber problem is a real advance — it is what makes a
+register-file save implementable at all in an interrupt prologue, and §8.1's
+objection is now retired rather than worked around. What failed is a first
+draft of the sequence, on its first run, with the tree green afterwards.
+
+Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `wifiinit` no fault and no
+reset.
+
 **Nothing has been on air.**
