@@ -5816,3 +5816,65 @@ wifiinit  -- reaches deeper, faults in _WindowUnderflow8
 ```
 
 **Nothing has been on air.**
+
+---
+
+## Step 87 — the new fault decoded: another uninitialised base save area
+
+The faulting instruction, exactly:
+
+```
+400800c0 <_WindowUnderflow8>:
+400800c0  l32e a0, a9, -16      <- a0  = [a9-16]  = 0x3ffd8f78   (blob .bss!)
+400800c9  l32e a1, a9, -12      <- a1  = [a9-12]
+400800cf  l32e a7, a1, -12      <- a7  = [a1-12]  = 0x190        (garbage)
+400800d5  l32e a4, a7, -32      <- FAULTS, excvaddr 0x170 = 0x190 - 32
+```
+
+With the probe values `excsave5 = a9 = 0x3ffb2810` and `excsave4 = a0 =
+0x3ffd8f78`, the chain reads cleanly backwards:
+
+- `a9 = 0x3ffb2810` — near the top of **task 9's** stack (`0x3ffb0c1c + 7168`).
+- `[a9-16] = 0x3ffd8f78` — inside the blob's `.bss` (`0x3ffd5018..0x3ffd90f8`).
+  A data address sitting where a return address belongs.
+- `[a1-12] = 0x190` — not an address at all.
+
+So the base save area for that frame was **never written**, and the underflow
+walked a chain of uninitialised words. Same defect class as step 37
+(`rom_call3`/`rom_call4`/`win_spill_call0`) and step 85 (the `w2c_*` bridges),
+now at the blob task's own call0-to-windowed boundary rather than the shell's.
+
+### What is already covered
+
+`rom_call3` writes its own base save area explicitly:
+
+```asm
+    addi    a8, a1, 48          /* the caller's sp */
+    addi    a9, a1, -12
+    s32i    a8, a9, 0
+```
+
+and the blob task enters through it — `blob_task_entry()` -> `blob_lock()` ->
+`rom_call3(fn, arg, 0, 0)`. So the boundary `rom_call3` owns is not the gap.
+
+### What to check next, in order
+
+1. **Whose frame is `0x3ffb2810`?** Task 9's stack runs `0x3ffb0c1c..0x3ffb282c`,
+   so this is within 28 bytes of the top — the outermost frame of the task, not a
+   deep one. `task_create_with_stack()` builds the initial frame there and no
+   windowed prologue has ever run above it.
+2. **Does the CALL8 out of `rom_call3` leave the callee a usable chain?** Under
+   the windowed ABI a CALL8 callee's `a1` comes from `ENTRY` reading the caller's
+   `a1`, but the caller's `a9` becomes the callee's `a1` register beforehand —
+   and `rom_call3` uses `a9` as scratch for the base-save-area write immediately
+   before the call. That ordering deserves reading against the ISA rather than
+   assumption; it has not been checked.
+3. **The step-85 fix is not implicated.** The retw ring is clean (`n=2` on every
+   entry), the slot watch reports `[sp+0] never diverged`, and `a0` is valid at
+   save and restore across the run that produced this fault.
+
+Point 2 is the one worth doing first, and it is a static check — no board time,
+and it either finds a real ordering bug or removes the largest remaining
+candidate.
+
+**Nothing has been on air.**
