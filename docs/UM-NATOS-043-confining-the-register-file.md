@@ -282,11 +282,13 @@ thing that has to work.
 
 ## 8. Implementation and test plan
 
-1. **Add the save/restore, unused.** Write the two loops, called from
-   `_handler_level3`, storing to and loading from the new `.bss` array — but
-   leave the existing grant computation in place. Confirm the suite is unchanged
-   and measure the added cycles with `xt_ccount()`. A pure addition, nothing
-   depending on it.
+1. **Add save and restore together, as an identity.** *(Corrected — the
+   original plan said "save only, unused", and that is not implementable. See
+   §8.1.)* Save all 64 ARs to the task's slot and immediately restore all 64
+   from that same slot, leaving the existing grant computation in place. If both
+   loops are right the pair is a no-op, so the suite staying green tests them
+   without anything yet depending on the data. Measure the added cycles with
+   `xt_ccount()` in the same build.
 2. **Switch the restore over.** Take `WINDOWBASE`/`WINDOWSTART` from the saved
    register file rather than from the frame, and delete the
    `(1 << base) | g_win_union` grant. Suite unchanged is the bar.
@@ -299,6 +301,33 @@ thing that has to work.
    `IllegalInstruction`.
 5. **Then `wifiinit`,** and only then consider replacing step 113's busy-spin
    with a real blocking wait.
+
+### 8.1 Why step 1 cannot be save-only
+
+The original plan called for adding the save first, with nothing reading it — the
+discipline that kept the tree green through steps 115–126. It does not work here,
+and the reason is worth recording because it is a property of the mechanism
+rather than of the code.
+
+At each `WINDOWBASE` position, saving the sixteen visible ARs needs two scratch
+registers **belonging to the window being saved**: one to hold the array pointer,
+and one to carry the next base into `wsr.windowbase`. Their values do reach
+memory, but the register file is left holding a pointer and a loop constant.
+
+The rotation cannot repair it. `wsr.windowbase` takes an AR operand, and the
+instant it executes the view has moved, so the clobbered register is no longer
+addressable. A pass that visits four positions therefore writes all 64 registers
+out correctly and **leaves three of the four windows wrong**.
+
+This is why real implementations never separate the two halves: the restore pass
+rewrites every AR from memory, so clobbering during the save is harmless by
+construction. The two loops are only correct as a pair.
+
+The safe first step is therefore an **identity** — save, then immediately restore
+from the same slot. It exercises both loops, depends on nothing, and is a no-op
+when correct, so a green suite is a real test of it. That preserves the intent of
+the original step 1 (add nothing that anything depends on) while respecting the
+mechanism.
 
 Each step builds, flashes, and runs the suite. Any step that regresses is
 reverted before the next is attempted — the discipline steps 115–126 used, which
