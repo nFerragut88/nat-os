@@ -261,6 +261,17 @@ volatile uint32_t g_of_bad_when;
 /* [step 99] the blob's return address into osi_s_queue_recv. */
 volatile uint32_t g_qr_caller, g_qr_caller_raw;
 
+/* [step 112] The spill probe, pointed at the BLOCKING path.
+ *
+ * The same walk that step 98 ran on the synthetic chain -- follow the saved a1
+ * links upward and check each frame's a0 is a windowed return encoding -- but
+ * taken here, immediately after win_spill_all() on the path that actually
+ * faults. Step 111 left the faulting save area reading STACK_FILL, i.e. never
+ * written, so the question is whether the frame in question is even on the chain
+ * the spill covers. Latched on the first blocking wait. */
+volatile uint32_t g_qspill_have, g_qspill_walked, g_qspill_bad;
+volatile uint32_t g_qspill_bad_a0, g_qspill_bad_at, g_qspill_top;
+
 /* [step 102] The save-area word the underflow later reads, sampled where the
  * spill writes it. {addr, after_spill, latched} -- so "the spill wrote it wrong"
  * and "the spill wrote it right and something changed it" can be told apart. */
@@ -725,6 +736,25 @@ static int32_t osi_s_queue_recv(void *queue, void *item, uint32_t block_time_tic
         }
 
         win_spill_all();                /* one live frame before we let go */
+
+        if (!g_qspill_have) {           /* [step 112] walk what the spill wrote */
+            uint32_t sp;
+            __asm__ volatile ("mov %0, a1" : "=r"(sp));
+            g_qspill_have = 1u;
+            g_qspill_top  = sp;
+            for (uint32_t k = 0; k < 12u; k++) {
+                if (sp < 0x3ff00000u || sp >= 0x40000000u) { break; }
+                uint32_t fa0 = ((volatile uint32_t *)(sp - 16u))[0];
+                uint32_t fa1 = ((volatile uint32_t *)(sp - 12u))[0];
+                g_qspill_walked++;
+                if ((fa0 >> 30) == 0u) {
+                    g_qspill_bad++;
+                    if (!g_qspill_bad_at) { g_qspill_bad_a0 = fa0; g_qspill_bad_at = sp; }
+                }
+                if (fa1 <= sp) { break; }      /* the chain must ascend */
+                sp = fa1;
+            }
+        }
 
         /* [step 109, Tortoise's H-windowed-reg-loss] Nothing live in a register
          * across the wait.

@@ -7329,3 +7329,74 @@ rather than the synthetic one would say whether the frame in question is on the
 chain the spill actually covers.
 
 **Nothing has been on air.**
+
+---
+
+## Step 112 — the faulting frame is not on the chain the spill covers
+
+Step 111 left two readings open. This settles them: the spill probe from step 98,
+pointed at the blocking path instead of the synthetic chain, taken immediately
+after `win_spill_all()`.
+
+```
+qspill  : from 0x3ffb2850  walked 4 frames, 1 bad  first a0 0x00000000 at 0x3ffb28e0
+uf frame: @0x3ffb2830
+```
+
+`win_spill_all()` walks **upward** from the caller's stack pointer into its
+callers — four frames, all of them above `0x3ffb2850`. The frame the underflow
+later dies on is at `0x3ffb2830`, thirty-two bytes **below** that.
+
+**It was never in the spill's range.** Reading (2) is correct, and this is why
+step 111 found `STACK_FILL` in the save area: nothing wrote it because nothing
+ever spilled that frame.
+
+### Why it is deeper
+
+The spill happens, and *then* the wait is entered. `osi_windowed_idle()` is
+called after `win_spill_all()` returns, so its frames are created below the
+point the spill reached. The task is unpinned across exactly that call — by
+design, so other tasks can run — and those fresh frames are what a preemption
+finds.
+
+So the sequence is:
+
+```
+win_spill_all()          spills everything ABOVE this point   <- covered
+unpin
+osi_windowed_idle()      creates frames BELOW this point      <- NOT covered
+   ... preempted here, frames live in registers, unspilled
+```
+
+Every version of the blocking path since step 24 has had this shape — spill,
+then release, then wait — and the waiting has always happened in frames the
+spill could not have covered, because they did not exist when it ran.
+
+### What this means for the fixes so far
+
+The four bridge removals (steps 110-111) were aimed at the wrong thing. They were
+correct on their own terms — a call0 callee moving a windowed `a1` is a real
+defect and step 103 proved it precisely — but the fault that remains is not that
+one. It is a frame created after the spill, preempted before any spill can cover
+it.
+
+Which also explains why each fix changed the fault's shape without removing it:
+they altered which frames exist below the spill point, and therefore what the
+handler read, but not the fact that frames exist there at all.
+
+### The shape of the actual fix
+
+Nothing may be created below the spill point while unpinned. Either:
+
+1. **Spill again inside the wait**, at the deepest point, before unpinning — so
+   the frames that will be preempted are already in memory; or
+2. **Do not create frames during the wait** — an unpinned wait that allocates no
+   windowed frames at all, which means a leaf, not a nested call chain; or
+3. **Spill on preemption** — step 108's conclusion, which covers this case and
+   every other one, and is the only version that does not depend on getting the
+   ordering right by hand.
+
+(3) remains the answer. (2) is the cheap test of this step's finding: make
+`osi_windowed_idle` a leaf and see whether the fault moves.
+
+**Nothing has been on air.**

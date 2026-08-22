@@ -641,6 +641,23 @@ uart_puts("  pre-spill : ps ");
                     uart_puts("\n");
                 }
                 {
+                    extern volatile uint32_t g_qspill_have, g_qspill_walked, g_qspill_bad;
+                    extern volatile uint32_t g_qspill_bad_a0, g_qspill_bad_at, g_qspill_top;
+                    uart_puts("  qspill    : ");
+                    if (!g_qspill_have) { uart_puts("blocking path never spilled"); }
+                    else {
+                        uart_puts("from "); uart_put_hex(g_qspill_top);
+                        uart_puts(" walked "); uart_put_dec(g_qspill_walked);
+                        uart_puts(" frames, "); uart_put_dec(g_qspill_bad);
+                        uart_puts(" bad");
+                        if (g_qspill_bad_at) {
+                            uart_puts("  first a0 "); uart_put_hex(g_qspill_bad_a0);
+                            uart_puts(" at "); uart_put_hex(g_qspill_bad_at);
+                        }
+                    }
+                    uart_puts("\n");
+                }
+                {
                     extern volatile uint32_t g_qr_caller, g_qr_caller_raw;
                     uart_puts("  qr caller : ");
                     if (!g_qr_caller) { uart_puts("never entered"); }
