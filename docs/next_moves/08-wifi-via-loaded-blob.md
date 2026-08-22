@@ -6174,3 +6174,54 @@ whose registers are still in use — the same question steps 53-57 circled, now
 arriving with the surrounding possibilities eliminated rather than assumed.
 
 **Nothing has been on air.**
+
+---
+
+## Step 93 — the "save area" was never a save area
+
+One reading of the existing evidence, with no new instrumentation:
+
+```
+underflow : recovered a0 0x3ffd8f78 from save area 0x3ffb2810
+```
+
+`0x3ffd8f78` is **not** `STACK_FILL` (`0xEEEEEEEE`), and not a code address. So
+that word is not uninitialised — something wrote it, deliberately, with a pointer
+into the blob's own `.bss`.
+
+Combined with step 92 (the frame is 112 bytes below the deepest bridge frame,
+inside the blob's own code), the simplest account that fits every measurement is:
+
+**`[0x3ffb2800]` was never a windowed save area at all.** It is ordinary stack
+data the blob wrote — a local, a spilled pointer — and the window machinery is
+reading it as a frame because `WINDOWBASE`/`WINDOWSTART` claim a frame lives at
+that position when it does not.
+
+That inverts the last several steps. The question is not "who corrupted the save
+area", it is "why does the window state point at a stack location that was never
+a frame". Steps 89-92 were answering the first question, and each found a real
+defect while leaving this one untouched — which is consistent with them having
+been the wrong question.
+
+### How this connects back
+
+Step 80 measured `WINDOWSTART` dropping seven live frames to one across a switch,
+and step 91 confirmed the frames are the blob's own. If a frame is disowned, its
+window position is free for another context to occupy; when the original task
+resumes and unwinds, the position it believes holds its caller now holds
+somebody else's data — or nothing that was ever a frame.
+
+`bit(base) CLEAR` in every dump of this fault says exactly that: the hardware is
+being told a frame is not live at the base it is executing on.
+
+### Status of this account
+
+It is a hypothesis that fits all current evidence and contradicts none of it. It
+is **not** measured, and this investigation has retired ten plausible accounts
+that fit the evidence at the time. The discriminating test is the one step 88
+named as candidate (2) and steps 89-92 have now cleared the ground around: record
+what a task actually holds at switch-out, and compare it against what the restore
+grants — for the blob task specifically, which is the only multi-frame windowed
+program in the system.
+
+**Nothing has been on air.**
