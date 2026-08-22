@@ -7016,3 +7016,69 @@ it in a register — would **mask** this, not fix it, and would throw away the
 clearest reproducer this investigation has produced. Left alone deliberately.
 
 **Nothing has been on air.**
+
+---
+
+## Step 107 — the restore DOES drop frames, and step 94 measured a case that never happens
+
+A blob-free test: hold magics in locals across a windowed call, **unpinned** so a
+tick can land, and check what survives. No adapter, no queue, no vendor code.
+
+```
+frames : task 9 held 0x0000002a granted 0x00000020 LOST 0x0000000a
+```
+
+The step-94 check — *"no task was ever granted less than it held"* — has never
+fired in a hundred steps. It fires on the first unpinned round. The task held
+bits 1, 3 and 5; the restore granted bit 5 alone; bits 1 and 3 were dropped.
+
+### Why step 94 was wrong
+
+`wintorture` and `wincollide` both reach windowed code through `rom_call3`, which
+takes `blob_lock` and therefore **pins**. The scheduler refuses to switch away, so
+a task never gets switched out holding multiple live windowed frames — and the
+frame-loss check has nothing to catch.
+
+Step 94 ran that check across a full `wifiinit` and reported it never fired.
+That was true and meaningless: **the unpinned case had no coverage at all.**
+Every windowed test in this project has run pinned since the pin was introduced.
+
+An instrument that cannot reach the condition it is testing reports the same
+silence as one that finds nothing wrong. Eleventh of the class, and the first
+where the gap was *coverage* rather than construction.
+
+### What this restores
+
+**Step 80 was right.** It measured `WINDOWSTART` dropping seven frames to one
+across a switch and named the restore rule from steps 56-57 as the cause. Step 94
+retracted that on the strength of a check that could not fire. The retraction is
+withdrawn; the original mechanism stands, now with a blob-free reproducer.
+
+The rule at fault:
+
+```c
+g_win_mask[t] = ((ws_out >> base) & 1) ? (1u << base) : 0u;
+```
+
+One bit, whatever the task actually held. Correct for a task parked after the
+spill — which is every task the pin permits to be switched out — and wrong for a
+task preempted mid-window, which only happens unpinned.
+
+### Why this matters beyond the bug
+
+The blocking adapter path *must* unpin: a callback that holds the pin while
+waiting deadlocks against the task it waits for. So the WiFi driver is the first
+thing in this system that routinely creates the one condition the window
+bookkeeping was never tested against.
+
+That is the whole fault, stated in one sentence, and there is now a test for it
+that runs in two seconds without the blob.
+
+### Next
+
+Grant what the task held rather than one bit — step 88's candidate (2). Steps 53
+and 54 both failed at this, but neither had a reproducer; every attempt was
+validated against suites that ran pinned and therefore could not tell a fix from
+a no-op. That is no longer true.
+
+**Nothing has been on air.**

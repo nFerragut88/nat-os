@@ -25,6 +25,7 @@ static volatile uint32_t g_runs, g_bad;
 volatile unsigned int g_spill_ws_before;
 volatile unsigned int g_spill_ws_after;
 volatile unsigned int g_spill_walked, g_spill_bad, g_spill_bad_a0, g_spill_bad_at;
+volatile unsigned int g_unpin_before, g_unpin_after, g_unpin_bad, g_unpin_rounds;
 static volatile int   g_spill_done;
 
 static unsigned int bitcount(unsigned int v)
@@ -67,6 +68,21 @@ void wincollide_entry(void)
         uart_puts(bitcount(g_spill_ws_after) == 1u
                   ? "   spill reduces to ONE frame as designed\n"
                   : "   SPILL DOES NOT REDUCE TO ONE FRAME\n");
+        {
+            extern unsigned int vendor_unpintest(unsigned int);
+            uart_puts("   unpin: registers across a windowed call while UNPINNED ... ");
+            (void)rom_call3((uint32_t)&vendor_unpintest, 200u, 0u, 0u);
+            if (!g_unpin_bad) { uart_puts("all survived\n"); }
+            else {
+                uart_puts("LOST mask 0x");
+                uart_put_hex(g_unpin_bad);
+                uart_puts(" at round ");
+                uart_put_dec(g_unpin_rounds);
+                uart_puts(", value 0x");
+                uart_put_hex(g_unpin_after);
+                uart_puts("\n");
+            }
+        }
         uart_puts("   spill: walked ");
         uart_put_dec(g_spill_walked);
         uart_puts(" frames, ");

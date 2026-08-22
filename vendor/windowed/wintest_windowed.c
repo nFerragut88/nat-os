@@ -204,3 +204,49 @@ unsigned int osi_windowed_idle(unsigned int depth, unsigned int spin)
     for (unsigned int i = 0; i < 4u; i++) { sum += local[i]; }
     return sum;
 }
+
+
+/* ---- do registers survive a windowed call made while UNPINNED? -----------
+ *
+ * next_moves/08 step 107. Step 106 found `a6` holding a pointer across
+ * `call8 osi_windowed_idle` and coming back as 0x1000 -- a caller-saved register
+ * in a windowed frame that did not survive.
+ *
+ * wintorture and wincollide have never tested this: both reach windowed code
+ * through rom_call3, which takes blob_lock and therefore PINS. The scheduler
+ * refuses to switch away, so no spill of the caller's frame ever happens. The
+ * unpinned case has no coverage at all.
+ *
+ * This is that case, with no blob, no adapter and no queue: hold magics in
+ * locals across a windowed call, unpinned so a tick can land, and report which
+ * survived. If they do not, the defect is general and ours.
+ */
+extern volatile int g_pinned;
+extern volatile unsigned int g_unpin_before, g_unpin_after, g_unpin_bad, g_unpin_rounds;
+
+unsigned int vendor_unpintest(unsigned int rounds);
+
+unsigned int vendor_unpintest(unsigned int rounds)
+{
+    unsigned int bad = 0u;
+    int me = g_pinned;
+    if (me < 0) { me = 0; }             /* run anyway; the pin is the variable */
+
+    for (unsigned int r = 0; r < rounds; r++) {
+        volatile unsigned int m1 = 0xA1A1A1A1u;
+        volatile unsigned int m2 = 0xB2B2B2B2u;
+        unsigned int k1 = 0xC3C3C3C3u;  /* these two are the ones GCC will try */
+        unsigned int k2 = 0xD4D4D4D4u;  /* to keep in registers across the call */
+
+        g_pinned = -1;                  /* UNPIN: a tick may now switch us out */
+        (void)osi_windowed_idle(4u, 60000u);
+        g_pinned = me;                  /* REPIN before anything else */
+
+        if (m1 != 0xA1A1A1A1u || m2 != 0xB2B2B2B2u) { bad |= 1u; }
+        if (k1 != 0xC3C3C3C3u) { bad |= 2u; g_unpin_after = k1; }
+        if (k2 != 0xD4D4D4D4u) { bad |= 4u; g_unpin_after = k2; }
+        if (bad) { g_unpin_rounds = r; break; }
+    }
+    g_unpin_bad = bad;
+    return bad;
+}
