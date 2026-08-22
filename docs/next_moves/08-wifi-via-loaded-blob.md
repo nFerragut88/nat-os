@@ -8150,4 +8150,66 @@ AGREE stands -- it was measured with no sweep in.
 Reverted. Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0,
 `wifiinit` no fault and no reset.
 
+## Step 125 — the a1 range check: both placements blocked, and the way through
+
+Step 124's fix (2) was "the sweep must refuse to spill a window whose `a1` is not
+inside the owning task's stack". Costed before writing it, and it does not fit in
+either of the two obvious places. **No code changed this step.**
+
+### In the sweep: needs window rotation
+
+The check needs each live window's `a1`, and those are in the physical register
+file. Reaching window `b` means `wsr.windowbase b` -- which remaps `a0..a15`, so
+**any scratch register used while rotated belongs to the frame being inspected**
+and corrupts the very thing the check exists to protect.
+
+Doing it safely means, per live window: rotate in, borrow one AR with
+`xsr.excsave4` (which saves the frame's value rather than destroying it), stash
+`a1` to a special register, rotate out, read it, then rotate back in to restore
+the borrowed AR. Loop state cannot live in ARs at all -- it goes in memory or
+special registers. That is roughly fifty lines of subtle assembly in the
+interrupt prologue, and a bug in it would be **indistinguishable from the phantom
+frame it is testing for**. Not something to start at the end of a session.
+
+### In the overflow handler: no room
+
+The natural alternative -- refuse the store when the frame pointer is not in
+DRAM -- belongs in `_WindowOverflow8/12`, which is where the bad write actually
+happens. There is no space. `_WindowOverflow8` currently holds three
+`xsr`/`wsr` probe writes (steps 48, 74, 75), eight `s32e`, an `l32e` and `rfwo`:
+about 45 bytes of a 64-byte vector slot. A range check is four more
+instructions. An earlier attempt to add loads to `_WindowUnderflow8` already
+failed to link for this exact reason.
+
+### The way through, and it is already on the list
+
+**Remove the probes from `_WindowOverflow8` to make room for the guard.**
+
+Those three writes are instrumentation, and UM-NATOS-042 section 9.3 already
+flags this class as debt -- "probes across window.S, task.c, panic.c,
+wifi_osi_stubs.c and wifi_osi_impl.c, several built on premises since
+disproved". The step-48 probe filters for "a near-null base", a hypothesis long
+retired; steps 74 and 75 chased a bogus frame pointer, which step 124 has now
+identified by other means. Retiring them buys about five instructions, which is
+more than the guard needs.
+
+That turns an unbounded assembly problem into a bounded one: delete known-dead
+probes from one 64-byte slot, then add a four-instruction range check where the
+faulting store already is. It also pays down debt the reports have been asking
+for since step 102.
+
+### Order for the next session
+
+1. Delete the retired probes from `_WindowOverflow8`, build, confirm the suite is
+   unchanged -- a pure removal, with nothing else moving.
+2. Add the range check: if the frame pointer is outside DRAM, skip the stores.
+   Count the skips somewhere already allocated.
+3. Sweep back on the bench, pin off. `LOST` should stay zero and `wintorture`
+   should now survive, because the phantom's stores never happen.
+4. If it survives, the phantom is contained but not explained. Its source
+   remains open and is the older question steps 53, 54 and 57 were circling.
+
+Suite unchanged: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0,
+`wifiinit` no fault and no reset.
+
 **Nothing has been on air.**
