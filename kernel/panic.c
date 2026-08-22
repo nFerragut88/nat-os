@@ -643,6 +643,31 @@ uart_puts("  pre-spill : ps ");
                 {
                     extern volatile uint32_t g_qspill_have, g_qspill_walked, g_qspill_bad;
                     extern volatile uint32_t g_qspill_bad_a0, g_qspill_bad_at, g_qspill_top;
+                    {
+                        extern volatile uint32_t g_pspill_count, g_pspill_pre_ws;
+                        extern volatile uint32_t g_pspill_post_ws, g_pspill_have;
+                        extern volatile uint32_t g_pspill_walked, g_pspill_badframes;
+                        extern volatile uint32_t g_pspill_bad_a0, g_pspill_bad_at;
+                        extern volatile uint32_t g_pspill_sp, g_pspill_wb;
+                        uart_puts("  pspill    : sweeps=");
+                        uart_put_dec(g_pspill_count);
+                        uart_puts(" pre_ws="); uart_put_hex(g_pspill_pre_ws);
+                        uart_puts(" post_ws="); uart_put_hex(g_pspill_post_ws);
+                        if (g_pspill_have) {
+                            uart_puts("\n              from ");
+                            uart_put_hex(g_pspill_sp);
+                            uart_puts(" wb="); uart_put_dec(g_pspill_wb);
+                            uart_puts(" walked "); uart_put_dec(g_pspill_walked);
+                            uart_puts(" bad "); uart_put_dec(g_pspill_badframes);
+                            if (g_pspill_bad_at) {
+                                uart_puts("  first a0 "); uart_put_hex(g_pspill_bad_a0);
+                                uart_puts(" at "); uart_put_hex(g_pspill_bad_at);
+                            }
+                        } else {
+                            uart_puts("  (no sweep audited)");
+                        }
+                        uart_puts("\n");
+                    }
                     uart_puts("  qspill    : ");
                     if (!g_qspill_have) { uart_puts("blocking path never spilled"); }
                     else {

@@ -7732,4 +7732,68 @@ Reverted. Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0,
 `wifiinit` no fault and no reset. `blobtx force` not re-verified this run -- the
 serial link dropped twice mid-suite and the reading was not retaken.
 
+## Step 118 — the sweep works; the spilled frames are not where the restore looks
+
+Steps 115-117 judged the sweep by whether `wintorture` passed. It does not pass,
+and pass/fail cannot name a bad save area. So the sweep now audits its own
+output -- walk the chain from the task's stack pointer upward, check each
+frame's `a0` is a windowed return encoding -- and the result prints in the panic
+dump. Same walk step 112 used on the blocking path.
+
+```
+pspill   : sweeps=1 pre_ws=0x0000aa8a post_ws=0x00000008
+           from 0x3ffb9220 wb=3 walked 1 bad 0
+exccause 28 (LoadProhibited)  epc 0x40080155  excvaddr 0x00e40d90
+```
+
+### The sweep is not the broken part
+
+`pre_ws 0x0000aa8a` is bits 1, 3, 7, 9, 11, 13, 15 -- seven live frames, matching
+step 117's `worst 7 frames`. `post_ws 0x00000008` is bit 3 alone, and `wb` is 3.
+
+**The sweep reduced seven frames to exactly one, and that one the task's own
+base.** That is precisely what it was written to do. Three steps of suspicion
+pointed at the sweep's logic and the logic is correct.
+
+### Where it actually fails
+
+`walked 1`. The audit walked ONE frame from `0x3ffb9220` and stopped, because the
+parent link at `[sp-12]` did not ascend. Seven frames were spilled and the chain
+from the task's stack pointer reaches none of them.
+
+That is enough to explain the fault without further inference. On restore the
+task gets one window back and `a1 = task_sp`; the first `retw` underflows and
+reads `[task_sp-12]` for its parent, finds something that is not a stack pointer,
+and loads through it -- `excvaddr 0x00e40d90`. On HEAD the same preemption is
+survived because the parents are still sitting in the register file and
+`g_win_union` grants their bits back, so no underflow ever happens.
+
+### The assumption to test next
+
+The borrowed-stack design rests on one claim, stated in the step-117 comment:
+*each frame overflows through the `a1` held in its own window, so every parent
+still writes to the task's stack wherever `a1` points.* If that were true the
+chain would be intact. It is not intact, so the claim is the thing to test.
+
+The concrete next experiment: dump the borrowed stack (`_phy_stack` + 0..1024)
+after a sweep and see whether the seven frames landed THERE. If they did, the
+premise is refuted -- the spill follows the sweeping context's `a1`, not each
+frame's own -- and the borrowed stack is exactly the wrong idea, because it sends
+every parent somewhere the task can never find. The sweep would then have to run
+on the task's own stack, below the switch frame rather than beside it.
+
+Note also that the audit's starting point deserves its own check: the innermost
+windowed frame is the one the interrupt handler is running in, and the handler
+moved `a1` before anything was spilled. Whether `[task_sp-12]` was ever a valid
+base save area, or was only ever the frame padding, is a second thing the dump
+should settle rather than assume.
+
+Reverted. Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobtx force`
+0x3004, `wifiinit` no fault and no reset. `blobphy` not re-verified -- the serial
+link dropped on that command and the reading was not retaken.
+
+The audit instrumentation stays in `task.c` and `panic.c`; with no sweep present
+it prints "no sweep audited" and costs nothing. Step 117 disproved the layout
+concern that would have argued for removing it.
+
 **Nothing has been on air.**

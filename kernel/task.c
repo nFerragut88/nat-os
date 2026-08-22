@@ -68,6 +68,19 @@ static uint32_t   g_out_ws[TASK_MAX], g_out_base[TASK_MAX];
 volatile uint32_t g_pspill_count, g_pspill_pre_ws, g_pspill_post_ws, g_pspill_worst;
 volatile int      g_pspill_task = -1;
 volatile uint32_t g_pspill_bad;      /* sweeps that did NOT reduce to one frame */
+
+/* [step 118] The sweep's own output, audited.
+ *
+ * Steps 115-117 all judged the sweep by whether wintorture passed. It does not
+ * pass, and pass/fail cannot say WHICH save area is wrong. This walks the chain
+ * the sweep just wrote, from the task's stack pointer upward, and checks each
+ * frame's a0 is a windowed return encoding -- the same walk step 112 used on the
+ * blocking path, which settled in one run what three steps of inference had not.
+ *
+ * Latched on the FIRST sweep, so it describes the event rather than the last of
+ * many. */
+volatile uint32_t g_pspill_have, g_pspill_walked, g_pspill_badframes;
+volatile uint32_t g_pspill_bad_a0, g_pspill_bad_at, g_pspill_sp, g_pspill_wb;
 volatile int      g_lost_task = -1;
 volatile uint32_t g_lost_had, g_lost_grant, g_lost_bits;
 
@@ -665,6 +678,33 @@ uint32_t task_schedule(uint32_t current_sp)
                     g_term_now     = now;
                     break;
                 }
+            }
+        }
+
+        /* [step 118] Audit the sweep, once, on the first event.
+         *
+         * Runs here because the sweep is in _handler_level3 immediately above
+         * and this is the first C to execute afterwards. current_sp + 112 is
+         * the task's own stack pointer -- the frame is TASK_FRAME_BYTES below
+         * it -- and the innermost windowed frame's base save area sits at
+         * [task_sp-16 .. task_sp-4], inside the frame's padding above offset
+         * 88, so the walk starts on ground the handler did not touch. */
+        if (g_pspill_count && !g_pspill_have) {
+            uint32_t sp = (uint32_t)current_sp + TASK_FRAME_BYTES;
+            g_pspill_have = 1u;
+            g_pspill_sp   = sp;
+            g_pspill_wb   = ((const uint32_t *)current_sp)[TASK_FRAME_IDX_WBASE] & 15u;
+            for (uint32_t k = 0; k < 12u; k++) {
+                if (sp < 0x3ff00000u || sp >= 0x40000000u) { break; }
+                uint32_t fa0 = ((volatile uint32_t *)(sp - 16u))[0];
+                uint32_t fa1 = ((volatile uint32_t *)(sp - 12u))[0];
+                g_pspill_walked++;
+                if ((fa0 >> 30) == 0u) {          /* not a windowed return encoding */
+                    g_pspill_badframes++;
+                    if (!g_pspill_bad_at) { g_pspill_bad_a0 = fa0; g_pspill_bad_at = sp; }
+                }
+                if (fa1 <= sp) { break; }         /* the chain must ascend */
+                sp = fa1;
             }
         }
 
