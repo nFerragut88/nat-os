@@ -208,33 +208,43 @@ task 9    : stack 0x3ffb0bd4 + 7168 B        -- the WiFi driver's own task
 Task 9 is the first genuinely windowed, genuinely multi-frame program this
 kernel has ever suspended. Every nat-os task until now has been a call0 shell
 that parks with exactly one frame at a known base — and every piece of park
-machinery encodes that assumption:
+machinery encodes that assumption.
 
-* `spill_before_parking` sees "more than one live frame" and forces the task
-  through `win_spill_call0()`, built to reduce a shell to its single base
-  frame. On task 9 the post-spill sample shows **seven** bits standing
-  (`0x0a2b@wb3`) instead of one.
-* The save path narrows each task's bookkeeping mask to a single bit at its
-  base (`kernel/task.c:525`), discarding the legitimate extra frames of a real
-  call tree.
-* Nothing in the design says what a parked task's WS may claim when the task
-  is not a shell.
+*Revision (session 4):* the suspicion that the sweep fails on such tasks was
+**disproven by measurement**. Outcome instrumentation at every multi-frame
+park (`sbp-post`) shows `win_spill_call0()` reduces task 9's two live frames
+to a clean single bit (`ws 0xa -> ws 0x8 @ wb 3`, "single-bit ok") — the
+seven-bit residue seen earlier belongs to the adapter stub's own mid-chain
+sampling point, not to the sweep's result. The sweep is nonetheless
+load-bearing: clamping it out entirely (X8 diagnostic, since reverted)
+converted the deterministic fault into a livelock in which ticks and
+scheduling continued but wifiinit never progressed.
+
+With the sweep verified good and every restore committing its exact mask,
+the second failure therefore stands as follows: task 9 parks cleanly on
+`_queue_recv` and is **never woken** (the post-wake sampler sentinel is
+untouched in every run); no osi call happens afterwards; and some seconds
+into the wait, task 5 — executing ROM init code with clean window state and
+a committed grant — faults with IllegalInstruction at a **timing-variable
+PC inside a small ROM cluster** (observed: `0x4008b8af` at tick 463,
+`0x4008b977` at tick 367, `0x4008b8e4` present in the saved frame's a7;
+adding nothing but heartbeat output moved both the tick and the PC).
 
 This failure could not exist before: bug 1 always killed the system at tick
 ~398, long before queue-receive territory. It is a distinct defect with its
 own causal chain, and per investigation discipline it gets its own
-hypothesis loop rather than a speculative patch. Two hypotheses are on file,
-neither tested:
+hypothesis loop rather than a speculative patch. Current hypotheses, neither
+tested:
 
-* **H-A** — the park/spill path mishandles genuine multi-frame windowed tasks
-  (single-bit narrowing, shell-shaped sweep), corrupting state that later
-  faults elsewhere; the IllegalInstruction in ROM would then be a delayed
-  consequence of task 9's corrupted suspension.
-* **H-B** — an independent defect in the wake path or osi glue, reached for
-  the first time because execution got this far.
+* **H-C** — the wake task 9 awaits is produced by a path nat-os does not
+  serve yet (notably a WiFi interrupt route), so t9 legitimately never
+  wakes; t5's ROM-side wait eventually wanders through stale register state.
+* **H-D** — t5's own return chain is corrupted during the wait by a writer
+  outside the inventoried paths; the wandering PC is the symptom, and the
+  wait-loop is innocent.
 
 Nothing has been changed for it. The full evidence set is in
-`docs/debug/2026-08-21-wifiinit-storeprohibited.md`, session 3.
+`docs/debug/2026-08-21-wifiinit-storeprohibited.md`, sessions 3–4.
 
 ---
 
@@ -253,3 +263,5 @@ Nothing has been changed for it. The full evidence set is in
    three-session elimination search into a two-run proof, because they
    measured the write at the only place ambiguity could hide: immediately
    after it.
+
+Written by: Tortoise

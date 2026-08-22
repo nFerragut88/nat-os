@@ -5234,3 +5234,29 @@ NEXT STEPS are failure 2, not bug 1:
    class of defect while every regression task shares one window base --
    consider adding a regression task parked at a second base so cross-base
    switches stop being invisible to the suites.
+
+Step 81 (session 4): X8 clamp (skip forced sweep) turned the fault into a
+healthy livelock -> sweep is load-bearing, clamp reverted. X9 outcome probe
+proved the sweep SUCCEEDS on task 9 (ws 0xa -> single-bit 0x8 @wb3,
+"single-bit ok"); session-3's "seven-bit residue" was the stub's own
+mid-chain sample point, not sweep output. H-A ELIMINATED. UM-NATOS-039
+section 6 corrected.
+
+Failure 2 now reads: t9 parks cleanly on _queue_recv and never wakes; no osi
+activity afterwards; t5 faults IllegalInstruction seconds later at a
+timing-variable PC in a tight ROM cluster (0x4008b8af@t463 vs
+0x4008b977@t367 across builds differing only by instrumentation; 0x4008b8e4
+in saved a7). Fault recorder corroborates across reboots.
+
+NEXT (one variable each):
+1. Extend panic dump to a8-a15; collect several runs; map the illegal-PC
+   cluster and inspect t5's return chain for a corrupted link (H-D).
+2. Use the existing level-3 ring to establish whether ANY interrupt arrives
+   between t9's park and death; if none, find which interrupt source was
+   supposed to post t9's queue and check whether nat-os routes it at all
+   (H-C). The woe-watch "good crossings 17" and intenable 0x00808000 are the
+   current baseline facts.
+3. Only after H-C/H-D discriminate: design the real mechanism (interrupt
+   route or wait-path repair). No speculative fixes.
+4. Regression discipline unchanged; heartbeat dots now appear in all logs
+   (X8b, marked diagnostic) -- ignore or filter them when diffing.

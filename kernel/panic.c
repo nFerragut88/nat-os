@@ -506,6 +506,21 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
                     uart_put_hex(g_sbp_ws);
                 }
                 uart_puts("\n");
+                extern volatile uint32_t g_sbp_skipped;
+                uart_puts("  sbp-skip  : ");
+                uart_put_dec(g_sbp_skipped);
+                uart_puts(" parks swept-skipped (X8 clamp)\n");
+                extern volatile uint32_t g_sbp_post_ws, g_sbp_post_wb;
+                uart_puts("  sbp-post  : wb ");
+                uart_put_dec(g_sbp_post_wb);
+                uart_puts(" ws ");
+                uart_put_hex(g_sbp_post_ws);
+                if (g_sbp_post_ws && !(g_sbp_post_ws & (g_sbp_post_ws - 1u))) {
+                    uart_puts("  single-bit ok");
+                } else {
+                    uart_puts("  SWEEP LEFT MULTI-BIT");
+                }
+                uart_puts("\n");
             }
 
             {

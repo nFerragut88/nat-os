@@ -248,3 +248,66 @@ Untested hypotheses (recorded only, nothing acted upon):
        sweep assumes shell frame layout).
   H-B: independent defect in the wake path or osi glue reached for the
        first time.
+
+## Session 4 (X8/X9): the sweep is innocent; failure 2 re-framed
+
+### X8 -- diagnostic clamp of the forced sweep (clearly marked, reverted)
+
+spill_before_parking skipped win_spill_call0() entirely (counter g_sbp_skipped).
+One variable vs the session-3 image. Result (x8_run1.log): NO fault at all --
+wifiinit stalls forever while the machine stays healthy. A scheduler-side
+heartbeat (X8b, dot every 64 scheduler calls) proved ticks and scheduling
+continue indefinitely; the stall is confined to the init flow.
+
+Conclusion: the forced sweep is LOAD-BEARING. Clamp reverted.
+
+Harness note: pyserial reads began hanging against the CH340 after an
+interrupted capture session; replaced for this machine by
+Temp/opencode/capture2.ps1 (.NET serial stack, same reset/capture protocol).
+
+### X9 -- sweep outcome instrumentation (kept)
+
+Every multi-frame park now records what the sweep LEFT BEHIND
+(g_sbp_post_ws/wb, printed as sbp-post). Result on the standard failing run:
+
+    sbp-last  : task 9 wb 3 ws 0x0000000a      (before: two live frames)
+    sbp-post  : wb 3 ws 0x00000008  single-bit ok
+
+win_spill_call0() SUCCEEDS on task 9's vendor-ABI frames. The seven-bit
+residue reported earlier ("post-spill ws 0x0a2b") is the adapter stub's own
+win_spill_all() sampling point mid-chain -- NOT our sweep's result. The
+session-3 suspicion that the sweep mishandles genuine windowed tasks is
+DISPROVEN. UM-NATOS-039 section 6 corrected accordingly.
+
+### What failure 2 actually looks like now
+
+With sweep verified good and every restore committing its exact mask:
+
+* task 9 parks cleanly on _queue_recv and NEVER WAKES (wake sentinel
+  untouched in every run); no osi call happens afterwards.
+* seconds into the wait, task 5 -- clean windows, committed grant --
+  faults with IllegalInstruction at a TIMING-VARIABLE PC inside a small ROM
+  cluster: epc 0x4008b8af at tick 463 (session-3 build), epc 0x4008b977 at
+  tick 367 (session-4 build, only heartbeat + sbp-post added), and
+  0x4008b8e4 sits in the saved frame's a7.
+* kernel fault recorder independently corroborates: LAST FAULT line across
+  reboots shows "exccause 0, epc 0x4008b8af (boot #726)".
+
+H-A (sweep corrupts genuine multi-frame tasks): ELIMINATED by sbp-post.
+H-B split into:
+  H-C: t9's wake comes from a path nat-os does not serve yet (e.g. a WiFi
+       interrupt route), so it legitimately never wakes; t5's ROM wait then
+       wanders through stale register state.
+  H-D: t5's own return chain is corrupted during the wait by a writer
+       outside the inventoried paths; the wandering PC is symptom, not cause.
+
+Untested. Next recommended experiment: extend the panic dump to a8-a15 and
+run several captures to map the illegal-PC cluster and look for a corrupted
+return-chain shape in t5's frame; separately, trace whether ANY interrupt
+arrives between t9's park and death (the ring sampler already timestamps
+every level-3 entry -- if seq advances while dots stop advancing work,
+interrupts are alive but nobody posts to the queue).
+
+Instrumentation currently in the image: ring sampler, restore readback,
+junk-source capture, restore history, sbp/post/skip counters, scheduler
+heartbeat (dots every 64 calls). All marked.

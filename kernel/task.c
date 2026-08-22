@@ -88,9 +88,22 @@ volatile uint32_t g_win_union;          /* read by _handler_level3 */
 
 /* [X5 experiment] last multi-frame sighting at a park point. See
  * spill_before_parking. 0xFFFFFFFF = never seen (WS is 16-bit, WB <= 15). */
+/* [X8 DIAGNOSTIC CLAMP -- NOT A FIX] count of parks where the forced
+ * win_spill_call0() was skipped. Every skip is also a full sbp sighting, so
+ * skipped <= sightings. Compared against the unmodified-image death
+ * signature (tick 463, epc 0x4008b8af, IllegalInstruction) to discriminate
+ * H-A (sweep corrupts genuinely multi-frame windowed tasks) from H-B
+ * (independent wake-path/osi-glue defect). */
 volatile uint32_t g_sbp_ws = 0xFFFFFFFFu;
 volatile uint32_t g_sbp_wb = 0xFFFFFFFFu;
 volatile int      g_sbp_task = -1;
+volatile uint32_t g_sbp_skipped = 0;
+
+/* [X8 experiment] window state the sweep LEFT BEHIND at the last multi-frame
+ * park. A healthy sweep reduces ws to a single bit at wb; anything else
+ * quantifies the failure shape per task. */
+volatile uint32_t g_sbp_post_ws = 0xFFFFFFFFu;
+volatile uint32_t g_sbp_post_wb = 0xFFFFFFFFu;
 
 /* [X7 experiment] non-static mirror of g_current, written at the single
  * assignment in task_schedule. The save-path ring sampler reads this to
@@ -777,6 +790,21 @@ uint32_t task_schedule(uint32_t current_sp)
     g_current = next;
     g_dbg_current = next;            /* [X7 experiment] mirror for the ring */
 
+    /* [X8b DIAGNOSTIC -- NOT A FIX] heartbeat from the scheduler itself.
+     * Dots keep flowing while ticks fire and scheduling cycles; silence means
+     * the machine wedged below the scheduler (interrupts dead or a spin with
+     * INTLEVEL raised). Discriminates "stuck in taskland" from "machine
+     * dead" for the X8 clamp hang. */
+    {
+        static uint32_t hb;
+        if ((++hb & 63u) == 0u) {
+            uart_putc('.');
+            if ((hb & 1023u) == 0u) {
+                uart_putc('\n');
+            }
+        }
+    }
+
 #if TRACE_SWITCHES > 0
     if (g_trace_n < TRACE_SWITCHES) {
         g_trace_n++;
@@ -1044,7 +1072,18 @@ static void spill_before_parking(void)
             g_sbp_ws   = ws;
             g_sbp_task = g_current;
         }
+        /* [X8 experiment] Clamp reverted after its run showed a livelock
+         * instead of the baseline fault: the forced sweep is load-bearing.
+         * Kept instead: outcome instrumentation -- what the sweep actually
+         * left behind, per park. */
         win_spill_call0();
+        {
+            uint32_t wb2, ws2;
+            __asm__ volatile ("rsr.windowbase %0"  : "=r"(wb2));
+            __asm__ volatile ("rsr.windowstart %0" : "=r"(ws2));
+            g_sbp_post_wb = wb2;
+            g_sbp_post_ws = ws2;
+        }
     }
 }
 
