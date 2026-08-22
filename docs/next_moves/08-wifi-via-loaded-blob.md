@@ -7608,4 +7608,60 @@ that `wintorture` -- not `wifiinit` -- is the test that will judge it.
 Suite after the revert: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy`
 rc=0, `blobtx force` 0x3004, `wifiinit` no fault and no reset.
 
+## Step 116 — the sweep cannot fire while the pin exists
+
+Step 115's placement diagnosis was acted on: the sweep moved into
+`_handler_level3` on the `.Lsched` path, before `task_schedule`, borrowing a
+dedicated 1 KB `.bss` stack rather than using the switch frame.
+
+The reasoning for the borrowed stack still looks right, and is worth keeping
+because it is the part that generalises: **each frame overflows through the `a1`
+held in its own window**, so every parent writes to the task's stack no matter
+where `a1` points. Only the CURRENT window's save area follows `a1`, and that is
+the handler's own context, which is discarded. The one thing that must survive is
+the innermost windowed frame's base save area at `[task_sp-16 .. task_sp-4]` --
+frame offsets 96..108, inside the padding, since the frame stores nothing above
+88. Verified against TASK_FRAME_WORDS 23 padded to TASK_FRAME_BYTES 112.
+
+**`wintorture` panicked again, identically: LoadProhibited, `epc 0x40080155`.**
+And this time the diagnostics say why that is not a verdict on the sweep:
+
+```
+switch-out: n 6151 wb 3 ws 0x00000008
+multiframe: 0 switch-outs with >1 live frame
+```
+
+**Zero.** Every switch-out already carries exactly one live frame, so
+`ws & (ws - 1)` was never true and the sweep body never executed. It broke
+`wintorture` without running -- which points at the 1 KB added to `.bss` and the
+code shift ahead of it, the step-7/25 layout band, not at the logic.
+
+### What this actually establishes
+
+The pin is doing the sweep's job. A task never reaches a switch-out holding more
+than one windowed frame, because `task_schedule()` refuses to switch away from
+one that does. So **spill-on-preemption cannot be tested while the pin exists**:
+it is dead code by construction, and `wintorture` passing or failing says
+nothing about it either way.
+
+That reframes the order of work. The sweep is not a change to make and then
+verify; it is the thing that has to be in place before the pin can come out, and
+the only test that can judge it is `wintorture` **with the pin disabled** --
+which is precisely the configuration UM-NATOS-038 section 12.3 measured as
+panicking, and the reason the pin was introduced.
+
+So the next attempt is three things in one step, not one:
+
+1. land the sweep without disturbing the layout -- put the borrowed stack where
+   an existing reserved stack already lives rather than appending to `.bss`, and
+   confirm `wintorture` is unchanged while the sweep is still dead code;
+2. disable the pin;
+3. run `wintorture` with the switch count as the control and `multiframe` as the
+   proof the sweep is now reached at all.
+
+Step 115 said `wintorture` rather than `wifiinit` would judge this. That was
+half right: `wintorture` with the pin ON judges nothing.
+
+Reverted. Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT.
+
 **Nothing has been on air.**
