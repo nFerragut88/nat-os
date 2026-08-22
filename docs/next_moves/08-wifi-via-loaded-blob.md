@@ -5182,3 +5182,55 @@ marked diagnostic clamp of spill_before_parking to the own-task mask
 
 Regressions after each build: wincollide runs=156 wrong=0, wintorture CORRECT,
 blobphy rc=0. Nothing on air changed.
+
+Step 79 (session 3): SOLVED. The phantom-bit writer was the context-switch
+restore itself. vectors.S wrote wsr.windowstart AFTER wsr.windowbase+rsync,
+so the a3 operand resolved to the wrong physical register whenever outgoing
+and incoming WINDOWBASE differed (base-13 excursion -> any base-1 task);
+stale register content truncated to 16 bits became ownerless WINDOWSTART
+bits. Same-base grants worked only because old and new views name the same
+physical slot. Fix: write windowstart BEFORE windowbase. Proof: restore
+readback mismatched exactly at n398 (wrote 0x0002, committed 0xe9a8 = low
+half of stale stack pointer 0x3ffbe9a8); after fix every restore commits its
+computed mask, StoreProhibited gone, regressions green (wintorture,
+wincollide, blobphy all corrupt=0 fault=none).
+
+NEW, distinct, deterministic failure now reachable (wifiinit dies at tick
+463, IllegalInstruction in ROM with CLEAN window state): the wifi driver's
+own task 9 is the first genuinely multi-frame windowed task ever parked, and
+spill_before_parking/win_spill_call0 assume call0-shell single-frame shape.
+Next: hypothesis loop for that park path (H-A) vs wake-path/osi-glue (H-B),
+before touching anything.
+
+Regressions after each build: unchanged discipline, see session 3 record.
+
+Step 80 (session 3 close-out): recorded as UM-NATOS-039
+(docs/UM-NATOS-039-the-phantom-window-bits.md). Bug 1 (StoreProhibited double
+exception during esp_wifi_init_internal) is closed: root cause was the
+context-switch restore writing wsr.windowstart through a rotated register
+view; fixed by writing windowstart before windowbase; verified by restore
+readback on every grant and by all three regressions. Instrumentation
+(ring sampler, restore readback, junk-source capture, restore history) stays
+in the image.
+
+NEXT STEPS are failure 2, not bug 1:
+
+1. Reproduce once more on the current image to confirm the signature is
+   stable at tick ~463 / epc 0x4008b8af / IllegalInstruction, task-9 park
+   seven ticks earlier (two identical runs already logged).
+2. Discriminate H-A vs H-B with one experiment, not a fix: make
+   spill_before_parking record-and-skip (no win_spill_call0) for tasks whose
+   base is NOT the shell base -- clearly marked diagnostic clamp, compared
+   against unmodified behaviour per investigation rules. If wifiinit then
+   survives past tick 463 or dies differently LATER in the queue path, the
+   sweep-on-real-windowed-task corruption (H-A) is implicated; if the death
+   is unchanged tick-for-tick, look at the wake path/osi glue (H-B).
+3. If H-A wins, design the real mechanism for suspending genuinely multi-frame
+   windowed tasks: either preserve the full WS word per task (and widen the
+   restore contract accordingly), or give the driver task its own shell
+   wrapper so it parks single-frame like everything else. Decide AFTER the
+   experiment, from evidence.
+4. Regressions after every build as always; note that they cannot see this
+   class of defect while every regression task shares one window base --
+   consider adding a regression task parked at a second base so cross-base
+   switches stop being invisible to the suites.

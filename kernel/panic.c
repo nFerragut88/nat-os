@@ -515,13 +515,16 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
                  * the write (saved frame or union); if it is clean, the bits
                  * materialised while a call0-only task was current. */
                 extern volatile uint32_t g_rin_seq, g_rin_wb, g_rin_ws;
+                extern volatile uint32_t g_rin_verify;
                 uart_puts("  switch-in : n ");
                 uart_put_dec(g_rin_seq);
                 uart_puts(" wb ");
                 uart_put_dec(g_rin_wb);
                 uart_puts(" ws ");
                 uart_put_hex(g_rin_ws);
-                uart_puts("\n");
+                uart_puts(" rbck ");
+                uart_put_hex(g_rin_verify);
+                uart_puts(g_rin_verify == g_rin_ws ? "  commit ok\n" : "  MISMATCH\n");
                 /* [X6 experiment] The paired switch-OUT record: the raw
                  * hardware window state of the task that was interrupted,
                  * before bookkeeping narrows it to the per-task mask. */
@@ -532,6 +535,56 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
                 uart_put_dec(g_rout_wb);
                 uart_puts(" ws ");
                 uart_put_hex(g_rout_ws);
+                uart_puts("\n");
+            }
+
+            {
+                /* [X7 experiment] Restore history: for each of the last 8
+                 * restores, the value the remapped a3 held at the
+                 * wsr.windowstart (junksrc) versus what the readback saw.
+                 * Healthy switches where junksrc == intended mask would mean
+                 * correctness has been accidental all along. */
+                extern volatile uint32_t g_rjunk;
+                extern volatile uint32_t g_rin_seq;
+                uart_puts("  rst-hist  :");
+                for (uint32_t k = 8u; k >= 1u; k--) {
+                    if (g_rin_seq < k) { continue; }
+                    uint32_t s   = g_rin_seq - k + 1u;
+                    uint32_t idx = s & 15u;
+                    const volatile uint32_t *e = &g_rjunk + idx * 3u;
+                    uart_puts("  ");
+                    uart_put_dec(s);
+                    uart_puts(":");
+                    uart_put_hex(e[1]);
+                    uart_puts("/");
+                    uart_put_hex(e[2]);
+                }
+                uart_puts("\n");
+            }
+
+            {
+                /* [X7 experiment] The last eight ring samples: {seq, task,
+                 * wb/ws}. The first entry whose ws carries bits beyond the
+                 * single-bit grant timestamps the pollution and names the
+                 * task that was current when it happened. */
+                extern volatile uint32_t g_ring;
+                extern volatile uint32_t g_ring_task;
+                extern volatile uint32_t g_rout_seq;
+                uart_puts("  win-ring   :");
+                for (uint32_t k = 8u; k >= 1u; k--) {
+                    if (g_rout_seq < k) { continue; }
+                    uint32_t s   = g_rout_seq - k + 1u;
+                    uint32_t idx = s & 63u;
+                    const volatile uint32_t *e = &g_ring + idx * 3u;
+                    uart_puts("  ");
+                    uart_put_dec(s);
+                    uart_puts("t");
+                    uart_put_dec((&g_ring_task)[idx]);
+                    uart_puts(":");
+                    uart_put_dec(e[1]);
+                    uart_puts("/");
+                    uart_put_hex(e[2]);
+                }
                 uart_puts("\n");
             }
 

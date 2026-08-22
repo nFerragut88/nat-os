@@ -92,6 +92,12 @@ volatile uint32_t g_sbp_ws = 0xFFFFFFFFu;
 volatile uint32_t g_sbp_wb = 0xFFFFFFFFu;
 volatile int      g_sbp_task = -1;
 
+/* [X7 experiment] non-static mirror of g_current, written at the single
+ * assignment in task_schedule. The save-path ring sampler reads this to
+ * record which task each sampled window state belongs to; g_current itself
+ * is static and has no symbol assembly can name. */
+volatile int g_dbg_current = -1;
+
 uint32_t task_win_union(void) { return g_win_union; }
 uint32_t task_win_mask(int id) { return (id >= 0 && id < TASK_MAX) ? g_win_mask[id] : 0u; }
 uint32_t task_win_base(int id) { return (id >= 0 && id < TASK_MAX) ? g_win_base[id] : 0u; }
@@ -769,6 +775,7 @@ uint32_t task_schedule(uint32_t current_sp)
     }
     g_tasks[next].resumes++;
     g_current = next;
+    g_dbg_current = next;            /* [X7 experiment] mirror for the ring */
 
 #if TRACE_SWITCHES > 0
     if (g_trace_n < TRACE_SWITCHES) {

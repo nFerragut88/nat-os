@@ -1,23 +1,23 @@
-# nat-os — Engineering Documentation
+﻿# nat-os â€” Engineering Documentation
 
-**Used Medias LLC — Embedded Systems Division**
-Document set: `UM-NATOS-001` … `UM-NATOS-022`
-Project: nat-os — a from-scratch operating system for the ESP32
+**Used Medias LLC â€” Embedded Systems Division**
+Document set: `UM-NATOS-001` â€¦ `UM-NATOS-022`
+Project: nat-os â€” a from-scratch operating system for the ESP32
 Hardware: developed and verified on the ESP32-2432S028R ("Cheap Yellow Display")
 Last revised: 2026-08-15
 
 ---
 
 > **Renamed from `cyd-os`.** Document numbering and section numbering are
-> unchanged — `UM-CYDOS-014 §5.2` in an older commit message is `UM-NATOS-014
-> §5.2` here. The rename reflects that only the pin maps and the panel and touch
+> unchanged â€” `UM-CYDOS-014 Â§5.2` in an older commit message is `UM-NATOS-014
+> Â§5.2` here. The rename reflects that only the pin maps and the panel and touch
 > drivers are specific to the Cheap Yellow Display; everything above them
 > assumes an ESP32 and nothing more.
 
 ## Purpose of this set
 
 These reports record the design of nat-os in enough detail that the project can
-be picked up cold — by someone else, or by the author after six months away —
+be picked up cold â€” by someone else, or by the author after six months away â€”
 without re-deriving decisions from the source.
 
 Each report states **what was decided, what it was measured against, and what
@@ -31,12 +31,12 @@ true" is the difference between a working boot and a silent reboot.
 | ID | Title | Covers |
 |---|---|---|
 | [UM-NATOS-001](UM-NATOS-001-architecture.md) | System Architecture and Scope | Layer model, what is built vs borrowed, the isolation problem, why a bytecode VM |
-| [UM-NATOS-002](UM-NATOS-002-boot-chain.md) | Boot Chain and Image Format | ROM → 2nd stage → kernel, image header, measured boot trace |
+| [UM-NATOS-002](UM-NATOS-002-boot-chain.md) | Boot Chain and Image Format | ROM â†’ 2nd stage â†’ kernel, image header, measured boot trace |
 | [UM-NATOS-003](UM-NATOS-003-abi.md) | Xtensa ABI Selection | Windowed vs call0, codegen evidence, consequences for the scheduler |
 | [UM-NATOS-004](UM-NATOS-004-memory-map.md) | Memory Map and Allocation Policy | ESP32 regions, our layout, the bootloader overlap risk |
 | [UM-NATOS-005](UM-NATOS-005-build-pipeline.md) | Build and Flash Pipeline | Toolchain, flags and why each one, reproducing a build, why not PlatformIO |
 | [UM-NATOS-006](UM-NATOS-006-m0-verification.md) | Milestone 0 Verification Report | Test method, captured output, pass/fail per assertion |
-| [UM-NATOS-007](UM-NATOS-007-roadmap.md) | Development Roadmap M1–M5 | Each milestone, its risks, and its exit criteria |
+| [UM-NATOS-007](UM-NATOS-007-roadmap.md) | Development Roadmap M1â€“M5 | Each milestone, its risks, and its exit criteria |
 | [UM-NATOS-008](UM-NATOS-008-m1-verification.md) | Milestone 1 Verification Report | Vectors, timer source and level choice, interrupt entry/exit, measured results, and a second writer to the comparator that stalled the tick for 183 ms |
 | [UM-NATOS-009](UM-NATOS-009-m2-verification.md) | Milestone 2 Verification Report | Task model, context frame, scheduler, the zero-overhead `LOOP` defect, watchdog correction, and ageing to bound the starvation strict priority allows |
 | [UM-NATOS-010](UM-NATOS-010-m3-verification.md) | Milestone 3 Verification Report | Heap allocator, arena model and bounds checking, and the measured DRAM budget |
@@ -56,20 +56,21 @@ true" is the difference between a working boot and a silent reboot.
 | [UM-NATOS-024](UM-NATOS-024-adc.md) | The ADC, and a Wrong Bit in a Right Register | SAR ADC1, the board's light sensor confirmed rather than assumed, and a one-bit error invisible to every read-back because it sat inside a twelve-bit field |
 | [UM-NATOS-025](UM-NATOS-025-i2c.md) | I2C, and Why a Preempted Master Is Legal | Bit-banged two-wire master on the last two free pins, clock stretching as the reason preemption is safe, and a self-test for the failure where a missing pull-up makes every address answer |
 | [UM-NATOS-026](UM-NATOS-026-onscreen-shell.md) | The Shell on the Panel, and Not a Menu of It | The real shell reached from a multi-tap keypad rather than a second command set that would drift from it; output captured by teeing the UART for exactly one command |
-| [UM-NATOS-027](UM-NATOS-027-audio.md) | Audio, and Three Ways to Be Silent | Hardware PWM on the speaker pin, a click on every keypress, and three stacked faults where each one made the next invisible — including a self-check that could not fail by construction |
+| [UM-NATOS-027](UM-NATOS-027-audio.md) | Audio, and Three Ways to Be Silent | Hardware PWM on the speaker pin, a click on every keypress, and three stacked faults where each one made the next invisible â€” including a self-check that could not fail by construction |
 | [UM-NATOS-028](UM-NATOS-028-wifi-touch-and-the-chrome-column.md) | WiFi, Touch, and the Column That Ate the 3D View | 802.11 receive working end to end; the TSF timer identified by behaviour; task_sleep found not to sleep; seven of this kernel's own instruments caught reporting confidently and wrongly; and a display fault that survived eight measured theories before a frozen-renderer test proved the repair happens downstream of the framebuffer |
 | [UM-NATOS-029](UM-NATOS-029-two-mysteries-and-a-novel-that-called-it.md) | Two Mysteries, One Confirmed Bug, and a Novel That Called It First | The display's DMA engine found dead since seconds after every boot, every build, with the whole system silently on the 64-byte FIFO path; eleven theories eliminated against hardware; a program whose entire purpose is to fail to draw found to repair the view, and a spinning task found not to; and five more instruments caught lying, one of them by circular reasoning that reverted a correct fix |
-| [UM-NATOS-030](UM-NATOS-030-one-bit.md) | One Bit | The 3D-view fault closed: DMA_OUTLINK_START was defined as bit 30, which is OUTLINK_RESTART, so every transfer resumed the old descriptor chain instead of starting the new one — a displaced copy of a provably correct framebuffer, with six instruments reporting success and only the glass disagreeing; found by sending the framebuffer out over the UART and looking at it, after eleven theories that were all downstream of it; it had been corrupting every transfer wider than 32 pixels system-wide, not only the 3D view |
-| [UM-NATOS-031](UM-NATOS-031-the-device-model.md) | The Device Model, and What a Narrow Interface Survives | The last hand-written syscall: a peripheral is now a table entry rather than a kernel edit and an ISA change, with one shared argument harness landing first so the model had nothing to invent; five devices verified on hardware, the one that did not fit recorded alongside the four that did, and three more defects that reported success while doing the wrong thing — including a diagnostic that ate the keypresses it was reporting |
+| [UM-NATOS-030](UM-NATOS-030-one-bit.md) | One Bit | The 3D-view fault closed: DMA_OUTLINK_START was defined as bit 30, which is OUTLINK_RESTART, so every transfer resumed the old descriptor chain instead of starting the new one â€” a displaced copy of a provably correct framebuffer, with six instruments reporting success and only the glass disagreeing; found by sending the framebuffer out over the UART and looking at it, after eleven theories that were all downstream of it; it had been corrupting every transfer wider than 32 pixels system-wide, not only the 3D view |
+| [UM-NATOS-031](UM-NATOS-031-the-device-model.md) | The Device Model, and What a Narrow Interface Survives | The last hand-written syscall: a peripheral is now a table entry rather than a kernel edit and an ISA change, with one shared argument harness landing first so the model had nothing to invent; five devices verified on hardware, the one that did not fit recorded alongside the four that did, and three more defects that reported success while doing the wrong thing â€” including a diagnostic that ate the keypresses it was reporting |
 | [UM-NATOS-032](UM-NATOS-032-containment.md) | Containment, and Why It Is Not Security | Each program declares which devices it may touch, the declaration sits beside its arena size in the launch table, and the check covers all four routes from a program to hardware; about seventy lines, most of the report spent on why this must not be called security and on the two ways it could have been quietly wrong |
 | [UM-NATOS-033](UM-NATOS-033-the-path-that-had-never-run.md) | The Path That Had Never Run | The 3D view's chrome appearing on the wrong side, traced not to a new bug but to UM-NATOS-030 having started executing a DMA path that had contained bugs since the day it was written and had never run long enough for anyone to see them; four defects found in it, three real, one the cause, and a fourth instrument caught lying on the way past |
-| [UM-NATOS-034](UM-NATOS-034-the-second-receiver.md) | The Second Receiver | A negative result worth more than the positives it replaced: a second nat-os board listening 30 cm away proves nothing demodulable reaches the air, so frame construction and content are exonerated and the fault is in the RF/PHY path; framing, CCA, EDCA, lmacInit, the power domain, the MAC address and the whole 0x3FF73Cxx block eliminated; two of three documented leads found not to exist; §17 asks whether the thing is possible at all and answers yes |
-| [UM-NATOS-035](UM-NATOS-035-the-last-borrowed-thing.md) | The Last Borrowed Thing | Espressif's second-stage bootloader replaced by 2,736 bytes of this project's own, so the executable chain from reset to shell prompt is now entirely ours except for the part physically in the chip; short because kernel/flash.c had already solved the read-flash-before-flash-works problem by depending on nothing but hardware; one defect, a byte store to instruction memory, found in eleven seconds by an exception the architecture is obliged to raise — and the report argues that contrast with the three-month silent transmitter is the transferable part |
+| [UM-NATOS-034](UM-NATOS-034-the-second-receiver.md) | The Second Receiver | A negative result worth more than the positives it replaced: a second nat-os board listening 30 cm away proves nothing demodulable reaches the air, so frame construction and content are exonerated and the fault is in the RF/PHY path; framing, CCA, EDCA, lmacInit, the power domain, the MAC address and the whole 0x3FF73Cxx block eliminated; two of three documented leads found not to exist; Â§17 asks whether the thing is possible at all and answers yes |
+| [UM-NATOS-035](UM-NATOS-035-the-last-borrowed-thing.md) | The Last Borrowed Thing | Espressif's second-stage bootloader replaced by 2,736 bytes of this project's own, so the executable chain from reset to shell prompt is now entirely ours except for the part physically in the chip; short because kernel/flash.c had already solved the read-flash-before-flash-works problem by depending on nothing but hardware; one defect, a byte store to instruction memory, found in eleven seconds by an exception the architecture is obliged to raise â€” and the report argues that contrast with the three-month silent transmitter is the transferable part |
 
 | [UM-NATOS-036](UM-NATOS-036-the-half-speed-board.md) | The Half-Speed Board | UM-NATOS-035's bootloader left the SoC on the bare 40 MHz crystal instead of the 80 MHz PLL, and no instrument in the kernel could detect it because every duration it reports is derived from CCOUNT -- halve the clock and a cycle count printed as milliseconds shows the same number for twice the time; found only because a crystal frequency of zero in an RTC retention register hangs the PHY; fixed in the kernel rather than the loader so one image boots correctly from either, with the eight-register differential that eliminated the remaining WiFi gap rather than explaining it |
 
 | [UM-NATOS-037](UM-NATOS-037-code-in-flash.md) | Code in Flash, and Three Things That Only Move Reveals | The kernel given a flash-executable region at last -- every instruction had lived in 128 KB of IRAM while .rodata had been mapped from flash since milestone 11, and the WiFi build was using 112 KB of it; free IRAM 19,127 -> 44,943 by moving two files, with the window that is named IROM0 turning out to be the wrong one; and three defects that only moving code could surface -- an alignment bug latent for months in a file nobody touched, a padding segment the bootloader had never been shown, and a build gate that hid the failure in one configuration and not the other |
 | [UM-NATOS-038](UM-NATOS-038-running-the-vendor-stack.md) | Running the Vendor Stack from Flash | next_moves/08's two blockers were both wrong once measured -- the archive is 234 KB against 3.3 MB of IROM, and the true external symbol surface is ten, not 66; a 606 KB pre-linked vendor image now lives in a reserved flash partition and is mapped into THREE windows, because code, read-only data and writable data each need a different mechanism and rodata in the instruction window faults on the byte accesses vendor code makes constantly; its PHY initialises under nat-os's own bootloader from a kernel containing no Espressif code, and ESP-IDF's driver init runs and allocates through nat-os's heap and mutexes; seven defects along the way including 357,940 bytes of code silently absent from the image, call0 stubs entered with CALL8 and jumped to a raw windowed return encoding, and an in-tree adapter table stale by 63 positions that the blob itself detected; the adapter names its own requirements one run at a time through instrumented stubs; and the config rejection that stalled it turned out to be a struct FOUR BYTES too long -- wpa_crypto_funcs reserved 120 where it is 116 -- so every value was right and every one was in the wrong place, found by asking a board running real ESP-IDF to print its own offsets rather than by bisecting nineteen fields; nothing has been on air |
+| [UM-NATOS-039](UM-NATOS-039-the-phantom-window-bits.md) | The Phantom Window Bits and the Writer in the Restore | the init-time StoreProhibited double exception root-caused with a two-run proof: the context-switch restore wrote wsr.windowstart through a rotated register view, so every cross-base grant latched stale register content (truncated to 16 bits) as ownerless WINDOWSTART bits -- same-base grants worked only because old and new views name the same physical slot, which is also why all three regression suites stayed green for months; fixed by writing windowstart before windowbase, verified by readback on every restore; removing it exposed a second, deterministic failure: task 9 is the first genuinely multi-frame windowed program ever suspended and the park machinery assumes call0-shell single-frame shape; hypotheses on file, deliberately unfixed |
 
 ## The book
 
@@ -86,7 +87,7 @@ produced), and **30** (the consolidated inventory of what is *not* established).
 
 ## Reading order
 
-New to the project: **001 → 002 → 004 → 003**. That gives the shape of the
+New to the project: **001 â†’ 002 â†’ 004 â†’ 003**. That gives the shape of the
 system, how it starts, where things live, and why the calling convention is
 unusual.
 
@@ -99,149 +100,149 @@ Reproducing a build: **005** alone is sufficient.
 
 | Item | State |
 |---|---|
-| Milestone 0 — kernel boots, self-checks pass | **Complete, verified on hardware** |
-| Milestone 1 — timer interrupt, tick counter | **Complete, verified on hardware** |
-| Milestone 2 — native task switching | **Complete, verified on hardware** — 3,400+ switches, zero corruption |
-| Milestone 3 — heap and arena model | **Complete, verified on hardware** — all three exit criteria |
-| Milestone 4 — bytecode interpreter | **Complete, verified on hardware** — program runs, six fault classes contained |
-| Isolation | **Live** — every VM memory access bounds-checked, UM-NATOS-012 §6.2 |
-| Full stack | **Running** — bytecode hosted in a preemptible native task, 3.3M instructions across 450 preemptions with zero accounting drift, UM-NATOS-012 §6.6 |
-| Milestone 5 — multiple applications | **Complete, verified on hardware** — all three exit criteria |
-| Roadmap M0–M5 | **Complete.** Six native tasks, three scheduling levels, a shell, and an application deliberately written to escape its arena that could not |
-| Locking | **Complete** — critical sections and a blocking mutex; heap and console both arbitrated, UM-NATOS-014 |
-| Task blocking | **Live** — `TASK_BLOCKED`, `TASK_SLEEPING` and an idle task using `WAITI`, UM-NATOS-009 §11 |
-| Scheduling | **Priorities with ageing** — three levels plus ageing credit, so a ready task reaches the front within ~600 ms whatever sits above it; `task_sleep()`. **No priority inheritance:** `task_boost()` exists and nothing calls it, UM-NATOS-014 §9 correction |
-| 3D renderer | **Running** — grid raycaster, one ray per column, face shading, framebuffer on (§5.7's contrary measurement was taken through a stalling clock and lock contention), UM-NATOS-015 §5.8 |
-| Display | **Working on hardware** — ILI9341, no framebuffer, **43 ms** full-screen fill via SPI2 + DMA, UM-NATOS-015 §5.5 |
-| Application graphics | **Live** — `FILL`/`TEXT`/`DIMS` confined to per-application viewports; 0 escapes across 136 audited fills, UM-NATOS-016 §5 |
-| Touch | **Working on hardware** — XPT2046 gated on PENIRQ **and** pressure; X axis was inverted for three months; calibrated on-device from four inset targets and persisted across reset, UM-NATOS-017 §4.1, §7.4 |
-| Interrupts | **Matrix verified, no consumer** — peripheral interrupts routable for the first time; PENIRQ proven by injection but never observed to fire from a finger, so touch stays polled, UM-NATOS-023 §6, §7 |
-| ADC | **Working on hardware** — SAR ADC1, 8 channels; the light sensor on GPIO34 moved 265 counts against a 47-count control group, UM-NATOS-024 §6 |
-| I2C | **Bus verified, nothing attached** — bit-banged on GPIO22/27; both lines drive and release correctly, no byte has yet been transferred, UM-NATOS-025 §7, §8 |
-| On-screen shell | **Working on hardware** — all 25 commands reachable with no host attached; one command set, not two, UM-NATOS-026 §2 |
-| Audio | **Working on hardware** — LEDC hardware PWM on GPIO26, no CPU while sounding; a click on every keypress. Tones only, and 440 Hz is inaudible on this speaker while 3 kHz is clear, UM-NATOS-027 §4 |
-| Application input | **Live** — `SYS TOUCH` confined to the asking application's viewport; 81 delivered, 109,211 withheld, 0 confinement failures, UM-NATOS-017 §8 |
-| Application messaging | **Live** — copied through a kernel mailbox, never shared memory; 278 sent / 277 delivered / 0 bad buffers, UM-NATOS-013 §8 |
-| Application bitmaps | **Live** — `SYS BLIT`, arena-bounded source and viewport-clipped destination, UM-NATOS-012 §10 |
-| DRAM budget | **Measured at M3** — 167,680 B allocatable then, 158,000 B after `TASK_MAX` rose to 8; it has since risen to 12 and three drivers have been added, so the current figure is lower and unremeasured, UM-NATOS-010 §7.2 |
-| Flash cache | **Enabled** — `.rodata` mapped from flash, UM-NATOS-011 |
-| Persistence | **Live** — checksummed record in a flash sector at 2 MB; boot counter and a cumulative frame count survived 16 resets, UM-NATOS-018 §6 |
-| Failure handling | **Enforced** — guards checked on every switch across every task slot; `hang`/`fault`/`smash` each trigger their path on demand, UM-NATOS-019 §5 |
-| Fault reporting | **Three ways** — flash record read back by the next boot, UART report, and the reason drawn on the panel; ordered by decreasing reliability, UM-NATOS-019 §6–7 |
-| microSD | **Reading** — SPI mode, per-stage errors, bounded on an empty slot; FAT16 header read at LBA 240, UM-NATOS-020 §5.2 |
-| Launcher | **Live** — 3×3 icon grid including an on-screen shell, hybrid cursor, double-tap to launch by name; close button per program in a column outside every viewport, so a program cannot hide its own exit, UM-NATOS-021 §6.2 |
-| Notes | **Live** — multi-tap keypad, 8 messages of 160 characters in flash, verified across a power cycle and a reflash, UM-NATOS-022 §6 |
-| Stack margins | **Measured** — worst task uses 444 B of 2,048; minimum margin 78%, UM-NATOS-019 §3.1 |
+| Milestone 0 â€” kernel boots, self-checks pass | **Complete, verified on hardware** |
+| Milestone 1 â€” timer interrupt, tick counter | **Complete, verified on hardware** |
+| Milestone 2 â€” native task switching | **Complete, verified on hardware** â€” 3,400+ switches, zero corruption |
+| Milestone 3 â€” heap and arena model | **Complete, verified on hardware** â€” all three exit criteria |
+| Milestone 4 â€” bytecode interpreter | **Complete, verified on hardware** â€” program runs, six fault classes contained |
+| Isolation | **Live** â€” every VM memory access bounds-checked, UM-NATOS-012 Â§6.2 |
+| Full stack | **Running** â€” bytecode hosted in a preemptible native task, 3.3M instructions across 450 preemptions with zero accounting drift, UM-NATOS-012 Â§6.6 |
+| Milestone 5 â€” multiple applications | **Complete, verified on hardware** â€” all three exit criteria |
+| Roadmap M0â€“M5 | **Complete.** Six native tasks, three scheduling levels, a shell, and an application deliberately written to escape its arena that could not |
+| Locking | **Complete** â€” critical sections and a blocking mutex; heap and console both arbitrated, UM-NATOS-014 |
+| Task blocking | **Live** â€” `TASK_BLOCKED`, `TASK_SLEEPING` and an idle task using `WAITI`, UM-NATOS-009 Â§11 |
+| Scheduling | **Priorities with ageing** â€” three levels plus ageing credit, so a ready task reaches the front within ~600 ms whatever sits above it; `task_sleep()`. **No priority inheritance:** `task_boost()` exists and nothing calls it, UM-NATOS-014 Â§9 correction |
+| 3D renderer | **Running** â€” grid raycaster, one ray per column, face shading, framebuffer on (Â§5.7's contrary measurement was taken through a stalling clock and lock contention), UM-NATOS-015 Â§5.8 |
+| Display | **Working on hardware** â€” ILI9341, no framebuffer, **43 ms** full-screen fill via SPI2 + DMA, UM-NATOS-015 Â§5.5 |
+| Application graphics | **Live** â€” `FILL`/`TEXT`/`DIMS` confined to per-application viewports; 0 escapes across 136 audited fills, UM-NATOS-016 Â§5 |
+| Touch | **Working on hardware** â€” XPT2046 gated on PENIRQ **and** pressure; X axis was inverted for three months; calibrated on-device from four inset targets and persisted across reset, UM-NATOS-017 Â§4.1, Â§7.4 |
+| Interrupts | **Matrix verified, no consumer** â€” peripheral interrupts routable for the first time; PENIRQ proven by injection but never observed to fire from a finger, so touch stays polled, UM-NATOS-023 Â§6, Â§7 |
+| ADC | **Working on hardware** â€” SAR ADC1, 8 channels; the light sensor on GPIO34 moved 265 counts against a 47-count control group, UM-NATOS-024 Â§6 |
+| I2C | **Bus verified, nothing attached** â€” bit-banged on GPIO22/27; both lines drive and release correctly, no byte has yet been transferred, UM-NATOS-025 Â§7, Â§8 |
+| On-screen shell | **Working on hardware** â€” all 25 commands reachable with no host attached; one command set, not two, UM-NATOS-026 Â§2 |
+| Audio | **Working on hardware** â€” LEDC hardware PWM on GPIO26, no CPU while sounding; a click on every keypress. Tones only, and 440 Hz is inaudible on this speaker while 3 kHz is clear, UM-NATOS-027 Â§4 |
+| Application input | **Live** â€” `SYS TOUCH` confined to the asking application's viewport; 81 delivered, 109,211 withheld, 0 confinement failures, UM-NATOS-017 Â§8 |
+| Application messaging | **Live** â€” copied through a kernel mailbox, never shared memory; 278 sent / 277 delivered / 0 bad buffers, UM-NATOS-013 Â§8 |
+| Application bitmaps | **Live** â€” `SYS BLIT`, arena-bounded source and viewport-clipped destination, UM-NATOS-012 Â§10 |
+| DRAM budget | **Measured at M3** â€” 167,680 B allocatable then, 158,000 B after `TASK_MAX` rose to 8; it has since risen to 12 and three drivers have been added, so the current figure is lower and unremeasured, UM-NATOS-010 Â§7.2 |
+| Flash cache | **Enabled** â€” `.rodata` mapped from flash, UM-NATOS-011 |
+| Persistence | **Live** â€” checksummed record in a flash sector at 2 MB; boot counter and a cumulative frame count survived 16 resets, UM-NATOS-018 Â§6 |
+| Failure handling | **Enforced** â€” guards checked on every switch across every task slot; `hang`/`fault`/`smash` each trigger their path on demand, UM-NATOS-019 Â§5 |
+| Fault reporting | **Three ways** â€” flash record read back by the next boot, UART report, and the reason drawn on the panel; ordered by decreasing reliability, UM-NATOS-019 Â§6â€“7 |
+| microSD | **Reading** â€” SPI mode, per-stage errors, bounded on an empty slot; FAT16 header read at LBA 240, UM-NATOS-020 Â§5.2 |
+| Launcher | **Live** â€” 3Ã—3 icon grid including an on-screen shell, hybrid cursor, double-tap to launch by name; close button per program in a column outside every viewport, so a program cannot hide its own exit, UM-NATOS-021 Â§6.2 |
+| Notes | **Live** â€” multi-tap keypad, 8 messages of 160 characters in flash, verified across a power cycle and a reflash, UM-NATOS-022 Â§6 |
+| Stack margins | **Measured** â€” worst task uses 444 B of 2,048; minimum margin 78%, UM-NATOS-019 Â§3.1 |
 | Version control | **Initialised 2026-08-14** |
 | JTAG debug probe | Ordered, not in hand |
-| Bootloader IRAM overlap | **Closed** — investigated and disproved, UM-NATOS-004 §5 |
-| Panic handler | **Closed** — exercised deliberately with an `ill` instruction; prints EXCCAUSE/EPC and halts |
-| Watchdogs | **Closed** — measured armed, now disabled and read back, UM-NATOS-009 §8 |
+| Bootloader IRAM overlap | **Closed** â€” investigated and disproved, UM-NATOS-004 Â§5 |
+| Panic handler | **Closed** â€” exercised deliberately with an `ill` instruction; prints EXCCAUSE/EPC and halts |
+| Watchdogs | **Closed** â€” measured armed, now disabled and read back, UM-NATOS-009 Â§8 |
 
-> **Standing rule for interrupt handlers — clear `PS.EXCM` before calling C.**
+> **Standing rule for interrupt handlers â€” clear `PS.EXCM` before calling C.**
 > Hardware sets `EXCM` on interrupt entry, and while it is set the Xtensa
 > zero-overhead loop-back is disabled: a hardware loop body executes once and
 > falls through to whatever sits at `LEND`. GCC emits these loops for ordinary
 > counted C loops, so this silently degrades **every C function reachable from a
-> handler** — drivers and the VM interpreter included, not just the scheduler
+> handler** â€” drivers and the VM interpreter included, not just the scheduler
 > where it was found. `_handler_level3` now clears it; any future handler must
-> do the same. UM-NATOS-009 §6.
+> do the same. UM-NATOS-009 Â§6.
 
-> **Standing rule for shared registers — a hardware register with a software
+> **Standing rule for shared registers â€” a hardware register with a software
 > shadow has one safe shape: either one writer, or every writer maintains the
 > shadow.** `timer.c` kept `g_next` as its idea of the comparator deadline while
 > `task_yield()` wrote CCOMPARE1 directly. The handler then added a whole
 > interval to a deadline that was only 64 cycles old, so every yield pushed the
-> tick further out — 18 tick periods, 183 ms, before anything noticed. The rule
+> tick further out â€” 18 tick periods, 183 ms, before anything noticed. The rule
 > below was obeyed exactly and did not prevent it, because it constrains the
-> WRITER and the defect was in the other party's bookkeeping. UM-NATOS-008 §8.
+> WRITER and the defect was in the other party's bookkeeping. UM-NATOS-008 Â§8.
 
-> **Standing rule for the scheduler — a yield must never defer the clock it
+> **Standing rule for the scheduler â€” a yield must never defer the clock it
 > depends on.** `task_yield()` originally wrote `CCOMPARE1 = ccount + 64`
 > unconditionally, so any loop yielding faster than 64 cycles pushed the
 > deadline ahead of `CCOUNT` forever, the timer interrupt stopped firing, and
-> the whole kernel froze — the tick is what drives every context switch. Any
+> the whole kernel froze â€” the tick is what drives every context switch. Any
 > routine adjusting a scheduler deadline must only ever move it **earlier**.
-> UM-NATOS-016 §3.
+> UM-NATOS-016 Â§3.
 
-> **Standing rule for verification — when an instrument reports its own reading
+> **Standing rule for verification â€” when an instrument reports its own reading
 > invalid, that outranks every value printed beside it.** Three times across two
 > sessions a frozen marker, a sample counter stuck at an identical value, and a
 > boot banner in a serial capture each said "this measurement is not what you
 > think", and the plausible-looking numbers next to them were believed anyway.
 > Two conclusions were published and later retracted as a result. Latch the
 > quantity so timing cannot lie about it, then feed the system a controlled
-> input rather than interpreting an uncontrolled one. UM-NATOS-017 §6.
+> input rather than interpreting an uncontrolled one. UM-NATOS-017 Â§6.
 
-> **Standing rule for debugging — a negative result is only informative if the
+> **Standing rule for debugging â€” a negative result is only informative if the
 > experiment demonstrably ran.** Two flash hypotheses were recorded as tested
 > against a board that had never been reflashed: `build.ps1` builds, but
 > `build.ps1 -Flash` is what flashes, and the invocation used named a script that
 > does not exist. Every hypothesis returned bit-identical output, which was read
 > as "none of these are the cause" when it meant "no experiment has run yet".
 > The signature to watch for is **a run of results that do not vary when the
-> input does** — suspect the harness before the theory, and verify the change
+> input does** â€” suspect the harness before the theory, and verify the change
 > reached the target rather than inferring it from the absence of an error.
-> UM-NATOS-018 §5.
+> UM-NATOS-018 Â§5.
 
-> **Standing rule for verification — a startup artefact is not evidence the
+> **Standing rule for verification â€” a startup artefact is not evidence the
 > thing it introduces works.** The shell was signed off because its banner
 > printed; the banner proves a task was created and the TRANSMIT path works, and
 > says nothing about receive. The receive path was one byte behind for the
 > shell's entire existence, so pressing Enter did nothing until the next
-> keystroke — and every automated test drove it with CR **and** LF, the one
+> keystroke â€” and every automated test drove it with CR **and** LF, the one
 > input shape that hides it. Stack guards and the panic handler went unexercised
 > for the same reason: each was confirmed to EXIST rather than observed to WORK.
-> Trigger the mechanism on purpose, or treat it as untested. UM-NATOS-019 §4.1.
+> Trigger the mechanism on purpose, or treat it as untested. UM-NATOS-019 Â§4.1.
 
-> **Standing rule for calibration — never infer direction from the endpoint of a
+> **Standing rule for calibration â€” never infer direction from the endpoint of a
 > gesture.** The first and last samples of a drag are its two least trustworthy,
 > because both sit at a contact transition where the panel is not bridged and the
 > ADC reads its rail. A rail reading is near the top of the range, so a drag
-> ending anywhere "ends near its maximum" and EVERY axis appears to increase —
+> ending anywhere "ends near its maximum" and EVERY axis appears to increase â€”
 > the test can only return one answer. The touch X axis was backwards for three
 > months behind exactly that. Calibrate from labelled points, each a known
 > position paired with a reading, and let direction fall out of comparing labels.
-> UM-NATOS-017 §7.1.
+> UM-NATOS-017 Â§7.1.
 
-> **Standing rule for lock contention — the cost is the NUMBER of blocking
+> **Standing rule for lock contention â€” the cost is the NUMBER of blocking
 > events, not the time the lock is held.** Each one costs a scheduling
-> round-trip whether the lock was held for 24 ms or 24 µs: the blocked task is
+> round-trip whether the lock was held for 24 ms or 24 Âµs: the blocked task is
 > descheduled and must be selected again. Measured here at 63 ms per contention
 > against a 24 ms hold, with the lock free 88% of the time while two tasks sat
 > blocked on it. Narrowing the hold by 25% changed the outcome by nothing. The
-> levers are batching (fewer takes) or not blocking at all (`try_lock`) —
-> shortening holds, the intuitive move, does nothing. UM-NATOS-014 §10.5.
+> levers are batching (fewer takes) or not blocking at all (`try_lock`) â€”
+> shortening holds, the intuitive move, does nothing. UM-NATOS-014 Â§10.5.
 
-> **Standing rule for cross-checks — a check only tests what its samples can
+> **Standing rule for cross-checks â€” a check only tests what its samples can
 > distinguish.** The SD pin map was verified against four IO_MUX entries already
 > in the tree. All four confirmed the indexing, and all four sat below the
 > anomaly, so every one of them agreed with the wrong answer: GPIO23 was read
 > from the UART's receive pad. The check was real, it was performed, and it
 > could not have failed. Samples must STRADDLE the thing being verified, not
-> merely agree with it. UM-NATOS-020 §4.2.
+> merely agree with it. UM-NATOS-020 Â§4.2.
 
-> **Standing rule for fixes — a correct diagnosis does not license a fix of
+> **Standing rule for fixes â€” a correct diagnosis does not license a fix of
 > arbitrary scope.** Chrome drawn over a view that repaints every pixel every
 > frame will strobe; that diagnosis was reached twice and was right both times.
 > The first fix reserved rows for it, which moved the region boundary, the
-> application strips, the colour strip and the grid — four files of constants —
+> application strips, the colour strip and the grid â€” four files of constants â€”
 > and produced a screen that looked wrong for reasons never found, while every
 > measurement insisted the renderer was correct. The second wrote 324 pixels
 > into a buffer that was already being sent. Prefer the fix whose blast radius
-> matches the defect. UM-NATOS-021 §6.6.
+> matches the defect. UM-NATOS-021 Â§6.6.
 
-> **Standing rule for workarounds — tolerating a defect is not fixing it.** The
+> **Standing rule for workarounds â€” tolerating a defect is not fixing it.** The
 > note pad's keys are 80 px because the touch mapping reads about 24 px low on
 > X; a 24 px key was destroyed by that error and an 80 px key absorbs it. The
 > app works, the fault is untouched, and every future element finer than 80 px
 > will meet it again. Record which one you did, at the place a reader would
-> otherwise assume the generous version. UM-NATOS-022 §3.3.
+> otherwise assume the generous version. UM-NATOS-022 Â§3.3.
 
-> **Standing rule for reverts — reverting two changes together destroys the
+> **Standing rule for reverts â€” reverting two changes together destroys the
 > information about which one mattered.** A relayout and a camera fix were
 > reverted in one commit; the screen looked right afterwards, which appeared to
 > convict the layout. Re-applying the geometry alone, later, showed it was
-> innocent — the camera had broken concurrently and "blank screen" was a correct
+> innocent â€” the camera had broken concurrently and "blank screen" was a correct
 > rendering of the inside of a wall. If a revert must bundle, the bundle is a
-> hypothesis to test later, not a conclusion. UM-NATOS-021 §6.7.
+> hypothesis to test later, not a conclusion. UM-NATOS-021 Â§6.7.

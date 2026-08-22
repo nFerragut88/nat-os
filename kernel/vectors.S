@@ -134,17 +134,36 @@ _handler_level3:
      * was interrupted, before any bookkeeping narrows it. Paired with the
      * switch-IN recorder at the restore: if a task leaves two bits live and
      * its saved word records one, the drop happened here; if it leaves one
-     * and the next task is granted several, the leak is in the restore. */
-    movi     a3, g_rout_seq
-    l32i     a4, a3, 0
-    addi     a4, a4, 1
-    s32i     a4, a3, 0
-    movi     a3, g_rout_wb
-    rsr.windowbase  a4
-    s32i     a4, a3, 0
-    movi     a3, g_rout_ws
+     * and the next task is granted several, the leak is in the restore.
+     *
+     * [X7 experiment] Extended into a RING SAMPLER: every level-3 interrupt
+     * appends {seq, WB, WS} to a 64-entry ring plus the running task's id,
+     * so the dump shows the first sample at which foreign bits exist -- with
+     * the task that was current at that instant -- rather than only the final
+     * state. Stride-12 addressing: addx8 then addx4 gives base + idx*12
+     * without a multiply. */
+    rsr.windowbase  a3
     rsr.windowstart a4
-    s32i     a4, a3, 0
+    movi     a5, g_rout_seq
+    l32i     a6, a5, 0
+    addi     a6, a6, 1
+    s32i     a6, a5, 0
+    movi     a5, g_rout_wb
+    s32i     a3, a5, 0
+    movi     a5, g_rout_ws
+    s32i     a4, a5, 0
+    extui    a6, a6, 0, 6             /* idx = seq & 63 */
+    movi     a5, g_ring
+    addx8    a5, a6, a5
+    addx4    a5, a6, a5               /* g_ring + idx*12 */
+    s32i     a6, a5, 0
+    s32i     a3, a5, 4
+    s32i     a4, a5, 8
+    movi     a5, g_dbg_current
+    l32i     a4, a5, 0
+    movi     a5, g_ring_task
+    addx4    a5, a6, a5               /* g_ring_task + idx*4 */
+    s32i     a4, a5, 0
 
     /* Clear PS.EXCM before calling any C.
      *
@@ -289,10 +308,59 @@ _handler_level3:
     s32i     a4, a5, 0
     movi     a4, g_switch_sp
     s32i     a1, a4, 0
-    wsr.windowbase  a2
-    rsync
+
+    /* [ROOT CAUSE / FIX] The grant mask in a3 was computed under the
+     * OUTGOING window view. WINDOWSTART must therefore be written BEFORE
+     * wsr.windowbase rotates the view: afterwards the name a3 resolves to
+     * a different physical register (slot newWB*4+3), and the write sources
+     * whatever stale value lives in that slot instead.
+     *
+     * X7 proved this exactly. Restore-history entries 391-397 (all
+     * base-1 -> base-1 grants): remapped a3 held 0x00000002, coincidentally
+     * equal to the intended mask, so the write looked correct. Entry 398,
+     * the first grant following task 5's base-13 excursion: remapped a3
+     * held stack pointer 0x3ffbe9a8, and WINDOWSTART -- architecturally 16
+     * bits wide -- latched 0xe9a8. That word is the ownerless phantom-frame
+     * set every prior experiment kept measuring, and sweeping it is the
+     * StoreProhibited.
+     *
+     * The transient state between the two writes (~2 instructions, both
+     * special-register stores back-to-back) has interrupts masked at level
+     * 3 and executes no window operation, so no allocation-chain check can
+     * observe it. */
+    /* [X7 experiment] operand capture retained, now taken pre-write under
+     * the unrotated view: must always equal rin_ws. */
+    movi     a4, g_rin_junksrc
+    s32i     a3, a4, 0
     wsr.windowstart a3
     rsync
+    wsr.windowbase  a2
+    rsync
+    /* [X7 experiment] readback: does the clean grant actually COMMIT?
+     * Special-register reads are view-independent, so this is valid even
+     * though wsr.windowbase has rotated the register view underneath us.
+     * verify != written would mean the write itself is being lost or
+     * overwritten inside the handler window. */
+    rsr.windowstart a5
+    movi     a4, g_rin_verify
+    s32i     a5, a4, 0
+    /* History ring: {seq-tag, junksrc, verify} for the last 16 restores,
+     * so the dump shows whether the remapped-operand write ALSO produces
+     * the correct value on healthy switches (junksrc coincidentally equal
+     * to the intended mask) or diverges everywhere. */
+    movi     a5, g_rin_seq
+    l32i     a6, a5, 0
+    extui    a6, a6, 0, 4             /* idx = seq & 15 */
+    movi     a5, g_rjunk
+    addx8    a5, a6, a5
+    addx4    a5, a6, a5               /* g_rjunk + idx*12 */
+    s32i     a6, a5, 0
+    movi     a4, g_rin_junksrc
+    l32i     a4, a4, 0
+    s32i     a4, a5, 4
+    movi     a4, g_rin_verify
+    l32i     a4, a4, 0
+    s32i     a4, a5, 8
 
     movi     a4, g_switch_sp            /* different physical reg now; reload */
     l32i     a1, a4, 0
@@ -439,3 +507,22 @@ g_rout_wb:
     .global g_rout_ws
 g_rout_ws:
     .space 4
+
+/* ---- [X7 experiment] window-state ring + restore readback ---- */
+    .align 4
+    .global g_ring
+g_ring:
+    .space 64 * 12
+    .global g_ring_task
+g_ring_task:
+    .space 64 * 4
+    .global g_rin_verify
+g_rin_verify:
+    .space 4
+    .global g_rin_junksrc
+g_rin_junksrc:
+    .space 4
+    .align 4
+    .global g_rjunk
+g_rjunk:
+    .space 16 * 12
