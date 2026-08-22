@@ -7796,4 +7796,69 @@ The audit instrumentation stays in `task.c` and `panic.c`; with no sweep present
 it prints "no sweep audited" and costs nothing. Step 117 disproved the layout
 concern that would have argued for removing it.
 
+## Step 119 — the borrowed stack is refuted, by my own premise's test
+
+Step 118 named the assumption the whole borrowed-stack design rests on and said
+to test it. Tested:
+
+```
+pspill : sweeps=1 pre_ws=0x0000aa8a post_ws=0x00000008
+         from 0x3ffb9230 wb=3 walked 1 bad 0
+         [task_sp-16]=0xeeeeeeee [task_sp-12]=0xeeeeeeee  borrowed: enc=3 sp_like=5
+```
+
+`0xeeeeeeee` is the stack fill pattern. **Both words of the innermost frame's
+base save area are untouched poison -- nothing was written to the task's stack
+at all** -- while the borrowed stack came back holding three windowed return
+encodings and five words that look like task stack pointers.
+
+The premise from step 117 was:
+
+> each frame overflows through the `a1` held in ITS OWN window, so every parent
+> still writes to the task's stack wherever `a1` points
+
+**That is false.** The spill followed the sweeping context's `a1`. The borrowed
+stack is not a neutral scratch area, it is where all seven frames went -- which
+makes it the worst possible choice, because it sends every parent to an address
+the task can never look at. The design was wrong in exactly the way step 118
+guessed it might be, and it took a direct measurement rather than more reasoning
+to establish it.
+
+### The second thing the dump settles
+
+`[task_sp-16]` being poison is not only about the sweep. It says the innermost
+windowed frame's base save area was **never written by anything**, sweep or no
+sweep. If `task_sp` were a genuine windowed frame boundary, `entry` would have
+written it when the frame was created. So either `current_sp + TASK_FRAME_BYTES`
+is not the interrupted `a1` after all, or the interrupted context was inside a
+call0 stretch where no windowed frame starts at that address.
+
+That matters beyond this fix: step 118's audit walk, and its `walked 1`, both
+start from that address. Until it is established, the walk is measuring from a
+place that may not be a frame boundary.
+
+### Where this leaves spill-on-preemption
+
+Not refuted -- the sweep still does what it claims, reducing seven live frames to
+one at the task's own base, and step 118 confirmed that separately. What is
+refuted is running it on a stack the task does not own.
+
+The next attempt must spill with `a1` on the task's own stack, below the switch
+frame rather than beside it, so the save areas land where the restore will look.
+Step 115 rejected that on the grounds that `win_spill_call0` writes at `sp-32-12`
+and would land inside the frame -- but that objection assumed spilling at the
+task's sp. Spilling below the frame (`current_sp` minus a margin) puts the
+scratch clear of it and still on the right stack, and the frames' own addresses
+are what the save areas encode.
+
+One more thing to settle first, cheaply: whether `pre_ws`'s seven bits are all
+one task's frames. WINDOWSTART is global hardware state, and the whole
+partitioning design means several tasks' frames coexist in the register file at
+once. If those seven bits span tasks, then a sweep spills OTHER tasks' frames
+through their own stack pointers, and "one task, one sweep" is the wrong model
+for what this operation even does.
+
+Reverted. Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0,
+`wifiinit` no fault and no reset.
+
 **Nothing has been on air.**

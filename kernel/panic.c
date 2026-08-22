@@ -663,6 +663,15 @@ uart_puts("  pre-spill : ps ");
                                 uart_puts("  first a0 "); uart_put_hex(g_pspill_bad_a0);
                                 uart_puts(" at "); uart_put_hex(g_pspill_bad_at);
                             }
+                            {
+                                extern volatile uint32_t g_pspill_bs_enc, g_pspill_bs_sp;
+                                extern volatile uint32_t g_pspill_link, g_pspill_a0slot;
+                                uart_puts("\n              [task_sp-16]=");
+                                uart_put_hex(g_pspill_a0slot);
+                                uart_puts(" [task_sp-12]="); uart_put_hex(g_pspill_link);
+                                uart_puts("  borrowed: enc="); uart_put_dec(g_pspill_bs_enc);
+                                uart_puts(" sp_like="); uart_put_dec(g_pspill_bs_sp);
+                            }
                         } else {
                             uart_puts("  (no sweep audited)");
                         }

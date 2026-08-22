@@ -81,6 +81,22 @@ volatile uint32_t g_pspill_bad;      /* sweeps that did NOT reduce to one frame 
  * many. */
 volatile uint32_t g_pspill_have, g_pspill_walked, g_pspill_badframes;
 volatile uint32_t g_pspill_bad_a0, g_pspill_bad_at, g_pspill_sp, g_pspill_wb;
+
+/* [step 119] Where did the seven frames actually GO?
+ *
+ * The borrowed-stack design rests on one claim: each frame overflows through
+ * the a1 held in ITS OWN window, so parents write to the task's stack wherever
+ * the sweeping context's a1 points. Step 118 showed the chain from the task's
+ * sp reaches none of them, so the claim is what gets tested.
+ *
+ * bs_enc / bs_sp census the borrowed stack for windowed return encodings and
+ * for words that look like task stack pointers. If the parents landed there,
+ * the premise is refuted and the borrowed stack is precisely the wrong idea.
+ *
+ * link / a0slot are [task_sp-12] and [task_sp-16] raw -- the words the restore's
+ * first underflow will read -- so "never written" and "written wrong" can be
+ * told apart instead of inferred. */
+volatile uint32_t g_pspill_bs_enc, g_pspill_bs_sp, g_pspill_link, g_pspill_a0slot;
 volatile int      g_lost_task = -1;
 volatile uint32_t g_lost_had, g_lost_grant, g_lost_bits;
 
@@ -693,6 +709,24 @@ uint32_t task_schedule(uint32_t current_sp)
             uint32_t sp = (uint32_t)current_sp + TASK_FRAME_BYTES;
             g_pspill_have = 1u;
             g_pspill_sp   = sp;
+
+            /* The two words the restore's first underflow reads, raw. */
+            g_pspill_a0slot = ((volatile uint32_t *)(sp - 16u))[0];
+            g_pspill_link   = ((volatile uint32_t *)(sp - 12u))[0];
+
+            /* Census the borrowed stack. */
+            {
+                extern uint32_t _phy_stack[];
+                const volatile uint32_t *bs = (const volatile uint32_t *)_phy_stack;
+                uint32_t enc = 0u, spl = 0u;
+                for (uint32_t k = 0; k < 256u; k++) {
+                    uint32_t w = bs[k];
+                    if ((w >> 30) != 0u && (w & 0x3FFFFFFFu) < 0x00400000u) { enc++; }
+                    if (w >= 0x3FFB0000u && w < 0x3FFC0000u) { spl++; }
+                }
+                g_pspill_bs_enc = enc;
+                g_pspill_bs_sp  = spl;
+            }
             g_pspill_wb   = ((const uint32_t *)current_sp)[TASK_FRAME_IDX_WBASE] & 15u;
             for (uint32_t k = 0; k < 12u; k++) {
                 if (sp < 0x3ff00000u || sp >= 0x40000000u) { break; }
