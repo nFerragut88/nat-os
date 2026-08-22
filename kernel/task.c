@@ -86,6 +86,12 @@ static uint32_t g_win_mask[TASK_MAX];
 static uint8_t  g_win_base[TASK_MAX];   /* the base each claim was made at */
 volatile uint32_t g_win_union;          /* read by _handler_level3 */
 
+/* [X5 experiment] last multi-frame sighting at a park point. See
+ * spill_before_parking. 0xFFFFFFFF = never seen (WS is 16-bit, WB <= 15). */
+volatile uint32_t g_sbp_ws = 0xFFFFFFFFu;
+volatile uint32_t g_sbp_wb = 0xFFFFFFFFu;
+volatile int      g_sbp_task = -1;
+
 uint32_t task_win_union(void) { return g_win_union; }
 uint32_t task_win_mask(int id) { return (id >= 0 && id < TASK_MAX) ? g_win_mask[id] : 0u; }
 uint32_t task_win_base(int id) { return (id >= 0 && id < TASK_MAX) ? g_win_base[id] : 0u; }
@@ -1017,6 +1023,20 @@ static void spill_before_parking(void)
     uint32_t ws;
     __asm__ volatile ("rsr.windowstart %0" : "=r"(ws));
     if (ws & (ws - 1u)) {
+        /* [X5 experiment] Every sight of more than one live frame at a park
+         * point. Overwritten each time, so after a fault these describe the
+         * LAST sighting -- if the faulting sweep rotated over a bit that does
+         * not belong to the sweeping task, that bit is the phantom frame and
+         * its owner is whoever parked without cleaning it. */
+        extern volatile uint32_t g_sbp_ws, g_sbp_wb;
+        extern volatile int      g_sbp_task;
+        {
+            uint32_t wb;
+            __asm__ volatile ("rsr.windowbase %0" : "=r"(wb));
+            g_sbp_wb   = wb;
+            g_sbp_ws   = ws;
+            g_sbp_task = g_current;
+        }
         win_spill_call0();
     }
 }

@@ -5146,3 +5146,39 @@ and it doubles as standing X1 instrumentation for any future preemption theory.
 
 Regressions on this build: wincollide runs=156 wrong=0; wintorture checksum
 CORRECT (switches-during-call 0 as always); blobphy rc=0.
+
+### Step 78 (branch `dev`) — the phantom sweep, caught on three instruments
+
+H1 was eliminated by its own counter (step 77.5), so the window-state
+transitions left on the failing path were the voluntary ones. Three
+instruments went in, all marked `[X4/X5/X6 experiment]`:
+
+1. `blk_sample` around every blocking excursion (pre-spill / post-spill /
+   post-wake). Result: win_spill_all correctly reduces 6 frames to 1 on the
+   failing excursion too; the excursion then blocks and NEVER returns (wake
+   slot still holds its DEADBEEF sentinel at death).
+2. `sbp-last`: spill_before_parking records task/wb/ws whenever it sees more
+   than one live frame. Result: the fatal sweep runs under whichever task
+   parks next after the pollution -- run A it was the display task reading
+   six bits, none of them its own; run B it was task 5 itself reading two.
+   One run's recovery walked into STACK_FILL: memory never written as a save
+   area. The victim varies; the StoreProhibited-in-_WindowOverflow12
+   signature does not.
+3. switch-out/switch-in recorders in vectors.S. Result: the restore grants a
+   CLEAN single bit every time (`wb 1 ws 0x00000002`), the paired save
+   recorded one bit, no further switches happened before death, and yet the
+   current call0-only task then read seven live-frame bits.
+
+Mechanism (measured end to end): excursion parks mid-block -> stale
+WINDOWSTART bits linger in hardware with no owner -> some later task's
+spill_before_parking sees ">1 frames" and sweeps -> rotation lands on phantom
+frames whose physical sp slots hold garbage (~25) -> OF12 faults ->
+double exception.
+
+Open question narrowed to one: WHO writes the phantom bits between switches,
+while only call0 code is running? Next: tick-handler ring sampler or a
+marked diagnostic clamp of spill_before_parking to the own-task mask
+(confirmation-by-prevention).
+
+Regressions after each build: wincollide runs=156 wrong=0, wintorture CORRECT,
+blobphy rc=0. Nothing on air changed.

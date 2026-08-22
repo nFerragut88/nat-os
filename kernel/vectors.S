@@ -130,6 +130,22 @@ _handler_level3:
     rsr.windowstart a2
     s32i       a2,  a1, 88
 
+    /* [X6 experiment] switch-OUT recorder: the raw window state as the task
+     * was interrupted, before any bookkeeping narrows it. Paired with the
+     * switch-IN recorder at the restore: if a task leaves two bits live and
+     * its saved word records one, the drop happened here; if it leaves one
+     * and the next task is granted several, the leak is in the restore. */
+    movi     a3, g_rout_seq
+    l32i     a4, a3, 0
+    addi     a4, a4, 1
+    s32i     a4, a3, 0
+    movi     a3, g_rout_wb
+    rsr.windowbase  a4
+    s32i     a4, a3, 0
+    movi     a3, g_rout_ws
+    rsr.windowstart a4
+    s32i     a4, a3, 0
+
     /* Clear PS.EXCM before calling any C.
      *
      * Hardware sets EXCM on interrupt entry, and while it is set the Xtensa
@@ -257,12 +273,27 @@ _handler_level3:
     l32i     a6, a6, 0
     or       a3, a3, a6
 
+    /* [X6 experiment] What every switch-in actually receives. Captured BEFORE
+     * the windowbase write: afterwards the view has rotated and a2/a3 name
+     * different physical slots -- the first build of this recorder stored
+     * post-rotation garbage (a code address and a stack pointer) and measured
+     * nothing. The static model grants (1<<saved_WB) | union, union zero on a
+     * real switch; if the recorded word ever holds more, the leak is upstream. */
+    movi     a5, g_rin_wb
+    s32i     a2, a5, 0
+    movi     a5, g_rin_ws
+    s32i     a3, a5, 0
+    movi     a5, g_rin_seq
+    l32i     a4, a5, 0
+    addi     a4, a4, 1
+    s32i     a4, a5, 0
     movi     a4, g_switch_sp
     s32i     a1, a4, 0
     wsr.windowbase  a2
     rsync
     wsr.windowstart a3
     rsync
+
     movi     a4, g_switch_sp            /* different physical reg now; reload */
     l32i     a1, a4, 0
 
@@ -383,4 +414,28 @@ g_tick_excm_pc:
     .space 4
     .global g_tick_excm_ps
 g_tick_excm_ps:
+    .space 4
+
+/* ---- [X6 experiment] switch-in recorder ---- */
+    .align 4
+    .global g_rin_seq
+g_rin_seq:
+    .space 4
+    .global g_rin_wb
+g_rin_wb:
+    .space 4
+    .global g_rin_ws
+g_rin_ws:
+    .space 4
+
+/* ---- [X6 experiment] switch-out recorder ---- */
+    .align 4
+    .global g_rout_seq
+g_rout_seq:
+    .space 4
+    .global g_rout_wb
+g_rout_wb:
+    .space 4
+    .global g_rout_ws
+g_rout_ws:
     .space 4

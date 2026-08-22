@@ -460,6 +460,82 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
             }
 
             {
+                /* [X4 experiment] Window state around the LAST voluntary
+                 * block: pre-spill / post-spill / post-wake, overwritten per
+                 * excursion. Post-spill must be exactly one live frame; more
+                 * means the sweep finished over frames that are not this
+                 * task's, whose register slots hold stale stack pointers. */
+                extern volatile uint32_t g_blk_ws[3];
+                extern volatile uint32_t g_blk_wb[3];
+                extern volatile uint32_t g_blk_union;
+                uint32_t bits = 0;
+                for (uint32_t v = g_blk_ws[1]; v; v >>= 1) { bits += v & 1u; }
+                uart_puts("  blk-window: pre ws ");
+                uart_put_hex(g_blk_ws[0]);
+                uart_puts(" wb ");
+                uart_put_dec(g_blk_wb[0]);
+                uart_puts(" | spill ws ");
+                uart_put_hex(g_blk_ws[1]);
+                uart_put_dec(bits);
+                uart_puts("b wb ");
+                uart_put_dec(g_blk_wb[1]);
+                uart_puts(" | wake ws ");
+                uart_put_hex(g_blk_ws[2]);
+                uart_puts(" wb ");
+                uart_put_dec(g_blk_wb[2]);
+                uart_puts(" | union ");
+                uart_put_hex(g_blk_union);
+                uart_puts("\n");
+            }
+
+            {
+                /* [X5 experiment] Last park point that saw more than one live
+                 * frame. If the task named here is not the owner of every bit
+                 * in ws, its sweep rotated over somebody else's parked frame
+                 * -- the phantom that faults with a stale sp. */
+                extern volatile uint32_t g_sbp_ws, g_sbp_wb;
+                extern volatile int      g_sbp_task;
+                uart_puts("  sbp-last  : ");
+                if (g_sbp_task < 0) { uart_puts("no multi-frame park seen"); }
+                else {
+                    uart_puts("task ");
+                    uart_put_dec((unsigned int)g_sbp_task);
+                    uart_puts(" wb ");
+                    uart_put_dec(g_sbp_wb);
+                    uart_puts(" ws ");
+                    uart_put_hex(g_sbp_ws);
+                }
+                uart_puts("\n");
+            }
+
+            {
+                /* [X6 experiment] The last switch-in: what the restore path
+                 * actually wrote into WINDOWBASE/WINDOWSTART. If the granted
+                 * word already holds foreign bits, the leak is upstream of
+                 * the write (saved frame or union); if it is clean, the bits
+                 * materialised while a call0-only task was current. */
+                extern volatile uint32_t g_rin_seq, g_rin_wb, g_rin_ws;
+                uart_puts("  switch-in : n ");
+                uart_put_dec(g_rin_seq);
+                uart_puts(" wb ");
+                uart_put_dec(g_rin_wb);
+                uart_puts(" ws ");
+                uart_put_hex(g_rin_ws);
+                uart_puts("\n");
+                /* [X6 experiment] The paired switch-OUT record: the raw
+                 * hardware window state of the task that was interrupted,
+                 * before bookkeeping narrows it to the per-task mask. */
+                extern volatile uint32_t g_rout_seq, g_rout_wb, g_rout_ws;
+                uart_puts("  switch-out: n ");
+                uart_put_dec(g_rout_seq);
+                uart_puts(" wb ");
+                uart_put_dec(g_rout_wb);
+                uart_puts(" ws ");
+                uart_put_hex(g_rout_ws);
+                uart_puts("\n");
+            }
+
+            {
                 extern volatile int g_badsp_task;
                 extern volatile uint32_t g_badsp_val, g_badsp_lo, g_badsp_hi;
                 uart_puts("  bad sp    : ");
