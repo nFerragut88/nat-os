@@ -6880,3 +6880,68 @@ frame across a park. The fault has always been on `_semphr_take` or
 `_queue_recv` — never on the other 113.
 
 **Nothing has been on air.**
+
+---
+
+## Step 105 — the wait moved into windowed code, and it was not enough
+
+Implemented step 104's recommendation: `osi_s_queue_recv` polls non-blocking
+while **pinned**, then waits **unpinned** inside `osi_windowed_idle()` — four
+nested windowed frames with a short spin, so a context switch landing in the wait
+finds `a1` belonging to a windowed frame with a proper save area beneath it. It
+also keeps the window rotating while the driver waits, which is closer to what
+the blob expects of a task blocked on a queue.
+
+No regressions (boot 11 PASS 0 FAIL, `wintorture` CORRECT, `wincollide`
+runs=118 wrong=0, `blobphy` rc=0), and **it did not fix the fault**:
+
+```
+epc 0x400800cf   excvaddr 0x000000f3
+a0-16 0x3ffd8f78  a1-12 0x000000ff  a2-8 0x8008da21  a3-4 0x4008c59e
++0 0xeeeeeeee     +4 0xeeeeeeee
+```
+
+Different shape — `a1` is now `0xff`, and the words above are `STACK_FILL` — but
+the same class: a save area whose `a1` slot is a small integer rather than a
+stack pointer.
+
+### Why it was not enough
+
+The loop still makes three call0 excursions per round, and two of them can be
+switched away from:
+
+- `blob_unlock()` — runs pinned until it clears the pin, then returns *unpinned*
+  through call0 code with `a1` moved. A tick landing in those few instructions
+  reproduces the original condition exactly.
+- `blob_lock()` — takes the blob mutex, and `mutex_lock` calls `task_block()` and
+  `task_yield()`. **That is a call0 function that blocks**, which is precisely the
+  condition step 104 identified. Moving the queue wait out of call0 did nothing
+  about the lock wait, which is also in call0.
+
+So the restructure removed one instance of the pattern and left two, one of them
+a blocking call0 function reached on every round.
+
+### What that teaches
+
+Step 104's diagnosis is unchanged and still believed: *a call0 function that
+blocks while holding a windowed frame's `a1`*. What is now clear is that the
+condition is not confined to the adapter's own waits — **the kernel's own
+synchronisation primitives are call0 and block**, so any windowed code that takes
+a mutex has the same problem.
+
+That is a larger statement than step 104 made, and it means fix (1) as scoped
+there is insufficient by construction. A complete version needs either:
+
+- the pin held across every call0 excursion, with the unpin issued *from windowed
+  code* as a direct store rather than through a call0 helper; and the lock
+  acquired without a call0 block — a try-lock loop with the retry in windowed
+  code, not `mutex_lock`; or
+- fix (2) from step 104: the `osi_impl_*` layer compiled `-mabi=windowed`, which
+  pushes the boundary onto the kernel primitives and requires the same treatment
+  of them.
+
+Reverted. The change is more correct in principle than what it replaced, but it
+is unproven, it converts a sleep into a spin, and keeping an unproven restructure
+on the failing path would make the next measurement harder to read.
+
+**Nothing has been on air.**
