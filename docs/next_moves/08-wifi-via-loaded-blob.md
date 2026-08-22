@@ -7979,4 +7979,61 @@ Reverted to `BLOB_PIN_DISABLE 0`. Suite green with the pin on: boot 11 PASS 0
 FAIL, `blobphy` rc=0, `wifiinit` no fault and no reset, `wintorture` CORRECT and
 still meaningless.
 
+## Step 122 — the sweep on the task's own stack: LOST goes to zero
+
+`a1` set just below the switch frame -- still the task's own stack, clear of the
+112 bytes the prologue wrote. Run on step 121's bench, pin off:
+
+```
+frames    : no task was ever granted less than it held
+pspill    : sweeps=1 pre_ws=0x0000aa8a post_ws=0x00000008
+            [task_sp-16]=0xeeeeeeee [task_sp-12]=0xeeeeeeee
+            borrowed: enc=0 sp_like=0
+```
+
+**`LOST` is zero.** The baseline's `task 5 held 0x0000aa8a granted 0x00000008
+LOST 0x0000aa82` is gone: every task is now granted everything it held. The
+defect step 121 named is fixed, and it was fixed by putting the spill on the
+stack the restore actually reads.
+
+### Step 119's conclusion is withdrawn
+
+Step 119 read `borrowed: enc=3 sp_like=5` as "all seven frames went to the PHY
+stack" and declared the premise refuted. That was wrong twice over:
+
+- `post_ws` keeps the innermost window's bit, so only the six OLDER frames ever
+  overflow. Parents live at HIGHER addresses, so `[task_sp-16]` was always going
+  to be untouched poison -- it is not evidence of anything.
+- `0xeeeeeeee >> 30` is non-zero, so the audit counted stack poison as a valid
+  return encoding (`bad 0`) and then chased it out of range. That is why
+  `walked 1`, and why the walk never said what it appeared to say.
+
+This run settles it: with the spill on the task's stack, `borrowed: enc=0
+sp_like=0`. The PHY stack is untouched. So the three encodings step 119 counted
+were `win_spill_all`'s OWN nested frames, not the task's -- and the premise it
+claimed to refute was never tested.
+
+### What is still broken
+
+`wintorture` still panics on the bench, `epc 0x6eeeeeee` -- poison executed as an
+address. Frames are no longer lost, so this is a second and downstream problem:
+something returns through a save area that was never written, even though the
+accounting says nothing went missing.
+
+`[task_sp-16]` being poison points at where to look. If `task_sp` were a real
+windowed frame boundary, `entry` would have written it. It did not, so the
+interrupted context was in a call0 stretch whose `a1` had moved below the last
+windowed frame -- and the restore hands the task back an `a1` of `task_sp`
+regardless. That is the next thing to measure, by finding the innermost windowed
+frame's true `a1` rather than assuming it is `current_sp + TASK_FRAME_BYTES`.
+
+### Not kept
+
+With the pin back ON, the sweep panics `wintorture` (LoadProhibited) and also
+`wifiinit`, which is clean on HEAD. So it is a regression in the shipping
+configuration and does not stay in, despite `LOST` going to zero. Reverted.
+
+Suite after revert: boot 11 PASS 0 FAIL, `wintorture` CORRECT (and still
+meaningless with the pin on), `blobphy` rc=0, `wifiinit` no fault and no reset.
+
 **Nothing has been on air.**
