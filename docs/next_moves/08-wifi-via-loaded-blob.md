@@ -8586,4 +8586,66 @@ requires.
 Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0, `wifiinit` no
 fault and no reset. The save pass from step 131 remains in and green.
 
+## Step 133 — all three together: boot recovers, the windowed paths do not
+
+Restore, window-state-from-slot and union deletion in one build, as step 132
+concluded they must be. One ordering point was got right and is worth keeping:
+the restore sits **after** `wsr.windowbase`, because a slot's four blocks are
+indexed relative to the owning task's `WINDOWBASE`, so the rotation must start
+from the *incoming* task's base rather than whatever the handler was running at.
+
+```
+boot 11 PASS 0 FAIL        (step 132 broke this -- 10 PASS)
+wintorture   FAIL/PANIC
+blobphy      rc=0
+wifiinit     PANIC
+```
+
+**Boot recovers fully.** Deleting the union alongside the restore fixed what
+step 132's restore-alone broke, which confirms step 132's diagnosis: the two
+were contradicting each other, and removing the contradiction restored startup.
+
+**The windowed paths still fail.** `wintorture` panics and `wifiinit` panics —
+the latter clean since step 113. Reverted; suite green with step 131's save pass
+still in.
+
+### Where this leaves Tier B
+
+Three of four pieces are now known-good in place:
+
+| piece | state |
+|---|---|
+| save, per-task, before any `call0` | **in and green** (step 131) |
+| union deletion | **works** — boot recovers with it |
+| restore placement after `wsr.windowbase` | **correct in principle**, and boot proves it is not catastrophic |
+| restore contents | **wrong** — the windowed paths fail |
+
+The remaining defect is narrow and, for once, unambiguous in kind: the save has
+been proven bit-exact for `a1` (step 129) and harmless in place (step 131), boot
+survives the restore, so what is wrong is **what the restore writes into windows
+1–3, or when a slot has never been populated**.
+
+The specific untested assumption: a task scheduled for the first time has a slot
+of zeros, and the restore writes those zeros over three windows. With the union
+gone nothing hands the frames back, so any live windowed frame belonging to
+another task is destroyed at that moment. The save populates a slot only for
+tasks that have been switched *out*, so every task's first switch *in* restores
+garbage.
+
+That points at a concrete next change rather than a hypothesis: **mark a slot
+valid on first save, and skip the restore for a slot that has never been
+written.** It is a one-word flag per task and it makes the first schedule of each
+task a no-op instead of an erasure.
+
+### Honest position
+
+Tier B is not working, after five builds. What it has produced is a save pass
+that is in, green, and proven; a costed and confirmed 3,072-byte footprint; and
+a defect narrowed from "the register file is shared" to "the restore writes an
+unpopulated slot". The three sequencing errors (§8.1, step 130, step 132) were
+mine and are recorded as such.
+
+Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0, `wifiinit` no
+fault and no reset.
+
 **Nothing has been on air.**
