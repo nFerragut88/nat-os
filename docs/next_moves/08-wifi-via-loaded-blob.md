@@ -8706,4 +8706,49 @@ The remaining work is a measurement, not another attempt.
 Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0, `wifiinit` no
 fault and no reset.
 
+## Step 135 — the restore-side diff is invalid; the reading must not be used
+
+Restore from the slot, then a verify pass re-reading all 64 registers into a
+second buffer, then a comparison in `task_schedule`. It reported:
+
+```
+restore : win 0 a0 got 0x00000000 want 0x400838bd
+```
+
+**Discard that.** The instrument is wrong, and the flaw is structural.
+
+The comparison runs in `task_schedule`. The **save pass runs in the prologue,
+before `task_schedule` is reached.** So by the time the diff executes, the task's
+slot has already been overwritten with its registers *at the new switch-out*.
+`want 0x400838bd` is not the value that was restored; it is the value saved
+microseconds earlier, on a different switch.
+
+The two sides of the comparison are from different events, which is precisely the
+defect step 123 caught in its own first attempt (`g_ih_a1_raw` rewritten every
+interrupt while `calc` was latched once). **Fourteenth entry in the catalogue,
+and a repeat of a lesson learned twelve steps ago.**
+
+### What a valid version requires
+
+The verify buffer and the slot must be compared **before anything can rewrite
+either**. Two ways, both cheap:
+
+1. **Compare in the prologue**, in assembly, before the save pass runs —
+   awkward, since the comparison wants C.
+2. **Snapshot the slot at restore time** into a third buffer, alongside
+   `g_regverify`, so the diff compares two things captured in the same event.
+   That is what step 123's fix did, and it is the one to use.
+
+The instrument cost one build and produced nothing, which is the correct price
+for catching it here rather than acting on it.
+
+### Unchanged
+
+`wintorture` panicked with `exccause 28`, `epc 0x40080155` — `_WindowUnderflow12
++ 0x15`, the same signature as steps 117–126. The restore is still wrong; nothing
+in this step says how.
+
+Reverted. Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0,
+`wifiinit` no fault and no reset. Step 131's save pass remains in and green.
+
 **Nothing has been on air.**
