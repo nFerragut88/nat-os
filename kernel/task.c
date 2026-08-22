@@ -60,6 +60,9 @@ volatile uint32_t g_switch_sp;
 volatile int      g_phytop_task = -1;   /* who was saved at _phy_stack_top */
 volatile uint32_t g_phytop_epc, g_phytop_a0;
 
+volatile int      g_a0bad_out_task = -1, g_a0bad_in_task = -1;
+volatile uint32_t g_a0bad_out_val, g_a0bad_in_val;
+
 volatile int      g_badsp_task = -1;
 volatile uint32_t g_badsp_val, g_badsp_lo, g_badsp_hi;
 volatile uint32_t g_badsp_osi = 0xFFFFFFFFu, g_badsp_tick;
@@ -521,6 +524,22 @@ uint32_t task_schedule(uint32_t current_sp)
             }
         }
 
+        /* [step 82] Is a0 already broken when the task is SAVED?
+         *
+         * a0 = 0x0000000d at the faulting retw is neither a code address (a
+         * call0 return) nor a windowed encoding (bit 31 set). Anything in
+         * [1, 0x3fffffff] is therefore anomalous whichever ABI the task was
+         * running. Catching it here says whether the value was already wrong
+         * before the switch, or arrives wrong on the way back in -- the two
+         * have different culprits and no amount of argument separates them. */
+        {
+            uint32_t a0_out = ((const uint32_t *)current_sp)[0];
+            if (a0_out != 0u && a0_out < 0x40000000u && g_a0bad_out_task < 0) {
+                g_a0bad_out_task = g_current;
+                g_a0bad_out_val  = a0_out;
+            }
+        }
+
         g_tasks[g_current].sp = current_sp;
         g_run_cycles[g_current] += now - g_slice_start;
 
@@ -953,6 +972,15 @@ uint32_t task_schedule(uint32_t current_sp)
                 uart_put_dec(g_badsp_eps & 0xFu);
                 uart_puts("\n");
             }
+        }
+    }
+
+    /* [step 82] ...and the same check on the way IN. */
+    {
+        uint32_t a0_in = ((const uint32_t *)g_tasks[next].sp)[0];
+        if (a0_in != 0u && a0_in < 0x40000000u && g_a0bad_in_task < 0) {
+            g_a0bad_in_task = next;
+            g_a0bad_in_val  = a0_in;
         }
     }
 

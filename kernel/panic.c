@@ -471,6 +471,20 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
                 {
         extern uint32_t g_a0trace[4];
         {
+            extern volatile int g_a0bad_out_task, g_a0bad_in_task;
+            extern volatile uint32_t g_a0bad_out_val, g_a0bad_in_val;
+            uart_puts("  a0 at save: ");
+            if (g_a0bad_out_task < 0) { uart_puts("always a valid address"); }
+            else { uart_puts("task "); uart_put_dec((unsigned)g_a0bad_out_task);
+                   uart_puts(" saved a0 "); uart_put_hex(g_a0bad_out_val); }
+            uart_puts("\n  a0 at rest: ");
+            if (g_a0bad_in_task < 0) { uart_puts("always a valid address"); }
+            else { uart_puts("task "); uart_put_dec((unsigned)g_a0bad_in_task);
+                   uart_puts(" restored a0 "); uart_put_hex(g_a0bad_in_val); }
+            uart_puts("\n");
+        }
+
+        {
             extern uint32_t g_xseq, g_xring[8][4];
             uart_puts("  retw ring : (newest last)\n");
             for (int k = 7; k >= 0; k--) {

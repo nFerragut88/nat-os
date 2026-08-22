@@ -5509,3 +5509,73 @@ Two separable threads, and they should not be merged again:
   itself was not skipped.
 
 **Nothing has been on air.**
+
+---
+
+## Step 82 — a0 is written once, and the slot it comes from is corrupt
+
+Two measurements, and together they close the question of where `a0 = 13`
+originates.
+
+### The context switch is not the culprit
+
+Checking the switch frame's saved `a0` at both ends, sticky, filtered to values
+that are neither a code address nor a windowed encoding (`[1, 0x3fffffff]`):
+
+```
+a0 at save: always a valid address
+a0 at rest: always a valid address
+```
+
+Never anomalous, in either direction. The save/restore path does not corrupt
+`a0`, which removes step 80's presumed causal chain — "frames disclaimed,
+registers reused" — as the explanation for *this* value. The `ws` drop is real
+and still unexplained, but it is not how `a0` becomes 13.
+
+### `a0` is written exactly once
+
+Every reference to `a0` in the emitted `w2c_call2`:
+
+```
+4008bfca  s32i.n a0, a1, 0     store a0 to the frame
+4008bfe8  l32i.n a0, a1, 0     <- the ONLY instruction that writes a0
+4008bfed  s32i.n a0, a9, 0     read
+4008c01a  s32i.n a0, a10, 4    read (the ring)
+```
+
+So `a0` at the `retw` *is* the value loaded from `[a1+0]`. The ring says that
+value is `0x0000000d`. Therefore **the windowed frame's saved-a0 slot on the
+task's own stack held 13 at the reload.**
+
+That is a memory corruption of one word at a known address — not a register
+effect, and not the same location as the switch frame's `a0`, which is why both
+measurements can be true at once.
+
+### Why step 79 could not have seen it
+
+The step-79 sticky latch is in the source at `window.S:605`. `w2c_call2` begins at
+line 636. Line 605 is inside **`w2c_call0f`** — the edit patched the first
+matching reload pattern in the file, which belongs to a different bridge.
+
+It never fired because it was watching the wrong function. Step 79's retraction
+of step 78 was therefore wrong twice over: wrong sampling point *and* wrong
+bridge. The ring, placed deliberately inside `w2c_call2`, is the instrument that
+holds.
+
+Tenth of the class, and the first whose flaw was *which function* it was
+installed in. A pattern-matched edit into a file with four near-identical
+functions will silently pick one, and `.replace(..., 1)` picks the first.
+
+### Next
+
+The question is now narrow and mechanical: **who writes 13 into
+`[frame_sp + 0]` while the task is parked?** 13 is a small integer — a count or
+an index, not a pointer — so it is a value being *stored*, and something is using
+that address as a destination.
+
+The spill is the obvious candidate: `win_spill_all()` and `_WindowOverflow*` both
+write to computed save areas on this stack. A miscomputed base would land here.
+`sbp-post` already reports the spill's own view of the frame count, and the ring
+carries `a1` — pairing them by address rather than by task is the measurement.
+
+**Nothing has been on air.**
