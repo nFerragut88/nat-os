@@ -6511,3 +6511,62 @@ should start from the return address the chain *should* have had, which
 `osi_s_queue_recv`'s caller supplies.
 
 **Nothing has been on air.**
+
+---
+
+## Step 99 — the caller is `ppTask`, and the call site confirms two earlier readings
+
+Step 98 asked for the return address the blob supplies. Captured at the stub's
+entry:
+
+```
+qr caller : 0x4036bb18  (raw a0 0x8036bb18)
+```
+
+`0x8036bb18` is a CALL8 encoding; the target resolves to `0x4036bb18`, inside
+**`ppTask`** — the WiFi driver's main packet-processing task. Its call site:
+
+```asm
+4036bb0a  l32i.n a5, a2, 0        ; the OSI table pointer
+4036bb0c  movi.n a12, -1          ; block_time_tick = -1
+4036bb0e  mov.n  a11, a1          ; item = ppTask's OWN stack pointer
+4036bb10  l32i   a5, a5, 116      ; table[116/4 = 29] = _queue_recv
+4036bb13  l32i.n a10, a3, 0       ; the queue handle
+4036bb15  callx8 a5
+4036bb18  beqi   a10, 1, ...      ; check the result
+```
+
+Three things are confirmed from the vendor image rather than inferred:
+
+1. **Offset 116 is entry 29.** The generated table's layout is right where the
+   driver reaches for `_queue_recv`, which is independent confirmation of the
+   work in UM-NATOS-038 §5.
+2. **`a12 = -1` is `portMAX_DELAY`.** Step 86 concluded the driver waits forever
+   by design; here is the instruction that does it.
+3. **`item` is `ppTask`'s own stack pointer.** The driver hands us a pointer to
+   a local as the destination buffer.
+
+### The theory that suggested, and why it does not fit
+
+If our queue's `item_size` were wrong, `copy_n(item, ..., item_size)` would
+scribble on `ppTask`'s frame. But `item_size` is whatever the driver passed to
+`queue_create` — 200 items of 8 bytes, the figure recorded in
+`osi_impl_queue_create`'s own comment — so the copy writes 8 bytes at `[a1]`.
+
+The corrupt save area is at `0x3ffb2810` and the frame's `a1` is `0x3ffb27e0`: an
+8-byte write at the latter cannot reach the former. Recorded and dropped rather
+than pursued.
+
+### What this changes
+
+The investigation has crossed a boundary. Everything through step 98 instrumented
+our own code and cleared it — bridges, spill, restore, scheduler, `a12`, save
+areas. This is the first step reading the vendor image along the failing path,
+and it produced a named function, a confirmed table offset, and hard confirmation
+of the `portMAX_DELAY` behaviour in one pass.
+
+`ppTask` is the right place to continue: its frame is the one whose save area is
+corrupt, its stack pointer is the one being handed to us, and its chain is the
+one the underflow is walking.
+
+**Nothing has been on air.**

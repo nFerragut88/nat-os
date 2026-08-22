@@ -249,6 +249,9 @@ volatile uint32_t g_of_bad_base;
 volatile uint32_t g_of_bad_frame;
 volatile uint32_t g_of_bad_when;
 
+/* [step 99] the blob's return address into osi_s_queue_recv. */
+volatile uint32_t g_qr_caller, g_qr_caller_raw;
+
 /* [X4 experiment] Window-state coherence across the voluntary block.
  *
  * H1 is eliminated: no tick ever lands mid-window-handler. The only remaining
@@ -650,6 +653,18 @@ static int32_t osi_s_queue_send_to_front(void *queue, void *item, uint32_t block
 static int32_t osi_s_queue_recv(void *queue, void *item, uint32_t block_time_tick)
 {
     osi_hit(29u);
+    /* [step 99] Who in the blob calls us, and where does it expect to return?
+     *
+     * a0 here is the windowed return encoding the blob supplied. Masking to 30
+     * bits and OR-ing the PC region gives the actual blob address, which names
+     * the calling function in the image -- the starting point step 98 asked
+     * for. Latched once; every later call would overwrite it. */
+    if (!g_qr_caller) {
+        uint32_t a0;
+        __asm__ volatile ("mov %0, a0" : "=r"(a0));
+        g_qr_caller_raw = a0;
+        g_qr_caller = 0x40000000u | (a0 & 0x3FFFFFFFu);
+    }
     /* Same shape as _semphr_take: try without blocking, and only if that
      * fails spill the window, unpin and release so another context -- notably
      * the blob's own task -- can run while we wait. Without this the pinned

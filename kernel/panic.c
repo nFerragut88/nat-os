@@ -626,6 +626,17 @@ uart_puts("  pre-spill : ps ");
                     uart_puts("\n");
                 }
                 {
+                    extern volatile uint32_t g_qr_caller, g_qr_caller_raw;
+                    uart_puts("  qr caller : ");
+                    if (!g_qr_caller) { uart_puts("never entered"); }
+                    else {
+                        uart_put_hex(g_qr_caller);
+                        uart_puts("  (raw a0 "); uart_put_hex(g_qr_caller_raw);
+                        uart_puts(")");
+                    }
+                    uart_puts("\n");
+                }
+                {
                     /* [step 96] The WHOLE save area, read HERE.
                      * The vector slot is 64 bytes and could not hold the
                      * extra loads -- it failed to link. It does not need
