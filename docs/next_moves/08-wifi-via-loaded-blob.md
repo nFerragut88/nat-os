@@ -8348,4 +8348,64 @@ draft of the sequence, on its first run, with the tree green afterwards.
 Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `wifiinit` no fault and no
 reset.
 
+## Step 129 — the save loop is correct; it was running after two `call0`s
+
+Two things made this readable where step 128 was not.
+
+**`ROTW` makes the save separable.** Each block restores its window's `a0` and
+`a1` before rotating, so a save-only pass is a genuine no-op. That splits the two
+loops, which §8.1 said could not be split — and the split localises the failure
+immediately: **save-only panics too, so the defect is in the save.**
+
+**Then the diff named it, register by register:**
+
+```
+regsave : a0 got 0x4008acbc want 0x400838bd   a1 0x3ffb9d80 sp 0x3ffb9d80
+```
+
+`a1` **matches exactly** — `g_regsave[1]` equals `current_sp`. The rotation, the
+offsets, the four-window mapping and the store sequence are all correct. `a0` is
+wrong, and both values are IRAM code addresses.
+
+### The cause
+
+`a0` is the call0 return-address register, and the save pass sits at `.Lsched` —
+**after `call0 intr_dispatch`**. It captured `intr_dispatch`'s return address
+instead of the task's.
+
+The same rule condemns more than `a0`: under call0, `a2..a11` are caller-saved,
+so `intr_dispatch` may clobber all of them too. `a1` and `a12..a15` survive,
+which is exactly the pattern the diff shows — `a1` correct, `a0` the first
+mismatch found.
+
+So the loop was never wrong. **It was reading the register file at a point where
+the register file no longer held the task's values**, roughly seventy
+instructions and two `call0`s after the moment it needed.
+
+That is also why step 128's identity pair failed: it faithfully saved
+`intr_dispatch`'s leftovers and faithfully restored them over the task's
+registers.
+
+### The fix, and why the placement is now forced
+
+The save must run **before any `call0`** — in the prologue, after the frame
+stores and the window-state save, while `a0..a15` still hold what the tick
+interrupted. The restore must run at `.Lresume`, after the last `call0`, for the
+mirror-image reason.
+
+That is a stronger constraint than "somewhere in the handler", and it is the
+first placement in this whole line of work that is *derived* rather than tried:
+the sweep placements of steps 115–119 were guesses between plausible sites, and
+this one is fixed by the ABI.
+
+### A note on the revert
+
+Reverting `vectors.S` alone broke the link — `task.c` still referenced
+`g_regsave` — and the stale image then reported `wintorture PANIC`, which for a
+moment looked like the revert had failed. It had not; the build had. The
+instrumentation spans three files and has to come out together.
+
+Suite after the full revert: boot 11 PASS 0 FAIL, `wintorture` CORRECT,
+`blobphy` rc=0, `wifiinit` no fault and no reset.
+
 **Nothing has been on air.**
