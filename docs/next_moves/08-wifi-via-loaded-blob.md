@@ -7082,3 +7082,55 @@ validated against suites that ran pinned and therefore could not tell a fix from
 a no-op. That is no longer true.
 
 **Nothing has been on air.**
+
+---
+
+## Step 108 — the rule cannot be fixed by granting bits back
+
+Three attempts against the step-107 reproducer, each measured rather than argued:
+
+| change | frame loss | `wincollide` |
+|---|---|---|
+| mask = every live bit not owned elsewhere | still lost | ok |
+| ...and stop zeroing the union on a real switch | **fixed** | **PANIC** |
+| ...plus a spilled/preempted distinction per task | **fixed** | **PANIC** |
+
+The first did nothing because step 57 discards the union on a real task change,
+so the grant is only ever `1 << base` and the per-task masks never reach the
+hardware at all. Keeping the union fixes the frame loss and immediately
+reinstates step 57's phantom: `wincollide` panics in `_WindowOverflow8`.
+
+### Why no version of this rule can work
+
+Granting the bits back restores a *claim*, not the frames. After the task was
+preempted mid-window, other tasks ran and rotated the window through those
+positions, and **the physical registers were reused**. Marking them live again
+tells the hardware to spill registers that now belong to somebody else — which
+is exactly the phantom, and exactly what `wincollide` catches.
+
+So the two reproducers are not in tension because the rule is subtly wrong. They
+are in tension because the information does not exist: once the registers are
+reused, the frames are unrecoverable, and no bookkeeping can bring them back.
+
+### What that leaves
+
+Only two positions are self-consistent:
+
+1. **Never preempt a task mid-window** — the pin. Correct today, and the reason
+   every windowed test passes. Its cost is that the blocking adapter path must
+   release it, which is precisely where the WiFi driver lives.
+2. **Spill on preemption** — `_handler_level3` pushes the outgoing task's window
+   to its own stack when it holds more than one live frame, so there is nothing
+   to lose. Then the one-bit restore is not merely safe but *correct*, because
+   one frame is genuinely all that remains.
+
+(2) is the answer, and it is the one attempted five times in steps 14-18 and
+abandoned. What is different now: `win_spill_call0` exists and is measured to
+work from task context, `spill_before_parking` already does exactly this on the
+voluntary path, and there is a reproducer that can tell a working spill from a
+no-op — which none of those five attempts had.
+
+Reverted to the state at step 107: the reproducer reports the loss, `wincollide`
+runs clean, and nothing pretends the rule is fixed.
+
+**Nothing has been on air.**
