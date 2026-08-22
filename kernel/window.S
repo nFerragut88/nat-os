@@ -582,10 +582,13 @@ rom_call3:
 
 w2c_call0f:                         /* uint32_t w2c_call0f(fn) */
     entry   a1, 32
-    s32i    a0, a1, 0
+    /* [step 85] a0 in a12, not on the stack -- see w2c_call2. [sp+0] upward is
+     * the call0 callee's argument/spill area and it writes there legitimately;
+     * a12..a15 are callee-saved under call0, so a12 is both correct and free. */
+    mov     a12, a0
     mov     a8, a2
     callx0  a8
-    l32i    a0, a1, 0
+    mov     a0, a12
     /* [step 79] What came BACK, and from where. Same address + different value
      * means the callee wrote into this frame; different address means the
      * reload sourced from a moved a1. */
@@ -622,11 +625,14 @@ w2c_call0f:                         /* uint32_t w2c_call0f(fn) */
     .type w2c_call1, @function
 w2c_call1:                          /* uint32_t w2c_call1(fn, a) */
     entry   a1, 32
-    s32i    a0, a1, 0
+    /* [step 85] a0 in a12, not on the stack -- see w2c_call2. [sp+0] upward is
+     * the call0 callee's argument/spill area and it writes there legitimately;
+     * a12..a15 are callee-saved under call0, so a12 is both correct and free. */
+    mov     a12, a0
     mov     a8, a2
     mov     a2, a3
     callx0  a8
-    l32i    a0, a1, 0
+    mov     a0, a12
     retw
     .size w2c_call1, . - w2c_call1
 
@@ -649,7 +655,20 @@ w2c_call2:                          /* uint32_t w2c_call2(fn, a, b) */
     l32i    a9, a10, 0
     addi    a9, a9, 1
     s32i    a9, a10, 0
-    s32i    a0, a1, 0
+    /* [step 85] a0 lives in a12 across the callx0, NOT on the stack.
+     *
+     * This saved a0 at [a1+0]. Measured: the word comes back as 13 and the four
+     * words at [a1+0..12] hold 0x0000000d / 0x00000700 / 0x3ffb0c78 / 0 --
+     * identical across runs and unchanged when the save was moved to [a1+4], so
+     * the readback follows the writer, not our store. 0x700 is 1792, which is
+     * BLOB_TASK_STACK_WORDS, and 0x3ffb0c78 is inside the blob task's stack:
+     * that is the call0 callee's own data.
+     *
+     * [sp+0] upward is the call0 caller-provided argument/spill area, so the
+     * callee is entitled to it and this bridge was never entitled to store
+     * there. a12..a15 are callee-saved under call0, so the callee must preserve
+     * them -- which makes a12 both correct and free. */
+    mov     a12, a0
     /* [step 83] Stamp the slot and remember where it is.
      *
      * a0 is written exactly once in this function -- by the reload -- so a0 at
@@ -657,7 +676,7 @@ w2c_call2:                          /* uint32_t w2c_call2(fn, a, b) */
      * overwritten while the task is parked. Recording the address lets the
      * corrupting store be identified by destination rather than by argument. */
     movi    a9, g_slotwatch
-    s32i    a1, a9, 0               /* the frame whose [sp+0] we are watching */
+    s32i    a1, a9, 0               /* [X: slot moved to sp+4 for this run] */
     s32i    a0, a9, 4               /* what we put there */
     /* [step 79] What was SAVED, and where. a0 = 13 at the retw (callinc 0) is
      * why that instruction is illegal; this says whether 13 was already in the
@@ -674,7 +693,7 @@ w2c_call2:                          /* uint32_t w2c_call2(fn, a, b) */
     rsr.windowbase  a9
     s32i    a9, a11, 8
     callx0  a8
-    l32i    a0, a1, 0
+    mov     a0, a12
     /* [step 83] Did the slot survive? Compare against what was stamped, and
      * latch the first divergence together with the frame address. */
     movi    a9, g_slotwatch
@@ -694,7 +713,7 @@ w2c_call2:                          /* uint32_t w2c_call2(fn, a, b) */
      * 88. If a switch frame overlaps this slot, [sp+4] holds a windowstart-
      * shaped value and the signature is unmistakable. Four words distinguish a
      * switch frame from a four-word window spill from a single store. */
-    l32i    a10, a1, 4
+    l32i    a10, a1, 0
     s32i    a10, a9, 24
     l32i    a10, a1, 8
     s32i    a10, a9, 28
@@ -753,13 +772,16 @@ w2c_call2:                          /* uint32_t w2c_call2(fn, a, b) */
     .type w2c_call3, @function
 w2c_call3:                          /* uint32_t w2c_call3(fn, a, b, c) */
     entry   a1, 32
-    s32i    a0, a1, 0
+    /* [step 85] a0 in a12, not on the stack -- see w2c_call2. [sp+0] upward is
+     * the call0 callee's argument/spill area and it writes there legitimately;
+     * a12..a15 are callee-saved under call0, so a12 is both correct and free. */
+    mov     a12, a0
     mov     a8, a2
     mov     a2, a3
     mov     a3, a4
     mov     a4, a5
     callx0  a8
-    l32i    a0, a1, 0
+    mov     a0, a12
     retw
     .size w2c_call3, . - w2c_call3
 

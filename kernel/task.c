@@ -60,6 +60,9 @@ volatile uint32_t g_switch_sp;
 volatile int      g_phytop_task = -1;   /* who was saved at _phy_stack_top */
 volatile uint32_t g_phytop_epc, g_phytop_a0;
 
+volatile uint32_t g_ovlp_seen, g_ovlp_frame, g_ovlp_slot;
+volatile int      g_ovlp_task = -1;
+
 volatile int      g_a0bad_out_task = -1, g_a0bad_in_task = -1;
 volatile uint32_t g_a0bad_out_val, g_a0bad_in_val;
 
@@ -537,6 +540,27 @@ uint32_t task_schedule(uint32_t current_sp)
             if (a0_out != 0u && a0_out < 0x40000000u && g_a0bad_out_task < 0) {
                 g_a0bad_out_task = g_current;
                 g_a0bad_out_val  = a0_out;
+            }
+        }
+
+        /* [step 84] Does a switch frame land on the frame w2c_call2 is
+         * watching?
+         *
+         * current_sp IS the switch frame's base, and the handler writes 112
+         * bytes upward from it. g_slotwatch[0] is the windowed frame whose
+         * [sp+0] was stamped. If the two ranges overlap, this catches it by
+         * address -- no reading of a byte pattern, no resemblance argument.
+         * If it never fires, step 83's switch-frame hypothesis is wrong and the
+         * writer is something else. */
+        {
+            extern volatile uint32_t g_slotwatch[9];
+            uint32_t watched = g_slotwatch[0];
+            if (watched != 0u && g_ovlp_seen == 0u
+                && current_sp <= watched && (current_sp + 112u) > watched) {
+                g_ovlp_seen  = 1u;
+                g_ovlp_frame = current_sp;
+                g_ovlp_slot  = watched;
+                g_ovlp_task  = g_current;
             }
         }
 

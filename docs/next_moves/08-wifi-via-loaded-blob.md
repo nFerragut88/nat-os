@@ -5638,3 +5638,72 @@ concluded "ADDRESS MOVED" from it. This compares only when the frame pointer is
 identical, so stamp and readback are provably the same frame.
 
 **Nothing has been on air.**
+
+---
+
+## Step 85 — FIXED: the bridges were saving `a0` in the callee's own scratch
+
+### The discriminating experiment
+
+Step 84's overlap test came back **"no switch frame ever landed on the watched
+frame"**, killing step 83's hypothesis. What settled it instead was moving the
+save one word and watching what the readback followed:
+
+| store at | watched slot returns | `[sp+0]` | `[sp+4]` | `[sp+8]` | `[sp+12]` |
+|---|---|---|---|---|---|
+| `[sp+0]` | `0x0000000d` | `0x0000000d` | `0x00000700` | `0x3ffb0c78` | `0` |
+| `[sp+4]` | `0x00000700` | `0x0000000d` | `0x00000700` | `0x3ffb0c78` | `0` |
+
+The memory is **identical in both runs**. Moving our store just moved it into
+another word the writer also owns, and the readback followed the writer rather
+than the stamp. So this was never a targeted store: a block of at least four
+words is being written, with a consistent payload.
+
+And the payload names itself. `0x00000700` is 1792, which is
+`BLOB_TASK_STACK_WORDS`; `0x3ffb0c78` is inside the blob task's stack. That is
+the call0 callee's own data.
+
+### The bug
+
+`[sp+0]` upward is the **call0 caller-provided argument and spill area**. The
+callee is entitled to write there. All four `w2c_*` bridges were saving the
+windowed `a0` into it across `callx0`, and the callee overwrote it exactly as the
+ABI permits.
+
+The bridges had no right to that memory. `a12..a15` are callee-saved under call0,
+so the callee must preserve them — which makes `a12` both correct and free:
+
+```asm
+    mov     a12, a0         /* was: s32i a0, a1, 0 */
+    callx0  a8
+    mov     a0, a12         /* was: l32i a0, a1, 0 */
+```
+
+Applied to `w2c_call0f`, `w2c_call1`, `w2c_call2` and `w2c_call3`.
+
+### Result
+
+```
+boot 11 PASS 0 FAIL   wintorture CORRECT   wincollide runs=121 wrong=0
+blobphy rc=0          blobtx force 0x00003004
+wifiinit  -- no fault, no reset, system alive
+```
+
+**The panic is gone.** `esp_wifi_init_internal` now executes without faulting for
+the first time since the vendor stack began running from flash. It does not yet
+return — that is thread B, the blocking `_queue_recv` that never comes back,
+identified separately in step 81 and unchanged by this.
+
+### What this was, in the end
+
+Ten instruments lied along the way, and the fault was mistaken for a register
+window problem, a scheduler problem, a stack-pointer problem and an ISA problem
+in turn. It was none of those. It was three lines in a bridge I wrote, storing
+one word in memory that belonged to somebody else — and it only ever surfaced
+once a callee big enough to use that scratch ran on the far side of it.
+
+The measurement that cracked it was not cleverer than the ones before. It was
+just the first that changed one variable and watched whether the *evidence*
+followed the change rather than the story.
+
+**Nothing has been on air.**

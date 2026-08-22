@@ -485,6 +485,19 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
         }
 
         {
+            extern volatile uint32_t g_ovlp_seen, g_ovlp_frame, g_ovlp_slot;
+            extern volatile int g_ovlp_task;
+            uart_puts("  overlap   : ");
+            if (!g_ovlp_seen) { uart_puts("no switch frame ever landed on the watched frame"); }
+            else {
+                uart_puts("task "); uart_put_dec((unsigned)g_ovlp_task);
+                uart_puts(" pushed a switch frame at "); uart_put_hex(g_ovlp_frame);
+                uart_puts(" across "); uart_put_hex(g_ovlp_slot);
+            }
+            uart_puts("\n");
+        }
+
+        {
             extern volatile uint32_t g_slotwatch[9];
             uart_puts("  slot watch: ");
             if (!g_slotwatch[2]) { uart_puts("[sp+0] never diverged"); }
