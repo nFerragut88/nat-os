@@ -7664,4 +7664,72 @@ half right: `wintorture` with the pin ON judges nothing.
 
 Reverted. Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT.
 
+## Step 117 — step 116 was wrong: the sweep runs, and it erased its own evidence
+
+The sweep moved to the PHY stack's unused low 1 KB, adding **nothing** to `.bss`.
+`wintorture` panicked identically -- `LoadProhibited`, `epc 0x40080155`. So
+step 116's layout account is **disproved**: zero bytes were added and the failure
+did not move.
+
+That left the other half of step 116 to check, and it does not survive either.
+
+### The correction
+
+Step 116 concluded the sweep body never executed, from
+`multiframe: 0 switch-outs with >1 live frame`. But `multiframe` is computed in
+`task.c` from the saved WINDOWSTART at frame offset 88 -- **the word the sweep
+rewrites to a single bit before `task_schedule` ever reads it.** The sweep was
+erasing the only evidence it had run, and the zero was read as its absence.
+
+Suppressing just that write, for one run:
+
+```
+multiframe: 1 switch-outs with >1 live frame, worst 7 frames, last task 5 ws 0x0000aa8a
+```
+
+**The sweep runs.** It fires on a real preemption of task 5 holding seven live
+windowed frames. Step 116's headline finding -- "the sweep cannot fire while the
+pin exists" -- is withdrawn.
+
+This is the twelfth instrument in this investigation to report something it could
+not observe, and the first built two steps running: the measurement was
+downstream of the change it was measuring. The catalogue in UM-NATOS-041 section
+7 and UM-NATOS-042 section 8 gains a new entry, and it is the worst kind, because
+it produced a confident negative that redirected a whole step.
+
+### What is actually true now
+
+`epc 0x40080155` is `_WindowUnderflow12 + 0x15` -- confirmed by symbol
+(`_WindowUnderflow12` at `0x40080140`), not by arithmetic on a remembered vector
+layout. The `wifiinit` fault that steps 86-113 chased was `_WindowUnderflow8 +
+0x15`. Same offset into a sibling handler.
+
+Two facts worth carrying:
+
+1. **The pin is not airtight.** With the pin ON, one switch-out in ~6100 still
+   carried seven live frames. The pin makes the case rare, not impossible, which
+   means the register-file partitioning has always had a hole in it and
+   `g_win_union` has been covering that hole rather than the pin preventing it.
+2. **The sweep, when it fires, breaks what HEAD survives.** On HEAD that same
+   preemption happens and `wintorture` passes, because the restore grants the
+   bits back out of `g_win_union` and the frames are still sitting in the
+   register file. The sweep moves them to memory and something about the
+   restore then reads the wrong thing.
+
+So the sweep is not dead code and never was; it is a live change with a real
+defect, on a path that is genuinely exercised. That is a better position than
+step 116 described, and a worse one than step 115 assumed.
+
+### Next
+
+The single event is now identifiable -- task 5, `ws 0x0000aa8a`, seven frames --
+so the next step should dump the save areas the sweep writes for exactly that
+event and compare them against what `_WindowUnderflow12` then reads, rather than
+inferring from a pass/fail. That is the pattern UM-NATOS-042 section 8 records as
+having worked every time it was used: name the thing by address and read a range.
+
+Reverted. Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0,
+`wifiinit` no fault and no reset. `blobtx force` not re-verified this run -- the
+serial link dropped twice mid-suite and the reading was not retaken.
+
 **Nothing has been on air.**
