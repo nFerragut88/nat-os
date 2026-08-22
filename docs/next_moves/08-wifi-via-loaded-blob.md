@@ -6278,3 +6278,70 @@ That is answerable by disassembling the blob around the return address the chain
 *should* have had, which is static work on the image and needs no board time.
 
 **Nothing has been on air.**
+
+---
+
+## Step 95 — the value is a named PHY global; the mixed-ABI theory is not supported
+
+### The address has a name
+
+```
+3ffd8f68 B phy_rxbb_dc
+3ffd8f78 B adc_ana_conf_org      <- the value the underflow recovered as a0
+3ffd8f7c B set_most_tpw
+```
+
+`0x3ffd8f78` is exactly `adc_ana_conf_org`, a PHY variable in the blob's `.bss`.
+So the word the underflow reads as a return address is the **address of a PHY
+global** — not a corrupted pointer, not fill, but a meaningful value something
+deliberately stored.
+
+### The theory it suggested, and why it does not hold up
+
+If the blob mixed call0 functions among its windowed ones, a call0 frame's `a0`
+could legitimately hold data, and windowed code rotating over it would spill that
+data as a return address — the exact hazard this project has documented for its
+own call0 frames since rev 1.1.
+
+Instruction census over the blob's 180,577 disassembled lines:
+
+```
+entry  2744    retw  3852        <- overwhelmingly windowed
+ret       4    callx0   3        <- a handful
+call8  7096    callx8 4889    call12 112    call4 102
+```
+
+Four `ret` and three `callx0` is **not** support for that theory:
+
+- It is within the noise of **data misdecoded as code**. `objdump` disassembles
+  `.text` linearly, and a 600 KB vendor blob with interleaved constants will
+  produce spurious instructions at that rate.
+- The enclosing symbols are `ieee80211_ht_node_init`, `is_esp_mesh_assoc`,
+  `nan_set_config_local`, `esp_mesh_recv_xon`, `set_cca` — mesh and NAN paths
+  that `esp_wifi_init_internal` does not walk.
+
+So the blob is windowed throughout on every path that matters, and the mixed-ABI
+account is recorded as **unsupported**, not as a lead.
+
+### A near-miss worth recording
+
+The first census reported `retw 0` and `ret.n 0`, which would have been a
+startling finding — a windowed binary with no windowed returns. It was a broken
+regex: the pattern required trailing whitespace, and `retw.n` ends its line.
+Caught before it was written down, but only just, and it is the same failure as
+the ten instruments before it.
+
+### Where this leaves the fault
+
+`a0` for that frame held `&adc_ana_conf_org` at spill time, the frame is the
+blob's own, the restore never dropped it, and `bit(base) CLEAR` is routine. The
+remaining question is unchanged and now quite specific: **what put a data pointer
+in `a0` of a windowed frame** — which is either the blob doing something the
+windowed ABI forbids, or that memory never being the frame's save area in the
+first place.
+
+Distinguishing those needs the frame's *other* saved words read alongside `a0`:
+a real spilled frame has a plausible `a1` at `[sp-12]`, and the step-83 watch
+already showed how to read a range rather than a single word.
+
+**Nothing has been on air.**
