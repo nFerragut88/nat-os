@@ -282,6 +282,17 @@ SECTIONS
   _heap_start = ALIGN(_bss_end, 8);
   _heap_end   = _stack_top - _boot_stack_size;
 
+  /* The heap is defined by subtraction, so nothing upstream notices when .bss
+   * grows past _heap_end -- the range simply inverts and every allocation
+   * fails at run time, several self-tests deep into boot. Observed live on
+   * 2026-08-22: a 2 KB overrun produced "LoadProhibited @ 0" in kmain's arena
+   * scrub and a panic-during-panic halt, with no link-time warning at all.
+   * This turns that class of layout mistake into a link error. Strict, so a
+   * zero-byte heap cannot sneak through either: heap_init() treats end==start
+   * as "no heap", and the self-test then dereferences the NULL arena base it
+   * is handed. */
+  ASSERT(_heap_start < _heap_end, ".bss grew into the heap/boot-stack reservation: shrink static DRAM (see APPCPU_CAP_MAX note in appcpu.h) or boot ends in LoadProhibited @ 0")
+
   /* Keep the toolchain from complaining about unplaced debug sections. */
   /DISCARD/ : { *(.eh_frame) *(.comment) }
 }
