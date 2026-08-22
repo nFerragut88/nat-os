@@ -650,6 +650,15 @@ w2c_call2:                          /* uint32_t w2c_call2(fn, a, b) */
     addi    a9, a9, 1
     s32i    a9, a10, 0
     s32i    a0, a1, 0
+    /* [step 83] Stamp the slot and remember where it is.
+     *
+     * a0 is written exactly once in this function -- by the reload -- so a0 at
+     * the retw IS [a1+0]. Step 82 measured that as 13, which means this word is
+     * overwritten while the task is parked. Recording the address lets the
+     * corrupting store be identified by destination rather than by argument. */
+    movi    a9, g_slotwatch
+    s32i    a1, a9, 0               /* the frame whose [sp+0] we are watching */
+    s32i    a0, a9, 4               /* what we put there */
     /* [step 79] What was SAVED, and where. a0 = 13 at the retw (callinc 0) is
      * why that instruction is illegal; this says whether 13 was already in the
      * slot at entry, or arrived while the call0 callee ran. */
@@ -666,6 +675,32 @@ w2c_call2:                          /* uint32_t w2c_call2(fn, a, b) */
     s32i    a9, a11, 8
     callx0  a8
     l32i    a0, a1, 0
+    /* [step 83] Did the slot survive? Compare against what was stamped, and
+     * latch the first divergence together with the frame address. */
+    movi    a9, g_slotwatch
+    l32i    a10, a9, 0              /* the frame we stamped */
+    bne     a10, a1, 2f             /* different frame: another invocation */
+    l32i    a10, a9, 4              /* what we stamped */
+    beq     a10, a0, 2f             /* unchanged: nothing to report */
+    l32i    a11, a9, 8
+    bnez    a11, 2f                 /* already latched the first */
+    movi    a11, 1
+    s32i    a11, a9, 8
+    s32i    a10, a9, 12             /* stamped value */
+    s32i    a0,  a9, 16             /* what came back */
+    s32i    a1,  a9, 20             /* the frame */
+    /* [step 83b] The neighbours. 13 is WINDOWBASE, and _handler_level3 writes
+     * WINDOWBASE at offset 84 of its 112-byte switch frame with WINDOWSTART at
+     * 88. If a switch frame overlaps this slot, [sp+4] holds a windowstart-
+     * shaped value and the signature is unmistakable. Four words distinguish a
+     * switch frame from a four-word window spill from a single store. */
+    l32i    a10, a1, 4
+    s32i    a10, a9, 24
+    l32i    a10, a1, 8
+    s32i    a10, a9, 28
+    l32i    a10, a1, 12
+    s32i    a10, a9, 32
+2:
     /* Diagnostic: a0 and a1 as they are on the way out. The blocking adapter
      * path returns through here after the task has been switched away and
      * back, so these are the two values that say whether the context came back
@@ -1115,6 +1150,12 @@ g_xseq:
     .global g_xring
 g_xring:
     .space 128
+
+/* [step 83] {frame, stamped, latched, was, now, frame_at_fault} */
+    .align 4
+    .global g_slotwatch
+g_slotwatch:
+    .word 0, 0, 0, 0, 0, 0, 0, 0, 0
 
 /* [X20 experiment] probe state, zero-init. Read back by the "x20" shell
  * command; layout mirrors what each store site above documents. */

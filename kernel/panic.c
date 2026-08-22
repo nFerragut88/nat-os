@@ -485,6 +485,22 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
         }
 
         {
+            extern volatile uint32_t g_slotwatch[9];
+            uart_puts("  slot watch: ");
+            if (!g_slotwatch[2]) { uart_puts("[sp+0] never diverged"); }
+            else {
+                uart_puts("frame "); uart_put_hex(g_slotwatch[5]);
+                uart_puts("  stamped "); uart_put_hex(g_slotwatch[3]);
+                uart_puts("  came back "); uart_put_hex(g_slotwatch[4]);
+                uart_puts("\n              neighbours +4 ");
+                uart_put_hex(g_slotwatch[6]);
+                uart_puts("  +8 "); uart_put_hex(g_slotwatch[7]);
+                uart_puts("  +12 "); uart_put_hex(g_slotwatch[8]);
+            }
+            uart_puts("\n");
+        }
+
+        {
             extern uint32_t g_xseq, g_xring[8][4];
             uart_puts("  retw ring : (newest last)\n");
             for (int k = 7; k >= 0; k--) {

@@ -5579,3 +5579,62 @@ write to computed save areas on this stack. A miscomputed base would land here.
 carries `a1` — pairing them by address rather than by task is the measurement.
 
 **Nothing has been on air.**
+
+---
+
+## Step 83 — the slot is provably overwritten, and the neighbours look like a switch frame
+
+A watch on the exact word: stamp `[a1+0]` at `w2c_call2`'s entry save, record the
+frame address, and at the reload compare — guarded on `a1` being the same frame,
+so it cannot pair two invocations the way steps 78-79 did.
+
+```
+slot watch: frame 0x3ffb9270  stamped 0x8008d359  came back 0x0000000d
+neighbours +4 0x00000700  +8 0x3ffb0c78  +12 0x00000000
+```
+
+**Direct proof.** The same frame's `[sp+0]` held a valid windowed return encoding
+when stamped and 13 when read back. One word of a live frame is overwritten while
+the task is inside the blocking call. This is no longer an inference from `a0` —
+it is the memory itself, before and after, at a known address.
+
+### The signature
+
+`13` is `WINDOWBASE`, and `_handler_level3` writes `WINDOWBASE` at offset 84 of
+its 112-byte switch frame. But the neighbours point somewhere simpler. A switch
+frame captured in an earlier dump reads
+
+```
+... 0xfffffff0  0x00000700  0x3ffb0930  0x00000000 ...   at offsets 12/16/20/24
+```
+
+and the watched slot's neighbours are `0x00000700`, `0x3ffb0c78`, `0x00000000` at
+`+4/+8/+12`. The same three-word run, shifted by 16 — consistent with the watched
+word sitting at **offset 12 of a context-switch frame** that overlaps this
+windowed frame's storage.
+
+Stated as a hypothesis, not a finding: the values differ between runs, so the
+match is structural rather than exact, and this investigation has now been wrong
+ten times by reading a resemblance as an identification.
+
+### The test that settles it
+
+`task_schedule()` already sees `current_sp`, which is the switch frame's base.
+Latch whenever that base falls within 128 bytes of `g_slotwatch[0]` — the frame
+being watched — and record both addresses. If a switch frame is pushed across a
+live windowed frame, this catches it by address with no interpretation required.
+If it never fires, the resemblance is a coincidence and the writer is something
+else.
+
+That is one comparison in code that already runs on every switch, and it does not
+depend on any reading of the neighbour pattern above.
+
+### Why the guard matters here
+
+The `bne a10, a1, 2f` in the watch is what makes this evidence rather than
+another paired-singleton error. Steps 78-79 compared an entry sample and a reload
+sample that belonged to different invocations on different task stacks, and
+concluded "ADDRESS MOVED" from it. This compares only when the frame pointer is
+identical, so stamp and readback are provably the same frame.
+
+**Nothing has been on air.**
