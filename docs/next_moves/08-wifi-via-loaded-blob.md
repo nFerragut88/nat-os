@@ -5260,3 +5260,67 @@ NEXT (one variable each):
    route or wait-path repair). No speculative fixes.
 4. Regression discipline unchanged; heartbeat dots now appear in all logs
    (X8b, marked diagnostic) -- ignore or filter them when diffing.
+
+---
+
+## Step 78 — the retw is illegal because `a0` is not a return address
+
+Picked up from Tortoise's X20 handoff. X20's verdict — the ISA permits a
+windowed callee to allocate its own bit and return via `retw.n` — makes the live
+fault a contradiction worth resolving before X21 is built, because the live fault
+*is* a `retw.n` with `bit(base) SET`.
+
+Symbolized: `0x4008be47` is the **exit of `w2c_call2`**, the windowed->call0
+bridge. Full dump:
+
+```
+exccause 0 (IllegalInstruction)   epc 0x4008be47   ps 0x00060f30
+win-exit-ps: 0x00060f20   bit18(WOE) SET   bit4(EXCM) CLEAR
+win-exit-ws: 0x00002000   wb 13   caller-bit CLEAR
+a0/sp out  : 0x0000000d / 0x00000000
+last osi   : entry 29 _queue_recv
+```
+
+`retw` raises IllegalInstruction under exactly three conditions: `PS.WOE` clear,
+`PS.EXCM` set, or **`a0[31:30] == 0`** (callinc zero). The first two are measured
+absent. `a0 = 0x0000000d` has callinc 0.
+
+**So the instruction is illegal because `a0` holds 13, not a return address.**
+Not a window-state fault, not an ISA question — X20's conclusion stands and is
+simply not the issue here.
+
+### An instrumentation bug found on the way, and it mattered
+
+The dump's `sp out : 0x00000000` looked like a1 = 0, which is impossible: the
+`l32i.n a0, a1, 0` two instructions earlier used a1 as a base and did not fault.
+The layout explains it:
+
+```
+3ffb0ba4  g_win_sp
+3ffb0ba8  g_win_a0     <- w2c_call2 stores a0 at +0 and a1 at +4 = 0x3ffb0bac
+```
+
+`g_win_sp` is *below* `g_win_a0`, so the a1 store lands on neither. The panic
+reads `g_win_sp`, which this path never writes — a permanently-zero global
+printed as a measurement. Seventh instrument of this class in this
+investigation, and the first found by arithmetic on the symbol table rather than
+by a contradiction on hardware.
+
+With it discounted, `a0 = 0x0d` is a genuine capture and self-consistent.
+
+### What this makes the next question
+
+`w2c_call2` saves the windowed `a0` at entry, does `callx0 a8` (which destroys
+a0 — it is the call0 return-address register), then restores it with
+`l32i.n a0, a1, 0` before the `retw`. So either that stack slot held 13, or a0
+was clobbered after the reload.
+
+13 is also `windowbase`, which the immediately preceding instrumentation loads
+into `a10`. That coincidence is worth exactly one check and no inference: it has
+been a stack pointer's low half once already (X7).
+
+Concretely: record `[a1+0]` at entry and again at the reload. Equal and wrong
+means the callee wrote through into the frame; different means the reload is
+sourcing from a moved a1.
+
+**Nothing has been on air.**
