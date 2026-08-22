@@ -60,6 +60,10 @@ volatile uint32_t g_switch_sp;
 volatile int      g_phytop_task = -1;   /* who was saved at _phy_stack_top */
 volatile uint32_t g_phytop_epc, g_phytop_a0;
 
+static uint32_t   g_term_addr[TASK_MAX], g_term_val[TASK_MAX];
+volatile int      g_term_hit = -1, g_term_by = -1;
+volatile uint32_t g_term_was, g_term_now;
+
 volatile uint32_t g_ovlp_seen, g_ovlp_frame, g_ovlp_slot;
 volatile int      g_ovlp_task = -1;
 
@@ -331,9 +335,24 @@ int task_create_with_stack(const char *name, task_entry_fn entry,
         }
         stack[0] = STACK_GUARD;
 
-        /* Frame sits at the top of the stack, 16-byte aligned. */
+        /* Frame sits at the top of the stack, 16-byte aligned -- less the 16
+         * bytes reserved for the windowed chain terminator.
+         *
+         * [step 90] Those 16 bytes are not spare. `_WindowUnderflow8` reads a
+         * caller's frame from `[a9-16..a9-4]`, so terminating the chain means
+         * the 16 bytes BELOW the top of the stack must hold a valid save area.
+         * But the handler pops its 112-byte frame and leaves `a1 = top`, so the
+         * task's own entry function then allocates downward straight through
+         * that same region -- measured: task 6 zeroed its own terminator while
+         * task 6 was running.
+         *
+         * Reserving them moves the task's usable stack down by 16 bytes, so its
+         * frames end at `top-17` and the terminator below `top` is never in the
+         * task's way. */
         uint32_t top = (uint32_t)&stack[words];
         top &= ~15u;
+        uint32_t term_top = top;
+        top -= 16u;
         uint32_t *frame = (uint32_t *)(top - TASK_FRAME_BYTES);
 
         for (int i = 0; i < TASK_FRAME_WORDS; i++) {
@@ -408,13 +427,17 @@ int task_create_with_stack(const char *name, task_entry_fn entry,
          * task into a contained, named failure; whatever makes the chain unwind
          * this far is still open (step 88, candidate 2). */
         {
-            uint32_t top_addr = (uint32_t)&stack[words];
-            top_addr &= ~15u;
+            uint32_t top_addr = term_top;
             uint32_t *t = (uint32_t *)top_addr;
             t[-4] = (1u << 30) | ((uint32_t)&task_chain_end & 0x3FFFFFFFu);
             t[-3] = top_addr;      /* a1: readable, and [a1-12] is too */
+
             t[-2] = 0u;
             t[-1] = 0u;
+            /* [step 90] Remember it, so the per-switch check below can tell
+             * "somebody wrote here" from "this was never written". */
+            g_term_addr[id] = top_addr;
+            g_term_val[id]  = t[-4];
         }
 
         g_tasks[id].stack_base  = stack;
@@ -605,6 +628,32 @@ uint32_t task_schedule(uint32_t current_sp)
                 g_ovlp_frame = current_sp;
                 g_ovlp_slot  = watched;
                 g_ovlp_task  = g_current;
+            }
+        }
+
+        /* [step 90] Who overwrites a task's chain terminator?
+         *
+         * It sits at a fixed address per task, written once at creation, and
+         * after that it has NO legitimate writer. So any change names its
+         * writer: latch the first one together with the task that was running
+         * at that instant. Step 89 measured the value as an address inside the
+         * blob's .bss, 96 bytes above the blob task's own stack pointer.
+         *
+         * Checked here, once per switch, for every task -- so the culprit is
+         * identified by task rather than inferred from a byte pattern, which is
+         * the move that has worked every time it was used in this
+         * investigation. */
+        if (g_term_hit < 0) {
+            for (int t = 0; t < TASK_MAX; t++) {
+                if (!g_term_addr[t]) { continue; }
+                uint32_t now = ((const uint32_t *)g_term_addr[t])[-4];
+                if (now != g_term_val[t]) {
+                    g_term_hit     = t;
+                    g_term_by      = g_current;
+                    g_term_was     = g_term_val[t];
+                    g_term_now     = now;
+                    break;
+                }
             }
         }
 

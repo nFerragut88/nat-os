@@ -5997,3 +5997,65 @@ inference, which is the move that has worked every time it has been used here an
 the one that failed every time it was skipped.
 
 **Nothing has been on air.**
+
+---
+
+## Step 90 — the terminator holds; the fault moves much later
+
+### The watch named the writer, and it was the task itself
+
+```
+terminator: task 6's was clobbered while task 6 ran:  0x400884d4 -> 0x00000000
+```
+
+Task 6 overwrote **its own** terminator, which exposed a flaw in step 89's guard
+rather than an external writer. `_WindowUnderflow8` reads a caller's frame from
+`[a9-16..a9-4]`, so terminating the chain requires the 16 bytes *below* the top
+of the stack to be valid — but the handler pops its 112-byte frame and leaves
+`a1 = top`, and the task's entry then allocates downward straight through that
+same region. The terminator was sitting in memory the task's own first frame
+uses.
+
+Fixed by reserving it: `top -= 16` before the initial frame is placed, so a
+task's usable stack ends below the terminator and can never reach it.
+
+```
+terminator: intact for every task
+boot 11 PASS 0 FAIL   wintorture CORRECT   wincollide runs=121 wrong=0   blobphy rc=0
+```
+
+### A premature claim, corrected in the same step
+
+A 50-second run showed no panic and was reported as "the fault is gone". It was
+not: a 90-second run panics at **68.5 s**. The window was too short, and the
+absence of a fault inside it was read as the absence of a fault.
+
+That is the same error as `wifiinit 0x101` in step 72 and the truncated dump in
+step 59 — a measurement whose bounds were not stated being treated as a result.
+Recorded here rather than quietly fixed, because it is the third instance.
+
+### What did change
+
+The fault is unchanged in identity — `LoadProhibited`, `_WindowUnderflow8+0x15`,
+`excvaddr 0x170` — but it now takes **68.5 seconds** to arrive, where it was
+near-immediate before. The driver is getting much further through init, grinding
+through repeated `OSI_FOREVER_CAP` timeouts on the way.
+
+### The open contradiction
+
+```
+terminator: intact for every task
+underflow : recovered a0 0x3ffd8f78 from save area 0x3ffb2810
+```
+
+If `0x3ffb2810` were still task 9's terminator, "intact" and a recovered
+`0x3ffd8f78` cannot both be true. The likely resolution is dull: `g_blob_stack`
+is a static array whose address moves with every build, so `0x3ffb2810` may no
+longer belong to that task — or to any task.
+
+**Not assumed.** The next run should print the task table alongside the underflow
+address, which the panic already does, and the two should be compared rather than
+matched from memory of an older layout. That specific mistake — carrying an
+address across a rebuild — cost four steps at 68.
+
+**Nothing has been on air.**

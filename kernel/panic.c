@@ -485,6 +485,21 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
         }
 
         {
+            extern volatile int g_term_hit, g_term_by;
+            extern volatile uint32_t g_term_was, g_term_now;
+            uart_puts("  terminator: ");
+            if (g_term_hit < 0) { uart_puts("intact for every task"); }
+            else {
+                uart_puts("task "); uart_put_dec((unsigned)g_term_hit);
+                uart_puts("'s was clobbered while task ");
+                uart_put_dec((unsigned)g_term_by);
+                uart_puts(" ran:  "); uart_put_hex(g_term_was);
+                uart_puts(" -> "); uart_put_hex(g_term_now);
+            }
+            uart_puts("\n");
+        }
+
+        {
             extern volatile uint32_t g_ovlp_seen, g_ovlp_frame, g_ovlp_slot;
             extern volatile int g_ovlp_task;
             uart_puts("  overlap   : ");
