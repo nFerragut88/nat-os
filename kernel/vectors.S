@@ -506,6 +506,41 @@ _handler_level3:
     s32i     a3, a4, 0
     wsr.windowstart a3
     rsync
+
+    /* [step 147] Leave no scratch behind in the outgoing view.
+     *
+     * a2..a6 are used above to compute and record the grant. `wsr.windowbase`
+     * below rotates the register view, so the epilogue's `l32i a0..a15` reload
+     * the INCOMING base's physical registers and never touch these. Whatever the
+     * handler last put in them stays in AR[old_base*4 + n] -- and when the
+     * outgoing and incoming window sets overlap, that is a register some live
+     * frame owns.
+     *
+     * Step 146 measured the consequence: a3 held the task's own WINDOWSTART
+     * (0x0000aa8a), the rotation stranded it, and vendor_torture read its own
+     * register and dereferenced a window mask. It was invisible while the grant
+     * was `1 << base`, because that residue is a small integer rather than a
+     * plausible pointer.
+     *
+     * The X7 comment above covers the operand hazard -- a3 must be WRITTEN
+     * before the rotation. This covers what the rotation leaves BEHIND, which
+     * is the same instruction seen from the other side.
+     *
+     * Reloading from the frame restores the OUTGOING task's real a3..a6, which
+     * is what those registers ought to hold. Note the ordering: this cannot be
+     * done after `wsr.windowbase`, because by then a1 names a different register
+     * and the frame is no longer addressable through it -- the reloads must
+     * straddle the rotation in exactly this direction.
+     *
+     * a2 is unavoidable: it is the operand of the rotation itself, so it still
+     * carries the saved WINDOWBASE afterwards. That is a value in 0..15 -- not
+     * a plausible pointer, and not a mask -- so it is the least harmful residue
+     * available. It is a known remainder, not an oversight. */
+    l32i     a3, a1, 8                  /* outgoing a3 */
+    l32i     a4, a1, 12                 /* outgoing a4 */
+    l32i     a5, a1, 16                 /* outgoing a5 */
+    l32i     a6, a1, 20                 /* outgoing a6 */
+
     wsr.windowbase  a2
     rsync
     /* [X7 experiment] readback: does the clean grant actually COMMIT?

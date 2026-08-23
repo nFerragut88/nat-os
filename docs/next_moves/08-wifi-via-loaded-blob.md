@@ -9377,4 +9377,75 @@ Reverted to green. Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy`
 rc=0, `blobtx force` 0x3004, `wifiinit` no fault and no reset. The 48-byte
 CALL12 reserve from step 145 remains in.
 
+## Step 147 — the scratch residue is fixed; `0xaa8a` is gone
+
+### First, a correction to my own proposal
+
+Step 146 offered "(3) rotate last -- set `WINDOWBASE` after every register the
+epilogue reloads". **That is not implementable, and I should have seen it when I
+wrote it.** The reloads are `l32i a0..a15` through `a1`; they must land in the
+physical registers visible at the *incoming* base, so the rotation is required to
+precede them. Loading first would write the outgoing view -- worse than the bug.
+
+The implementable form is the same idea from the other end: **restore the
+pre-rotation scratch from the frame, immediately before rotating.**
+
+```asm
+wsr.windowstart a3
+rsync
+l32i     a3, a1, 8        /* outgoing a3 */
+l32i     a4, a1, 12
+l32i     a5, a1, 16
+l32i     a6, a1, 20
+wsr.windowbase  a2
+rsync
+```
+
+The ordering is forced in this direction too: it cannot be done *after*
+`wsr.windowbase`, because by then `a1` names a different register and the frame
+is no longer addressable through it.
+
+`a2` is unavoidable — it is the rotation's own operand, so it still carries the
+saved `WINDOWBASE` afterwards. That is a value in 0..15: not a plausible pointer,
+not a mask, the least harmful residue available. **A known remainder, recorded as
+one rather than left to be discovered.**
+
+### Measured
+
+Reserve + scratch restore + grant from `frame[88]`, pin off:
+
+```
+before : excvaddr 0x0000aa8a   <- the task's own WINDOWSTART
+after  : excvaddr 0x000b8e4f   <- something else entirely
+```
+
+**`0xaa8a` no longer reaches any register.** The residue is gone, confirmed by
+the symptom changing rather than by inspection.
+
+### Three defects fixed, each confirmed by a changed symptom
+
+| step | defect | evidence it went |
+|---|---|---|
+| 142 | tasks created with `WINDOWSTART = 0` | drift checker stopped firing |
+| 145 | switch frame written through the CALL12 save area | `_WindowUnderflow12` signature gone |
+| 147 | handler scratch stranded by the rotation | `0xaa8a` gone from `excvaddr` |
+
+All three were present since `_handler_level3` was written. All three were hidden
+by the pin, which prevents the tick that exposes them. None of them is Tier B,
+the sweep, the union or the phantom — they are ordinary defects in the switch
+path that a windowed workload was never run against.
+
+### Still open
+
+`excvaddr 0x000b8e4f`, `epc 0x4008e7f2`, pin off. A fourth value, not obviously a
+mask or a stack address. The method that has worked three times running applies
+unchanged: find which register holds it, and the register names the path.
+
+Kept in and green: the 48-byte CALL12 reserve, the `WINDOWSTART` seed, the
+scratch restore. The `frame[88]` grant is **not** kept — it is necessary and its
+consequences are still being worked through.
+
+Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0, `blobtx force`
+0x3004, `wifiinit` no fault and no reset.
+
 **Nothing has been on air.**
