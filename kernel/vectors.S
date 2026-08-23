@@ -98,7 +98,11 @@ _handler_level3:
      * free and can be the first instruction. excsave2 is otherwise unused. */
     wsr.excsave2 a1
 
-    addi     a1, a1, -112
+    /* [step 145] -160, not -112: 112 of frame plus 48 of reserve. The 48 bytes
+     * directly below the interrupted sp are a CALL12 frame's extended save area
+     * (a4..a11 at -48..-20) and writing the frame through them handed
+     * WINDOWSTART back as a10. TASK_FRAME_RESERVE in task.h has the arithmetic. */
+    addi     a1, a1, -160
     s32i     a0,  a1, 0
     s32i     a2,  a1, 4
     s32i     a3,  a1, 8
@@ -567,7 +571,7 @@ _handler_level3:
     l32i     a13, a1, 48
     l32i     a14, a1, 52
     l32i     a15, a1, 56
-    addi     a1, a1, 112
+    addi     a1, a1, 160         /* [step 145] frame + TASK_FRAME_RESERVE */
     rfi      3
 
     .size _handler_level3, . - _handler_level3

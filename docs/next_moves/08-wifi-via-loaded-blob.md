@@ -9238,4 +9238,66 @@ to do without a build and a full suite behind it.
 Suite unchanged: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0,
 `blobtx force` 0x3004, `wifiinit` no fault and no reset.
 
+## Step 145 — the reserve is applied and correct; step 144's account is not
+
+`TASK_FRAME_RESERVE 48` added in `task.h`, and the six sites that assumed the
+frame size moved together: the prologue (`-160`), the epilogue (`+160`),
+`task_create`'s frame placement, the overlap check, and both derivations of
+`task_sp`.
+
+**Pin on: fully green.** boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy`
+rc=0, `blobtx force` 0x3004, `wifiinit` no fault, drift checker quiet. Tightest
+stack 1,492 of 2,048 B free — the 48 bytes cost nothing that matters.
+
+**Pin off: the signature changed.** `_WindowUnderflow12 + 0x15` — the fault this
+investigation has returned to since step 117 — is **gone**, replaced by step
+121's baseline `epc 0x6eeeeeee`. Something real was removed.
+
+### But the account did not survive its own test
+
+Adding the grant from `frame[88]` on top of the reserve gives:
+
+```
+exccause 28   epc 0x4008e7ee   excvaddr 0x0000aa8a
+```
+
+`0x0000aa8a` again — the `WINDOWSTART` value used as an address. **With the
+reserve in, frame offset 88 sits at `task_sp-72`, outside the CALL12 range
+entirely.** The mechanism step 144 described cannot be delivering that value any
+more, and the value still arrives.
+
+So step 144 was right that the switch frame overlapped the CALL12 extended save
+area — that is arithmetic and it is not in doubt — and wrong that this was the
+path by which `0xaa8a` reached a register. **Two true statements, one wrong
+inference between them.**
+
+### What is kept, and on what basis
+
+The reserve stays. Its justification is independent of this fault: a CALL12
+frame's `a4..a11` live at `[caller_sp-48 .. caller_sp-20]`, the interrupted sp is
+a `caller_sp`, and writing 112 bytes of switch frame through that span corrupts
+saved registers whenever a tick lands on a task holding a CALL12 frame. That is
+true whether or not it explains `0xaa8a`, it is a real defect present since the
+handler was written, and removing the `_WindowUnderflow12` signature is
+consistent with having fixed something.
+
+**Recorded as correct by arithmetic, not proven by outcome.** The distinction
+matters: this log has twice let a plausible fix inherit credit for an unrelated
+improvement.
+
+### What is still unexplained
+
+`0x0000aa8a` reaching a register in `vendor_torture`/`vendor_spilltest`, by a
+route that is not the CALL12 save area. `WINDOWSTART` is loaded into `a3` at the
+restore and consumed by `wsr.windowstart`, and `a3` is then reloaded from the
+frame before RFI — so the obvious path is closed too.
+
+The next question is narrow and has not been asked: **which register holds
+`0xaa8a` at the fault**, rather than which address was dereferenced. The panic
+dump prints the saved frame; comparing every word of it against `0xaa8a` names
+the register, and the register names the path.
+
+Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0, `blobtx force`
+0x3004, `wifiinit` no fault and no reset.
+
 **Nothing has been on air.**

@@ -53,6 +53,28 @@
 #define TASK_FRAME_WORDS  23
 #define TASK_FRAME_BYTES  112          /* 23 words, padded to 16-byte alignment */
 
+/* [step 145] Dead space between the interrupted task's sp and the switch frame.
+ *
+ * A CALL12 frame's extended save area lives at [caller_sp-48 .. caller_sp-20]:
+ * _WindowOverflow12 stores a4..a11 there, and _WindowUnderflow12 reads them
+ * back. The interrupted task's sp IS a caller_sp, so the 48 bytes below it
+ * belong to the window machinery and to nothing else.
+ *
+ * _handler_level3 used to open with `addi a1, a1, -112`, putting the switch
+ * frame at [task_sp-112, task_sp) -- straight through that area. Frame offset 88
+ * is task_sp-24, which is exactly where a10 is saved, so a tick landing on a
+ * task with a live CALL12 frame handed WINDOWSTART back as a10. Measured:
+ * excvaddr 0x0000aa8a inside vendor_torture, where 0xaa8a is that task's
+ * WINDOWSTART. See next_moves/08 step 144.
+ *
+ * Present since the handler was written. The pin hid it by preventing the tick.
+ *
+ * task_create already reserves 16 bytes at the other end of the stack for the
+ * chain terminator, for the same class of reason (step 90). This is that fix at
+ * the bottom end. */
+#define TASK_FRAME_RESERVE 48
+#define TASK_FRAME_TOTAL   (TASK_FRAME_BYTES + TASK_FRAME_RESERVE)   /* 160 */
+
 #define TASK_FRAME_IDX_SAR    15
 #define TASK_FRAME_IDX_EPC3   16
 #define TASK_FRAME_IDX_EPS3   17

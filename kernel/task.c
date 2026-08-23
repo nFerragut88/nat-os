@@ -434,7 +434,7 @@ int task_create_with_stack(const char *name, task_entry_fn entry,
         top &= ~15u;
         uint32_t term_top = top;
         top -= 16u;
-        uint32_t *frame = (uint32_t *)(top - TASK_FRAME_BYTES);
+        uint32_t *frame = (uint32_t *)(top - TASK_FRAME_TOTAL);
 
         for (int i = 0; i < TASK_FRAME_WORDS; i++) {
             frame[i] = 0;
@@ -716,7 +716,7 @@ uint32_t task_schedule(uint32_t current_sp)
             extern volatile uint32_t g_slotwatch[9];
             uint32_t watched = g_slotwatch[0];
             if (watched != 0u && g_ovlp_seen == 0u
-                && current_sp <= watched && (current_sp + 112u) > watched) {
+                && current_sp <= watched && (current_sp + TASK_FRAME_TOTAL) > watched) {
                 g_ovlp_seen  = 1u;
                 g_ovlp_frame = current_sp;
                 g_ovlp_slot  = watched;
@@ -759,7 +759,7 @@ uint32_t task_schedule(uint32_t current_sp)
          * [task_sp-16 .. task_sp-4], inside the frame's padding above offset
          * 88, so the walk starts on ground the handler did not touch. */
         if (g_pspill_count && !g_pspill_have) {
-            uint32_t sp = (uint32_t)current_sp + TASK_FRAME_BYTES;
+            uint32_t sp = (uint32_t)current_sp + TASK_FRAME_TOTAL;
             g_pspill_have = 1u;
             g_pspill_sp   = sp;
 
@@ -805,7 +805,7 @@ uint32_t task_schedule(uint32_t current_sp)
                 g_ih_ws      = ws;
                 g_ih_wb      = base;
                 g_ih_bitset  = (ws >> base) & 1u;
-                g_ih_a1_calc = (uint32_t)current_sp + TASK_FRAME_BYTES;
+                g_ih_a1_calc = (uint32_t)current_sp + TASK_FRAME_TOTAL;
                 /* [step 123 fix] latch raw HERE, in the same event.
                  * _handler_level3 rewrites g_ih_a1_raw on every interrupt, so
                  * reading it at panic time compared this event's `calc` against
