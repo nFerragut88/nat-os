@@ -10836,4 +10836,66 @@ and named, now from a fourth direction.
 
 Reverted; suite green with the pin off.
 
+## Step 173 — the missing-ENTRY hypothesis: right about the mechanism, wrong about the fix
+
+Prompted from outside: is the park failing because some window has no `ENTRY`,
+so its `WINDOWSTART` bit was never set the normal way and its save area was never
+written?
+
+That is a good shape for the evidence. `ENTRY` is what sets a bit
+(`WindowStart[WindowBase] <- 1`, ISA 8.3.106) and an overflow is what writes the
+save area below it. A frame that got its bit some other way has one and not the
+other — which is exactly step 169's finding, and exactly step 126's phantom.
+
+**And a task's initial frame is such a frame.** Step 142 gave it a bit
+(`frame[WSTART] = 1 << wb`); no `ENTRY` ever ran for it. The ISA has a rule for
+precisely this, in the thread-startup section:
+
+> the base save area at `sp - n` … must be initialized as if it had been written
+> by a window overflow … The return address register (a0) for the first procedure
+> on the stack must be explicitly set to zero.
+
+### What was found
+
+`task_create` does write a chain terminator, but at `[term_top-16, term_top)`,
+and the task's initial `sp` is `top = term_top - 16`. So the terminator sits at
+`[sp, sp+16)` — the task's own locals region — while an underflow below that
+frame would read `[sp-16, sp)`.
+
+Moving it to `[sp-16, sp)` builds clean, regresses nothing, and **does not fix
+the park**: `epc 0x400800d5`, `excvaddr 0x00060500`, unchanged.
+
+### Why it was reverted rather than kept
+
+The justification does not survive checking. The outermost windowed function's
+`entry a1, N` sets its sp to `top - N`, so the *initial context's* registers
+spill to `[top-N-16]` — and **N is not known at task creation.** Neither the old
+address nor the new one is "the ABI's base save area"; the location depends on
+the first callee's frame size.
+
+nat-os's terminator is a different construct: a fixed high sentinel carrying a
+return encoding to `task_chain_end`, paired with the chain-ascends check in the
+walks. That is a pragmatic design, not the ISA's startup rule, and moving it on
+a misreading of the ISA would have changed task-creation semantics for no
+measured benefit.
+
+**Unverified change, shaky justification, no effect — reverted.** The temptation
+to keep it because it "looks more correct" is the same one that has produced
+three findings in this log that were later withdrawn.
+
+### What the hypothesis is still worth
+
+The mechanism it proposes remains the best available account: **a bit set without
+an `ENTRY`, or cleared without an overflow, produces exactly the observed
+fault.** What has not been found is which bit, and the initial frame is now
+eliminated as the candidate — the park's fault is unchanged whether that area is
+initialized or not.
+
+The remaining places a bit can be set or cleared outside `ENTRY`/`RETW` are
+enumerable and short: `task_create` (eliminated here), the restore's
+`wsr.windowstart` in `_handler_level3`, the three wipes in `window.S`, and
+`rfwo`/`rfwu`. Four of the five are already instrumented.
+
+Reverted; suite green with the pin off.
+
 **Nothing has been on air.**
