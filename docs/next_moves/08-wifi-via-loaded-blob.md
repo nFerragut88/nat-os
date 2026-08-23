@@ -9698,4 +9698,53 @@ been pointed at a failing run.
 Reverted to green, flash verified. Suite: boot 11 PASS 0 FAIL, `wintorture`
 CORRECT, `blobphy` rc=0, `wifiinit` no fault and no reset.
 
+## Step 152 — the switch-in capture does not boot; a register-lifetime slip
+
+The measurement step 151 called for: capture the register file again at the end
+of `.Lresume`, after the frame reload, and diff it against the slot saved on the
+way out. Any register that differs was changed while the task was away — the
+shared-register-file question asked directly.
+
+**The board does not boot.** 0 PASS against 11. Reverted; suite green, flash
+verified.
+
+### The mistake, which is small and specific
+
+The inserted block ends by restoring `a1`:
+
+```asm
+    l32i     a1, a4, 0                  /* a4 still holds g_switch_sp */
+```
+
+That comment is false at that point in the handler. `a4` holds `g_switch_sp`
+earlier, but by the end of `.Lresume` the frame reload has already run and `a4`
+carries the **task's** `a4`. The load reads through a task register and returns
+garbage as the stack pointer, immediately before `rfi`.
+
+I copied the idiom from where it is true and did not check it was still true
+where I put it. That is the same class as step 129 (the save pass reading
+registers two `call0`s after the values it wanted) and step 135 (comparing two
+values captured in different events): **a correct fragment placed where its
+preconditions no longer hold.** Three times now, and the common factor is
+reusing a working sequence without re-verifying what it depends on at the new
+site.
+
+### The correct placement
+
+The capture must run **before** the frame reload, not after — the reload is the
+last thing that touches the register file, so the file is complete the moment
+before it starts, and `a1` is still the frame pointer there. That also makes the
+comparison sharper: the reload rewrites window 0 from the frame, so capturing
+after it would mask any damage to window 0 with the frame's own copy.
+
+Concretely, the block belongs immediately after the LOOP-register restore and
+before `l32i a0, a1, 0`, with no `a4` dependency at all.
+
+**Not attempted here.** The correct site is a five-line move from the wrong one,
+but placing assembly in the interrupt epilogue at the end of a session is how
+step 130 and step 152 both went, and the tree is green.
+
+Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0, `wifiinit` no
+fault and no reset.
+
 **Nothing has been on air.**
