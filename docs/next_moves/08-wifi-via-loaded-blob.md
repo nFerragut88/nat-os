@@ -10461,4 +10461,58 @@ value, and the kernel already records saved stack pointers per task.
 Reverted; the spin stands. Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT,
 `blobphy` rc=0, `wifiinit` no fault and no reset, pin off.
 
+## Step 165 — measured: the machine is in an invalid window state, and `a3` holds a PS
+
+Step 160's arithmetic closed with numbers instead of assumptions. The park's own
+switch frame is the blob task's saved sp, which the panic dump already prints —
+no probe added to the blocking path.
+
+```
+task 9 sp 0x3ffb26e0  stack 0x3ffb0d18+7168  win 0x00000008@3
+saved frame @ 0x3ffb26e0: 0x40089a92 0x00000000 0x00060520 0xfffffff0 ...
+                            [0]=a0     [1]=a2     [2]=a3
+saved ctl   @ ...         0x40088b49 0x00060520 ...        <- EPC3, EPS3
+excvaddr 0x00060500  ->  a7 = 0x00060520
+windowbase: 1   windowstart: 0x00000008   bit(base) CLEAR
+```
+
+### Two findings, and the second is the stronger
+
+**`a3` holds a PS.** Frame word 2 is offset 8 — `a3` — and it is `0x00060520`,
+**the same value as `EPS3`** two lines below, and the same value `a7` came back
+holding. Three appearances of one processor-state word where a stack pointer and
+a general register belong.
+
+**`bit(base) CLEAR`.** `WINDOWBASE` is 1, `WINDOWSTART` is `0x00000008` — bit 3
+only. The bit at the current base is **not set**, and the panic dump has a label
+for exactly this because it is architecturally invalid: §6.1.2 says a
+`WINDOWSTART` bit "is set if those four registers are AR[0] to AR[3] for some
+call", and the current window is by definition such a call.
+
+Task 9 was *saved* as `win 0x00000008@3` — base 3, bit 3, consistent. At the
+fault the base is 1 with bit 3 still the only one set. **Something moved
+`WINDOWBASE` without moving `WINDOWSTART` with it.**
+
+`ROTW` is precisely the instruction that does that (step 161: it adds to
+`WindowBase` and touches nothing else), and Tier B's restore contains four of
+them. They are meant to wrap — 4 × `rotw 4` = +16 = identity on a 4-bit
+`WINDOWBASE` — so a net displacement of 2 means the sequence did not complete as
+written, or something else rotated.
+
+### What that makes the next step
+
+Not another hypothesis: **read `WINDOWBASE` before and after the restore's
+rotation sequence.** Two `rsr.windowbase` into globals, in the prologue-safe
+style, and the dump says whether the four `ROTW`s are net-zero. If they are, the
+displacement comes from elsewhere — the underflow handler's own `rfwu`, or the
+H1 defer path — and that is a different search. If they are not, Tier B's restore
+has an exit path that skips rotations, and the guards are the place to look.
+
+This is worth stating plainly: **Tier B works for `wintorture` and may still be
+leaving the window state inconsistent on the park path.** Those are compatible —
+`wintorture` never parks — and the invalid state is measured, not inferred.
+
+Reverted; the spin stands. Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT,
+`blobphy` rc=0, `wifiinit` no fault and no reset, pin off.
+
 **Nothing has been on air.**
