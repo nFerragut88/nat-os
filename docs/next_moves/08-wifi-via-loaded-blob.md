@@ -9300,4 +9300,81 @@ the register, and the register names the path.
 Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0, `blobtx force`
 0x3004, `wifiinit` no fault and no reset.
 
+## Step 146 — `0xaa8a` is the handler's own scratch, left behind by the rotation
+
+Asked the narrow question at last -- **which register**, not which address -- and
+the dump answered it.
+
+```
+switch-in : n 6141 wb 3 ws 0x0000aa8a rbck 0x0000aa8a  commit ok
+excvaddr  : 0x0000aa8a
+saved frame @ 0x3ffb91d0: 0x8008e7e7 0x00000000 0x5683411b 0x0000000c ...
+```
+
+Two facts settle it:
+
+1. **The grant is written correctly.** `ws 0x0000aa8a rbck 0x0000aa8a commit ok`
+   -- the restore now admits all seven frames and the readback agrees. That half
+   works.
+2. **`0xaa8a` appears nowhere in the saved frame.** It is not coming from memory,
+   so no save area is delivering it.
+
+It is the handler's own scratch. The sequence is:
+
+```asm
+l32i     a3, a1, 88        /* a3 <- the task's WINDOWSTART */
+wsr.windowstart a3
+wsr.windowbase  a2         /* <-- the register view rotates HERE */
+...
+l32i     a3, a1, 8         /* writes the NEW a3 */
+```
+
+After `wsr.windowbase`, the name `a3` resolves to a different physical register.
+The epilogue reloads that one. **The old `a3` -- physical register
+`old_base*4 + 3` -- keeps `0xaa8a`, and that register belongs to one of the
+windows the restore has just declared live.** `vendor_torture` then reads its own
+register and gets a window mask.
+
+### This hazard is already documented, for the other half
+
+`vectors.S` carries a long X7 comment on precisely this instruction pair:
+
+> The grant mask in a3 was computed under the OUTGOING window view. WINDOWSTART
+> must therefore be written BEFORE `wsr.windowbase` rotates the view: afterwards
+> the name a3 resolves to a different physical register.
+
+That fix was correct and is still correct — it concerns *where the value is
+written from*. What it does not cover is **what the value leaves behind.** The
+same rotation that invalidates the operand also strands it.
+
+It was invisible while the grant was `1 << saved_base`: the residue was a single
+low bit, which is a plausible-looking small integer and, in a register the task
+was about to overwrite, harmless most of the time. Reading the real
+`WINDOWSTART` back made the residue large, distinctive, and fatal — which is why
+this surfaced only now, and why it looked like the `frame[88]` change had broken
+something.
+
+### The fix
+
+The handler must not leave scratch in a physical register the incoming task
+owns. Cheapest forms, in order:
+
+1. **Zero `a3` after `wsr.windowstart` and before `wsr.windowbase`** — one
+   instruction, and the residue becomes 0 rather than a mask. Zero is still
+   wrong-if-read, but it is not a plausible pointer, and the task's own reload
+   overwrites the register it lands in.
+2. **Use a register the incoming task does not own.** Requires knowing its
+   window set, which is exactly what the grant is; circular but computable.
+3. **Do the rotation last** — set `WINDOWBASE` after every register the epilogue
+   will reload has been reloaded. Structural, and the ordering constraint from
+   X7 makes it delicate.
+
+(1) is one instruction and testable immediately. It is not a *correct* fix, only
+a defanging, and the log should say so: the right answer is (3), and (1) buys the
+time to do it properly.
+
+Reverted to green. Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy`
+rc=0, `blobtx force` 0x3004, `wifiinit` no fault and no reset. The 48-byte
+CALL12 reserve from step 145 remains in.
+
 **Nothing has been on air.**
