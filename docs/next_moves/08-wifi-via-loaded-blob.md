@@ -9847,4 +9847,59 @@ hypothesis some other way.
 Reverted; suite green, flash verified. Suite: boot 11 PASS 0 FAIL, `wintorture`
 CORRECT, `blobphy` rc=0, `wifiinit` no fault and no reset.
 
+## Step 155 — the all-ones rotation is not the missing piece either
+
+Tier B assembled with everything learned: save (step 131, in and green), valid
+flag, restore, union deleted, grant taken from `frame[88]`, and one new idea from
+step 154 —
+
+**`WINDOWSTART` set to all-ones across the rotation.** Steps 153 and 154 showed
+`ROTW` in the restore path regresses the suite, and the reason offered was that
+rotating onto a window whose `WINDOWSTART` bit is clear leaves the machine
+undefined for what follows. If that were the mechanism, marking every window live
+for the duration of the rotation and installing the real mask afterwards would
+fix it. The grant travelled in `EXCSAVE3` so it would survive the rotation — the
+X7 hazard handled from the other side.
+
+**Boot drops to 10 PASS and `wintorture` fails.** Reverted; suite green, flash
+verified.
+
+### What that costs and what it buys
+
+The all-ones account of step 153/154 is **not supported**. Rotating onto
+clear-bit windows may still be a problem, but it is not *the* problem, because
+removing it changes nothing. That hypothesis should not be carried forward as
+though it explained anything.
+
+What stands unchanged is the measurement underneath it: **`ROTW` anywhere in the
+restore path regresses the suite, and no account of why has survived contact.**
+Four sites tried now (epilogue, top of `.Lresume`, and this), one variable
+controlled, still broken.
+
+### Honest position on Tier B
+
+Eleven builds across steps 128–155. What is proven:
+
+- the save is correct, per-task, and green — `a1` bit-exact (129), no-op in place (131);
+- the restore mechanism is correct — `all 64 landed` (136);
+- the union must go with it (132, 133);
+- the grant must come from `frame[88]` (140);
+- three unrelated switch-path defects were found and fixed along the way (142, 145, 147), each confirmed by a changed symptom.
+
+What is not solved: assembling those into a working restore. Every arrangement
+either fails to boot or fails `wintorture` with the pin **on** — that is, it
+breaks the configuration that currently works, before ever being judged on the
+configuration it was built for.
+
+**That pattern is the finding.** The restore path tolerates the register file
+being *read* in the prologue and does not tolerate it being *touched* on the way
+back in, and eleven builds have not produced an account of why. Continuing to
+vary the arrangement is not working; the next step should be to understand what
+the restore path actually requires, from the ISA rather than from experiment —
+specifically what `ROTW` guarantees about `WINDOWSTART`, and what the epilogue's
+`RFI` depends on that a rotation can disturb.
+
+Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0, `blobtx force`
+0x3004, `wifiinit` no fault and no reset.
+
 **Nothing has been on air.**
