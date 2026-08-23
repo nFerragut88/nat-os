@@ -816,6 +816,27 @@ uart_puts("  pre-spill : ps ");
             }
 
             {
+                /* [step 180] the whole adapter trace, with the calling task.
+                 * "last osi" names where control left; this says how it got
+                 * there, and wifiinit cannot reach osiused to print it. Both
+                 * arrays are already maintained -- nothing new is recorded. */
+                extern uint8_t  g_osi_trace[];
+                extern uint8_t  g_osi_trace_who[];
+                extern uint32_t g_osi_trace_n;
+                uint32_t k, n = g_osi_trace_n;
+                if (n > 48u) { n = 48u; }
+                uart_puts("  osi trace : ");
+                for (k = 0u; k < n; k++) {
+                    uart_puts("t");
+                    uart_put_dec(g_osi_trace_who[k]);
+                    uart_puts(":");
+                    uart_put_dec(g_osi_trace[k]);
+                    uart_puts(" ");
+                }
+                uart_puts("\n");
+            }
+
+            {
                 extern volatile uint32_t g_of_bad_base, g_of_bad_frame, g_of_bad_when;
                 uart_puts("  of filter : ");
                 if (!g_of_bad_when) { uart_puts("no near-null base recovered"); }

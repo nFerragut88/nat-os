@@ -235,11 +235,18 @@ extern uint32_t blob_mutex_owner(void);
 extern uint32_t blob_mutex_acq(void);
 extern uint32_t blob_mutex_cont(void);
 extern uint32_t blob_mutex_err(void);
+extern uint32_t blob_mutex_depth(void);
+extern uint32_t blob_mutex_waiters(void);
+extern uint32_t blob_mutex_granted(void);
 extern void uart_put_hex(unsigned int value);
 extern uint32_t blob_task_reached(void);
 extern uint32_t blob_task_running(void);
 extern uint32_t blob_task_returned(void);
 extern int      blob_trylock_w(int me);                        /* windowed */
+/* [step 180] full-depth release/restore, for the blocking wait only. */
+extern uint32_t blob_unlock_all_w(int me);                     /* windowed */
+extern int      blob_relock_all_w(int me);                     /* windowed */
+extern uint32_t g_blob_relock_skips;
 extern uint32_t blob_unlock_w(int me);                         /* windowed */
 extern void     blob_wake_waiters(void);                       /* address only */
 extern void osi_impl_wake_senders(void);                        /* address only */
@@ -825,7 +832,7 @@ static int32_t osi_s_queue_recv(void *queue, void *item, uint32_t block_time_tic
          * nothing moves this frame's a1. The wake it may owe goes back through
          * a bridge below, pinned. */
         {
-            uint32_t owed = blob_unlock_w(me);
+            uint32_t owed = blob_unlock_all_w(me);   /* [step 180] every level */
             if (owed) { (void)w2c_call1((uint32_t)&blob_wake_waiters, owed); }
         }
 
@@ -877,7 +884,7 @@ static int32_t osi_s_queue_recv(void *queue, void *item, uint32_t block_time_tic
         pinp = &g_pinned;               /* RE-DERIVE, do not trust a register */
         *pinp = me_v;                   /* REPIN before any call0 excursion */
 
-        if (!blob_trylock_w(me)) {      /* [step 111] windowed, no bridge */
+        if (!blob_relock_all_w(me)) {   /* [step 180] restores the depth */
             continue;                   /* someone else holds it; wait again */
         }
         {
@@ -994,6 +1001,12 @@ static int32_t osi_s_queue_recv(void *queue, void *item, uint32_t block_time_tic
             (void)w2c_call1((uint32_t)&uart_put_dec, w2c_call0f((uint32_t)&blob_mutex_acq));
             (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" cont=");
             (void)w2c_call1((uint32_t)&uart_put_dec, w2c_call0f((uint32_t)&blob_mutex_cont));
+            (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" depth=");
+            (void)w2c_call1((uint32_t)&uart_put_dec, w2c_call0f((uint32_t)&blob_mutex_depth));
+            (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" waiters=");
+            (void)w2c_call1((uint32_t)&uart_put_hex, w2c_call0f((uint32_t)&blob_mutex_waiters));
+            (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" granted=");
+            (void)w2c_call1((uint32_t)&uart_put_hex, w2c_call0f((uint32_t)&blob_mutex_granted));
             (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" err=");
             (void)w2c_call1((uint32_t)&uart_put_dec, w2c_call0f((uint32_t)&blob_mutex_err));
             /* [step 179] made queues, then who waited on what. */

@@ -281,6 +281,12 @@ uint32_t blob_mutex_owner(void) { return (uint32_t)g_blob_mutex.owner; }
 uint32_t blob_mutex_acq(void)   { return g_blob_mutex.acquisitions; }
 uint32_t blob_mutex_cont(void)  { return g_blob_mutex.contentions; }
 uint32_t blob_mutex_err(void)   { return g_blob_mutex.errors; }
+uint32_t blob_mutex_depth(void);
+uint32_t blob_mutex_waiters(void);
+uint32_t blob_mutex_granted(void);
+uint32_t blob_mutex_depth(void)   { return g_blob_mutex.depth; }
+uint32_t blob_mutex_waiters(void) { return g_blob_mutex.waiters; }
+uint32_t blob_mutex_granted(void) { return g_blob_mutex.granted; }
 static uint32_t g_bt_short;     /* times the request exceeded a nat-os stack */
 static uint32_t g_bt_last_want; /* the largest such request, in bytes */
 
