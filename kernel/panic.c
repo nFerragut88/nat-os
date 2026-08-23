@@ -825,6 +825,24 @@ uart_puts("  pre-spill : ps ");
                 extern uint32_t g_osi_trace_n;
                 uint32_t k, n = g_osi_trace_n;
                 if (n > 48u) { n = 48u; }
+                {
+                    /* [step 183] Did the blob's worker function RETURN?
+                     * reached/running/returned have existed since step 179 but
+                     * are only printed from the [qr] block, which a panic
+                     * pre-empts. "returned" non-zero means the chain unwound
+                     * past rom_call3's entry into blob_task_entry's call0
+                     * frame, where a save area is just call0 locals. */
+                    extern uint32_t blob_task_reached(void);
+                    extern uint32_t blob_task_running(void);
+                    extern uint32_t blob_task_returned(void);
+                    uart_puts("  worker    : reached ");
+                    uart_put_dec(blob_task_reached());
+                    uart_puts("  running ");
+                    uart_put_dec(blob_task_running());
+                    uart_puts("  returned ");
+                    uart_put_dec(blob_task_returned());
+                    uart_puts("\n");
+                }
                 uart_puts("  osi trace : ");
                 for (k = 0u; k < n; k++) {
                     uart_puts("t");

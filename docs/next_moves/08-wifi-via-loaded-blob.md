@@ -11472,6 +11472,124 @@ neither is the current blocker. `_wifi_realloc` needs a `heap_realloc` that does
 not exist.
 
 **Nothing has been on air.**
+---
+
+## step 183 — four hypotheses killed, and two instruments that were lying
+
+The fault left by step 182: the worker, `exccause 20 InstFetchProhibited`,
+`epc 0x00000000`. Reproducible byte-for-byte. No code changed this step except
+the panic dump; everything below is elimination.
+
+### 183a. Not concurrency, and not the save-area overlap
+
+Step 180's full-depth release lets two contexts sit in windowed code at once for
+the first time, so the obvious suspect was the `w2c_*` save-area overlap that
+UM-NATOS-045 §8.4 lists as dormant.
+
+`BLOB_PIN_DISABLE` was kept as a switch for exactly this question (UM-NATOS-044
+§9). Set to `0`, only one context can be inside the blob:
+
+```
+pin off : exccause 20  epc 0x00000000  last osi 11  trace ...t9:10 t9:11
+pin on  : exccause 20  epc 0x00000000  last osi 11  trace ...t9:10 t9:11
+```
+
+Identical. **The fault does not need two contexts in windowed code**, so the
+overlap and every other concurrency story are out.
+
+This also **corrects step 182**, which dismissed the same hypothesis on the
+grounds that the zero-`a0` frame pre-dated the change. That argument was about
+the wrong frame — see §183c — and did not settle anything. The pin A/B does.
+
+### 183b. The worker did not return
+
+The chain `epc 0` ← `retw` ← a save area holding `a0 = 0` has an economical
+explanation: the blob's worker function returned, unwinding past `rom_call3`'s
+`entry` into `blob_task_entry`'s **call0** frame, where a "save area" is only
+call0 locals and the zero is whatever happened to be there.
+
+`reached`/`running`/`returned` have existed since step 179 but print only from
+the `[qr]` block, which a panic pre-empts. Moved into the panic dump:
+
+```
+worker    : reached 1  running 1  returned 0
+```
+
+**`returned 0`.** The worker is still inside `rom_call3`. The hypothesis is dead,
+and it cost one line of output rather than a rewrite of `_task_delete`.
+
+### 183c. Two instruments that were lying, and one conclusion built on one
+
+Two lines in the dump were being read as fault-time facts. Neither is.
+
+**`a0/sp out`** is written by `w2c_call*` on its way out (`window.S:772`), not by
+the fault. It is a **singleton** overwritten by every bridge call, so the value
+that survives to the panic belongs to whichever bridge ran last — exactly the
+flaw UM-NATOS-044 §7 records about step 79's first attempt, reintroduced in a
+different probe. Its verdict string is worse than useless: it prints
+`context survived` whenever `a0 | sp` is non-zero, so `sp = 0` alone reads as
+healthy.
+
+A chain of reasoning here — *`a1` became zero, therefore the underflow read from
+`0xfffffff0`, therefore …* — was built on that number. It is not the faulting
+`a1` and the chain does not stand.
+
+**`saved frame @`** dumps `task_saved_sp(task_current())`, the current task's
+**last switch-out**. When the current task is the one that faulted, that frame is
+stale by construction, and the `0xfffffff0` read as `a1 - 16` is just an old
+saved register.
+
+**The zero-`a0` frame is probably not a defect either.** `qspill` walks the a1
+chain and flags `a0 == 0` at `0x3ffb2910`. Task 9's stack is
+`0x3ffb0d3c + 7168`, so that address is 0x20 below the top: the outermost frame,
+whose caller is `blob_task_entry` — call0 code, which has no windowed save area
+and no `a0` to find. A task's base frame having no caller is the normal state.
+The walk has no stopping rule at the task base, so it reports the normal state as
+`1 bad`.
+
+Two more, noticed while reading and not yet fixed:
+
+- `sbp-post : wb 4294967295 ws 0xffffffff  SWEEP LEFT MULTI-BIT` — `0xffffffff`
+  is the never-sampled sentinel, and the verdict is printed off it. It has been
+  announcing a defect in a probe that never ran.
+- `blk-window : ... spill ws 0x000002802b ...` — twenty-one bits of a sixteen-bit
+  register, from a missing separator running two fields together.
+
+### What is actually known
+
+Reliable, because the panic handler reads them live:
+
+```
+exccause 20  InstFetchProhibited   epc 0x00000000
+ps 0x00060130     EXCM set, WOE set
+windowbase 15     windowstart 0x00008000    one frame
+worker: reached 1 running 1 returned 0
+last osi: entry 11  _wifi_int_restore
+```
+
+The blob jumped to address 0 while its worker was still executing inside it, and
+`_wifi_int_restore` — verified this step to merge only `PS.INTLEVEL`, exactly
+what `XTOS_RESTORE_JUST_INTLEVEL` specifies — was the last adapter entry before
+it. `osi_impl_queue_send` and `osi_qpoll_w` were both read and both copy
+`item_size` bytes correctly, so a mis-delivered message is not the cause.
+
+That leaves **the blob calling a function pointer that is zero**, with the OSI
+table itself verified complete in step 179. The remaining candidates are pointers
+the blob expects something else to have filled in — most plausibly a field inside
+a structure it allocated with `_wifi_zalloc`, which now returns real zeroed
+memory where before it returned NULL and the driver gave up before ever reading
+it.
+
+### Next
+
+Capture the **true** fault-time `a0`. The exception path must stash it somewhere
+the panic handler can reach; `excsave1` reads `0x00000000` in the dump, so it is
+not there yet. That single value names the caller, and the caller names the
+pointer. Nothing else should be built on `a0/sp out` or `saved frame @` until
+they are fixed or deleted.
+
+**Nothing has been on air.**
+
 
 
 
