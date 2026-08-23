@@ -9448,4 +9448,54 @@ consequences are still being worked through.
 Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0, `blobtx force`
 0x3004, `wifiinit` no fault and no reset.
 
+## Step 148 — the register is `a3`, and it holds a stack pointer with 12 bits cut off
+
+```
+excvaddr : 0x000b8e58
+saved frame @ 0x3ffb91d0: 0x8008e7eb 0x00000000 0x000b8e58 0x0000000c ...
+                            [0]=a0     [1]=a2     [2]=a3
+0x3ff00000 | 0x000b8e58 = 0x3ffb8e58   -- inside task 5's stack
+```
+
+Frame word 2 is offset 8, which is **`a3`**. The value is a valid task-stack
+address with its **top 12 bits stripped**: `0x3ffb8e58` becomes `0x000b8e58`.
+
+### Two things this rules out
+
+**It is not the handler's stranded scratch.** That was step 147 and it is fixed —
+`0xaa8a` is gone. This value is in the *saved frame*, written by the prologue at
+switch-out, so **`a3` was already corrupt when the tick landed.** The handler
+recorded a bad register faithfully rather than creating one.
+
+**It is not a random pointer.** `0x3ffb8e58` is a real address in the right
+stack, and the corruption is exactly `& 0x000FFFFF`. A wild store or a torn read
+does not produce that; a shift or a mask does.
+
+### The signature names a small family of instructions
+
+Losing precisely the top twelve bits of a 32-bit value is `x << 12 >> 12`, or an
+`extui`-style field extract of width 20. On Xtensa that means `SAR` was 12 or 20
+when a shift ran over `a3`.
+
+`ssl a2 / sll a3, a3` in the restore sets `SAR` from the saved `WINDOWBASE` and
+shifts `a3` by it. With the grant as `1 << base` that operates on a constant 1
+and is harmless. **The question is whether any other path lets `a3` reach a shift
+with `SAR` set from something else** — `window.S` has three
+`rsr.windowbase / movi / ssl / sll` sequences of its own in the wipes, and they
+use `a9`/`a10`/`a11` rather than `a3`, so they are not it on inspection alone.
+
+That is a lead, and it is recorded as a lead. What is measured is the register,
+the value, the mask width, and that the corruption precedes the switch.
+
+### Method note
+
+Three faults running have now been resolved by asking *which register* rather
+than *which address*, each in a single run: `0xaa8a` (step 146, handler scratch),
+and now `a3` here. The dump already contained everything needed both times — the
+change was in the question, not the instrument.
+
+Reverted to green. Kept: the CALL12 reserve, the `WINDOWSTART` seed, the scratch
+restore. Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0,
+`blobtx force` 0x3004, `wifiinit` no fault and no reset.
+
 **Nothing has been on air.**
