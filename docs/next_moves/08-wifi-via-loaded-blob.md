@@ -10088,4 +10088,61 @@ Everything reverted. The busy-spin stands. Suite: boot 11 PASS 0 FAIL,
 `wintorture` CORRECT, `blobphy` rc=0, `blobtx force` 0x3004, `wifiinit` no fault
 and no reset.
 
+## Step 159 — the park fault is deterministic, and `a7` comes back holding a PS
+
+Step 158's rule applied: change *when* the park happens rather than watching it.
+Three builds, sleep durations 1, 4 and 16 ticks, no probes added to the path.
+
+```
+ticks=1   PANIC  exccause 28  epc 0x400800d5  excvaddr 0x00060500
+ticks=4   PANIC  exccause 28  epc 0x400800d5  excvaddr 0x00060500
+ticks=16  PANIC  exccause 28  epc 0x400800d5  excvaddr 0x00060500
+```
+
+**Identical — same cause, same instruction, same address, sixteen-fold change in
+how long the task is away.**
+
+### What that rules out
+
+Not a race. Not a window where another task's timing matters. Not a wake arriving
+early or late. The park produces the same wrong value every time regardless of
+duration, which makes it **structural**: the sequence itself is wrong, and it
+would be wrong if the task slept for a microsecond or a second.
+
+That retires a whole class of explanation that has been implicitly live since
+step 106 — anything of the form "a tick lands at an unlucky moment". It does not.
+
+### And the value names itself
+
+`epc 0x400800d5` is `_WindowUnderflow8 + 0x15`, the instruction `l32e a4, a7, -32`.
+So `a7 = 0x00060500 + 32 = 0x00060520`.
+
+**That is a PS value.** Every processor-state word printed in this log has the
+shape `0x0006xxxx` — `0x00060320` and `0x00060330` appear in the dumps of steps
+142, 146 and 148. `a7` is the caller's stack pointer, recovered by the underflow
+from `[a9-12]` of the frame it is restoring.
+
+So the underflow read a **saved PS where a stack pointer belongs**, and then
+loaded through it.
+
+This cost nothing to learn: no probe, no added read, no perturbation. It came out
+of the pass/fail signal and the existing dump — which is exactly what step 158
+said the next move had to look like.
+
+### Where a PS could come from
+
+The switch frame stores `EPS3` at offset 68 and `EPC3` at 64. `task_sleep()`
+parks through the ordinary block path. Something in that sequence puts a saved
+processor-state word at the address the underflow later reads as a frame link —
+and since the fault is deterministic, it is a fixed offset relationship, not a
+collision that sometimes happens.
+
+That is the next thing to work out, and it is arithmetic rather than
+experiment: which write puts `EPS3` at the address `[a9-12]` resolves to for the
+frame being restored. The switch frame's layout and the park's stack geometry are
+both known and fixed.
+
+Reverted; suite green, flash verified: boot 11 PASS 0 FAIL, `wintorture` CORRECT,
+`wifiinit` no fault and no reset.
+
 **Nothing has been on air.**
