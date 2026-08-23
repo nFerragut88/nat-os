@@ -9164,4 +9164,78 @@ rather than left to be inherited.
 Suite unchanged: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0,
 `blobtx force` 0x3004, `wifiinit` no fault and no reset.
 
+## Step 144 — the switch frame is written through the CALL12 save area
+
+Step 143's hypothesis was wrong in its detail and right in its arithmetic.
+
+**Wrong:** it proposed a live frame at `a1 = task_sp - 8`. Stacks grow down, the
+innermost frame *is* `task_sp`, and nothing lives below it. No such frame can
+exist.
+
+**Right:** something does read `[task_sp-24]`. It is one level up, and it is in
+`_WindowOverflow12`, which this project wrote:
+
+```asm
+s32e a4, a0, -48    s32e a8,  a0, -32
+s32e a5, a0, -44    s32e a9,  a0, -28
+s32e a6, a0, -40    s32e a10, a0, -24     <-- offset 88 of the switch frame
+s32e a7, a0, -36    s32e a11, a0, -20
+```
+
+A **CALL12 frame's extended save area spans `[caller_sp-48 .. caller_sp-20]`**,
+where `a0` is the caller's stack pointer recovered by `l32e a0, a1, -12`.
+
+With `caller_sp = task_sp`, that range is `[task_sp-48 .. task_sp-20]`. And
+`_handler_level3` opens with `addi a1, a1, -112`, placing the switch frame at
+`[task_sp-112, task_sp)` — **straight through it.**
+
+### The value, the register, and the offset all agree
+
+```
+frame offset 88 = task_sp - 112 + 88 = task_sp - 24
+[caller_sp - 24] is a10, per the store list above
+frame offset 88 holds WINDOWSTART = 0x0000aa8a
+observed: excvaddr 0x0000aa8a, inside vendor_torture
+```
+
+`a10` is handed the saved `WINDOWSTART` and `vendor_torture` uses it as the
+pointer it believes it to be. **This is not a coincidence to test; it is
+arithmetic.** And it explains the signature this investigation has returned to
+since step 117: every one of these faults has been `_WindowUnderflow12`, because
+only CALL12 frames reach 48 bytes below their caller.
+
+### Scope — this is older and wider than Tier B
+
+The collision needs only three things: a task in windowed code, a CALL12 frame,
+and a tick. None of them involve Tier B, the sweep, the union, or the phantom.
+**It has been present since `_handler_level3` was written**, and the pin has been
+hiding it by preventing exactly that tick.
+
+It also reframes several earlier steps. Step 126 verified the *innermost* frame's
+base save area at `[task_sp-16 .. task_sp-4]` lands in the frame's padding, and
+it does — but that check answered a smaller question than it appeared to. The
+padding is 92..111. The CALL12 extended area starts at offset 64 and runs to 92,
+overlapping `EPC3`, `EPS3`, all three LOOP registers, `WINDOWBASE` and
+`WINDOWSTART`.
+
+### The fix
+
+The handler must not write within 48 bytes of `task_sp`. `task_create` already
+reserves 16 bytes at the stack top for the chain terminator, for the same class
+of reason (step 90, and the comment at `task.c:425`) — this is the same fix at
+the other end.
+
+Cheapest form: open the prologue with `addi a1, a1, -160` instead of `-112`,
+leaving the 48-byte save-area span untouched below `task_sp` and the frame below
+that. Every site that computes `current_sp + TASK_FRAME_BYTES` to recover
+`task_sp` must move with it — step 123's `AGREE` check exists precisely to catch
+that and will fire if one is missed.
+
+**Not applied in this step.** The constant appears in the prologue, the epilogue
+and `task.c`, and changing a stack-frame size across three files is not something
+to do without a build and a full suite behind it.
+
+Suite unchanged: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0,
+`blobtx force` 0x3004, `wifiinit` no fault and no reset.
+
 **Nothing has been on air.**
