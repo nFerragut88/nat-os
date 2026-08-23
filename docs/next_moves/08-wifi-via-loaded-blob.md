@@ -10406,4 +10406,59 @@ here and a working radio: interrupts were never wired, `_task_delay` returns
 immediately, the timer entries are stubs, event callbacks never fire, and there
 is no data path above the MAC.
 
+## Step 164 — the park fault is independent of Tier B and of the pin
+
+Step 163 said step 157's park deserved retrying, because it had run "with the
+pin ON and without Tier B's restore, i.e. under the conditions that made it
+impossible". Retried with both conditions removed:
+
+```
+exccause 28   epc 0x400800d5   excvaddr 0x00060500
+```
+
+**Identical to steps 157 and 159.** Same handler, same instruction, same
+PS-shaped value. `wintorture` CORRECT and `blobphy` rc=0 alongside it, so nothing
+else regressed.
+
+### What that settles
+
+The park's fault is **not** a register-preservation problem. It survives the
+mechanism that makes windowed frames survive preemption, and it survives removing
+the pin. Those were the two things this file has spent since step 106 arranging,
+and neither touches it.
+
+My step 163 framing was wrong: I described the pin and the missing restore as
+"the conditions that made it impossible". They were conditions that made it
+*untestable in isolation*. They were not the cause.
+
+So the park has its own defect, and it is now cleanly separated from everything
+Tier B addressed. Three facts about it, all measured:
+
+- **deterministic** — identical across sleep durations 1, 4 and 16 (step 159);
+- **`a7` comes back holding a PS value**, `0x00060520`, where a caller's stack
+  pointer belongs (step 159);
+- **the implied frame link points below the sleeping stack pointer**, into the
+  switch frame's own region — `a9 == sleep_sp - 80` from step 160's geometry,
+  and a live windowed frame cannot be below the current sp.
+
+That last one is the shape of a phantom `WINDOWSTART` bit, reached independently
+of step 124's, and it explains the determinism: the switch frame sits at a fixed
+offset, so a bad link into it lands on the same word every time.
+
+### Where that leaves the radio
+
+Tier B and the unpinned scheduler are real and they hold — `wintorture` survives
+ten genuine preemptions with eight frames live. What they do **not** do is make
+the blob's blocking wait work, and step 113's busy-spin remains the only version
+of that wait which runs.
+
+The next question is the one step 160 left open and did not close: **measure
+`sleep_sp`** rather than derive it, and confirm whether `a9` really resolves into
+the switch frame. That closes the arithmetic with a number, and it needs no new
+probe on the blocking path — the park creates the switch frame that holds the
+value, and the kernel already records saved stack pointers per task.
+
+Reverted; the spin stands. Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT,
+`blobphy` rc=0, `wifiinit` no fault and no reset, pin off.
+
 **Nothing has been on air.**
