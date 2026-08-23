@@ -124,6 +124,7 @@ uint32_t blob_call(uint32_t fn, uint32_t a, uint32_t b, uint32_t c, uint32_t d)
      * leaves nothing another context can reach. The private stack keeps the job
      * it was built for -- PHY init, which does not block -- and blockable driver
      * code now runs where the driver's own task already runs. */
+
     blob_pin();                      /* not preemptible from here */
     uint32_t r = rom_call4(fn, a, b, c, d);
     blob_unpin();

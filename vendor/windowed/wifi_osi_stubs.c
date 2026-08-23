@@ -178,10 +178,60 @@ uint32_t g_osi_intr_clamped;   /* interrupts asked for above CRIT_LEVEL */
 #define OSI_TRACE_MAX 48u
 static uint32_t g_st_sem_done, g_st_sem_rc, g_st_relocked;
 extern volatile int g_pinned;   /* kernel/blobcall.c -- needed by osi_trace */
+extern volatile uint32_t g_romcall_prime[];   /* [step 188] window.S */
+uint32_t g_rcz_seen, g_rcz_idx, g_rcz_call, g_rcz_who;
+uint32_t g_rcz_site;
 uint8_t  g_osi_trace[OSI_TRACE_MAX];
 uint8_t  g_osi_trace_who[OSI_TRACE_MAX];
 uint32_t g_osi_trace_arg[OSI_TRACE_MAX];
 uint32_t g_osi_trace_n;
+
+/* [step 188] Latch the FIRST site that sees rom_call4's saved return address
+ * already zero. The sites are ordered along osi_s_semphr_take's blocking path,
+ * so whichever fires first brackets the write to a single operation. One load
+ * of a word whose address the kernel already recorded -- it cannot perturb what
+ * it measures. */
+/* [step 188] Window state either side of the spill, so "which frames existed"
+ * is a measurement rather than a geometry argument. */
+uint32_t g_rcz_ws[4], g_rcz_wb[4], g_rcz_sp[4], g_rcz_val[4];
+/* [step 188] 16 words of task 5's stack around rom_call4's frame, before and
+ * after the spill. Which words the spill actually writes is a measurement; the
+ * geometry argument has been wrong twice. Anchored at rom_call4's sp - 16. */
+uint32_t g_rcz_dump[2][16];
+
+static void rcz_snap(uint32_t k)
+{
+    /* Only the FIRST pass through the blocking take. osi_s_semphr_take runs
+     * more than once, and a singleton that keeps overwriting itself describes
+     * the last call while the latch beside it describes the first -- the trap
+     * step 183 caught in a0/sp out, one file over. */
+    if (g_rcz_seen) { return; }
+    uint32_t ws, wb, sp;
+    __asm__ volatile ("rsr.windowstart %0" : "=r"(ws));
+    __asm__ volatile ("rsr.windowbase  %0" : "=r"(wb));
+    __asm__ volatile ("mov %0, a1" : "=r"(sp));
+    if (k < 4u) {
+        g_rcz_ws[k] = ws; g_rcz_wb[k] = wb; g_rcz_sp[k] = sp;
+        g_rcz_val[k] = g_romcall_prime[2]
+                     ? *(volatile uint32_t *)g_romcall_prime[2] : 0xDEADu;
+        if (k < 2u && g_romcall_prime[2]) {
+            const volatile uint32_t *b =
+                (const volatile uint32_t *)(g_romcall_prime[2] - 16u);
+            for (uint32_t q = 0; q < 16u; q++) { g_rcz_dump[k][q] = b[q]; }
+        }
+    }
+}
+
+static void rcz_check(uint32_t site)
+{
+    if (g_rcz_seen || !g_romcall_prime[2]) { return; }
+    if (*(volatile uint32_t *)g_romcall_prime[2] == 0u) {
+        g_rcz_seen = 1u;
+        g_rcz_site = site;
+        g_rcz_idx  = g_osi_trace_n;
+        g_rcz_who  = (uint32_t)g_pinned;
+    }
+}
 
 static void osi_trace(uint32_t i, uint32_t arg)
 {
@@ -191,6 +241,19 @@ static void osi_trace(uint32_t i, uint32_t arg)
          * currently inside the blob and is already in memory here, so this is a
          * store, not a new read on the blocking path. Without it, "the worker
          * waits for itself" and "init waits for the worker" have the same trace. */
+        /* [step 188] Bracket the corruption of rom_call4's saved return
+         * address. One load of a word the kernel already recorded the address
+         * of, latched once -- it cannot perturb what it measures, and it names
+         * the interval the write happened in. */
+        if (!g_rcz_seen && g_romcall_prime[2]) {
+            if (*(volatile uint32_t *)g_romcall_prime[2] == 0u) {
+                g_rcz_seen = 1u;
+                g_rcz_site = 9u;              /* seen at an adapter call */
+                g_rcz_idx  = g_osi_trace_n;   /* zero by this call */
+                g_rcz_call = i;               /* which entry that is */
+                g_rcz_who  = (uint32_t)g_pinned;
+            }
+        }
         g_osi_trace_who[g_osi_trace_n] = (uint8_t)(g_pinned < 0 ? 99 : g_pinned);
         g_osi_trace_arg[g_osi_trace_n] = arg;
         g_osi_trace_n++;
@@ -632,8 +695,12 @@ static int32_t osi_s_semphr_take(void *semphr, uint32_t block_time_tick)
         g_stub_sp_pre_spill = sp;
         if (sp < g_stub_sp_min) { g_stub_sp_min = sp; }
     }
+    rcz_snap(0u);
+    rcz_check(1u);                  /* [step 188] before the spill */
     blk_sample(0u); uf_sample(1u); of_sample(1u);
     win_spill_all();
+    rcz_snap(1u);
+    rcz_check(2u);                  /* after win_spill_all */
     blk_sample(1u); uf_sample(2u); of_sample(2u);
     /* Through the bridge: blob_lock/blob_unlock are call0 kernel functions and
      * this file is windowed. Calling them directly rotates the window and
@@ -641,15 +708,18 @@ static int32_t osi_s_semphr_take(void *semphr, uint32_t block_time_tick)
      * IllegalInstruction at epc 0x80247feb, bit 31 set, a return encoding
      * jumped to raw. Same fault window.S records from the first time. */
     (void)w2c_call0f((uint32_t)&blob_unlock);
+    rcz_check(3u);                  /* after blob_unlock */
     int32_t r = (int32_t)w2c_call2((uint32_t)&osi_impl_sem_take,
                                    (uint32_t)semphr, (uint32_t)block_time_tick);
     blk_sample(2u);
+    rcz_check(4u);                  /* after the block returns */
     /* [step 179, Tortoise] Three points on the blocking take, so "still in the
      * semaphore" and "has the semaphore, waiting for the blob lock back" stop
      * looking the same from outside. */
     g_st_sem_done++;
     g_st_sem_rc = (uint32_t)r;
     (void)w2c_call0f((uint32_t)&blob_lock);
+    rcz_check(5u);                  /* after re-taking the blob lock */
     g_st_relocked++;
     return r;
 }

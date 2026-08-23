@@ -12138,6 +12138,136 @@ The `frames` and `overlap` probes already in the dump watch a *different* frame
 and reported nothing; a probe aimed at this word specifically is the next step.
 
 **Nothing has been on air.**
+---
+
+## step 188 — what zeroes the saved return address
+
+Step 187 established that the null "pointer" is `rom_call4`'s own saved call0
+return address, overwritten while the blob ran. This step names the writer and
+measures the write. Two attempted fixes failed; both are recorded.
+
+### 188a. Bracketing
+
+`rom_call4` already records the address of its saved-a0 slot. Checking that one
+word at ordered points along the path latches the first site that sees it zero.
+The first bracket, at every adapter call:
+
+```
+rc0 zero : by trace idx 15  entry 16  task 9
+```
+
+Index 15 is `t9:16`, the worker's **first** call — thirty-three calls before the
+crash. Index 14 is `t5:15`, `_semphr_take`. So the word dies inside that call's
+blocking path, and five checkpoints along it give:
+
+```
+rc0 zero : by trace idx 15  entry 0  task 5  site 2
+```
+
+**Site 2 is immediately after `win_spill_all()`.** Site 1, before it, does not
+fire — so the value was intact going in.
+
+### 188b. The measurement
+
+`win_spill_all()` is six nested `entry a1, 48` + `call12`: it deliberately
+starves the register file so the hardware spills every live window. Sixteen
+words of task 5's stack, either side, anchored at `rom_call4`'s a0 slot − 16:
+
+```
+spill pre : ws 0x00002aaa  wb 13   [a0 slot] 0x40081e1c
+   0000000 3ffb6290 3ffbe4d8 4008ce62 | 40081e1c 3ffbeb3c 403014dc 00000000 | 00000000 403014dc ...
+spill post: ws 0x00002800  wb 13   [a0 slot] 0x00000000
+   0000000 3ffb6290 3ffbe4d8 4008ce62 | 00000000 00000000 00000000 cccccccd | 00000000 403014dc ...
+```
+
+`WINDOWSTART` goes from seven live frames to two — the spill did exactly its
+job. And it wrote **exactly sixteen bytes**, at `[0x3ffb9540, 0x3ffb9550)`.
+Nothing on either side changed.
+
+Sixteen bytes is one base save area, `a0..a3`, written for a frame whose sp is
+`0x3ffb9550`. `rom_call4`'s frame is `[0x3ffb9530, 0x3ffb9560)`, so that frame's
+recorded stack pointer is **inside `rom_call4`'s own frame**, and it cannot
+belong to the chain `rom_call4` started: everything `callx8` reaches lives below
+`rom_call4`'s sp.
+
+It is a **window that was already live when `rom_call4` was entered** — a stale
+`WINDOWSTART` bit carrying a stack pointer from earlier windowed activity on
+task 5. `rom_call4` then allocated its call0 frame across that address, and the
+first spill deep inside the blob wrote the old frame home, on top of it.
+
+The destroyed word was `0x40081e1c` — **`blob_call`**, the return address
+`rom_call4` was going to use.
+
+### 188c. Two fixes that did not work
+
+**Reserving the base save area.** A call0 function that starts a windowed chain
+should keep its own data out of `[sp, sp+16)`. `rom_call4` was widened to 48
+bytes with its saves moved to `+16..+32`.
+
+No effect, and the arithmetic says why: the caller's sp is fixed at
+`0x3ffb9560`, so a 48-byte frame puts sp at `0x3ffb9530` and the a0 slot at
+`sp+16` — `0x3ffb9540`, **exactly where it already was**. The danger zone is
+anchored to the *caller's* sp, not to `rom_call4`'s, so growing the frame moves
+the frame and the slot together. Reverted.
+
+**Spilling before descending.** If the stale frames are flushed before
+`rom_call4` allocates, nothing is left to spill over it later. `blob_call` was
+given a `win_spill_call0()` immediately before the bridge.
+
+Worse, not better: the panic moved to before the first adapter call, with
+`rom_call4` recording `sp 0x3ffd3f50` — an address in the blob's DRAM, not task
+5's stack. Spilling from that point leaves `a1` somewhere it must not be. The
+idea may still be right; that call site is not. Reverted.
+
+### 188d. A probe that lied, again
+
+The window snapshots were first recorded unconditionally and printed
+`[a0 slot] 0x00000000` on **both** sides of the spill — which reads as "already
+dead before we got here" and would have sent the next step somewhere useless.
+
+`osi_s_semphr_take` runs more than once. The snapshot was a singleton
+overwriting itself, so it described the *last* call while the latch beside it
+described the *first*. Latching the snapshot to the first pass produced the
+table in §188b. This is the third time in this investigation that a
+self-overwriting global has produced a confident wrong reading — steps 79, 183,
+and here.
+
+### What is committed
+
+The bracket, the checkpoints, the before/after stack dump, `rom_call4` recording
+its a0-slot address, and `rom_call4` refusing a null target. All reporting; no
+change to the driver path. Both attempted fixes are reverted, and the tree
+reproduces the step-187 fault exactly.
+
+```
+boot 11 PASS 0 FAIL
+wintorture 1000 ms : switches during the call: 10  (preemption really happened)
+                     checksum 1632 expected 1632  CORRECT
+blobphy rc=0
+```
+
+### Next
+
+The defect is now fully specified: **a windowed frame that is live across a
+call0 function which then allocates over its recorded stack pointer.** Options,
+none tried:
+
+1. Have `rom_call4` clear the stale windows properly — `win_spill_call0()` is
+   the right tool at the wrong site; inside `rom_call4`, after its own frame is
+   allocated, may be correct.
+2. Keep `rom_call4`'s saved return address out of memory entirely for the
+   duration of the call — there is no call0 register that survives `CALL8`, so
+   this needs a per-task slot rather than the stack.
+3. Ask why a frame from earlier task-5 windowed activity is still live at all.
+   `RETW` clears its own `WINDOWSTART` bit, so a bit surviving its function's
+   return is itself worth explaining, and may be the actual defect.
+
+(3) is the one that would explain rather than avoid, and it is cheap: log
+`WINDOWSTART` at `rom_call4` entry and compare against the frames the chain
+should own.
+
+**Nothing has been on air.**
+
 
 
 

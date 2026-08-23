@@ -916,12 +916,12 @@ uart_puts("  pre-spill : ps ");
                         } else {
                             uart_puts("(unreadable)");
                         }
-                        uart_puts("  sp ");
+                        uart_puts("  a0slot ");
                         uart_put_hex(g_romcall_prime[2]);
                         /* [step 187] rom_call4 saves its own call0 return
                          * address at [sp+0]. Its epilogue reloads a0 from
                          * there. If this reads 0, the ret goes to 0. */
-                        uart_puts("  saved a0 @sp ");
+                        uart_puts("  saved a0 ");
                         if (g_romcall_prime[2] >= 0x3FF00000u &&
                             g_romcall_prime[2] <  0x40000000u) {
                             uart_put_hex(*(volatile uint32_t *)g_romcall_prime[2]);
@@ -929,6 +929,48 @@ uart_puts("  pre-spill : ps ");
                             uart_puts("(unreadable)");
                         }
                         uart_puts("\n");
+                    }
+                    {
+                        /* [step 188] when the saved return address went to 0 */
+                        extern uint32_t g_rcz_seen, g_rcz_idx, g_rcz_call, g_rcz_who;
+                        extern uint32_t g_rcz_site;
+                        uart_puts("  rc0 zero  : ");
+                        if (!g_rcz_seen) { uart_puts("not seen zero at any adapter call"); }
+                        else {
+                            uart_puts("by trace idx ");
+                            uart_put_dec(g_rcz_idx);
+                            uart_puts("  entry ");
+                            uart_put_dec(g_rcz_call);
+                            uart_puts("  task ");
+                            uart_put_dec(g_rcz_who);
+                            uart_puts("  site ");
+                            uart_put_dec(g_rcz_site);
+                        }
+                        uart_puts("\n");
+                    }
+                    {
+                        /* [step 188] window state either side of the spill */
+                        extern uint32_t g_rcz_ws[], g_rcz_wb[], g_rcz_sp[], g_rcz_val[];
+                        for (int k = 0; k < 2; k++) {
+                            uart_puts(k ? "  spill post: " : "  spill pre : ");
+                            uart_puts("ws ");
+                            uart_put_hex(g_rcz_ws[k]);
+                            uart_puts(" wb ");
+                            uart_put_dec(g_rcz_wb[k]);
+                            uart_puts(" sp ");
+                            uart_put_hex(g_rcz_sp[k]);
+                            uart_puts(" [rc0sp] ");
+                            uart_put_hex(g_rcz_val[k]);
+                            uart_puts("\n     "); 
+                            {
+                                extern uint32_t g_rcz_dump[2][16];
+                                for (int q = 0; q < 16; q++) {
+                                    uart_puts(" ");
+                                    uart_put_hex(g_rcz_dump[k][q]);
+                                }
+                            }
+                            uart_puts("\n");
+                        }
                     }
                     uart_puts("  romcall0  : n ");
                     uart_put_dec(g_romcall_null[0]);

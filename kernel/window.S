@@ -392,7 +392,11 @@ rom_call4:
     movi    a12, g_romcall_prime
     s32i    a11, a12, 0             /* address primed */
     s32i    a10, a12, 4             /* value written */
-    s32i    a1,  a12, 8             /* rom_call4's sp at the time */
+    /* [step 189] the ADDRESS of the saved-a0 slot, not the sp. The probes
+     * that read this must follow the frame layout, and deriving the slot
+     * from sp went stale the moment the layout changed. */
+    mov     a11, a1
+    s32i    a11, a12, 8
 
     s32i    a0,  a1, 0
     s32i    a12, a1, 4              /* callee-saved under call0; CALL8 eats them */
