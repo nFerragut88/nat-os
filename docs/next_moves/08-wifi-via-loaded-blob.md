@@ -10145,4 +10145,61 @@ both known and fixed.
 Reverted; suite green, flash verified: boot 11 PASS 0 FAIL, `wintorture` CORRECT,
 `wifiinit` no fault and no reset.
 
+## Step 160 — the park's stack geometry, written down; the derivation is not finished
+
+Step 159 established the fault is deterministic and that `a7` comes back holding
+a PS value, so there is a **fixed** offset relationship putting a saved `EPS3`
+where a frame link belongs. That is arithmetic. Here is what the arithmetic has
+to work with, read from the code rather than recalled:
+
+```
+stub frame sp                    = S            (osi_s_queue_recv's a1)
+w2c_call2:  entry a1, 32         -> bridge frame sp = S - 32
+win_spill_call0: addi a1, a1,-32 -> a1 = S - 64  (call0; shares the bridge window)
+switch frame base                = sleep_sp - 160        (TASK_FRAME_TOTAL)
+  EPC3 at +64, EPS3 at +68, WINDOWBASE at +84, WINDOWSTART at +88
+underflow reads the frame link at [a9-12], and a4..a7 from [a7-48 .. a7-20]
+```
+
+The condition the fault expresses is `a9 - 12 == (sleep_sp - 160) + 68`, i.e.
+`a9 == sleep_sp - 80`.
+
+**I have not closed it**, because `sleep_sp` depends on `task_sleep`'s own call0
+frame chain below `osi_impl_park`, and I have not measured that. Guessing it
+would produce a number that looks like a derivation and is not one — which is
+precisely how steps 143, 144 and 148 went.
+
+### One observation that is solid
+
+`a9 == sleep_sp - 80` puts the frame being restored **below** the sleeping
+stack pointer — inside the region the switch frame occupies. A live windowed
+frame cannot be below the current sp; stacks grow down and the innermost frame
+*is* the sp. So whatever `WINDOWSTART` bit drives that underflow is claiming a
+window whose `a1` points **into the switch frame itself**.
+
+That is the same shape as step 124's phantom — a bit with no real frame behind
+it — reached from a completely different direction, and it is consistent with
+the fault being deterministic: the switch frame is at a fixed offset, so a
+phantom link into it lands on the same word every time.
+
+### On the datasheet
+
+The file is `DS_ESP32`, the hardware datasheet — pinout, electrical
+characteristics, RF, package. It carries no instruction-set material. The
+document that answers `ROTW`/`WINDOWSTART` is the **Xtensa ISA Reference
+Manual**, Windowed Register Option; the ESP32 **Technical Reference Manual** has
+some window material as a second source. Also worth noting for future sessions:
+PDFs cannot be read on this machine — `pdftoppm` is not installed — so a text
+extract is needed either way.
+
+### Next
+
+Measure `sleep_sp` rather than derive it — it is one value, available from the
+switch frame the park itself creates, and the kernel already records saved stack
+pointers per task. That closes the arithmetic with a number instead of an
+assumption.
+
+Suite unchanged: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0,
+`wifiinit` no fault and no reset.
+
 **Nothing has been on air.**
