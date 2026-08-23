@@ -9649,4 +9649,53 @@ been skipped twice.
 Reverted to green, flash verified. Suite: boot 11 PASS 0 FAIL, `wintorture`
 CORRECT, `blobphy` rc=0, `wifiinit` no fault and no reset.
 
+## Step 151 — the register file is clean at switch-out; the damage is on the way in
+
+Read `a1` and `a3` out of `g_regsave` — what the hardware actually held — instead
+of walking a memory chain that does not exist in this configuration.
+
+```
+regs a1/a3: w0 0x3ffb91d0/0x3ffb634c*  w1 0x3ffb93f0/0x3ffb93f0=
+            w2 0x3ffb9370/0x3ffb9370=  w3 0x3ffb92f0/0x3ffb92f0=
+excvaddr  : 0x000b90c5
+```
+
+**Windows 1, 2 and 3 satisfy `a3 == a1` exactly**, at `0x3ffb93f0`, `0x3ffb9370`
+and `0x3ffb92f0` — spaced `0x80` apart, which is `entry a1, 64` plus its save
+area. Three clean `vendor_torture` frames.
+
+Window 0's pair differs, and should: w0 is the **handler's own window**, not a
+torture frame, so `a3` there is whatever the handler last used.
+
+### Two things this settles
+
+**The save path is not the defect.** At switch-out the register file holds
+correct, full, aligned frame pointers. Whatever damages `a3` happens **after**
+the save — on the restore, or while another task runs between the two. Every
+step from 143 to 150 was looking at the outbound half.
+
+**The mask theory is dead, and not by elimination.** `0x000b90c5` as a DRAM
+address is `0x3ffb90c5` — **unaligned**. A frame pointer is 16-byte aligned; the
+three real ones above end in `0`. A truncated frame pointer would still be
+aligned. So this value was never a frame pointer at all, and the "top twelve bits
+were shifted off" account from step 148 is wrong outright rather than merely
+unsupported.
+
+What `0x000b90c5` *is* remains open. It is close to the frames — `0x3ffb90c5`
+sits just below `w0`'s `0x3ffb91d0` — which suggests something reading at a
+byte offset into that region rather than a mangled pointer.
+
+### Where to look now
+
+The restore path, with the register file known good going in. That is a much
+smaller surface than the last eight steps have been searching, and the same
+instrument answers it: `g_regsave` is written at switch-out and the fault happens
+after switch-in, so **capturing the file again immediately after the restore and
+diffing the two says exactly which register changed and when.** Step 136 already
+built that comparison and proved it works — `all 64 landed` — it simply has not
+been pointed at a failing run.
+
+Reverted to green, flash verified. Suite: boot 11 PASS 0 FAIL, `wintorture`
+CORRECT, `blobphy` rc=0, `wifiinit` no fault and no reset.
+
 **Nothing has been on air.**
