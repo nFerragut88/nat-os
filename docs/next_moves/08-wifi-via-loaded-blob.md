@@ -9529,4 +9529,63 @@ reserve, the `WINDOWSTART` seed, the scratch restore. Suite: boot 11 PASS 0 FAIL
 `wintorture` CORRECT, `blobphy` rc=0, `blobtx force` 0x3004, `wifiinit` no fault
 and no reset.
 
+## Step 149 — `a3` is a pointer by design, and it is reloaded from `[sp-4]`
+
+Stopped inferring and read `vendor_torture`:
+
+```asm
+4008e7bc <vendor_torture>:
+4008e7bc:  entry   a1, 64
+4008e7c4:  mov.n   a3, a1        <- a3 IS a stack pointer, by design
+...
+4008e7f4:  call8   vendor_torture
+4008e7fe:  l32i.n  a9, a3, 0     <- and it is the unwind cursor
+4008e800:  addi.n  a3, a3, 4
+```
+
+`a3` is not a corrupted scalar. It is a copy of the frame base, kept across the
+recursive `call8` and used to walk the six locals on the way out. The fault is a
+**pointer that came back wrong**, which is a different thing from a value that
+was mangled in place.
+
+### Two corrections
+
+**The 20-bit-mask lead is weak.** Step 148 reasoned that `0x3ffb8e58` losing its
+top twelve bits implied a shift with `SAR` set to 12 or 20. Every shift and
+extract in `window.S` and `vectors.S` was then listed: **none of them touches
+`a3`.** The only `a3` shift is the grant's `ssl a2 / sll a3, a3`, which operates
+on a `movi a3, 1`. So no code in this kernel masks `a3`, and "a shift or a mask
+did this" should not be carried forward as though it were established.
+
+**The location was wrong.** Step 148 identified `a3` as frame word 2 of the
+*switch* frame — correct for where the prologue stores it at switch-out, and not
+where the faulting value comes from. A windowed frame's `a0..a3` are saved at
+`[sp-16 .. sp-4]`, so **`a3` lives at `[sp-4]`**, the top word of the base save
+area, and an underflow reloads it from there.
+
+That matters for the reserve. With the old layout the switch frame reached
+`task_sp-112`, so `[task_sp-4]` was frame offset 108 — inside the padding. With
+step 145's reserve the frame starts at `task_sp-160` and `[task_sp-4]` is inside
+the 48-byte gap, untouched. **So for the innermost frame the save area is now
+clean either way, and the bad `a3` must be arriving from a deeper frame's
+`[sp-4]` — an address above `task_sp`, in the task's own stack, which the switch
+frame never reaches.**
+
+### What that leaves
+
+The corruption is not the switch frame overwriting a save area. Something writes
+`[sp-4]` of a live parent frame, or an underflow reads the wrong `sp`. Both are
+checkable by address rather than by argument: the frames are at known offsets
+from `task_sp`, and `[sp-4]` of each can be read and compared against the `a3`
+each frame should hold — `vendor_torture` sets `a3 = a1`, so the correct value at
+`[sp-4]` of any frame is that frame's own `sp`.
+
+**That is an unusually strong invariant to test against**: every frame's saved
+`a3` must equal its own `sp`. A single walk says which frame breaks it, and
+whether the stored value is a truncation of the right answer or something
+unrelated.
+
+Suite unchanged: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0,
+`blobtx force` 0x3004, `wifiinit` no fault and no reset.
+
 **Nothing has been on air.**
