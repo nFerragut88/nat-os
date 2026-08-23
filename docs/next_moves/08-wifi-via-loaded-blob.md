@@ -9978,4 +9978,58 @@ same investigation.
 Suite unchanged: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0,
 `blobtx force` 0x3004, `wifiinit` no fault and no reset.
 
+## Step 157 — a real sleep brings back the original fault
+
+Replaced step 113's ccount spin with a genuine park, ordered as the evidence
+said it should be:
+
+```
+caller bridges in PINNED        -- the bridge's `entry` frame is created where
+                                   no tick can land on it
+win_spill_call0()               -- one live window, still pinned
+g_pinned = -1                   -- unpin only now
+task_sleep(1)                   -- park
+g_pinned = me                   -- repin before the bridged return
+```
+
+The claim was that nothing windowed is created between the spill and the park —
+step 112's rule — since everything after `win_spill_call0()` is call0.
+
+**`wifiinit` panics: `exccause 28`, `epc 0x400800d5`.** That is
+`_WindowUnderflow8 + 0x15`, the instruction `l32e a4, a7, -32` — **the original
+`wifiinit` fault, verbatim, from steps 86 through 113.** The rest of the suite is
+untouched: `wintorture` CORRECT, `blobphy` rc=0, `blobtx force` 0x3004. Reverted.
+
+### What that tells us
+
+The fault is specific to the blocking path and returns the moment the spin is
+replaced. Step 113 did not *fix* that fault — it **avoided** it, by removing the
+only construct that triggers it. That was clear at the time and is worth
+restating now that the avoidance has been tested: the spin is not a workaround
+for a solved problem, it is the problem still being routed around.
+
+My ordering argument is therefore incomplete somewhere. The obvious gap: the
+spill leaves the **bridge's own frame** live, so on return the bridge's `retw`
+underflows the *caller's* frame back from a save area written before the park.
+Everything about that is meant to work, and the panic is in exactly that
+handler — `_WindowUnderflow8`, reading the extended save area at `[a7-32]`.
+
+So the next question is narrow and has an address in it: **at the park, what is
+in `osi_s_queue_recv`'s save area, and is it the same when the task wakes?** If
+it changes across the sleep, something writes it while the task is parked. If it
+was wrong before the park, the spill did not write what it should have.
+
+That is checkable with the same read-a-range discipline that resolved steps 146
+and 151, and it is a better-posed question than any asked in steps 128-156 —
+because the failing path is now four instructions long and bounded by a spill on
+one side and a `retw` on the other.
+
+### Status
+
+`osi_impl_park()` is reverted, not kept. The busy-spin stands, and with it the
+600 ms per `_queue_recv` and the inability to wait on an interrupt.
+
+Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0, `blobtx force`
+0x3004, `wifiinit` no fault and no reset.
+
 **Nothing has been on air.**
