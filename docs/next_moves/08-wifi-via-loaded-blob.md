@@ -10624,4 +10624,75 @@ economical account is that a save area is being written from the wrong register,
 or read at the wrong offset, such that `a3`'s value lands where `a1`'s belongs.
 Both are checkable against the handler's store list rather than by experiment.
 
+## Step 169 — nothing writes the PS; the save area was never written at all
+
+Dumped the memory around the save area the underflow read. Safe here: the panic
+path, not the blocking path, so the read cannot perturb what it measures.
+
+```
+uf window : a9 0x3ffb27d0
+0x000008ef 0x3ffb27f0 0x3ffb0000 0x4008caf2  [0x000008ef 0x3ffb2790 0x8008e6f0 0x4008d10e] ...
+                                              a0         a1         a2         a3
+```
+
+### First, a correction to the trace
+
+`_WindowUnderflow8` goes one level further than the last four steps assumed:
+
+```asm
+l32e a0, a9, -16      -> 0x000008ef
+l32e a1, a9, -12      -> 0x3ffb2790          <- the PARENT's sp
+l32e a2, a9,  -8
+l32e a7, a1, -12      -> [0x3ffb2784]        <- a7 comes from HERE
+l32e a4, a7, -32      -> faults
+```
+
+`a7` is not `[a9-12]`. It is `[a1-12]`, one link up. So the PS lives at
+**`0x3ffb2784`**, inside the base save area of the frame at `0x3ffb2790`
+(`[0x3ffb2780 .. 0x3ffb278c]`) — not in the save area at `a9` at all.
+
+Steps 165 through 168 all reasoned about the wrong word. The arithmetic in step
+160 and the "a9 relative to base" figure in step 168 were computed against a
+link the fault never loaded through.
+
+### And the finding that follows
+
+**Nothing wrote a PS there.** Xtensa fills base save areas **lazily** — the
+overflow handler writes them when a frame is actually spilled, and `ENTRY` writes
+nothing (established at step 123, forgotten at 149, and load-bearing here).
+
+So `[0x3ffb2784]` holds whatever last occupied that stack address. A switch frame
+with `EPS3` at `0x3ffb2784` has its base at `0x3ffb2740` and spans
+`[0x3ffb2740, 0x3ffb27e0)` — a preemption taken when the task's sp was
+`0x3ffb27e0`, which is squarely on the park's own descent. The bytes are a **dead
+switch frame's `EPS3` slot**, sitting in memory a later windowed frame's save
+area now nominally occupies.
+
+The PS was never the defect. It is debris, and its shape only ever said *which*
+debris.
+
+### What the defect actually is
+
+**An underflow fired for a frame whose save area was never written.**
+
+`retw` underflows only when the parent's `WINDOWSTART` bit is clear, and a bit is
+cleared by `rfwo` — after the overflow handler has written the save area. A bit
+that is clear *without* the save area having been written is the same object step
+126 named: a claim with nothing behind it.
+
+That reframes the search from "who writes a PS" — nobody — to **"which bit was
+cleared without a spill"**, and it puts this back on the same defect the sweep
+work circled from step 124 onward, now reached from the park path with a specific
+address in hand.
+
+The park's spill is `win_spill_call0()` inside `osi_impl_park()`. Step 112's rule
+applies to it directly: anything created **below** the spill point is outside the
+range the spill covered. `task_sleep()` runs after that spill and builds call0
+frames, but the bridge's own windowed frame is above it — so which frames the
+spill actually reached is the next thing to read, and `win_spill_all`'s walk is
+already instrumented from step 112.
+
+Reverted; the spin stands. Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT,
+`blobphy` rc=0, `wifiinit` no fault and no reset, pin off.
+
 **Nothing has been on air.**
