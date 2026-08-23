@@ -9747,4 +9747,56 @@ step 130 and step 152 both went, and the tree is green.
 Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0, `wifiinit` no
 fault and no reset.
 
+## Step 153 — the capture works and is not free; window 0 is the wrong place to look
+
+Placed correctly this time: after the LOOP restore, before the frame reload,
+where `a1` is still the frame pointer and nothing depends on `a4`. **It boots** —
+11 PASS, against step 152's 0 — so the placement diagnosis was right.
+
+It also produced a reading:
+
+```
+while away: w0 a0 was 0x400838bd now 0x4008af2e
+```
+
+### That reading is uninformative, and predictably so
+
+`w0` is the **handler's own window**, and `a0` is the call0 return-address
+register. Between the save in the prologue and the capture in the epilogue the
+handler makes two `call0`s — `intr_dispatch` and `task_schedule` — so `a0`
+differing is not damage, it is the handler working.
+
+Step 151 already established this exact point about window 0: its `a1`/`a3` pair
+differs *because* w0 is the handler's window, not a torture frame. I wrote that
+down and then built a diff that starts at window 0 anyway. **The comparison
+should begin at window 1**, or exclude `a0`/`a1` of w0 explicitly.
+
+### And the block is not free
+
+`wintorture` panics with the pin **on**, where it passed before. The capture was
+described as non-destructive because each block restores its window's `a0` and
+`a1` before rotating — true of the stores, but the four `rotw` steps still move
+`WINDOWBASE` through windows whose `WINDOWSTART` bits are clear, *after* the
+grant has been written and while the epilogue is mid-restore. That is a different
+context from the prologue, where the same block has been running safely since
+step 131.
+
+So "non-destructive" was carried over from the save site without rechecking it
+at the new one — **the same slip as step 152, one step after naming it.** The
+difference is that this time the tree caught it rather than the boot.
+
+Reverted; suite green, flash verified.
+
+### What is worth keeping
+
+The placement is correct and demonstrated: before the frame reload, no `a4`
+dependency, boots cleanly. The instrument needs two changes before it can answer
+anything: **start the comparison at window 1**, and find a capture that does not
+rotate the window during the epilogue — reading the four windows via the already
+proven prologue path and deferring the *comparison* is one option, since
+`g_regsave` is written there safely on every switch already.
+
+Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0, `wifiinit` no
+fault and no reset.
+
 **Nothing has been on air.**
