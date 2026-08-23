@@ -159,7 +159,13 @@ typedef struct {
     int32_t _magic;
 } wifi_osi_funcs_t;
 
-#define OSI_N 118u
+/* [step 185] 120, not 118: the two phy_common_clock stubs take trace ids 117
+ * and 118, outside the 1..116 field numbering. nat-os's osi_hit ids were never
+ * struct indices (step 179) and 54/55 are already taken by
+ * _phy_update_country_info and _read_mac, so appending is the only choice that
+ * does not renumber the whole trace. This OSI_N sizes the trace arrays only --
+ * wifi_osi_entries() reads a separate one in kernel/wifi_osi_table.h. */
+#define OSI_N 120u
 
 uint16_t g_osi_calls[OSI_N];
 uint8_t  g_osi_order[OSI_N];
@@ -1263,6 +1269,34 @@ static void osi_s_phy_enable(void)
     osi_hit(53u);
 }
 
+/* [step 185] Five slots the struct declared and the initializer never set.
+ *
+ * A designated initializer leaves omitted members ZERO, so these were NULL
+ * function pointers in a table handed to a driver that calls them without
+ * checking. ppTask does exactly that at offset 216 -- see the report -- and
+ * jumped to address 0.
+ *
+ * The two phy_common_clock entries are NO-OPS, not implementations. IDF's
+ * wrappers reach wifi_bt_common_module_enable/disable, the shared WiFi/BT
+ * peripheral clock. phyinit already runs to completion here (blobphy rc=0), so
+ * the clock is on before ppTask ever asks; what was missing was a valid address
+ * to call, not the work. Wiring the real clock gating belongs with _wifi_clock_
+ * enable/_disable, which are also still empty.
+ *
+ * These were the only two. A first scan reported five, but it did not honour
+ * the preprocessor: _slowclk_cal_get is #if !CONFIG_IDF_TARGET_ESP32 and the
+ * two regdma/sleep_retention entries are ESP32-C6 only, so none of the three
+ * exists in this build. */
+static void osi_s_phy_common_clock_enable(void)
+{
+    osi_hit(117u);
+}
+
+static void osi_s_phy_common_clock_disable(void)
+{
+    osi_hit(118u);
+}
+
 static int osi_s_phy_update_country_info(const char* country)
 {
     osi_hit(54u);
@@ -1717,6 +1751,8 @@ const wifi_osi_funcs_t g_osi = {
     ._wifi_apb80m_release = osi_s_wifi_apb80m_release,
     ._phy_disable = osi_s_phy_disable,
     ._phy_enable = osi_s_phy_enable,
+    ._phy_common_clock_enable = osi_s_phy_common_clock_enable,
+    ._phy_common_clock_disable = osi_s_phy_common_clock_disable,
     ._phy_update_country_info = osi_s_phy_update_country_info,
     ._read_mac = osi_s_read_mac,
     ._timer_arm = osi_s_timer_arm,

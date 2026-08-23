@@ -876,6 +876,25 @@ uart_puts("  pre-spill : ps ");
                     }
                     uart_puts("\n");
                 }
+                {
+                    /* [step 185] Did an allocation fail? The blob does not
+                     * check every one, and the [mem] line only prints from the
+                     * [qr] block, which a panic pre-empts. */
+                    extern uint32_t g_osi_alloc_calls, g_osi_alloc_bytes;
+                    extern uint32_t g_osi_alloc_max, g_osi_alloc_fails;
+                    extern uint32_t osi_impl_free_heap(void);
+                    uart_puts("  osi alloc : calls ");
+                    uart_put_dec(g_osi_alloc_calls);
+                    uart_puts("  bytes ");
+                    uart_put_dec(g_osi_alloc_bytes);
+                    uart_puts("  largest ");
+                    uart_put_dec(g_osi_alloc_max);
+                    uart_puts("  FAILS ");
+                    uart_put_dec(g_osi_alloc_fails);
+                    uart_puts("  heap free ");
+                    uart_put_dec(osi_impl_free_heap());
+                    uart_puts("\n");
+                }
                     uart_puts("  worker    : reached ");
                     uart_put_dec(blob_task_reached());
                     uart_puts("  running ");

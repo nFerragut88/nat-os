@@ -11716,6 +11716,163 @@ prints its verdict off a never-sampled sentinel, and `blk-window` runs two field
 together into a twenty-one-bit `WINDOWSTART`.
 
 **Nothing has been on air.**
+---
+
+## step 185 — two words of zero in the adapter table
+
+The fault is fixed, and it was two missing lines.
+
+### 185a. Reading the blob
+
+`build/blob.elf` carries symbols, which had not been used. The worker function
+is **`ppTask`** at `0x4036baec`, and its prologue reads straight off our table:
+
+```asm
+4036baef:  l32r  a2, (3ffd4e08 <g_osi_funcs_p>)
+4036bafb:  l32i  a3, a3, 64        ; offset 64  = field 16 = _semphr_give
+4036bafe:  callx8 a3
+4036bb10:  l32i  a5, a5, 116       ; offset 116 = field 29 = _queue_recv
+4036bb15:  callx8 a5
+```
+
+`_semphr_give` then `_queue_recv` — exactly `t9:16 t9:29`, the first two calls
+the worker ever made. Every fault register matched a named blob object:
+`a2 = &g_osi_funcs_p`, `a3 = &xphyQueue`, `a14 = 0x05100000`, the queue handle.
+
+The signal dispatch:
+
+```asm
+4036bb6e:  l32r   a5, (3f7011a0)   ; jump table, in DROM
+4036bb71:  addx4  a5, a10, a5      ; a10 = the signal id
+4036bb74:  l32i.n a5, a5, 0
+4036bb76:  jx     a5
+```
+
+`a10 = 0x00000006` at the fault, and the first message delivered was
+`{ id = 6, arg = 0x3ffc1848 }`. Table entry 6 is `0x4036bbab`, and that
+instruction loads `0x3ffd7ac8` — **which is the recorded `a5`**. So the jump
+table was intact and the `jx` had already succeeded. The fault was further on.
+
+### 185b. The defect
+
+Entry 6 lands in a shared tail:
+
+```asm
+4036bb8c:  l32i.n a8, a5, 0
+4036bb8e:  beqz   a8, ...          ; the blob DOES check this one
+4036bb91:  l32i.n a8, a2, 0        ; g_osi_funcs_p
+4036bb93:  l32i   a8, a8, 216      ; offset 216 = field 54
+4036bb96:  callx8 a8               ; and does NOT check this one
+```
+
+Offset 216 is **`_phy_common_clock_enable`**. In `wifi_osi_stubs.c` the struct
+declares it, and the initializer goes straight from `._phy_enable` to
+`._phy_update_country_info`:
+
+```c
+._phy_disable = osi_s_phy_disable,
+._phy_enable  = osi_s_phy_enable,
+/* _phy_common_clock_enable  -- absent */
+/* _phy_common_clock_disable -- absent */
+._phy_update_country_info = osi_s_phy_update_country_info,
+```
+
+**A designated initializer zero-fills omitted members.** Two words of the table
+handed to the driver were NULL, and the driver calls them without checking.
+
+`wifi_osi.c`'s table has both and is clean; only the stubs table had the hole.
+
+### 185c. A correction to step 184
+
+Step 184 ruled out `callx8` as the faulting instruction because "it rotates
+`WindowBase`, and `wb` would not still be 15", and concluded the instruction had
+to be an indirect *jump*.
+
+That is wrong about the ISA. **`CALL8` does not rotate at the call site.** It
+writes the return address into `a8` of the *current* window and branches; the
+rotation happens in the callee's `ENTRY`. Address 0 never executed an `ENTRY`,
+so no rotation ever occurred — which is exactly why the window looked like a
+single unrotated frame, and why `a8 = 0x8036bb99` was sitting there: that is
+precisely the return address `callx8` had just written.
+
+The evidence step 184 gathered was right and completely sufficient. The
+elimination argument applied to it was not.
+
+### 185d. And a correction to my own scan
+
+A scan for holes reported five. Three were false: `_slowclk_cal_get` is
+`#if !CONFIG_IDF_TARGET_ESP32`, and `_regdma_link_set_write_wait_content` and
+`_sleep_retention_find_link_by_id` are ESP32-C6 only. The scan matched struct
+members textually and did not honour the preprocessor. Two were real, and the
+compiler said so when the other three were wired.
+
+Step 183's survey could not have found either: it looked for stub *functions*
+with empty or `return 0` bodies, and here there is no stub to find. A hole in a
+designated initializer is invisible to every check this project had.
+
+### 185e. The guard
+
+`wifi_init_cfg()` is the last code to touch the table before the blob does. It
+now walks the words between `_version` and `_magic` and refuses to be quiet:
+
+```
+osi table : 118 words, no null slots
+```
+
+A zero among those words is always a defect, and this would have printed it on
+the first `wifiinit` of the investigation.
+
+### 185f. Result
+
+```
+before:  ... t9:10 t9:11                                        -> epc 0
+after:   ... t9:10 t9:11 t9:117 t9:57 t9:55 t9:55 t9:79 t9:92 t9:85
+```
+
+`t9:117` is the new `_phy_common_clock_enable`. ppTask now gets through it into
+the callback at `s_wifi_queue+0x14`, which runs `_timer_disarm`, `_read_mac`
+twice, `_get_random`, `_wifi_zalloc` and `_malloc_internal`.
+
+The new fault is different in kind:
+
+```
+exccause 28  LoadProhibited   epc 0x4000be94   (ESP32 ROM)
+wb 15  ws 0x0000aaa8          seven live frames
+osi alloc : calls 7  bytes 4272  largest 3120  FAILS 0  heap free 67384
+```
+
+**Not memory exhaustion** — nothing failed and 67 KB remain. A ROM routine read
+a bad address. `0x4000be94` and the return `0x40056c48` are not in
+`esp32.rom.ld`; the nearest exported symbols are `+0x1e0` and `+0xc28` away, so
+they are unexported ROM and those names mean nothing. They are not quoted here
+as identifications.
+
+The strongest lead is in the trace immediately before it:
+
+```c
+static int osi_s_read_mac(uint8_t* mac, unsigned int type)
+{
+    osi_hit(55u);
+    return 0;                       /* ESP_OK, and mac is never written */
+}
+```
+
+It reports success and leaves the caller's buffer untouched. The blob called it
+**twice** and then allocated and called into ROM. A MAC address the driver
+believes it has and has not got is exactly the shape of a bad load.
+
+### Next
+
+1. Implement `_read_mac`. It needs a real MAC from eFuse; nat-os reads eFuse
+   already for other purposes.
+2. Then re-run and see whether the ROM load survives.
+3. The instrumentation debt is now large enough to be its own task: `a0/sp out`
+   and `saved frame @` are superseded by `fault regs` and actively mislead;
+   `sbp-post` prints a verdict off a never-sampled sentinel; `blk-window` runs
+   two fields together.
+
+**Nothing has been on air.**
+
 
 
 

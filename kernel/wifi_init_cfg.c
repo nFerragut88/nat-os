@@ -2,6 +2,7 @@
 
 #include "wifi_init_cfg.h"
 #include "wifi_osi_table.h"
+#include "uart.h"
 
 /* THE REAL TABLE, in vendor/windowed/wifi_osi.c.
  *
@@ -52,9 +53,53 @@ static wifi_init_config_t g_cfg;
  * ESP_ERR_INVALID_ARG one field at a time rather than guess at 21 fields. */
 static int g_nvs_override = -1;
 
+/* [step 185] Refuse to hand the driver a table with a hole in it.
+ *
+ * The OS adapter is built with designated initializers, so a member the struct
+ * declares and the initializer omits is silently NULL -- and the driver calls
+ * these without checking. Five slots were NULL for the entire investigation;
+ * ppTask reached one of them (offset 216, _phy_common_clock_enable) and jumped
+ * to address 0. Nothing in the build, and no scan for unimplemented stubs, can
+ * see that: there is no stub to find.
+ *
+ * The table is bounded by _version at word 0 and _magic at the end, so the
+ * function pointers are exactly the words between, and a zero among them is
+ * always a defect. Checked here because this is the last code that touches the
+ * table before the blob does. */
+static uint32_t osi_null_slots(uint32_t *first_off)
+{
+    const uint32_t *t = (const uint32_t *)wifi_osi_table();
+    uint32_t words = wifi_osi_entries();
+    uint32_t bad = 0;
+    *first_off = 0;
+    for (uint32_t i = 1; i + 1 < words; i++) {
+        if (t[i] == 0u) {
+            if (!bad) { *first_off = i * 4u; }
+            bad++;
+        }
+    }
+    return bad;
+}
+
 const void *wifi_init_cfg(void)
 {
     g_cfg.osi_funcs = (wifi_osi_funcs_t *)wifi_osi_table();
+
+    {
+        uint32_t off = 0;
+        uint32_t bad = osi_null_slots(&off);
+        uart_puts("   osi table : ");
+        uart_put_dec(wifi_osi_entries());
+        uart_puts(" words, ");
+        if (!bad) {
+            uart_puts("no null slots\n");
+        } else {
+            uart_put_dec(bad);
+            uart_puts(" NULL SLOTS -- first at offset ");
+            uart_put_dec(off);
+            uart_puts("  the driver will jump to 0\n");
+        }
+    }
 
     /* wpa_crypto_funcs is opaque here; only size and version are set, at
      * offsets 0 and 4, and every callback stays null. Nothing in a raw
