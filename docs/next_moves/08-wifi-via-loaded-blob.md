@@ -10515,4 +10515,63 @@ leaving the window state inconsistent on the park path.** Those are compatible �
 Reverted; the spin stands. Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT,
 `blobphy` rc=0, `wifiinit` no fault and no reset, pin off.
 
+## Step 166 — the rotation is identity, and step 165's "invalid state" was not one
+
+Captured `WINDOWBASE` either side of Tier B's rotation, inside the `PS.EXCM`
+window so the capture itself cannot trip the overflow check:
+
+```
+rotw net : pre 3 post 3  identity
+```
+
+**The four `rotw 4` are net-zero, as designed.** Tier B's restore displaces
+nothing. That eliminates the mechanism step 165 proposed.
+
+### And the premise was wrong too
+
+Step 165 read `windowbase: 1  windowstart: 0x00000008  bit(base) CLEAR` as "an
+architecturally invalid state", reasoning from ISA §6.1.2 that the bit at the
+current base must be set.
+
+That is true of ordinary task context and **false of a window handler**, which is
+where this dump is taken — the fault is inside `_WindowUnderflow8`, and an
+underflow handler runs with the window rotated and the bit not yet set. The base
+of 1 is the handler's, not the task's.
+
+UM-NATOS-042 §5 already lists this, in the table of things positively eliminated:
+
+> `bit(base) CLEAR` is an anomaly | **no** | it is the normal state inside an
+> underflow handler
+
+**Third time this session I have re-raised something the log had already
+settled** — step 156 was step 14's finding, and this is §5's. The pattern is
+specific enough to name: when a dump line looks anomalous, the elimination table
+in UM-NATOS-042 §5 should be read *before* building on it, not after. It exists
+for exactly this and costs one minute.
+
+### What survives from step 165
+
+One thing, and it is still unexplained: **`a3` holds `0x00060520`, which is also
+`EPS3`, and also the value `a7` came back with.** Three appearances of one
+processor-state word — in a general register, in the saved control block, and in
+the pointer the underflow loaded through. That is not a normal state and no
+elimination covers it.
+
+### Where the park investigation actually stands
+
+Measured and holding: the fault is deterministic across sleep durations (159);
+`a7` returns a PS (159); Tier B's rotation is identity (this step); the fault is
+independent of Tier B and of the pin (164).
+
+Eliminated: rotation displacement (this step); `bit(base)` anomaly (§5, re-
+confirmed); a race or timing window (159).
+
+Open: how a PS reaches `a3`. That is now the single thread, and it is narrow —
+`EPS3` is written at exactly one place in the prologue (`rsr.eps3 a2; s32i a2,
+a1, 68`) and read at exactly one place in the epilogue. Whatever puts it in `a3`
+is between those.
+
+Reverted; the spin stands. Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT,
+`blobphy` rc=0, `wifiinit` no fault and no reset, pin off.
+
 **Nothing has been on air.**
