@@ -10574,4 +10574,54 @@ is between those.
 Reverted; the spin stands. Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT,
 `blobphy` rc=0, `wifiinit` no fault and no reset, pin off.
 
+## Step 167 — the dump decoded, and `a3` holding a PS is probably innocent
+
+Verified what the panic dump actually prints, before building anything on it:
+
+```
+saved frame : words 0..7   -> a0, a2, a3, a4, a5, a6, a7, a8
+saved hi    : words 8..15  -> a9..a15, SAR
+saved ctl   : words 15..20 -> SAR, EPC3, EPS3, LBEG, LEND, LCOUNT
+```
+
+Both step 165 readings were correct: `a3 = 0x00060520` and `EPS3 = 0x00060520`.
+
+### But "three appearances of one PS" overstates it
+
+`a3` holding a processor-state word is not by itself anomalous. Two candidates
+were checked rather than assumed:
+
+- `crit_enter()` returns `ps & 0xFu` — four bits only, so **not** this;
+- the windowed helpers do `__asm__ volatile ("rsil %0, 3" : "=r"(ps))`, and
+  `RSIL` returns the **full previous PS**. `osi_qpoll_w`, `blob_trylock_w` and
+  `blob_unlock_w` all use it, and all run immediately before the park.
+
+So a live register holding `0x0006xxxx` on that path is **expected**, and `a3`
+being one of them is ordinary register allocation. Step 165 presented it as a
+third corroborating sighting; it is better read as the normal state of code that
+has just masked interrupts.
+
+That leaves the anomaly narrower and sharper: **`a7`**. `a7` is the caller's
+stack pointer recovered by `_WindowUnderflow8` from `[a9-12]`, and it came back
+as a PS. A register holding a PS is unremarkable; a **frame link** holding one is
+the defect.
+
+### Corrected position
+
+| claim | status |
+|---|---|
+| `a3` holds a PS | true, and probably legitimate — `RSIL` returns one |
+| `EPS3` holds the same value | true, and unsurprising if the task was interrupted at that PS |
+| `a7` holds a PS where a frame link belongs | **the actual defect, unexplained** |
+| rotation displacement | eliminated (166) |
+| `bit(base)` anomaly | eliminated (§5, re-confirmed 166) |
+| race / timing | eliminated (159) |
+
+The question is therefore not "how does a PS get into a register" — that has an
+ordinary answer — but **"how does a save area come to hold one where a stack
+pointer should be"**. Given `a3` legitimately carries a PS on this path, the most
+economical account is that a save area is being written from the wrong register,
+or read at the wrong offset, such that `a3`'s value lands where `a1`'s belongs.
+Both are checkable against the handler's store list rather than by experiment.
+
 **Nothing has been on air.**
