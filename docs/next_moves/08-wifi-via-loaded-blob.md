@@ -10202,4 +10202,94 @@ assumption.
 Suite unchanged: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0,
 `wifiinit` no fault and no reset.
 
+## Step 161 — the ISA answers it: `PS.EXCM`, and step 155 was backwards
+
+`pdftotext` **is** installed even though `pdftoppm` is not, so the ISA summary
+was readable after all. Two passages settle a question that has cost roughly
+thirty steps across two sessions.
+
+### 1. `ROTW` does not touch `WINDOWSTART`
+
+```
+WindowBase <- WindowBase + imm4 if Windowed Register Option
+```
+
+That is the whole operation. It is privileged, "intended for use in exception
+handlers and context switch code". My recollection in step 156 was right, and
+irrelevant — the danger is not what `ROTW` writes.
+
+### 2. The overflow check fires on ANY register reference
+
+From §6.1.3, Window Overflow Check:
+
+```
+procedure WindowCheck (wr, ws, wt)
+   n <- if (wr != 2'b00 or ws != 2'b00 or wt != 2'b00)
+           and WindowStart[WindowBase+1] then 2'b01
+        else if (wr1 or ws1 or wt1) and WindowStart[WindowBase+2] then 2'b10
+        else if (wr = 2'b11 ...) and WindowStart[WindowBase+3] then 2'b11
+        else 2'b00
+   if CWOE = 1 and n != 2'b00 then  PS.OWB <- WindowBase ... PS.EXCM <- 1 ...
+```
+
+with `ref()` being "1 if the register is used by the instruction". **Not
+`ENTRY`. Any instruction that references a register.**
+
+Every attempt from step 128 onward rested on the claim that "only
+`wsr`/`rsr`/`movi`/`s32i`/`l32i`/`rotw` execute, so no window exception can
+fire". **That claim is false.** An `s32i a12, a0, N` after a `ROTW` triggers the
+check whenever `WindowStart[WindowBase+1]` is set.
+
+### 3. And the gate is `PS.EXCM`
+
+```
+CWOE <- if PS.EXCM then 0 else PS.WOE
+```
+
+`_handler_level3` **clears `PS.EXCM` at entry** — deliberately, with its own
+comment, so that a fault inside the handler reaches the panic handler rather
+than the double-exception vector. That clear sits *after* the prologue and
+*before* `.Lresume`.
+
+So:
+
+| site | `PS.EXCM` | `CWOE` | overflow check | result |
+|---|---|---|---|---|
+| prologue save pass | 1 | 0 | **off** | works, green since step 131 |
+| every restore-path attempt | 0 | 1 | **on** | breaks, five times |
+
+**That is the answer.** Not placement, not ordering, not the phantom. The save
+pass has always run inside the EXCM window where the check is disabled, and
+every restore attempt has run outside it.
+
+### Step 155 was exactly backwards
+
+Step 155 set `WINDOWSTART` to **all-ones** across the rotation, reasoning that
+rotating onto a clear bit was the hazard. All-ones guarantees
+`WindowStart[WindowBase+1]` is set at every stop, so with `CWOE = 1` **every
+register reference after every `ROTW` faults.** Boot dropped from 11 to 10, and
+I recorded that the hypothesis was "not supported" without seeing that I had
+maximised the very condition that breaks it.
+
+### The fix, and it is small
+
+Set `PS.EXCM` for the duration of the rotation in the restore path, or clear
+`PS.WOE` — either drives `CWOE` to 0 and disables the check, exactly as the
+prologue already enjoys by accident of ordering. The ISA also notes a hazard
+worth honouring: after `WSR WINDOWSTART`, an `RSYNC` is required before *any* use
+or definition of an AR while `CWOE = 1`; the existing code already does that.
+
+That makes Tier B's restore a two-instruction change away from being testable
+for the first time, rather than a design that has failed five times.
+
+### Method note
+
+The answer was in a document nobody had opened, and it took one `pdftotext`.
+Thirty steps of experiment produced a correct empirical rule — *rotating in the
+restore path breaks the working case* — and no explanation. The explanation was
+four pages of a reference manual.
+
+Suite unchanged: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0,
+`wifiinit` no fault and no reset.
+
 **Nothing has been on air.**
