@@ -211,6 +211,8 @@ extern void blob_task_create(void);
 /* [step 178] read-only blob-task counters, taken via w2c_call0f. */
 extern void blob_task_count(void);
 extern void blob_task_stack_short(void);
+extern void blob_task_last_prio(void);
+extern void blob_task_last_lvl(void);
 extern void blob_task_want_stack(void);
 extern void blob_lock(void);
 extern void blob_unlock(void);
@@ -974,6 +976,10 @@ static int32_t osi_s_queue_recv(void *queue, void *item, uint32_t block_time_tic
             (void)w2c_call1((uint32_t)&uart_put_dec, w2c_call0f((uint32_t)&blob_task_count));
             (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" refused=");
             (void)w2c_call1((uint32_t)&uart_put_dec, w2c_call0f((uint32_t)&blob_task_stack_short));
+            (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" prio=");
+            (void)w2c_call1((uint32_t)&uart_put_dec, w2c_call0f((uint32_t)&blob_task_last_prio));
+            (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)"->lvl");
+            (void)w2c_call1((uint32_t)&uart_put_dec, w2c_call0f((uint32_t)&blob_task_last_lvl));
             (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" want_stack=");
             (void)w2c_call1((uint32_t)&uart_put_dec, w2c_call0f((uint32_t)&blob_task_want_stack));
             /* [step 178] blob-task state. The OSI trace shows call 36

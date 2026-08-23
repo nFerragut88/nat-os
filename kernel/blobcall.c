@@ -255,6 +255,7 @@ struct blob_task {
     int      id;            /* nat-os task id, -1 until known */
     uint32_t fn;            /* windowed entry in the blob     */
     uint32_t arg;
+    uint32_t prio;          /* what the blob asked for, on ITS scale */
     uint32_t want_stack;    /* what the blob asked for, in bytes */
 };
 static struct blob_task g_bt[BLOB_TASK_MAX];
@@ -289,6 +290,9 @@ uint32_t blob_mutex_waiters(void) { return g_blob_mutex.waiters; }
 uint32_t blob_mutex_granted(void) { return g_blob_mutex.granted; }
 static uint32_t g_bt_short;     /* times the request exceeded a nat-os stack */
 static uint32_t g_bt_last_want; /* the largest such request, in bytes */
+/* [step 181] what the blob last asked for, and what it was mapped to. */
+static uint32_t g_bt_last_prio, g_bt_last_lvl;
+#define OSI_MAX_PRIO 25u        /* must match osi_s_task_get_max_priority() */
 
 /* Task creation is OPT-IN, and the reason is architectural rather than a bug.
  *
@@ -393,6 +397,7 @@ int blob_task_create(void *reqp, const char *name)
     g_bt[slot].id   = -1;
     g_bt[slot].fn   = r->fn;
     g_bt[slot].arg  = r->arg;
+    g_bt[slot].prio = r->prio;
     g_bt[slot].want_stack = r->stack_bytes;
     crit_exit(crit);
 
@@ -404,6 +409,42 @@ int blob_task_create(void *reqp, const char *name)
         return 0;                                        /* pdFAIL */
     }
     if (big) { g_blob_stack_taken = 1; }
+
+    /* [step 181] Honour the requested priority.
+     *
+     * _task_get_max_priority answers 25 -- ESP-IDF's configMAX_PRIORITIES --
+     * because the blob does arithmetic on it, and IDF's own wrapper hands the
+     * result straight to xTaskCreatePinnedToCore. Espressif's WiFi task sits
+     * near the top of that scale deliberately: their documentation warns that
+     * starving the low-level WiFi work destabilises the system.
+     *
+     * Until now r->prio was read into the request struct and then dropped, so
+     * every blob task ran at TASK_PRIO_NORMAL alongside the shell and display.
+     * The mapping was always meant to live here -- osi_s_task_get_max_priority
+     * says so in as many words, and declines to rescale at its own end because
+     * the blob also uses the constant for arithmetic.
+     *
+     * Three levels against twenty-five, split in thirds. The WiFi task's ~23
+     * lands in HIGH, which is the point of the exercise. */
+    {
+        uint32_t p = r->prio;
+        int lvl = (p >= (OSI_MAX_PRIO * 2u) / 3u) ? TASK_PRIO_HIGH
+                : (p >= OSI_MAX_PRIO / 3u)        ? TASK_PRIO_NORMAL
+                                                  : TASK_PRIO_LOW;
+        task_set_priority(id, lvl);
+        g_bt_last_prio = p;
+        g_bt_last_lvl  = (uint32_t)lvl;
+        /* Printed from here for the same reason the refusal is: this file is
+         * not flash-resident, and wifiinit no longer reaches the [qr] report. */
+        uart_puts("   [blobtask] ");
+        uart_puts(name ? name : "blob");
+        uart_puts(" prio ");
+        uart_put_dec(p);
+        uart_puts("/25 -> nat-os level ");
+        uart_put_dec((unsigned int)lvl);
+        uart_puts(lvl == TASK_PRIO_HIGH ? " (HIGH)\n" : " (not high)\n");
+    }
+
     g_bt[slot].id = id;                                  /* trampoline unblocks */
 
     if (r->handle) { *(uint32_t *)r->handle = (uint32_t)(id + 1); }
@@ -417,5 +458,9 @@ uint32_t blob_task_count(void)
     return n;
 }
 uint32_t blob_task_stack_short(void) { return g_bt_short; }
+uint32_t blob_task_last_prio(void);
+uint32_t blob_task_last_lvl(void);
+uint32_t blob_task_last_prio(void) { return g_bt_last_prio; }
+uint32_t blob_task_last_lvl(void)  { return g_bt_last_lvl; }
 uint32_t blob_task_want_stack(void)  { return g_bt_last_want ? g_bt_last_want
                                                             : g_bt[0].want_stack; }
