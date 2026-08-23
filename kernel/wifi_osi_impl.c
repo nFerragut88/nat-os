@@ -603,6 +603,40 @@ static void osi_alloc_note(uint32_t n, const void *p)
     }
 }
 
+/* [step 175] The blob's blocking wait, parking WITHOUT a spill.
+ *
+ * task_sleep() calls spill_before_parking() as its first act. That is the whole
+ * defect on this path, and step 172 missed it by removing the wrong spill:
+ *
+ *   the bridge's `entry` puts its frame at bridge_sp;
+ *   `callx0` into call0 code puts THAT frame at [bridge_sp-16, bridge_sp) --
+ *     which is where the ABI keeps the bridge's caller's base save area;
+ *   spill_before_parking() then writes the stub's a0..a3 into exactly that
+ *     range, on top of live call0 locals, and they overwrite each other;
+ *   the bridge's `retw` underflows and reads the wreckage.
+ *
+ * Measured at step 170: park a1 = 0x3ffb27c0 against a save area of
+ * [0x3ffb27c0, 0x3ffb27d0). Exactly coincident.
+ *
+ * The spill exists because the pin made preemption with live windowed frames
+ * fatal. Tier B removed that (step 162) -- the register file is saved and
+ * restored per task, so parking with several frames live is safe. So this parks
+ * through task_sleep_armed() directly and never spills.
+ *
+ * That also explains why step 113's spin works: it makes no call0 call after the
+ * spill, so nothing is ever allocated over the save area. */
+void osi_impl_park(int me, uint32_t ticks);
+
+void osi_impl_park(int me, uint32_t ticks)
+{
+    extern volatile int g_pinned;
+
+    g_pinned = -1;
+    task_arm_wake();
+    task_sleep_armed(ticks ? ticks : 1u);
+    g_pinned = me;
+}
+
 void *osi_impl_malloc(uint32_t n)
 {
     void *p = heap_alloc(n ? n : 1u);

@@ -516,6 +516,14 @@ _handler_level3:
     wsr.windowstart a3
     rsync
 
+    /* [step 174] site 0: the restore's own write. a4/a5 are scratch here and are
+     * reloaded from the frame immediately below. */
+    movi     a4, g_wsw
+    l32i     a5, a4, 0
+    addi     a5, a5, 1
+    s32i     a5, a4, 0
+    s32i     a3, a4, 4
+
     /* [step 147] Leave no scratch behind in the outgoing view.
      *
      * a2..a6 are used above to compute and record the grant. `wsr.windowbase`

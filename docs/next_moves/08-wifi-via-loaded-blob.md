@@ -10898,4 +10898,86 @@ enumerable and short: `task_create` (eliminated here), the restore's
 
 Reverted; suite green with the pin off.
 
+## Step 174/176 — THE BLOCKING WAIT WORKS. The spill was the defect.
+
+### How it was found
+
+Tagged every site that writes `WINDOWSTART` outside `ENTRY`/`RETW` — the restore,
+`x20_windowed`'s wipe, and `phy_stack_call`'s two — with a counter and the value
+each last wrote. At the park fault:
+
+```
+ws write : restore  n=6339  last=0x00000008     <- ONE bit
+ws write : x20wipe  n=0
+ws write : phypre   n=1  last=0x00000002
+ws write : phypost  n=1  last=0x00000002
+```
+
+The restore was the last writer and wrote a single bit, so the task had been
+**saved holding one frame** — something had spilled the stub's and the bridge's
+frames during the park. With the explicit spill removed (step 172), nothing
+should have.
+
+`task_sleep()` calls `spill_before_parking()` as its first act.
+
+### Two invalid tests, both mine
+
+Step 172 removed `win_spill_call0()` from `osi_impl_park` and concluded "the
+spill is not implicated". **`task_sleep` spilled anyway.**
+
+Step 175 then called `task_sleep_armed()` directly to skip that. **It reaches
+`task_yield()`, which also spills.** The fault changed to a stack guard overrun,
+which looked like progress and was the blob simply running longer before hitting
+the same thing.
+
+All three parking primitives spill: `task_block`, `task_sleep`, `task_yield`.
+Disabling `spill_before_parking()` at its single definition is the first test
+that actually removes it.
+
+### The result
+
+```
+wifiinit : NO FAULT, NO RESET
+[qr] budget spent, still waiting  calls=4 timeouts=3 rounds/wait=24
+```
+
+`rounds/wait` was **191** with step 113's busy-spin. It is 24 now, because the
+wait is a real sleep. **The blob's blocking wait no longer burns the CPU**, and
+the radio can wait on something rather than counting cycles.
+
+Full suite, unpinned: boot 11 PASS 0 FAIL; `wintorture 1000 ms` with **10 genuine
+preemptions** and checksum CORRECT; `wincollide` ran; `wintest` ok; `blobphy`
+rc=0; `blobtx force` 0x3004. Heap 76,368 B. The 12 KB blob stack tried at step
+175 was **not** needed — the overrun belonged to the broken intermediate and 7 KB
+stands.
+
+### Why the spill was harmful
+
+Step 170's overlap was the mechanism all along, and step 172's refutation of it
+was reached from an invalid test.
+
+Every parking primitive calls the spill, so on the blob's path it runs **inside a
+call0 callee entered from a windowed bridge**. That callee's frame sits at
+`[bridge_sp-16, bridge_sp)` — exactly where the ABI keeps the bridge's caller's
+base save area — and the spill writes the stub's `a0..a3` into it. They overwrite
+each other, and the bridge's `retw` underflows into the wreckage.
+
+Measured at step 170: park `a1 = 0x3ffb27c0` against a save area of
+`[0x3ffb27c0, 0x3ffb27d0)`. Exactly coincident.
+
+And it explains step 113's spin: it makes no call0 call after the spill, so
+nothing is ever allocated over the save area.
+
+### Why removing it is correct, not a workaround
+
+`spill_before_parking()` exists because windowed frames did not survive
+preemption (UM-NATOS-038 §12.3). **Tier B made them survive** — step 163 measured
+ten genuine preemptions with eight frames live. Reducing a task to one frame
+before it parks is no longer buying anything, and on this path it was costing
+correctness.
+
+Kept: the park (`osi_impl_park` via `w2c_call2`), the disabled spill, and the
+`WINDOWSTART` writer tagging, which earned its place by producing this in one
+run.
+
 **Nothing has been on air.**

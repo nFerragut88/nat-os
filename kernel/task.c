@@ -1521,6 +1521,29 @@ void task_set_idle(int id)
  * nothing windowed in flight pays one register read. */
 static void spill_before_parking(void)
 {
+    /* [step 176] Tier B made this obsolete, and it is now actively harmful.
+     *
+     * It exists to reduce a task to one live windowed frame before it parks,
+     * because windowed frames did not survive preemption. Tier B saves and
+     * restores the whole register file per task (step 162), so they do now --
+     * measured, ten genuine preemptions with eight frames live (step 163).
+     *
+     * Harmful because of where it runs. Every parking primitive calls it --
+     * task_block, task_sleep, and task_yield, which task_sleep_armed reaches --
+     * so on the blob's blocking path it executes inside a call0 callee that was
+     * entered from a windowed bridge. That callee's frame sits at
+     * [bridge_sp-16, bridge_sp), which is exactly where the ABI keeps the
+     * bridge's caller's base save area, and the spill writes the stub's a0..a3
+     * into it. They overwrite each other, and the bridge's `retw` underflows
+     * into the wreckage. Measured at step 170: park a1 = 0x3ffb27c0 against a
+     * save area of [0x3ffb27c0, 0x3ffb27d0).
+     *
+     * Steps 172 and 175 both tried to test this by removing a spill and both
+     * removed the wrong one -- task_sleep spills, and task_sleep_armed reaches
+     * task_yield which spills. Disabling it here is the first test that actually
+     * removes it from every parking path. */
+    return;
+
     uint32_t ws;
     __asm__ volatile ("rsr.windowstart %0" : "=r"(ws));
     if (ws & (ws - 1u)) {

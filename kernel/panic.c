@@ -502,6 +502,17 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
                     uart_puts((const char[]){10,0});
                 }
             }
+            {
+                extern volatile uint32_t g_wsw[8];
+                static const char *nm[4] = { "restore", "x20wipe", "phypre ", "phypost" };
+                for (int k = 0; k < 4; k++) {
+                    uart_puts("  ws write  : ");
+                    uart_puts(nm[k]);
+                    uart_puts("  n="); uart_put_dec(g_wsw[k * 2]);
+                    uart_puts("  last="); uart_put_hex(g_wsw[k * 2 + 1]);
+                    uart_puts((const char[]){10,0});
+                }
+            }
             uart_puts("  frames    : ");
             if (g_lost_task < 0) { uart_puts("no task was ever granted less than it held"); }
             else {

@@ -278,6 +278,7 @@ extern volatile uint32_t g_pspill_count, g_pspill_bad, g_pspill_worst, g_pspill_
 extern uint32_t g_osi_alloc_calls, g_osi_alloc_bytes, g_osi_alloc_max, g_osi_alloc_fails;
 extern uint32_t g_osi_free_calls, g_osi_heap_used, g_osi_heap_hw;
 extern uint32_t g_osi_heap_largest, g_osi_heap_minfree;
+extern void osi_impl_park(int me, uint32_t ticks);
 extern void uart_puts(const char *s);
 extern void uart_put_dec(unsigned int v);
 volatile uint32_t g_qr_blk_calls, g_qr_blk_rounds, g_qr_timeouts;
@@ -808,25 +809,8 @@ static int32_t osi_s_queue_recv(void *queue, void *item, uint32_t block_time_tic
 
         *pinp = -1;                     /* UNPIN */
 
-        /* [step 113] LEAF TEST. No call at all.
-         *
-         * Step 112 found the faulting frame BELOW the spill's starting point:
-         * win_spill_all() walks upward into callers, and osi_windowed_idle() is
-         * entered afterwards, so its frames are created in territory the spill
-         * could not have covered. This removes them -- the wait now happens in
-         * this frame, which is the one live frame the spill deliberately leaves
-         * and the restore is known to handle.
-         *
-         * If the fault survives this, "frames created below the spill point" is
-         * not the mechanism and step 112's reading is wrong. */
-        {
-            uint32_t t0, now;
-            __asm__ volatile ("rsr.ccount %0" : "=r"(t0));
-            for (;;) {
-                __asm__ volatile ("rsr.ccount %0" : "=r"(now));
-                if ((now - t0) > OSI_SPIN_CYCLES) { break; }
-            }
-        }
+        *pinp = me_v;
+        (void)w2c_call2((uint32_t)&osi_impl_park, (uint32_t)me_v, 1u);
 
         pinp = &g_pinned;               /* RE-DERIVE, do not trust a register */
         *pinp = me_v;                   /* REPIN before any call0 excursion */

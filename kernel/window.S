@@ -966,6 +966,12 @@ x20_windowed:
     sll     a10, a10
     wsr.windowstart a10
     rsync
+    /* [step 174] who wrote WINDOWSTART. Counter + last value, per site. */
+    movi    a9, g_wsw
+    l32i    a11, a9, 8
+    addi    a11, a11, 1
+    s32i    a11, a9, 8
+    s32i    a10, a9, 12
     movi    a9, g_x20_post_ws
     s32i    a10, a9, 0
 
@@ -1186,6 +1192,13 @@ phy_stack_call:
     sll     a11, a11
     wsr.windowstart a11
     rsync
+    /* [step 174] who wrote WINDOWSTART. Counter + last value, per site. */
+    movi    a9, g_wsw
+    l32i    a10, a9, 16
+    addi    a10, a10, 1
+    s32i    a10, a9, 16
+    s32i    a11, a9, 20
+
 
     /* [step 138] Tell the bookkeeping what the wipe just did.
      *
@@ -1220,6 +1233,13 @@ phy_stack_call:
     sll     a11, a11
     wsr.windowstart a11
     rsync
+    /* [step 174] who wrote WINDOWSTART. Counter + last value, per site. */
+    movi    a9, g_wsw
+    l32i    a10, a9, 24
+    addi    a10, a10, 1
+    s32i    a10, a9, 24
+    s32i    a11, a9, 28
+
 
     /* [step 138] Tell the bookkeeping what the wipe just did.
      *
@@ -1307,3 +1327,14 @@ g_x20_post_ws:
     .global g_x20_recovered
 g_x20_recovered:
     .space 16                       /* a2, a3, excsave4, excsave5 at landing */
+
+/* [step 174] Four sites write WINDOWSTART outside ENTRY/RETW. Each records a
+ * count and the value it last wrote, so the panic dump can say who touched it
+ * most recently rather than leaving it to inference.
+ *   0: _handler_level3 restore   1: x20_windowed wipe
+ *   2: phy_stack_call pre        3: phy_stack_call post */
+    .section .bss, "aw", @nobits
+    .align 4
+    .global g_wsw
+g_wsw:
+    .space 32
