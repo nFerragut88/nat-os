@@ -9902,4 +9902,80 @@ specifically what `ROTW` guarantees about `WINDOWSTART`, and what the epilogue's
 Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0, `blobtx force`
 0x3004, `wifiinit` no fault and no reset.
 
+## Step 156 — step 14 already ruled this out, and said why
+
+Sent to look up what `ROTW` guarantees about `WINDOWSTART`. Found something more
+useful first: **this log answered the question 140 steps ago.**
+
+From step 14, "first attempt at window-aware switching. Failed, reverted":
+
+> Direct register-file save was **ruled out first**: `rotw` rotates *every*
+> register including whichever one holds the frame pointer, so there is no
+> register left to address memory with. Parking it in `EXCSAVE_3` and re-reading
+> it works for one group and then loses the group it clobbers.
+
+and, on the attempt that was actually built:
+
+> **It broke the case that already worked** — a *single* windowed task, which had
+> been 6/6 before. Reverted; `wintorture` correct again immediately.
+
+> Calling a windowed routine out of the level-3 handler means rotating the window
+> in the middle of a context switch, while `a1` is the frame under construction
+> and the handler's own state lives in registers the spill chain is about to walk
+> over.
+
+**That is the exact signature of steps 153, 154 and 155**: every arrangement
+regressed `wintorture` with the pin ON — breaking the case that already worked,
+before ever being judged on the case it was built for. I described that as "the
+finding" in step 155. It was step 14's finding.
+
+### What is genuinely new, and what is not
+
+**New:** step 14's *first* objection is overcome. It says there is no register
+left to address memory with, and that parking a pointer in `EXCSAVE` "works for
+one group and then loses the group it clobbers". Deriving the pointer **inside
+each block** with `movi a0, g_regsave`, after that window's `a0` is already in
+`EXCSAVE2`, avoids carrying anything across the rotation at all. That is why the
+save pass works and is green (step 131), and it is a real advance on step 14.
+
+**Not new:** everything about rotating during the restore. Step 14 measured it,
+recorded it, and named the mechanism. Steps 128–155 re-measured it at four sites
+and produced no better account.
+
+### On the ISA question itself
+
+Still worth answering properly, and I am not going to answer it from memory. What
+I recall — `ROTW` adds its immediate to `WINDOWBASE` and does **not** modify
+`WINDOWSTART`, and the architecture requires `WINDOWSTART[WINDOWBASE]` to be set
+for windowed instructions to behave defined — is consistent with step 155's
+result, since setting all-ones changed nothing and my sequence executes no
+windowed instruction anyway. But "consistent with" is not "verified", and this
+log has been burned by recalled facts often enough that it should be read from
+the Xtensa ISA reference before anything is built on it.
+
+**The empirical finding is stronger than my recollection either way**, and it is
+already recorded twice: rotating the window inside the switch breaks the working
+case. That is a measurement at five sites across two separate attempts, 140 steps
+apart.
+
+### What this means for Tier B
+
+Tier B's save half is sound and in. Its restore half requires rotating during the
+restore, which is the thing this project has now failed at twice with different
+people looking at it. **The design needs to change, not the arrangement.**
+
+The option that does not rotate during the restore: leave the incoming task's
+extra windows where they are and let the existing underflow handlers pull frames
+back from the stack lazily, as the hardware intends — which is what the kernel
+already does, and which makes Tier B's restore unnecessary rather than difficult.
+That reduces Tier B to "save on the way out so nothing is lost", and the question
+becomes whether a saved-but-never-restored file is any use. It is not obviously
+so, and that is the honest place to reconsider.
+
+Before the next attempt, read step 14 and steps 128–155 together. They are the
+same investigation.
+
+Suite unchanged: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0,
+`blobtx force` 0x3004, `wifiinit` no fault and no reset.
+
 **Nothing has been on air.**
