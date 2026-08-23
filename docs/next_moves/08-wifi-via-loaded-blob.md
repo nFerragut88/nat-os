@@ -9588,4 +9588,65 @@ unrelated.
 Suite unchanged: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0,
 `blobtx force` 0x3004, `wifiinit` no fault and no reset.
 
+## Step 150 — the invariant is right; memory is the wrong place to test it
+
+Step 149's invariant refines to something needing no external data. A base save
+area at `[sp-16 .. sp-4]` holds the **parent's** `a0..a3` — `a1` at `[sp-12]`,
+`a3` at `[sp-4]` — and `vendor_torture` opens with `mov.n a3, a1`. So for any
+frame whose parent is a torture frame:
+
+```
+[sp-4] must equal [sp-12]
+```
+
+The chain compared against itself. Implemented as a walk in the panic dump.
+
+```
+a3==a1 : 1 frames, all agree
+```
+
+**One frame, then the walk stops** — `[sp-12]` does not ascend, so there is
+nowhere to go. Exactly where step 118's walk stopped, for exactly the same
+reason, which I did not connect before building this.
+
+### Why memory cannot answer it
+
+With the pin off, the task's frames are **live in the register file**, not in
+memory. Base save areas are written *lazily*, by the overflow handler, when a
+frame is actually spilled — step 123 established that and step 149 forgot it. The
+innermost frame has never overflowed, so `[task_sp-12]` is unwritten and the
+chain has no second link to follow.
+
+The invariant is sound. The place to evaluate it is not memory.
+
+### The instrument for it is already in the tree
+
+Step 131's save pass writes all 64 physical registers into `g_regsave` on every
+switch, per task, and has been in and green since. In that slot, window *k*'s
+registers are at `slot[k*16 + n]`, so:
+
+```
+a1 of window k = slot[k*16 + 1]
+a3 of window k = slot[k*16 + 3]
+```
+
+The check is four comparisons against data that is already being captured, with
+no walk, no chain, and no dependence on anything having been spilled. It reads
+what the hardware actually held rather than what memory happens to record.
+
+That is the next step, and it is small: compare those pairs for the faulting
+task and report the first window where they differ, with both values. If a3 is a
+truncation of a1 the mask question is settled; if it is unrelated, the mask lead
+dies properly rather than by elimination.
+
+### Note
+
+Two instruments in a row have now been built to walk a chain that is not
+populated in the configuration being measured. The distinguishing question —
+*is this data in memory or in registers right now?* — is cheap to ask and has
+been skipped twice.
+
+Reverted to green, flash verified. Suite: boot 11 PASS 0 FAIL, `wintorture`
+CORRECT, `blobphy` rc=0, `wifiinit` no fault and no reset.
+
 **Nothing has been on air.**
