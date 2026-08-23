@@ -9494,8 +9494,28 @@ than *which address*, each in a single run: `0xaa8a` (step 146, handler scratch)
 and now `a3` here. The dump already contained everything needed both times — the
 change was in the question, not the instrument.
 
-Reverted to green. Kept: the CALL12 reserve, the `WINDOWSTART` seed, the scratch
-restore. Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0,
-`blobtx force` 0x3004, `wifiinit` no fault and no reset.
+### A near-miss in the reporting
+
+The revert build's flash **failed** -- `Could not open COM5, the port doesn't
+exist`, the port still held by the preceding serial session -- and the suite that
+ran afterwards was the **bench image**, not the reverted source. It duly reported
+`wintorture FAIL` and `wifiinit PANIC`, which is correct for what was actually on
+the board and wrong for what the commit claimed.
+
+Caught because those two results contradicted a tree that had just been reverted.
+`GetPortNames()` showed COM5 present the whole time; the earlier `Win32_SerialPort`
+query saying "absent" was the unreliable one. Reflashed, verified.
+
+**This is the same class as step 128's "build failed, stale image reported
+clean" and step 135's cross-event comparison** -- the third time this session a
+toolchain step failed quietly and the run after it was read as a result. The
+build script's exit status is checked; the *flash* step's is not, and that is the
+gap. `Hash of data verified` / `Leaving...` is the string that means the image
+actually landed.
+
+Reverted to green, **verified after a successful reflash**. Kept: the CALL12
+reserve, the `WINDOWSTART` seed, the scratch restore. Suite: boot 11 PASS 0 FAIL,
+`wintorture` CORRECT, `blobphy` rc=0, `blobtx force` 0x3004, `wifiinit` no fault
+and no reset.
 
 **Nothing has been on air.**
