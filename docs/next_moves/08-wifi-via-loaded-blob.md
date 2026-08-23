@@ -10764,4 +10764,76 @@ failed remedy costs.
 Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0, `wifiinit` no
 fault and no reset, pin off.
 
+## Step 171/172 — the regression is diagnosed; the park fault is not
+
+Step 170 left one question — why did reserving the caller's save area regress a
+working case — and one claim, that the overlap explains the park fault. The first
+is answered. The second is now doubtful.
+
+### Why the reservation regressed: the ISA says so, under MOVSP
+
+Applied to `w2c_call2` alone (the bridge the park uses), the park's fault
+**moved**, from `_WindowUnderflow8 + 0x15` to `+0x0f`:
+
+```
++0x0f : l32e a7, a1, -12      excvaddr 0x000000f3  ->  a1 = 0x000000ff
+```
+
+`a1` is loaded from `[a9-12]` and came back as small garbage rather than the
+`0x3ffb2790` it held before. Different debris, same unwritten save area.
+
+The reason the approach cannot work is stated outright in the ISA, under `MOVSP`:
+
+> The Xtensa Windowed Register ABI specifies that **some of the caller's
+> registers may be stored just below the callee's stack pointer. When the stack
+> frame is extended, these values may need to be moved.** Under the Windowed
+> Register Option this is handled by raising an **Alloca exception** so that the
+> registers can be moved with interrupts and exceptions disabled.
+
+**`a1` is not a free register — it is the address the save area is defined
+against.** Moving it with a plain `addi` relocates the definition and leaves the
+data behind, so the spill wrote `[moved_a1-16]` and the `retw` read
+`[orig_a1-16]`, 32 bytes apart. `MOVSP` exists precisely to make that move
+atomic, and this kernel has no Alloca handler.
+
+So the reservation is not a fix that needs tuning. **It is the wrong instrument**,
+and step 170's "not diagnosed" is now diagnosed.
+
+### And the overlap is not the park fault
+
+With the reservation removed and `win_spill_call0()` taken out of the park
+entirely — no spill at all, on the theory that Tier B has made it unnecessary —
+the fault returns exactly as before:
+
+```
+exccause 28   epc 0x400800d5   excvaddr 0x00060500
+```
+
+Identical with the spill and without it. **So the spill is not implicated, and
+the save-area overlap step 170 measured is not what produces this fault.** The
+overlap is real — the arithmetic is exact — but it is a latent defect the park
+happens to sit near, not the cause of the park failing.
+
+That corrects step 170's closing claim that the overlap explains both why the
+spin works and why every blocking wait fails. On this evidence it explains
+neither.
+
+### Where the park fault now stands
+
+Eliminated, each by measurement rather than argument: rotation displacement
+(166), `bit(base)` as an anomaly (§5), timing and races (159), Tier B and the pin
+(164), the spill (172), and the save-area overlap (172).
+
+Still true: deterministic; `a7` recovered as a PS; the save area it reads was
+never written (169); the PS in it is debris from a dead switch frame.
+
+What has not been asked: **why an underflow fires at all.** `retw` underflows
+only when the caller's `WINDOWSTART` bit is clear. With no spill in the park, the
+stub's frame should never have been spilled, its bit should still be set, and no
+underflow should occur on the bridge's return. One does. **Which bit is clear,
+and who cleared it, is the question** — and it is the same one step 126 reached
+and named, now from a fourth direction.
+
+Reverted; suite green with the pin off.
+
 **Nothing has been on air.**
