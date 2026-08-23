@@ -10695,4 +10695,73 @@ already instrumented from step 112.
 Reverted; the spin stands. Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT,
 `blobphy` rc=0, `wifiinit` no fault and no reset, pin off.
 
+## Step 170 — the overlap is measured and exact; the obvious fix regresses
+
+### The measurement
+
+Probed what the park's spill covered — call0 code, special-register reads and
+global stores only, none of the shapes that perturbed steps 152–158 — and checked
+the fault signature was unmoved before believing any of it:
+
+```
+park spill : ws 0x0000000a -> 0x00000008   wb 3   sp 0x3ffb27c0
+signature  : epc 0x400800d5  excvaddr 0x00060500   UNCHANGED
+```
+
+The spill cleared bit 1 (the stub's frame) and kept bit 3 (the bridge's), which
+is correct. So the bridge's `retw` underflows the stub's frame, and reads its
+save area at `[bridge_sp-16 .. bridge_sp)` = **`[0x3ffb27c0, 0x3ffb27d0)`**.
+
+`osi_impl_park`'s call0 frame has `a1 = 0x3ffb27c0`. In call0, `a1` is the lowest
+address of the frame, so that frame is `[0x3ffb27c0, 0x3ffb27d0)`.
+
+**Exactly coincident.** The call0 callee's frame *is* the caller's save area.
+
+### And it is an asymmetry between the bridges
+
+```
+win_spill_call0 :  addi a1, a1, -32   before its work
+rom_call3       :  addi a1, a1, -48
+w2c_call0f/1/2/3:  entry a1, 32  ...  callx0 a8      <- no reservation
+```
+
+`entry a1, 32` puts the frame at `[a1, a1+32)` and the caller's save area
+*below* it, in what is otherwise free stack. Two bridges reserve that space and
+four do not. `win_spill_call0`'s own comment describes this class of bug and
+protects against it; the `w2c_*` bridges were written from `rom_call3`'s shape
+and inherited the gap — the same inheritance step 37 records for `phy_stack_call`.
+
+That also explains the shape of the whole investigation: **the step-113 spin makes
+no call0 call after the spill**, so nothing allocates there and nothing is
+overwritten. Every attempt at a real blocking wait does make one.
+
+### The obvious fix regresses
+
+Adding `addi a1, a1, -32` / `+32` around all four `callx0` sites **breaks
+`wifiinit`, which was clean**:
+
+```
+exccause 28   epc 0x400800cf   DOUBLE EXCEPTION   excvaddr 0x000000f3
+epc1 0x4008d176   windowbase 11   windowstart 0x00002000
+```
+
+A different fault, in `_WindowUnderflow8 + 0x0f`, on the path the spin normally
+survives. Reverted; suite green.
+
+So the analysis is measured and the remedy is not simply "reserve the space".
+Something else depends on the bridge's `a1` during the `callx0` — the candidates
+are the `[a1+0]` slot diagnostics the bridges write (steps 79, 82), a callee that
+reads through the caller's sp, or stack depth on a nested crossing. **Not
+diagnosed, and recorded as not diagnosed.**
+
+### Status
+
+The overlap is the first mechanism in this investigation that explains *both*
+why the spin works and why every blocking wait fails, and it is arithmetic rather
+than inference — two addresses that coincide exactly. That is worth more than the
+failed remedy costs.
+
+Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0, `wifiinit` no
+fault and no reset, pin off.
+
 **Nothing has been on air.**
