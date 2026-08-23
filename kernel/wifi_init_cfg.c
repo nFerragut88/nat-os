@@ -86,6 +86,8 @@ const void *wifi_init_cfg(void)
     g_cfg.osi_funcs = (wifi_osi_funcs_t *)wifi_osi_table();
 
     {
+        extern void osi_impl_mac_report(void);
+        osi_impl_mac_report();
         uint32_t off = 0;
         uint32_t bad = osi_null_slots(&off);
         uart_puts("   osi table : ");

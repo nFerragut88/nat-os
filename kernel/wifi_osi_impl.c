@@ -190,6 +190,83 @@ void *osi_impl_sem_create(uint32_t max, uint32_t init)
  * being refused, and freeing its way back out one call later. */
 static void *g_thread_sem[TASK_MAX];
 
+/* [step 186] _read_mac, from eFuse.
+ *
+ * The stub returned ESP_OK and never wrote the caller's buffer. The blob asked
+ * twice, believed it, and faulted in ROM one allocation later (step 185).
+ * Reporting success without doing the work is worse than failing: the caller
+ * has no way to find out.
+ *
+ * Layout is ESP-IDF's esp_efuse_table.c, MAC_FACTORY, verbatim -- BLK0 bit
+ * offsets, most significant byte first:
+ *
+ *   mac[0] = bits 72..79     mac[3] = bits 48..55
+ *   mac[1] = bits 64..71     mac[4] = bits 40..47
+ *   mac[2] = bits 56..63     mac[5] = bits 32..39
+ *
+ * BLK0 word N covers bits 32N..32N+31, so bits 32..63 are RDATA1 and 64..95 are
+ * RDATA2. Read-only registers; no eFuse programming is performed or possible
+ * from here.
+ *
+ * Type derivation is esp_read_mac()'s generate_mac(), for the universes ESP-IDF
+ * enables by default on this part. */
+#define EFUSE_BLK0_RDATA1  0x3FF5A004u
+#define EFUSE_BLK0_RDATA2  0x3FF5A008u
+
+int32_t osi_impl_read_mac(uint8_t *mac, uint32_t type);
+int32_t osi_impl_read_mac(uint8_t *mac, uint32_t type)
+{
+    if (!mac) {
+        return -1;                       /* ESP_ERR_INVALID_ARG */
+    }
+    uint32_t r1 = *(volatile uint32_t *)EFUSE_BLK0_RDATA1;
+    uint32_t r2 = *(volatile uint32_t *)EFUSE_BLK0_RDATA2;
+
+    mac[0] = (uint8_t)(r2 >> 8);
+    mac[1] = (uint8_t)(r2);
+    mac[2] = (uint8_t)(r1 >> 24);
+    mac[3] = (uint8_t)(r1 >> 16);
+    mac[4] = (uint8_t)(r1 >> 8);
+    mac[5] = (uint8_t)(r1);
+
+    switch (type) {
+    case 0u: break;                      /* ESP_MAC_WIFI_STA    -- the base   */
+    case 1u: mac[5] += 1u; break;        /* ESP_MAC_WIFI_SOFTAP               */
+    case 2u: mac[5] += 2u; break;        /* ESP_MAC_BT                        */
+    case 3u: mac[5] += 3u; break;        /* ESP_MAC_ETH                       */
+    default: return -1;                  /* ESP_ERR_NOT_SUPPORTED             */
+    }
+    return 0;                            /* ESP_OK, and now it means it       */
+}
+
+/* Printed once at init so a wrong MAC is visible rather than inferred. */
+void osi_impl_mac_report(void);
+void osi_impl_mac_report(void)
+{
+    uint8_t m[6];
+    if (osi_impl_read_mac(m, 0u) != 0) { return; }
+    static const char hexd[] = "0123456789abcdef";
+    char line[20];
+    int  o = 0;
+    for (int i = 0; i < 6; i++) {
+        if (i) { line[o++] = ':'; }
+        line[o++] = hexd[(m[i] >> 4) & 0xF];
+        line[o++] = hexd[m[i] & 0xF];
+    }
+    line[o++] = '\n';
+    line[o]   = 0;
+    /* [step 186] ROM newlib's syscall stub table pointer. ROM __getreent reads
+     * it; the LoadProhibited at __getreent+0x8 with excvaddr 0 says it is not
+     * usable. Printed so "nat-os never writes it" stops being an inference. */
+    uart_puts("   rom stubs : pro=");
+    uart_put_hex(*(volatile uint32_t *)0x3FFAE024u);
+    uart_puts(" app=");
+    uart_put_hex(*(volatile uint32_t *)0x3FFAE020u);
+    uart_puts(line + 17);          /* just the newline */
+    uart_puts("   base mac  : ");
+    uart_puts(line);
+}
+
 void *osi_impl_thread_sem_get(void);
 void *osi_impl_thread_sem_get(void)
 {

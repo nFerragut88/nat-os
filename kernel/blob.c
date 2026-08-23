@@ -189,6 +189,14 @@ int blob_init(const struct blob_entry *e)
 
     /* The MMU maps instructions; it does not populate writable memory. These
      * two steps are what a loader exists for. */
+    /* [step 186] Install the ROM newlib syscall stubs before any blob code
+     * runs. The blob calls ROM libc; ROM libc reaches through
+     * syscall_table_ptr_pro, which nat-os had left at zero. */
+    {
+        extern void rom_stubs_init(void);
+        rom_stubs_init();
+    }
+
     uart_puts("      [copy .data]\n");
     const volatile uint32_t *src = (const volatile uint32_t *)e->data_lma;
     volatile uint32_t *dst       = (volatile uint32_t *)e->data_vma;

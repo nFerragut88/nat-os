@@ -11872,6 +11872,166 @@ believes it has and has not got is exactly the shape of a bad load.
    two fields together.
 
 **Nothing has been on air.**
+---
+
+## step 186 — a MAC that was never read, and an operating system ROM expected
+
+### 186a. `_read_mac`
+
+```c
+static int osi_s_read_mac(uint8_t* mac, unsigned int type)
+{
+    osi_hit(55u);
+    return 0;                       /* ESP_OK, and mac never written */
+}
+```
+
+Reporting success for work never done, and the blob asked twice. Implemented
+from eFuse, with the layout taken from ESP-IDF's `esp_efuse_table.c`
+(`MAC_FACTORY`) rather than recalled — BLK0 bit offsets, most significant byte
+first, so `mac[0]` is bits 72..79 and `mac[5]` is bits 32..39, which lands as
+`RDATA2`'s low half followed by `RDATA1` big-endian. Type derivation is
+`esp_read_mac()`'s: STA is the base, SoftAP `+1`, BT `+2`, ETH `+3`.
+
+Verified against ground truth rather than by inspection — **esptool prints the
+MAC while flashing**:
+
+```
+esptool  MAC: 5c:01:3b:50:3f:64
+nat-os   base mac : 5c:01:3b:50:3f:64
+```
+
+**And it did not move the fault at all.** Byte-identical trace, same
+`excvaddr`. A real defect, and not this one. Worth stating plainly: the step-185
+report named it as "the strongest lead", and it was wrong.
+
+### 186b. The fault: an operating system ROM expected and did not find
+
+`excvaddr` settles a `LoadProhibited` immediately, and had been in the dump all
+along:
+
+```
+exccause 28  LoadProhibited   epc 0x4000be94   excvaddr 0x00000000
+```
+
+`esp32.rom.ld` alone does not resolve `0x4000be94`, but the ROM symbols are
+spread over ten linker scripts. Across all of them:
+
+```
+0x4000be94 -> __getreent + 0x8   [esp32.rom.syscalls.ld]
+              next symbol: malloc at 0x4000bea0
+```
+
+The ESP32 mask ROM contains a newlib — `malloc`, `printf`, the string and float
+routines — but not the operating system those routines need. Every ROM entry
+that touches libc state reaches through a table of callbacks the runtime
+installs at `syscall_table_ptr_pro` (`0x3FFAE024`). Measured, before assuming:
+
+```
+rom stubs : pro=0x00000000 app=0x00000000
+```
+
+**nat-os never wrote either.** The blob called a ROM routine, the ROM routine
+called `__getreent`, and `__getreent` dereferenced a null table pointer. Not the
+blob's doing and not the adapter's.
+
+`kernel/rom_stubs.c` + `vendor/windowed/rom_stubs_w.c` install a 36-entry table:
+the allocators route to nat-os's heap, `__getreent` returns a writable zeroed
+block so ROM has somewhere for errno, the lock family is deliberately empty
+(nat-os already serialises every path that reaches ROM libc, and making them
+real would mean a blocking call0 excursion from inside ROM code — step 104), and
+everything else refuses. Field order is copied from IDF's `libc_stubs.h`.
+
+`_realloc_r` returns NULL rather than faking it: nat-os's heap has no realloc and
+the old size is not recoverable from the pointer, so there is no way to copy the
+right number of bytes. A visible failure beats invisible corruption.
+
+### 186c. The ABI boundary, crossed wrongly in both directions
+
+Two mistakes in one step, both mine, both instructive.
+
+**call0 table, windowed caller.** The first attempt put the stubs in `kernel/`,
+which builds `-mabi=call0`. ROM calls them with `CALL8`, which writes the return
+address into `a8` and leaves the rotation to the callee's `ENTRY`. A call0
+function has no `ENTRY`, so nothing rotates and it returns through an `a0` the
+caller never set:
+
+```
+exccause 2  InstructionFetchError   epc 0x3ffb2770   (inside task 9's stack)
+```
+
+**Windowed helper, call0 caller.** Moving the table to `vendor/windowed/` fixed
+that and introduced the mirror image: `rom_stub_words()` was a windowed function,
+and `kernel/rom_stubs.c` — call0 — called it directly.
+
+```
+exccause 0  IllegalInstruction   epc 0x4008de55   (rom_stub_words)
+```
+
+It is now a `const uint32_t`. A word of data needs no ABI at all.
+
+The same boundary, crossed both ways, in the file written to fix a crossing. The
+project's rule — *the boundary is by file* — is not a style preference, and the
+two symptoms are worth keeping as its signature: **call0 callee entered from
+windowed returns into a stack address; windowed callee entered from call0 traps
+IllegalInstruction on its `entry`.**
+
+### 186d. Result
+
+```
+before:  ... t9:79 t9:92 t9:85                                    -> __getreent+8
+after:   ... t9:85 t9:44 t9:92 t9:92 t9:92 t9:21 t9:22 t9:89 t9:21
+```
+
+`_free`, three `_wifi_zalloc`, `_mutex_lock`/`_unlock`, `_wifi_malloc`. And the
+allocation figures move for the first time in this investigation:
+
+| | step 185 | now |
+|---|---|---|
+| allocator calls | 7 | **26** |
+| bytes | 4,272 | **23,820** |
+| heap free | 67,384 | 47,880 |
+| fails | 0 | 0 |
+
+The driver is genuinely building its state rather than dying on the way in.
+
+The new fault is another jump to zero, and the technique from step 185 named the
+site in one step:
+
+```
+fault regs: a0 0x00000000  a1 0x3ffb9560  wb 1  ws 0x00000002
+a8 = 0x8008d964  ->  4008d961: callx8 a2      (rom_call4)
+```
+
+`a1` is in **task 5's** stack, so this is the init context, not the worker, and
+`rom_call4` was called with `fn == 0`. The step-177 ISR trampolines also use
+`rom_call4`, and they were checked first: `blob_isr_run()` guards with
+`if (!fn) { g_blob_isr_nofn++; return; }`, so this is not that. The other caller
+is `blob_call()`.
+
+`esp_wifi_init_internal` still does not return.
+
+### Next
+
+1. Find what calls `blob_call()` with a null function on task 5. The caller is
+   nat-os's, not the blob's, so this is a short search.
+2. `_get_random` is the same defect as `_read_mac` was — `return 0` with the
+   caller's buffer untouched — and is on the live path. It should be fixed on its
+   own merits, and *not* described as a lead until something implicates it.
+3. The instrumentation debt is overdue and now has a new entry: `a0/sp out` and
+   `saved frame @` are superseded by `fault regs`, `sbp-post` prints a verdict
+   off a never-sampled sentinel, `blk-window` runs two fields together, and
+   `qspill` reports a task's base frame as `1 bad`.
+
+```
+boot 11 PASS 0 FAIL
+wintorture 1000 ms : switches during the call: 10  (preemption really happened)
+                     checksum 1632 expected 1632  CORRECT
+blobphy rc=0
+```
+
+**Nothing has been on air.**
+
 
 
 

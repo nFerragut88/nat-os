@@ -212,6 +212,7 @@ extern void osi_impl_calloc(void);
 extern void osi_impl_free_heap(void);      /* [step 182] */
 extern void osi_impl_queue_waiting(void); /* [step 182] */
 extern void osi_impl_thread_sem_get(void); /* [step 182] */
+extern void osi_impl_read_mac(void);       /* [step 186] */
 extern void osi_impl_free(void);
 extern void task_current(void);
 extern void osi_impl_queue_create(void);
@@ -1306,7 +1307,10 @@ static int osi_s_phy_update_country_info(const char* country)
 static int osi_s_read_mac(uint8_t* mac, unsigned int type)
 {
     osi_hit(55u);
-    return 0;
+    /* [step 186] Was `return 0` with the buffer untouched -- ESP_OK for work
+     * never done. See osi_impl_read_mac() for the eFuse layout. */
+    return (int)w2c_call2((uint32_t)&osi_impl_read_mac,
+                          (uint32_t)mac, (uint32_t)type);
 }
 
 static void osi_s_timer_arm(void *timer, uint32_t tmout, bool repeat)
