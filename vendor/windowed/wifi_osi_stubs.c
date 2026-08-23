@@ -200,6 +200,10 @@ extern void task_current(void);
 extern void osi_impl_queue_create(void);
 extern void osi_impl_queue_delete(void);
 extern void blob_task_create(void);
+/* [step 178] read-only blob-task counters, taken via w2c_call0f. */
+extern void blob_task_count(void);
+extern void blob_task_stack_short(void);
+extern void blob_task_want_stack(void);
 extern void blob_lock(void);
 extern void blob_unlock(void);
 extern void win_spill_all(void);
@@ -274,11 +278,18 @@ volatile uint32_t g_qr_caller, g_qr_caller_raw;
 /* [step 115] spill-on-preemption outcome, reported from the one place that
  * already prints during a live wifiinit. Data only -- no call0 call. */
 extern volatile uint32_t g_pspill_count, g_pspill_bad, g_pspill_worst, g_pspill_post_ws;
+/* [step 177] did the interrupts actually get wired, and do they fire? */
+extern volatile uint32_t g_blob_isr_calls[32], g_blob_isr_nofn, g_blob_intr_routed;
 /* [step 127] the radio's memory demand, read as data -- no call0 call. */
 extern uint32_t g_osi_alloc_calls, g_osi_alloc_bytes, g_osi_alloc_max, g_osi_alloc_fails;
 extern uint32_t g_osi_free_calls, g_osi_heap_used, g_osi_heap_hw;
 extern uint32_t g_osi_heap_largest, g_osi_heap_minfree;
 extern void osi_impl_park(int me, uint32_t ticks);
+/* [step 177] the interrupt plumbing, call0 side. */
+extern void osi_impl_set_isr(int32_t n, void *f, void *arg);
+extern void osi_impl_set_intr(uint32_t source, uint32_t num, uint32_t prio);
+extern void osi_impl_ints_on(uint32_t mask);
+extern void osi_impl_ints_off(uint32_t mask);
 extern void uart_puts(const char *s);
 extern void uart_put_dec(unsigned int v);
 volatile uint32_t g_qr_blk_calls, g_qr_blk_rounds, g_qr_timeouts;
@@ -426,7 +437,11 @@ static void osi_s_set_intr(int32_t cpu_no, uint32_t intr_source, uint32_t intr_n
         g_osi_intr_clamped++;
         intr_prio = 3;
     }
-    (void)cpu_no; (void)intr_source; (void)intr_num; (void)intr_prio;
+    /* [step 177] Now actually routed. cpu_no is dropped: single core, and the
+     * app CPU is not started. */
+    (void)cpu_no;
+    (void)w2c_call3((uint32_t)&osi_impl_set_intr,
+                    intr_source, intr_num, (uint32_t)intr_prio);
 }
 
 static void osi_s_clear_intr(uint32_t intr_source, uint32_t intr_num)
@@ -437,16 +452,22 @@ static void osi_s_clear_intr(uint32_t intr_source, uint32_t intr_num)
 static void osi_s_set_isr(int32_t n, void *f, void *arg)
 {
     osi_hit(4u);
+    /* [step 177] Recorded, not installed -- the trampoline reads it when the
+     * line fires, so _set_isr and _set_intr may arrive in either order. */
+    (void)w2c_call3((uint32_t)&osi_impl_set_isr,
+                    (uint32_t)n, (uint32_t)f, (uint32_t)arg);
 }
 
 static void osi_s_ints_on(uint32_t mask)
 {
     osi_hit(5u);
+    (void)w2c_call1((uint32_t)&osi_impl_ints_on, mask);
 }
 
 static void osi_s_ints_off(uint32_t mask)
 {
     osi_hit(6u);
+    (void)w2c_call1((uint32_t)&osi_impl_ints_off, mask);
 }
 
 static bool osi_s_is_from_isr(void)
@@ -859,6 +880,49 @@ static int32_t osi_s_queue_recv(void *queue, void *item, uint32_t block_time_tic
             (void)w2c_call1((uint32_t)&uart_put_dec, g_pspill_worst);
             (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" last_post_ws=");
             (void)w2c_call1((uint32_t)&uart_put_dec, g_pspill_post_ws);
+            (void)w2c_call1((uint32_t)&uart_puts,
+                            (uint32_t)"\n   [intr] routed=");
+            (void)w2c_call1((uint32_t)&uart_put_dec, g_blob_intr_routed);
+            (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" nofn=");
+            (void)w2c_call1((uint32_t)&uart_put_dec, g_blob_isr_nofn);
+            (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" fired:");
+            {
+                uint32_t k;
+                for (k = 0u; k < 32u; k++) {
+                    if (g_blob_isr_calls[k]) {
+                        (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" L");
+                        (void)w2c_call1((uint32_t)&uart_put_dec, k);
+                        (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)"=");
+                        (void)w2c_call1((uint32_t)&uart_put_dec, g_blob_isr_calls[k]);
+                    }
+                }
+            }
+            /* [step 177] the OSI call trace, in order. Already recorded by
+             * osi_hit(); never printed, because wifiinit does not return and
+             * `osiused` cannot be reached. This says what the blob actually
+             * asked for before it stalled. */
+            (void)w2c_call1((uint32_t)&uart_puts,
+                            (uint32_t)"\n   [osi] ");
+            {
+                uint32_t k, n = g_osi_trace_n;
+                if (n > 40u) { n = 40u; }
+                for (k = 0u; k < n; k++) {
+                    (void)w2c_call1((uint32_t)&uart_put_dec, g_osi_trace[k]);
+                    (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" ");
+                }
+            }
+            (void)w2c_call1((uint32_t)&uart_puts,
+                            (uint32_t)"\n   [bt] created=");
+            (void)w2c_call1((uint32_t)&uart_put_dec, w2c_call0f((uint32_t)&blob_task_count));
+            (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" refused=");
+            (void)w2c_call1((uint32_t)&uart_put_dec, w2c_call0f((uint32_t)&blob_task_stack_short));
+            (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" want_stack=");
+            (void)w2c_call1((uint32_t)&uart_put_dec, w2c_call0f((uint32_t)&blob_task_want_stack));
+            /* [step 178] blob-task state. The OSI trace shows call 36
+             * (_task_create_pinned_to_core) hit once, but a refused create and
+             * a successful one look identical from the trace -- osi_hit() fires
+             * before the decision. These counters are already maintained by
+             * blobcall.c; nothing new is measured. */
             (void)w2c_call1((uint32_t)&uart_puts,
                             (uint32_t)"\n   [mem] alloc calls=");
             (void)w2c_call1((uint32_t)&uart_put_dec, g_osi_alloc_calls);

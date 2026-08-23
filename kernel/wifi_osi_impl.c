@@ -23,6 +23,9 @@
 
 #include "wifi_osi_impl.h"
 #include "task.h"
+#include "xtensa.h"
+#include "window.h"
+#include "intr.h"
 #include "timer.h"
 #include "heap.h"
 #include "critical.h"
@@ -635,6 +638,175 @@ void osi_impl_park(int me, uint32_t ticks)
     task_arm_wake();
     task_sleep_armed(ticks ? ticks : 1u);
     g_pinned = me;
+}
+
+/* ==== [step 177] The radio's interrupts, wired ==========================
+ *
+ * _set_intr, _set_isr, _ints_on and _ints_off have counted their calls and done
+ * nothing since the OSI table was written. UM-NATOS-042 section 9.5 lists them
+ * first among what stands between here and a working radio, and nothing above
+ * the MAC can work until they do something.
+ *
+ * The kernel already has the machinery, and the constants were reserved for this
+ * in intr.h: INTR_SRC_WIFI_MAC and INTR_LINE_WIFI_MAC.
+ *
+ * ---- the shape of the problem -------------------------------------------
+ *
+ * intr_dispatch() calls handlers as `void (*)(void)`, call0, no argument. The
+ * blob's ISR is WINDOWED and takes one. So each line gets a call0 trampoline
+ * that knows its own number, looks the ISR up, and crosses the ABI boundary.
+ *
+ * rom_call4 is the crossing, chosen over rom_call3 for one reason: rom_call3
+ * takes the blob mutex, and a mutex cannot be taken from an interrupt handler
+ * (UM-NATOS-042 section 2.4; UM-NATOS-041 section 5.3 is the same point). It
+ * also reserves 32 bytes below its frame and writes its own base save area,
+ * which the w2c_* bridges do not -- see UM-NATOS-045 section 8, where that gap
+ * is recorded as dormant.
+ *
+ * ---- what this deliberately does NOT do ----------------------------------
+ *
+ * No mutual exclusion against the blob task. An ISR firing while the blob task
+ * is inside vendor code puts two contexts in windowed vendor code at once, which
+ * the blob mutex exists to prevent. The blob has its own answer -- it wraps its
+ * critical regions in _wifi_int_disable/_wifi_int_restore, which mask interrupts
+ * globally -- and those are already implemented here. Whether that is sufficient
+ * is not yet measured, and this comment is the marker for it. */
+
+typedef struct { uint32_t fn, arg; } blob_isr_t;
+
+static volatile blob_isr_t g_blob_isr[32];
+volatile uint32_t g_blob_isr_calls[32];
+volatile uint32_t g_blob_isr_nofn;      /* line fired with no ISR recorded */
+volatile uint32_t g_blob_intr_routed;   /* _set_intr calls that reached the matrix */
+
+static void blob_isr_run(uint32_t line)
+{
+    uint32_t fn  = g_blob_isr[line].fn;
+    uint32_t arg = g_blob_isr[line].arg;
+
+    if (!fn) {
+        g_blob_isr_nofn++;
+        return;
+    }
+    g_blob_isr_calls[line]++;
+    (void)rom_call4(fn, arg, 0u, 0u, 0u);
+}
+
+static void blob_isr_0(void) { blob_isr_run(0u); }
+static void blob_isr_1(void) { blob_isr_run(1u); }
+static void blob_isr_2(void) { blob_isr_run(2u); }
+static void blob_isr_3(void) { blob_isr_run(3u); }
+static void blob_isr_4(void) { blob_isr_run(4u); }
+static void blob_isr_5(void) { blob_isr_run(5u); }
+static void blob_isr_6(void) { blob_isr_run(6u); }
+static void blob_isr_7(void) { blob_isr_run(7u); }
+static void blob_isr_8(void) { blob_isr_run(8u); }
+static void blob_isr_9(void) { blob_isr_run(9u); }
+static void blob_isr_10(void) { blob_isr_run(10u); }
+static void blob_isr_11(void) { blob_isr_run(11u); }
+static void blob_isr_12(void) { blob_isr_run(12u); }
+static void blob_isr_13(void) { blob_isr_run(13u); }
+static void blob_isr_14(void) { blob_isr_run(14u); }
+static void blob_isr_15(void) { blob_isr_run(15u); }
+static void blob_isr_16(void) { blob_isr_run(16u); }
+static void blob_isr_17(void) { blob_isr_run(17u); }
+static void blob_isr_18(void) { blob_isr_run(18u); }
+static void blob_isr_19(void) { blob_isr_run(19u); }
+static void blob_isr_20(void) { blob_isr_run(20u); }
+static void blob_isr_21(void) { blob_isr_run(21u); }
+static void blob_isr_22(void) { blob_isr_run(22u); }
+static void blob_isr_23(void) { blob_isr_run(23u); }
+static void blob_isr_24(void) { blob_isr_run(24u); }
+static void blob_isr_25(void) { blob_isr_run(25u); }
+static void blob_isr_26(void) { blob_isr_run(26u); }
+static void blob_isr_27(void) { blob_isr_run(27u); }
+static void blob_isr_28(void) { blob_isr_run(28u); }
+static void blob_isr_29(void) { blob_isr_run(29u); }
+static void blob_isr_30(void) { blob_isr_run(30u); }
+static void blob_isr_31(void) { blob_isr_run(31u); }
+
+static const intr_handler_fn g_blob_tramp[32] = {
+    blob_isr_0,
+    blob_isr_1,
+    blob_isr_2,
+    blob_isr_3,
+    blob_isr_4,
+    blob_isr_5,
+    blob_isr_6,
+    blob_isr_7,
+    blob_isr_8,
+    blob_isr_9,
+    blob_isr_10,
+    blob_isr_11,
+    blob_isr_12,
+    blob_isr_13,
+    blob_isr_14,
+    blob_isr_15,
+    blob_isr_16,
+    blob_isr_17,
+    blob_isr_18,
+    blob_isr_19,
+    blob_isr_20,
+    blob_isr_21,
+    blob_isr_22,
+    blob_isr_23,
+    blob_isr_24,
+    blob_isr_25,
+    blob_isr_26,
+    blob_isr_27,
+    blob_isr_28,
+    blob_isr_29,
+    blob_isr_30,
+    blob_isr_31
+};
+
+/* _set_isr(n, f, arg). Recorded rather than installed: the blob may call this
+ * before or after _set_intr, and the trampoline reads the record when it
+ * fires, so either order works. */
+void osi_impl_set_isr(int32_t n, void *f, void *arg);
+
+void osi_impl_set_isr(int32_t n, void *f, void *arg)
+{
+    if (n < 0 || n >= 32) {
+        return;
+    }
+    g_blob_isr[n].fn  = (uint32_t)f;
+    g_blob_isr[n].arg = (uint32_t)arg;
+}
+
+/* _set_intr(cpu_no, source, num, prio). cpu_no is dropped: this is a
+ * single-core kernel and the app CPU is not started. */
+void osi_impl_set_intr(uint32_t source, uint32_t num, uint32_t prio);
+
+void osi_impl_set_intr(uint32_t source, uint32_t num, uint32_t prio)
+{
+    (void)prio;                     /* clamped by the caller; see the stub */
+    if (num >= 32u) {
+        return;
+    }
+    g_blob_intr_routed++;
+    intr_route(source, num, g_blob_tramp[num]);
+}
+
+void osi_impl_ints_on(uint32_t mask);
+void osi_impl_ints_off(uint32_t mask);
+
+void osi_impl_ints_on(uint32_t mask)
+{
+    for (uint32_t line = 0u; line < 32u; line++) {
+        if (mask & (1u << line)) {
+            xt_enable_interrupt(line);
+        }
+    }
+}
+
+void osi_impl_ints_off(uint32_t mask)
+{
+    for (uint32_t line = 0u; line < 32u; line++) {
+        if (mask & (1u << line)) {
+            xt_disable_interrupt(line);
+        }
+    }
 }
 
 void *osi_impl_malloc(uint32_t n)

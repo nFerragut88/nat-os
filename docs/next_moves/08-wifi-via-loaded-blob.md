@@ -10981,3 +10981,169 @@ Kept: the park (`osi_impl_park` via `w2c_call2`), the disabled spill, and the
 run.
 
 **Nothing has been on air.**
+---
+
+## step 177 — the interrupts, wired
+
+`_set_intr`, `_set_isr`, `_ints_on` and `_ints_off` have counted their calls and
+done nothing since the table was written. They now reach the kernel.
+
+- `kernel/wifi_osi_impl.c`: 32 per-line call0 trampolines (`blob_isr_0..31`) and
+  a `blob_isr_t g_blob_isr[32]` table. A trampoline looks up the blob's handler
+  for its line and calls it with **`rom_call4`**, not `rom_call3` — `rom_call3`
+  takes the blob mutex, and a mutex cannot be taken from an ISR
+  (UM-NATOS-042 §2.4).
+- `vendor/windowed/wifi_osi_stubs.c`: the four stubs bridge out through
+  `w2c_call1`/`w2c_call3`.
+- The kernel side already existed: `intr_route(source, line, fn)`,
+  `intr_dispatch()`, `xt_enable_interrupt()`, and the reserved
+  `INTR_SRC_WIFI_MAC 0` / `INTR_LINE_WIFI_MAC 27`.
+
+Green: boot 11 PASS 0 FAIL, `wintorture` 10 real switches checksum CORRECT,
+`blobphy` rc=0.
+
+And inert: **`[intr] routed=0`**. The blob never calls `_set_intr`, because it
+never gets that far. So the trace was printed instead — the OSI call numbers, in
+order, from the live `[qr]` block, since `wifiinit` does not return and `osiused`
+cannot be reached:
+
+```
+[osi] 19 41 21 87 41 22 8 19 85 42 93 13 42 36 15 16 29 29 29 29
+```
+
+```
+ 1. 19  recursive_mutex_create      9. 85  malloc_internal
+ 2. 41  task_get_current_task      10. 42  task_get_max_priority
+ 3. 21  mutex_lock                 11. 93  wifi_create_queue
+ 4. 87  calloc_internal            12. 13  semphr_create
+ 5. 41  task_get_current_task      13. 42  task_get_max_priority
+ 6. 22  mutex_unlock               14. 36  task_create_pinned_to_core
+ 7.  8  spin_lock_create           15. 15  semphr_take
+ 8. 19  recursive_mutex_create     16. 16  semphr_give
+                                   17. 29  queue_recv, forever
+```
+
+Sixteen setup calls, then the driver creates its worker task and waits on a queue
+for that worker to signal. It waits for ever. **That is the whole stall**, and it
+is one call further on than the report says.
+
+An earlier mapping of these numbers, taken from the order of the fields in the
+OSI struct, was misaligned and was discarded; the numbers above are `osi_hit(N)`
+arguments read out of the stub bodies.
+
+---
+
+## step 178 — who was refused, and two tools that lied
+
+### 178a. The blob task is created
+
+`wifiinit task` and plain `wifiinit` produced byte-identical traces, which looked
+like the `task` flag not taking. It is not visible from the trace either way:
+`osi_hit(36)` fires at the top of `osi_s_task_create_pinned_to_core`, **before**
+`blob_task_create()` decides anything, so a refused create and a successful one
+are indistinguishable there.
+
+`blobcall.c` already maintained the three counters that separate them. Reporting
+them costs nothing new — no read is added to the blocking path, which is step
+167's rule:
+
+```
+[bt] created=1 refused=0 want_stack=6656
+```
+
+So the task exists, and it took the big stack (6,656 B requested, 7,168 B
+available in `g_blob_stack`; a nat-os task stack is 2,048 B and would have been
+refused). Task 9 appears in the panic dump at `0x3ffb0d18+7168`.
+
+The stall is therefore **not** a refused task creation. The worker exists and the
+driver still waits for it.
+
+### 178b. Two tools that lied, and neither was the board
+
+Most of this step went on instrumentation that was not the kernel's.
+
+**`build.ps1` without `-Flash` does not flash.** It builds, packages, prints
+`image: 123,040 bytes`, and exits 0. Read as a flash, it means every subsequent
+measurement exercises the previous image. Same shape as step 148 — the exit code
+was right, the reading was wrong.
+
+**`send_cmd.py` wedges on `wifiinit`.** Its capture loop is
+`while time.time() < deadline: ser.read(4096)`. Asking for 4,096 bytes from a
+port that has none never returned on this host, so a 35-second capture ran past
+90 seconds and printed nothing — for `wifiinit`, and only for `wifiinit`, because
+that is the one command that leaves long silent gaps. `mem` and `help` kept the
+stream busy enough to hide it.
+
+The symptom — zero bytes, not one byte of garbage, and a port that stops
+accepting writes — reads exactly like a board that has died on the command. It
+had not. Reading `ser.in_waiting` first and only asking for what is there
+produced 1,051 bytes of perfectly ordinary output on the first attempt.
+
+Two builds were spent on an A/B against this: the `[bt]` line was reverted and
+reflashed on the suspicion it had shifted the flash layout into the step-7 band.
+It had not — the step-177 image behaved identically, which is what said the fault
+was in the reading rather than the image. A third went to `-WiFi`, which is the
+wrong flag for this work: it links the blob rather than loading it, and leaves
+8,048 B of heap against the ~76 KB every report in this series quotes.
+
+*Do not read silence as a result.* A capture that returns nothing is a claim
+about the tool until the tool has been shown to be able to return something.
+
+### 178c. Releasing the blob mutex across the park — tried, wrong, informative
+
+`blob_task_entry()` takes `blob_lock()` before it may run any windowed code.
+`esp_wifi_init_internal` runs under `blob_call()`, which holds that mutex. If the
+mutex were held across the wait, the worker could never start and the waiter
+could never be signalled — a clean deadlock, and it fits every symptom.
+
+Tried: `osi_impl_park()` releasing with `blob_unlock_only()` before
+`task_sleep_armed()` and re-taking with a new `blob_lock_only()` after, arming
+the wake first so a signal landing in the gap is not lost.
+
+It changed the outcome sharply. Task 9 reached `win 0x00000008@3` — the blob's
+worker ran windowed code with three frames live, which it had never done — and
+the run ended in a new fault rather than a silent wait:
+
+```
+exccause 20  InstFetchProhibited   epc 0x00000000
+a0 0x8008ea84 -> osi_s_queue_recv       sp 0x00000000
+GRANT DRIFT: task.c predicted 0x00002000, vectors.S wrote 0x00002800 for task 5
+```
+
+**And the premise is wrong.** `osi_s_queue_recv` already releases the lock on
+every iteration of its wait loop — `blob_unlock_w(me)` at the top, `w2c_call2` to
+the park, `blob_trylock_w(me)` on the way back (steps 111, 113). It is released
+by design, in windowed code, by TRY, precisely so no call0 excursion can block.
+So `blob_unlock_only()` released a mutex the caller had already released, and
+`blob_lock_only()` left it held where the loop's own bookkeeping expects it free.
+
+Reverted. What survives is a fact worth more than the patch: the difference
+between that version and this one is that the waiter **blocked on the mutex**
+instead of retrying a trylock, and under blocking acquisition the worker task ran
+for the first time. The next question is whether the trylock retry can win the
+race at all — not whether the lock is released, which it is.
+
+`epc 0x00000000` with `a0` inside `osi_s_queue_recv` is not yet explained and
+should not be quoted as "the next missing stub" until it is; it is equally
+consistent with a windowed return through a frame whose `a1` had become 0.
+
+### What is committed
+
+The interrupt wiring (177) and the `[bt]` counters (178a). Both are inert with
+respect to the stall and both are green:
+
+```
+boot 11 PASS 0 FAIL
+wintorture 1000 ms : switches during the call: 10  (preemption really happened)
+                     checksum 1632 expected 1632  CORRECT
+blobphy rc=0
+wifiinit : no fault, no reset
+[qr] calls=4 timeouts=3 lastosi=29 rounds/wait=23 osin=20
+[intr] routed=0 nofn=0 fired:
+[bt]  created=1 refused=0 want_stack=6656
+```
+
+Not committed: the park change of 178c.
+
+**Nothing has been on air.**
+
