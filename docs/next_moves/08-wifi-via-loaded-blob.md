@@ -9046,4 +9046,62 @@ not observe.
 Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0, `blobtx force`
 0x3004, `wifiinit` no fault and no reset.
 
+## Step 142 — a latent bug found: tasks were created with WINDOWSTART = 0
+
+Took the grant from `frame[88]` as step 140 concluded it must be, pin off, and
+the drift checker fired on its first real outing:
+
+```
+GRANT DRIFT: task.c predicted 0x00000002 but vectors.S wrote 0x00000000 for task 6
+excvaddr 0x0000aa8a   <- the WINDOWSTART value, used as an address
+```
+
+`frame[88]` was **zero** for task 6, because `task_create_with_stack()` seeded
+`frame[TASK_FRAME_IDX_WSTART] = 0u`.
+
+**A `WINDOWSTART` with no bit set is architecturally meaningless.** The bit at
+`WINDOWBASE` is what marks the current frame; a context with no current frame
+cannot execute. Every task in this kernel has been created that way since tasks
+existed.
+
+It never mattered because **the restore never read the word**. It synthesised
+`1 << saved base | g_win_union` and overwrote the seed before it could be used.
+The first change to read a task's real `WINDOWSTART` back exposed it immediately.
+
+Fixed: `frame[TASK_FRAME_IDX_WSTART] = 1u << (wb & 15u)` — one live window at the
+task's own base, which is what a freshly created task actually has. **Kept**, and
+green with the grant reverted, because the seed is now correct whether or not
+anything reads it.
+
+### The drift checker paid for itself in one step
+
+Written in step 141 and verified in both directions there. This is its first
+unplanned use, and it turned "the fault moved to the overflow path" into "the
+handler wrote 0x00000000 for task 6, and here is the task" without a single
+extra build. Every previous finding of that shape cost two or three.
+
+### What is still wrong
+
+With the seed fixed and the grant still from `frame[88]`, the fault persists:
+
+```
+exccause 28   epc 0x4008e7da   excvaddr 0x0000aa8a
+```
+
+`0x0000aa8a` is task 5's held-window mask being dereferenced as a pointer, in
+kernel code rather than in a window vector. Something takes a `WINDOWSTART`
+value and uses it as an address. That is a narrow, specific thing to look for and
+it is the next step: `0x4008e7da` names the instruction, and the symbol it falls
+in will name the function.
+
+Note the `frames :` line still printed `granted 0x00000008` while the drift
+checker stayed quiet, which needs reconciling — either the checker's one-switch
+lag is looking at a different task than the line reports, or the two disagree
+about which grant belongs to which task. **Do not trust either number until that
+is settled.**
+
+Reverted the grant change; the seed fix stays. Suite: boot 11 PASS 0 FAIL,
+`wintorture` CORRECT, `blobphy` rc=0, `blobtx force` 0x3004, `wifiinit` no fault
+and no reset, drift checker quiet.
+
 **Nothing has been on air.**

@@ -472,7 +472,19 @@ int task_create_with_stack(const char *name, task_entry_fn entry,
              * put the sixteen registers; that is harmless, since every task's
              * registers travel through memory on each switch. It is the BIT that
              * was the lie. */
-            frame[TASK_FRAME_IDX_WSTART] = 0u;
+            /* [step 142] One live window at the task's own base, not zero.
+             *
+             * WINDOWSTART with no bit set is architecturally meaningless -- the
+             * bit at WINDOWBASE marks the current frame, and a context with no
+             * current frame cannot execute. It survived because the restore
+             * never read this word: it synthesised `1 << saved base` and ORed in
+             * g_win_union, so the seed was overwritten before it could matter.
+             *
+             * Reading the task's real WINDOWSTART back (step 142) exposed it at
+             * once -- vectors.S wrote 0x00000000 for task 6, the drift checker
+             * said so by name, and the first load through that window took
+             * 0x0000aa8a as an address. */
+            frame[TASK_FRAME_IDX_WSTART] = 1u << (wb & 15u);
         }
 
         g_tasks[id].sp         = (uint32_t)frame;
