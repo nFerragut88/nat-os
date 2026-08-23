@@ -9799,4 +9799,52 @@ proven prologue path and deferring the *comparison* is one option, since
 Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0, `wifiinit` no
 fault and no reset.
 
+## Step 154 — the handler looks clean, and the instrument is not trustworthy enough to say so
+
+Capture moved to the top of `.Lresume`, before any window-state write, on the
+reasoning that the base and window state there match the prologue — where this
+identical block has run safely since step 131. Comparison started at **window 1**,
+since step 153 confirmed window 0 is the handler's own and differs for good
+reasons.
+
+```
+handler : w1-w3 unchanged -- handler is clean
+```
+
+Between the prologue's save and the top of `.Lresume` — the span containing
+`intr_dispatch` and `task_schedule` — windows 1 to 3 are **untouched**. Taken at
+face value that clears the handler and moves the search to the window-state
+write, the frame reload, or after `RFI`.
+
+### Why it is not taken at face value
+
+**`wintorture` still panics with the pin ON.** The block regresses the suite at
+this site too, so my reasoning about matching conditions was wrong twice: it is
+not safe in the epilogue (step 153) and it is not safe here either.
+
+That makes the reading a measurement of **a system the instrument perturbed**.
+"w1-w3 unchanged" may be true of the healthy kernel, or true only of the kernel
+with four extra `ROTW` steps per switch. Nothing in the run distinguishes those.
+
+This log has a name for reporting the first and ignoring the second, and it has
+cost enough steps that the finding is recorded as **provisional** rather than
+banked: *the handler appears clean, on an instrument that changes behaviour.*
+
+### What is actually established
+
+The `ROTW`-based capture is unsafe anywhere in the restore path — both ends
+tried, both regress. It is safe only in the prologue. That is a property of the
+block, now measured at three sites rather than assumed from one, and it bounds
+what any future version of this instrument can do.
+
+Confirming "the handler is clean" needs a capture that does not rotate. The
+options are narrow: read the four windows in the prologue where rotation is
+already proven safe and compare there, or find a way to sample the incoming
+task's windows without moving `WINDOWBASE` at all — which, given `ROTW` is the
+only way to reach them, probably means not sampling them and testing the
+hypothesis some other way.
+
+Reverted; suite green, flash verified. Suite: boot 11 PASS 0 FAIL, `wintorture`
+CORRECT, `blobphy` rc=0, `wifiinit` no fault and no reset.
+
 **Nothing has been on air.**
