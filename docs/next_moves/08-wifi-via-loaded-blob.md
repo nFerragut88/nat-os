@@ -9104,4 +9104,64 @@ Reverted the grant change; the seed fix stays. Suite: boot 11 PASS 0 FAIL,
 `wintorture` CORRECT, `blobphy` rc=0, `blobtx force` 0x3004, `wifiinit` no fault
 and no reset, drift checker quiet.
 
+## Step 143 — `0x4008e7da` is inside `vendor_torture`, not kernel code
+
+Resolved in a **rebuild of the configuration that produced it** — grant from
+`frame[88]`, seed fixed — rather than against the current ELF. Addresses move
+between builds, and reading a stale one against a new image is the trap that cost
+four steps on `_phy_stack_top`.
+
+```
+containing symbol : 4008e7a0 vendor_torture
+next symbol       : 4008e7ec vendor_spilltest
+```
+
+**The faulting instruction is in the windowed test function itself.** Step 142
+recorded this as "something in kernel code takes a `WINDOWSTART` value and uses
+it as an address". That was wrong. Nothing in the kernel dereferences it — a
+register belonging to `vendor_torture`'s own frame came back holding `0x0000aa8a`,
+and `vendor_torture` then used it the way it was entitled to use its own register.
+
+So the question is not "who dereferences a mask" but **"which underflow handed a
+frame the mask instead of its saved register"**.
+
+### An arithmetic coincidence worth testing
+
+The switch frame is 112 bytes at `[task_sp-112, task_sp)`, and `WINDOWSTART` is
+stored at offset 88. That puts it at:
+
+```
+task_sp - 112 + 88 = task_sp - 24
+```
+
+A windowed frame whose `a1` is `task_sp - 8` has its base save area at
+`[task_sp-24 .. task_sp-12]` — **exactly on top of the switch frame's
+`WINDOWSTART`, `WINDOWBASE` and LOOP fields.** An underflow through such a frame
+would recover `WINDOWSTART` as a register, which is precisely the observed value
+in precisely the observed place.
+
+Step 126 checked that the *innermost* frame's save area at `[task_sp-16 ..
+task_sp-4]` lands in the frame's padding above offset 88, and it does. **What was
+never checked is any frame below that.** The padding is 92..111 — twenty bytes —
+so exactly one save area fits safely and the next one down collides.
+
+This is a hypothesis with an address in it, not an account of a symptom. It is
+testable directly: record `a1` for the frame the underflow is servicing and see
+whether it is `task_sp - 8`, or generally whether any live frame's save area
+falls below `task_sp - 16`.
+
+If it holds, the fix is structural and cheap in either direction — move the
+window-state fields to the top of the frame, or reserve the save-area span below
+`task_sp` the way `task_create` already reserves 16 bytes at the stack top for
+the chain terminator (steps 90 and the comment at `task.c:425`). The kernel has
+solved this exact class of overlap once already.
+
+### Correction
+
+Step 142 said the dereference was in kernel code. It is not. Corrected here
+rather than left to be inherited.
+
+Suite unchanged: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0,
+`blobtx force` 0x3004, `wifiinit` no fault and no reset.
+
 **Nothing has been on air.**
