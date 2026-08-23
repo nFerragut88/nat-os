@@ -203,6 +203,9 @@ extern void osi_impl_sem_take(void);
 extern void osi_impl_sem_give(void);
 extern void osi_impl_malloc(void);
 extern void osi_impl_calloc(void);
+extern void osi_impl_free_heap(void);      /* [step 182] */
+extern void osi_impl_queue_waiting(void); /* [step 182] */
+extern void osi_impl_thread_sem_get(void); /* [step 182] */
 extern void osi_impl_free(void);
 extern void task_current(void);
 extern void osi_impl_queue_create(void);
@@ -653,7 +656,7 @@ static int32_t osi_s_semphr_give(void *semphr)
 static void * osi_s_wifi_thread_semphr_get(void)
 {
     osi_hit(17u);
-    return 0;
+    return (void *)w2c_call0f((uint32_t)&osi_impl_thread_sem_get);
 }
 
 static void * osi_s_mutex_create(void)
@@ -1071,7 +1074,7 @@ static int32_t osi_s_queue_recv(void *queue, void *item, uint32_t block_time_tic
 static uint32_t osi_s_queue_msg_waiting(void *queue)
 {
     osi_hit(30u);
-    return 0;
+    return w2c_call1((uint32_t)&osi_impl_queue_waiting, (uint32_t)queue);
 }
 
 static void * osi_s_event_group_create(void)
@@ -1166,7 +1169,14 @@ static void osi_s_task_delay(uint32_t tick)
 static int32_t osi_s_task_ms_to_tick(uint32_t ms)
 {
     osi_hit(40u);
-    return 0;
+    /* [step 182] Answering 0 collapsed every timeout the blob derived from
+     * this to "do not block" -- and it derives the queue_send and semphr_take
+     * timeouts on the init path from exactly this call. IDF's wrapper is
+     * ms / portTICK_PERIOD_MS; nat-os's tick is OSI_TICK_CYCLES at
+     * OSI_CYCLES_PER_MS, which is 10 ms. Round up, so a non-zero request never
+     * becomes a zero wait. */
+    uint32_t per = OSI_TICK_CYCLES / OSI_CYCLES_PER_MS;      /* 10 ms */
+    return (int32_t)((ms + per - 1u) / per);
 }
 
 static void * osi_s_task_get_current_task(void)
@@ -1212,7 +1222,9 @@ static int32_t osi_s_event_post(const char* event_base, int32_t event_id, void* 
 static uint32_t osi_s_get_free_heap_size(void)
 {
     osi_hit(46u);
-    return 0;
+    /* [step 182] Reporting zero free heap tells a driver it has no memory.
+     * osi_impl_free_heap() has always existed. */
+    return w2c_call0f((uint32_t)&osi_impl_free_heap);
 }
 
 static uint32_t osi_s_rand(void)
@@ -1451,10 +1463,21 @@ static void * osi_s_zalloc_internal(size_t size)
     return (void *)w2c_call2((uint32_t)&osi_impl_calloc, 1u, (uint32_t)size);
 }
 
+/* [step 182] The WiFi-heap allocators were all NULL, and that is what made
+ * esp_wifi_init_internal unwind.
+ *
+ * The trace showed task 5 calling _wifi_zalloc and then, having been told the
+ * allocation failed, tearing the driver back down: delete the semaphore, post a
+ * stop to the worker, and the worker deletes its queue and itself. The crash at
+ * _task_delete was the last step of a shutdown, not the first step of a bug.
+ *
+ * ESP-IDF separates these from _malloc_internal only by which heap they draw
+ * from -- MALLOC_CAP_INTERNAL either way on this part. nat-os has one heap, so
+ * they route to the same place _malloc_internal already used successfully. */
 static void * osi_s_wifi_malloc(size_t size)
 {
     osi_hit(89u);
-    return 0;
+    return (void *)w2c_call1((uint32_t)&osi_impl_malloc, (uint32_t)size);
 }
 
 static void * osi_s_wifi_realloc(void *ptr, size_t size)
@@ -1466,13 +1489,15 @@ static void * osi_s_wifi_realloc(void *ptr, size_t size)
 static void * osi_s_wifi_calloc(size_t n, size_t size)
 {
     osi_hit(91u);
-    return 0;
+    return (void *)w2c_call2((uint32_t)&osi_impl_calloc,
+                             (uint32_t)n, (uint32_t)size);
 }
 
 static void * osi_s_wifi_zalloc(size_t size)
 {
     osi_hit(92u);
-    return 0;
+    /* calloc(1, size) is zalloc; osi_impl_calloc already zeroes. */
+    return (void *)w2c_call2((uint32_t)&osi_impl_calloc, 1u, (uint32_t)size);
 }
 
 static void * osi_s_wifi_create_queue(int queue_len, int item_size)

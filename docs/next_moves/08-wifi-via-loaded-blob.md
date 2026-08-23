@@ -11332,5 +11332,146 @@ They interact, and (1) looks like the one that must come first.
 Per Tortoise's instruction the interrupt implementation was not touched.
 
 **Nothing has been on air.**
+---
+
+## step 182 — the unwind, and what was actually causing it
+
+Step 180 left `wifiinit` faulting at `_task_delete`, and the obvious move was to
+implement `_task_delete`. The trace said not to:
+
+```
+t5:39 t5:14 t5:92 t5:13 t5:10 t5:11 t5:40 t5:25 t5:15
+t9:10 t9:11 t9:30 t9:16 t9:94 t9:38
+```
+
+`_task_delay`, `_semphr_delete`, `_wifi_zalloc`, ... then the worker deleting its
+own queue (`94`) and itself (`38`). **That is a shutdown sequence.** The crash at
+`_task_delete` was the last step of an orderly teardown, not the first step of a
+bug, and implementing `_task_delete` would only have moved the crash.
+
+So the question was which earlier call failed. It took no instrumentation:
+
+```c
+static void * osi_s_wifi_zalloc(size_t size) { osi_hit(92u); return 0; }
+```
+
+**All four WiFi-heap allocators returned NULL unconditionally.** `_wifi_malloc`,
+`_wifi_realloc`, `_wifi_calloc`, `_wifi_zalloc`. Task 5 asked for memory, was
+told there was none, and unwound the driver.
+
+### 182a. A survey rather than another crash
+
+Rather than find these one fault at a time, every adapter entry was scanned for a
+body that is empty or `return 0`. Discounting the eight one-line entries that are
+genuinely implemented, the ones **on the live path** were:
+
+| id | entry | returned | fixed |
+|---|---|---|---|
+| 89 | `_wifi_malloc` | NULL | yes |
+| 91 | `_wifi_calloc` | NULL | yes |
+| 92 | `_wifi_zalloc` | NULL | yes |
+| 40 | `_task_ms_to_tick` | 0 | yes |
+| 46 | `_get_free_heap_size` | 0 | yes |
+| 30 | `_queue_msg_waiting` | 0 | yes |
+| 17 | `_wifi_thread_semphr_get` | NULL | yes |
+| 90 | `_wifi_realloc` | NULL | **no** — nat-os has no `heap_realloc` |
+| 38 | `_task_delete` | — | no |
+| 39 | `_task_delay` | — | no |
+
+Two of these are worth naming on their own.
+
+**`_task_ms_to_tick` answered 0.** The blob derives the `queue_send` and
+`semphr_take` timeouts on the init path from exactly this call, so every one of
+them collapsed to "do not block". nat-os's tick is `OSI_TICK_CYCLES` at
+`OSI_CYCLES_PER_MS` — 10 ms — and the answer now rounds up, so a non-zero request
+can never become a zero wait.
+
+**`_get_free_heap_size` answered 0**, while `osi_impl_free_heap()` has existed all
+along. Telling a driver it has no memory is the same defect as refusing the
+allocation, one step earlier.
+
+The allocators needed nothing new: IDF separates `_wifi_*` from `_malloc_internal`
+only by which heap they draw from, `MALLOC_CAP_INTERNAL` either way on this part,
+and nat-os has one heap. They route to what `_malloc_internal` was already using
+successfully.
+
+### 182b. `_wifi_thread_semphr_get`, and the second unwind
+
+With the allocators in, three new calls appeared and the trace stopped in a new
+place:
+
+```
+t5:92 t5:41 t5:17 t5:44 ...
+```
+
+`_task_get_current_task`, `_wifi_thread_semphr_get` — **NULL** — and then `_free`
+one call later. The same shape as before, one gap further along.
+
+IDF's `wifi_thread_semphr_get_wrapper` is a lazily created per-thread semaphore:
+read FreeRTOS thread-local slot 0, and if it is empty create
+`xSemaphoreCreateCounting(1, 0)` and store it there. nat-os has no TLS, but the
+slot is only ever indexed by "the current task", so an array indexed by task id
+is the same object.
+
+### 182c. Result: the unwind is gone
+
+```
+before:  ... t5:92 t5:41 t5:17 t5:44 t5:13 ...  | t9:10 t9:11 t9:30 t9:16 t9:94 t9:38
+after:   ... t5:92 t5:41 t5:17 t5:41 t5:21 t5:10 t5:11 t5:40 t5:25 t5:41 t5:22 t5:15 | t9:10 t9:11
+```
+
+No `_free`, no `_semphr_delete`, no `_wifi_delete_queue`, no `_task_delete`.
+What replaces them is a **WiFi API call**: `_mutex_lock`, interrupts masked and
+restored, `_task_ms_to_tick`, `_queue_send`, `_mutex_unlock`, `_semphr_take`.
+Take the API lock, post the request, release it, wait for the reply. That is the
+mechanism working, not unwinding.
+
+`esp_wifi_init_internal` still does not return, and `esp_wifi_start()` is still
+not reached.
+
+### 182d. The new fault, and one thing it is not
+
+```
+exccause 20  InstFetchProhibited   epc 0x00000000
+a0 0x8008ee40 -> osi_s_queue_recv     windowbase 15
+frames  : task 9 held 0x0000000a granted 0x00000008 LOST 0x00000002
+qspill  : walked 4 frames, 1 bad   first a0 0x00000000 at 0x3ffb2910
+```
+
+The worker, in `osi_s_queue_recv`, with a windowed save area whose return address
+is zero. Reproducible byte-for-byte across runs.
+
+This is no longer a missing stub — it is a windowing fault, and the obvious
+suspicion is that step 180's full-depth release woke the save-area overlap
+UM-NATOS-045 §8.4 listed as dormant: a call0 callee entered from a `w2c_*` bridge
+still allocates over its caller's base save area, and full release lets another
+context into windowed code while this task has live frames.
+
+**That suspicion is not supported.** Step 180's own dump already carried
+`qspill ... 1 bad first a0 0x00000000 at 0x3ffb2900` — the same zero-`a0` frame,
+before any of this step's changes. It is pre-existing and was simply not being
+reached. Worth stating plainly, because "the last change woke it" is the
+comfortable answer and it happens to be wrong.
+
+### What is committed
+
+Seven adapter entries, all pure and non-blocking, none of them touching the
+interrupt implementation.
+
+```
+boot 11 PASS 0 FAIL
+wintorture 1000 ms : switches during the call: 10  (preemption really happened)
+                     checksum 1632 expected 1632  CORRECT
+blobphy rc=0
+wifiinit : reaches the API round-trip, faults in the worker
+```
+
+Not done, and deliberately: `_task_delete` and `_task_delay` both need blocking
+semantics and the same release/re-acquire dance `_semphr_take` performs, and
+neither is the current blocker. `_wifi_realloc` needs a `heap_realloc` that does
+not exist.
+
+**Nothing has been on air.**
+
 
 

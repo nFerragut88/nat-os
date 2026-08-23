@@ -178,6 +178,31 @@ void *osi_impl_sem_create(uint32_t max, uint32_t init)
     return 0;
 }
 
+/* [step 182] _wifi_thread_semphr_get: one semaphore per calling task, made on
+ * first use.
+ *
+ * IDF keeps it in FreeRTOS thread-local storage -- pvTaskGetThreadLocalStorage
+ * Pointer(NULL, 0), and xSemaphoreCreateCounting(1, 0) if the slot is empty.
+ * nat-os has no TLS, but the slot is only ever indexed by "the current task",
+ * so an array indexed by task id is the same thing.
+ *
+ * It returned NULL until now, and the trace showed the blob asking for it,
+ * being refused, and freeing its way back out one call later. */
+static void *g_thread_sem[TASK_MAX];
+
+void *osi_impl_thread_sem_get(void);
+void *osi_impl_thread_sem_get(void)
+{
+    int me = task_current();
+    if (me < 0 || me >= TASK_MAX) {
+        return 0;
+    }
+    if (!g_thread_sem[me]) {
+        g_thread_sem[me] = osi_impl_sem_create(1u, 0u);   /* counting(1, 0) */
+    }
+    return g_thread_sem[me];
+}
+
 void osi_impl_sem_delete(void *h)
 {
     if (H_OK(h, OSI_SEM_MAX)) {
