@@ -835,6 +835,47 @@ uart_puts("  pre-spill : ps ");
                     extern uint32_t blob_task_reached(void);
                     extern uint32_t blob_task_running(void);
                     extern uint32_t blob_task_returned(void);
+                {
+                    /* [step 184] The registers as they were AT THE FAULT,
+                     * recorded by _handler_panic before it took the panic
+                     * stack. Unlike "a0/sp out" and "saved frame @", these are
+                     * not sampled somewhere else and are not a singleton. */
+                    extern volatile uint32_t g_fault_regs[];
+                    if (g_fault_regs[18]) {
+                        uart_puts("  fault regs: a0 ");
+                        uart_put_hex(g_fault_regs[0]);
+                        uart_puts("  a1 ");
+                        uart_put_hex(g_fault_regs[1]);
+                        uart_puts("  wb ");
+                        uart_put_dec(g_fault_regs[16]);
+                        uart_puts(" ws ");
+                        uart_put_hex(g_fault_regs[17]);
+                        uart_puts("\n  fault a2- :");
+                        for (int w = 2; w < 16; w++) {
+                            uart_puts(" ");
+                            uart_put_hex(g_fault_regs[w]);
+                        }
+                        uart_puts("\n");
+                    } else {
+                        uart_puts("  fault regs: not recorded\n");
+                    }
+                }
+                {
+                    /* [step 184] what the worker was actually handed. */
+                    extern uint32_t g_qmsg_have, g_qmsg_size;
+                    extern unsigned char g_qmsg[];
+                    uart_puts("  first msg : ");
+                    if (!g_qmsg_have) { uart_puts("none delivered"); }
+                    else {
+                        uart_put_dec(g_qmsg_size);
+                        uart_puts(" B :");
+                        for (int w = 0; w < 8 && w < (int)g_qmsg_size; w++) {
+                            uart_puts(" ");
+                            uart_put_hex(g_qmsg[w]);
+                        }
+                    }
+                    uart_puts("\n");
+                }
                     uart_puts("  worker    : reached ");
                     uart_put_dec(blob_task_reached());
                     uart_puts("  running ");

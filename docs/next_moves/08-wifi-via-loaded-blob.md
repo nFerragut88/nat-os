@@ -11589,6 +11589,134 @@ pointer. Nothing else should be built on `a0/sp out` or `saved frame @` until
 they are fixed or deleted.
 
 **Nothing has been on air.**
+---
+
+## step 184 — the real registers, and what the blob jumped through
+
+Step 183 ended with a rule: build nothing further on `a0/sp out` or
+`saved frame @`, and get the true fault-time `a0`. Both done.
+
+### 184a. Recording the registers that actually faulted
+
+`_handler_panic`'s first instruction was `movi a1, _panic_stack_top`, which
+destroys the faulting `a1`, and `a0` was never recorded at all. Every "register"
+in the dump came from a probe sampled somewhere else.
+
+`EXCSAVE1` has read `0x00000000` throughout the investigation, so it is free to
+hold the faulting `a1` for the two instructions it takes to free a register:
+
+```asm
+wsr.excsave1 a1                 /* stash faulting a1        */
+movi    a1, g_fault_regs
+s32i    a0, a1, 0               /* faulting a0              */
+rsr.excsave1 a0                 /* faulting a1 back into a0 */
+s32i    a0, a1, 4
+... a2..a15, windowbase, windowstart, valid flag ...
+```
+
+Only `a0` and `a1` are clobbered, and both are saved first.
+
+```
+fault regs: a0 0x8008d765  a1 0x3ffb28b0  wb 15  ws 0x00008000
+fault a2- : 0x3ffd4e08 0x3ffd4e9c 0x00000000 0x3ffd7ac8 0x3ffb0cd8 0x00000000
+            0x8036bb99 0x3ffb2890 0x00000006 0x00060120 0x1312cfff 0x00000008
+            0x05100000 0x3ffc05c8
+```
+
+**`a1 = 0x3ffb28b0`** — a valid address inside task 9's stack. The "a1 became
+zero" reading that step 183 retracted is now not merely unsupported but false.
+
+### 184b. Which frame, and therefore which instruction
+
+`a0 = 0x8008d765` disassembles exactly:
+
+```asm
+4008d762:  callx8  a2          <- a2 = g_bt[slot].fn
+4008d765:  mov.n   a2, a10     <- the recorded a0
+4008d767:  s32i.n  a2, a1, 20
+           call0   blob_unlock
+```
+
+That is `rom_call3`, which is **call0** and enters the blob through `callx8`. So
+the frame that faulted is the blob's **outermost windowed function**, and its
+`a0` is simply the link back to `rom_call3` — not the caller of address zero.
+
+`ws = 0x00008000`, one bit, at `wb 15`: a single windowed frame, and **no
+rotation happened at the fault**. That rules the instruction in:
+
+| candidate | ruled out because |
+|---|---|
+| `callx8` | rotates `WindowBase`; `wb` would not still be 15 |
+| `callx0` | overwrites `a0`, which still holds the `rom_call3` link |
+| `retw` | `a0` is a valid address, not zero |
+
+What is left is an **indirect jump through a register holding zero**. `a4` and
+`a7` are both `0x00000000`.
+
+### 184c. What it was dispatching on
+
+A `jx` through null inside a driver is a dispatch table, and the worker had just
+taken its first message off the queue. `osi_qpoll_w` now copies the first
+message it ever delivers:
+
+```
+first msg : 8 B : 06 00 00 00  48 18 fc 3f
+```
+
+Eight bytes: `{ id = 6, arg = 0x3ffc1848 }`. A plain API request, and the
+argument is a plausible DRAM address. **The message is sane** — and `a10` at the
+fault is `0x00000006`, the same id, still live in a register.
+
+So the sequence is complete and none of it is nat-os mis-delivering anything:
+task 5 posts request 6, the worker receives it correctly, dispatches on 6, and
+the table entry it jumps through is zero.
+
+`osi_impl_queue_send` and `osi_qpoll_w` were already read in step 183 and copy
+`item_size` bytes correctly; this measurement confirms it end to end rather than
+by inspection.
+
+### 184d. Why the entry is zero — not established
+
+The blob is a **loaded** image, so a table of function pointers that never got
+populated is the shape to look for. The loader was read:
+
+- `.text` is MMU-mapped into IROM;
+- `.rodata` is MMU-mapped into DROM, and range-checked (`-8` if it falls
+  outside the window);
+- `.data` is copied `data_lma -> data_vma`, word-aligned and word-at-a-time;
+- `.bss` is zeroed.
+
+No gap is visible there, which makes the more likely explanation **a table the
+blob populates at run time, by an initialisation step nat-os never performs**.
+IDF's bring-up is not `esp_wifi_init_internal` alone. That is a hypothesis, and
+it is recorded as one.
+
+### What is committed
+
+The fault-register recorder in `_handler_panic`, its dump, and the first-message
+capture. No functional change to the driver path.
+
+```
+boot 11 PASS 0 FAIL
+wintorture 1000 ms : switches during the call: 10  (preemption really happened)
+                     checksum 1632 expected 1632  CORRECT
+blobphy rc=0
+```
+
+### Next
+
+Find what populates the dispatch table for API id 6. Two ways in, and the first
+is cheaper: disassemble the blob around the outermost function reached from
+`g_bt[0].fn` and locate the `jx` and the table it indexes; or work forward from
+IDF's init sequence and find the registration step that has no counterpart here.
+
+Still to clean up, from step 183 and unchanged: `a0/sp out` and `saved frame @`
+are misleading and now redundant — `fault regs` supersedes both. `sbp-post`
+prints its verdict off a never-sampled sentinel, and `blk-window` runs two fields
+together into a twenty-one-bit `WINDOWSTART`.
+
+**Nothing has been on air.**
+
 
 
 

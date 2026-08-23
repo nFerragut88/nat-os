@@ -71,6 +71,8 @@ extern osi_queue_t g_queue[OSI_QUEUE_MAX];
  * static inline in a call0 header, and while it would very likely inline
  * cleanly, "very likely" is not a property this investigation has been well
  * served by. Two instructions here are exact. */
+u32 g_qmsg_have, g_qmsg_size;
+u8  g_qmsg[8];
 int osi_qpoll_w(void *h, void *item, u32 *woke);
 
 int osi_qpoll_w(void *h, void *item, u32 *woke)
@@ -94,6 +96,15 @@ int osi_qpoll_w(void *h, void *item, u32 *woke)
         dst = (u8 *)item;
         n   = q->item_size;
         for (i = 0; i < n; i++) { dst[i] = src[i]; }
+        /* [step 184] The FIRST message the worker is ever handed.
+         * The fault is a jump through a null register in the blob's dispatch,
+         * so what it dispatched on is the question. Copy only, no new read of
+         * anything the blocking path did not already touch. */
+        if (!g_qmsg_have) {
+            g_qmsg_have = 1u;
+            g_qmsg_size = n;
+            for (i = 0; i < 8u && i < n; i++) { g_qmsg[i] = src[i]; }
+        }
         q->head = (q->head + 1u) % q->capacity;
         q->len--;
         *woke = q->waiters_send;

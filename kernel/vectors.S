@@ -822,6 +822,46 @@ _handler_double:
 
     .align 4
 _handler_panic:
+    /* [step 184] Record the FAULTING registers before anything is clobbered.
+     *
+     * This handler's first act was `movi a1, _panic_stack_top`, which destroys
+     * the faulting a1, and a0 was never recorded at all. Everything the dump
+     * printed as "the registers" came from probes sampled elsewhere -- step 183
+     * found two of them stale and a conclusion built on one.
+     *
+     * a0 is the value that matters here: with epc 0, a0 is the return address
+     * of whoever called address zero, which names the caller and so names the
+     * null pointer.
+     *
+     * EXCSAVE1 is free -- the dump has read it as 0 throughout -- so it holds
+     * the faulting a1 for the two instructions it takes to free a register.
+     * Only a0 and a1 are clobbered, and both are saved first. */
+    wsr.excsave1 a1                 /* stash faulting a1 */
+    movi    a1, g_fault_regs
+    s32i    a0, a1, 0               /* faulting a0 -- the caller of 0 */
+    rsr.excsave1 a0                 /* faulting a1 back into a0 */
+    s32i    a0, a1, 4
+    s32i    a2, a1, 8
+    s32i    a3, a1, 12
+    s32i    a4, a1, 16
+    s32i    a5, a1, 20
+    s32i    a6, a1, 24
+    s32i    a7, a1, 28
+    s32i    a8, a1, 32
+    s32i    a9, a1, 36
+    s32i    a10, a1, 40
+    s32i    a11, a1, 44
+    s32i    a12, a1, 48
+    s32i    a13, a1, 52
+    s32i    a14, a1, 56
+    s32i    a15, a1, 60
+    rsr.windowbase  a0
+    s32i    a0, a1, 64
+    rsr.windowstart a0
+    s32i    a0, a1, 68
+    movi    a0, 1
+    s32i    a0, a1, 72              /* valid flag */
+
     /* Use a known-good stack: the faulting one may be why we are here. */
     movi    a1, _panic_stack_top
     rsr.exccause a2
@@ -832,6 +872,12 @@ _handler_panic:
     j       .Lpanic_hang
 
     .size _handler_panic, . - _handler_panic
+
+    .section .bss
+    .align 4
+    .global g_fault_regs
+g_fault_regs:
+    .space 76                       /* a0..a15, windowbase, windowstart, valid */
 
     .section .bss
     .align 16
