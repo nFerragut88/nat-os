@@ -10292,4 +10292,75 @@ four pages of a reference manual.
 Suite unchanged: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0,
 `wifiinit` no fault and no reset.
 
+## Step 162 — TIER B WORKS. Windowed frames survive preemption.
+
+The two-instruction fix step 161 derived, applied: `PS.EXCM` set for the duration
+of the rotation in the restore path, driving `CWOE` to 0 and disabling the
+overflow check — the condition the prologue's save pass has enjoyed since step
+131 purely by accident of ordering. With that, the full Tier B restore went in:
+per-task slots, valid flag, grant from `frame[88]`, `g_win_union` deleted.
+
+**Pin ON — green, first time in eleven builds:**
+
+```
+boot 11 PASS 0 FAIL   wintorture CORRECT   blobphy rc=0   wifiinit no fault
+```
+
+**Pin OFF — the test this was built for, read with its control (step 120):**
+
+```
+  60 ms : CORRECT   switches during the call: 1   (preemption really happened)
+ 300 ms : CORRECT   switches during the call: 3
+1000 ms : CORRECT   switches during the call: 10
+wincollide : ran      blobphy : rc=0
+wifiinit   : no fault, no reset          -- UNPINNED
+```
+
+**Ten genuine preemptions with eight windowed frames live, checksum correct every
+time.** Against step 121's baseline on the same bench:
+
+```
+*** KERNEL PANIC ***  IllegalInstruction  epc 0x6eeeeeee
+frames : task 5 held 0x0000aa8a granted 0x00000008 LOST 0x0000aa82
+```
+
+Windowed frames now survive a genuine context switch on this kernel. That has
+not been true at any point in this project.
+
+### What it took, and what it did not
+
+The mechanism was verified piecemeal long ago — the save bit-exact (129), the
+restore landing all 64 registers (136), the union needing to go (132), the grant
+needing to come from `frame[88]` (140). **Every one of those was correct.** What
+blocked assembly for eleven builds was a single condition nobody had checked: the
+window overflow check fires on any register reference, and `_handler_level3`
+clears `PS.EXCM` between the prologue and the restore, so the same code was
+running with the check off in one place and on in the other.
+
+Not placement. Not ordering. Not the phantom. Not the sweep. One bit in `PS`.
+
+### What this unlocks
+
+The pin exists because windowed frames did not survive preemption
+(UM-NATOS-038 §12.3). They do now. That makes `BLOB_PIN_DISABLE` a one-line
+change backed by evidence rather than a hope — and with it, the busy-spin from
+step 113 can become a real blocking wait, which is what a driver waiting on an
+interrupt requires.
+
+**The pin is left ON in this commit.** Turning it off is a behavioural change to
+the shipping configuration and deserves its own step with the full suite behind
+it, not a rider on the change that made it possible.
+
+### Cost, against UM-NATOS-043's estimate
+
+```
+heap 76,400 B usable   (79,680 at session start; 3,072 Tier B + 112 metering + 96 other)
+```
+
+The 3,072 bytes are exactly as costed in §5.1. The `~2.1 µs` per switch estimate
+in §5.2 remains unmeasured and should be confirmed with `xt_ccount()`.
+
+Suite at the committed default (pin ON): boot 11 PASS 0 FAIL, `wintorture`
+CORRECT, `blobphy` rc=0, `blobtx force` 0x3004, `wifiinit` no fault and no reset.
+
 **Nothing has been on air.**

@@ -290,6 +290,17 @@ _handler_level3:
     l32i    a1,  a1, 196
     rotw    4
 
+    wsr.excsave2 a0
+    wsr.excsave3 a1
+    movi     a0, g_current
+    l32i     a0, a0, 0
+    movi     a1, g_regvalid
+    addx4    a1, a0, a1
+    movi     a0, 1
+    s32i     a0, a1, 0
+    rsr.excsave2 a0
+    rsr.excsave3 a1
+
 .Ltb_saved:
 
     /* [X6 experiment] switch-OUT recorder: the raw window state as the task
@@ -443,9 +454,9 @@ _handler_level3:
      * left exactly as found. The saved WINDOWSTART word stays in the frame --
      * it is what the invariant counter reads -- but it is not authoritative on
      * the way back in. */
-    movi     a3, 1
+    /* [step 162] the task's own WINDOWSTART; the union is gone (steps 132/140) */
+    l32i     a3, a1, 88
     ssl      a2
-    sll      a3, a3                     /* 1 << saved WINDOWBASE */
     /* [step 115] The grant is now this task's own base bit and nothing else.
      *
      * It used to be OR'd with g_win_union -- every other task's recorded live
@@ -460,9 +471,7 @@ _handler_level3:
      * [step 115b] RESTORED pending evidence. Removing it broke wintorture in the
      * same build that added the sweep, and those are two changes with one
      * symptom. The union goes back so the sweep can be judged alone. */
-    movi     a6, g_win_union
-    l32i     a6, a6, 0
-    or       a3, a3, a6
+    /* [step 162] union deleted -- the restore below rewrites these windows. */
 
     /* [X6 experiment] What every switch-in actually receives. Captured BEFORE
      * the windowbase write: afterwards the view has rotated and a2/a3 name
@@ -568,6 +577,149 @@ _handler_level3:
     movi     a4, g_rin_verify
     l32i     a4, a4, 0
     s32i     a4, a5, 8
+
+    /* ==== [step 162] TIER B restore, with the overflow check disabled ======
+     *
+     * The ISA settles why every previous attempt failed (step 161). Window
+     * overflow is checked on ANY REGISTER REFERENCE, not just ENTRY:
+     *
+     *     if (ref(r) or ref(s) or ref(t)) and WindowStart[WindowBase+1]
+     *        and CWOE = 1  ->  overflow
+     *
+     * so an `s32i` after a `ROTW` faults whenever the next window's bit is set.
+     * And the gate is  CWOE <- if PS.EXCM then 0 else PS.WOE.
+     *
+     * The prologue's save pass runs BEFORE this handler clears PS.EXCM, so it
+     * has always had CWOE = 0 and the check disabled -- which is the entire
+     * reason it works and five restore attempts did not. Here EXCM has been
+     * cleared, so the check is live.
+     *
+     * Setting EXCM for the duration restores the prologue's condition. Nothing
+     * inside needs exceptions: no ENTRY, no RETW, no call, and any fault in this
+     * window would be a bug rather than a mechanism.
+     *
+     * Step 155 did the opposite by accident -- WINDOWSTART all-ones guarantees
+     * WindowStart[WindowBase+1] at every stop, maximising the fault. */
+    rsr.ps   a2
+    movi     a3, 0x10                   /* PS.EXCM */
+    or       a2, a2, a3
+    wsr.ps   a2
+    rsync
+
+    movi     a0, g_current
+    l32i     a0, a0, 0
+    bltz     a0, .Ltb_restored
+    movi     a1, g_regvalid
+    addx4    a1, a0, a1
+    l32i     a1, a1, 0
+    beqz     a1, .Ltb_restored
+
+    movi    a0, g_current
+    l32i    a0, a0, 0
+    slli    a0, a0, 8
+    movi    a1, g_regsave
+    add     a0, a0, a1
+    l32i    a2,  a0, 8
+    l32i    a3,  a0, 12
+    l32i    a4,  a0, 16
+    l32i    a5,  a0, 20
+    l32i    a6,  a0, 24
+    l32i    a7,  a0, 28
+    l32i    a8,  a0, 32
+    l32i    a9,  a0, 36
+    l32i    a10, a0, 40
+    l32i    a11, a0, 44
+    l32i    a12, a0, 48
+    l32i    a13, a0, 52
+    l32i    a14, a0, 56
+    l32i    a15, a0, 60
+    l32i    a1,  a0, 0
+    wsr.excsave2 a1
+    l32i    a1,  a0, 4
+    rsr.excsave2 a0
+    rotw    4
+
+    movi    a0, g_current
+    l32i    a0, a0, 0
+    slli    a0, a0, 8
+    movi    a1, g_regsave
+    add     a0, a0, a1
+    l32i    a2,  a0, 72
+    l32i    a3,  a0, 76
+    l32i    a4,  a0, 80
+    l32i    a5,  a0, 84
+    l32i    a6,  a0, 88
+    l32i    a7,  a0, 92
+    l32i    a8,  a0, 96
+    l32i    a9,  a0, 100
+    l32i    a10, a0, 104
+    l32i    a11, a0, 108
+    l32i    a12, a0, 112
+    l32i    a13, a0, 116
+    l32i    a14, a0, 120
+    l32i    a15, a0, 124
+    l32i    a1,  a0, 64
+    wsr.excsave2 a1
+    l32i    a1,  a0, 68
+    rsr.excsave2 a0
+    rotw    4
+
+    movi    a0, g_current
+    l32i    a0, a0, 0
+    slli    a0, a0, 8
+    movi    a1, g_regsave
+    add     a0, a0, a1
+    l32i    a2,  a0, 136
+    l32i    a3,  a0, 140
+    l32i    a4,  a0, 144
+    l32i    a5,  a0, 148
+    l32i    a6,  a0, 152
+    l32i    a7,  a0, 156
+    l32i    a8,  a0, 160
+    l32i    a9,  a0, 164
+    l32i    a10, a0, 168
+    l32i    a11, a0, 172
+    l32i    a12, a0, 176
+    l32i    a13, a0, 180
+    l32i    a14, a0, 184
+    l32i    a15, a0, 188
+    l32i    a1,  a0, 128
+    wsr.excsave2 a1
+    l32i    a1,  a0, 132
+    rsr.excsave2 a0
+    rotw    4
+
+    movi    a0, g_current
+    l32i    a0, a0, 0
+    slli    a0, a0, 8
+    movi    a1, g_regsave
+    add     a0, a0, a1
+    l32i    a2,  a0, 200
+    l32i    a3,  a0, 204
+    l32i    a4,  a0, 208
+    l32i    a5,  a0, 212
+    l32i    a6,  a0, 216
+    l32i    a7,  a0, 220
+    l32i    a8,  a0, 224
+    l32i    a9,  a0, 228
+    l32i    a10, a0, 232
+    l32i    a11, a0, 236
+    l32i    a12, a0, 240
+    l32i    a13, a0, 244
+    l32i    a14, a0, 248
+    l32i    a15, a0, 252
+    l32i    a1,  a0, 192
+    wsr.excsave2 a1
+    l32i    a1,  a0, 196
+    rsr.excsave2 a0
+    rotw    4
+
+.Ltb_restored:
+    rsr.ps   a2
+    movi     a3, 0xffffffef             /* clear PS.EXCM again */
+    and      a2, a2, a3
+    wsr.ps   a2
+    rsync
 
     movi     a4, g_switch_sp            /* different physical reg now; reload */
     l32i     a1, a4, 0
@@ -741,3 +893,10 @@ g_rjunk:
     .global g_regsave
 g_regsave:
     .space 3072
+
+/* [step 162] Tier B: one saved register file per task, and whether it has one. */
+    .section .bss, "aw", @nobits
+    .align 4
+    .global g_regvalid
+g_regvalid:
+    .space 48
