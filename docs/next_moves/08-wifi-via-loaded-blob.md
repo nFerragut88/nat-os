@@ -12031,6 +12031,114 @@ blobphy rc=0
 ```
 
 **Nothing has been on air.**
+---
+
+## step 187 — identifying the null pointer
+
+The question was narrow: what is the pointer, and why is it null. It is not what
+step 186 supposed, and it is not a function pointer at all.
+
+### 187a. What it is not
+
+Step 186 read `a8 = 0x8008d964` in the fault registers, resolved it to the
+instruction after `callx8 a2` in `rom_call4`, and concluded the bridge had been
+called with a null target. Three eliminations, in order:
+
+**`blob_call` has exactly one caller** — `shell.c:820`, passing `e->wifi_init`,
+which the shell prints as `0x403014dc`. `rom_call4`'s other callers pass
+constants, and `blob_isr_run()` already guards with
+`if (!fn) { g_blob_isr_nofn++; return; }`.
+
+**`rom_call4` now refuses a null target** and records the caller rather than
+jumping to zero. It reports `n 0`. **The bridge was never called with null.**
+`a8` was a stale leftover in a register the fault did not touch — the same trap
+step 183 recorded for `a0/sp out`, in a different register.
+
+**Neither table has a hole.** The adapter guard reports `118 words, no null
+slots`; the ROM stub guard reports `36 entries, installed`; and the stub entry
+points were disassembled and are all proper windowed functions —
+`stub_getreent` returns `g_rom_reent`, not zero.
+
+### 187b. What it is
+
+`rom_call4` primes the base save area's `a0` slot with `win_chain_trap`, so that
+a chain unwinding past it traps by name. Recording where it primed, and
+re-reading it at the fault:
+
+```
+chain base: at 0x3ffb9530  primed 0x4008dae8  now 0x4008dae8
+            sp 0x3ffb9540  saved a0 @sp 0x00000000
+fault regs: a0 0x00000000  a1 0x3ffb9560  wb 1  ws 0x00000002
+```
+
+`rom_call4` ran with `sp = 0x3ffb9540`. It begins `addi a1, a1, -32`, so its
+caller's sp was `0x3ffb9560` — **exactly the faulting `a1`**. `a1` had already
+been restored, which places the fault in the epilogue:
+
+```asm
+    l32i.n  a0, a1, 0       /* reload the call0 return address */
+    ...
+    addi    a1, a1, 32
+    ret                     /* -> a0 */
+```
+
+And `[sp+0]`, the word `rom_call4` wrote at entry with `s32i a0, a1, 0`, now
+reads **zero**.
+
+**The pointer is `rom_call4`'s own saved call0 return address.** Not a function
+pointer, not an adapter slot, not a blob callback. The bridge returned to
+address zero because the return address it had stored on its own stack was gone.
+
+### 187c. Why it is null
+
+It was not null when written. Two things establish that the store happened and
+the frame was set up correctly:
+
+- `s32i a0, a1, 0` stores whatever `blob_call` passed in `a0`, and a `call0`
+  return address is never zero;
+- the word 16 bytes lower, at `0x3ffb9530`, was primed in the same prologue and
+  **still holds `win_chain_trap`**.
+
+So the prologue ran, and exactly one word of `rom_call4`'s frame was
+subsequently zeroed while the blob was executing. This is an **overwrite, not a
+miss** — which is why no guard caught it: every guard added so far checks that a
+value was *installed*, and this one was.
+
+That also explains why `win_chain_trap` never fired. It protects the save area
+**below** `rom_call4`'s sp. The word that was destroyed is at `sp` itself, above
+everything the priming covers.
+
+### What is committed
+
+`rom_call4` refuses a null target and names the caller; the panic dump reports
+the chain-base priming and re-reads both the primed slot and the saved return
+address. All three are read-only reporting of values the kernel already had.
+
+```
+boot 11 PASS 0 FAIL
+wintorture 1000 ms : switches during the call: 10  (preemption really happened)
+                     checksum 1632 expected 1632  CORRECT
+blobphy rc=0
+```
+
+### Next
+
+Find what writes zero to `0x3ffb9540`. It is one word, at a known address, in
+task 5's stack, written while the blob runs — a watchpoint-shaped question rather
+than a search. Candidates in order of cheapness:
+
+1. A `w2c_*` bridge's dormant save-area overlap (UM-NATOS-045 §8.4) reaching a
+   word above the bridge's sp rather than below it.
+2. A blob write through a pointer nat-os handed it. `_read_mac` now writes six
+   bytes and `osi_qpoll_w` writes `item_size`; both write to caller-supplied
+   addresses and neither is bounds-checked.
+3. A spill from a window vector using a stale sp.
+
+The `frames` and `overlap` probes already in the dump watch a *different* frame
+and reported nothing; a probe aimed at this word specifically is the next step.
+
+**Nothing has been on air.**
+
 
 
 

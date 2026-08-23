@@ -354,6 +354,23 @@ win_call_vendor:
     .type rom_call4, @function
     .align 4
 rom_call4:
+    /* [step 187] Refuse a null target, and say who asked.
+     *
+     * A callx8 through a zero register lands at PC 0 with nothing to say for
+     * itself: exccause 20, epc 0, and a window that names the bridge rather
+     * than the caller. Recording fn and the call0 return address here turns
+     * that into a named failure at the site of the mistake. a2 is the target
+     * and a0 is the caller, both still live on entry. */
+    bnez    a2, 1f
+    movi    a8, g_romcall_null
+    l32i    a9, a8, 0
+    addi    a9, a9, 1
+    s32i    a9, a8, 0               /* count */
+    s32i    a0, a8, 4               /* who called rom_call4 */
+    s32i    a3, a8, 8               /* its first argument */
+    movi    a2, 0
+    ret                             /* refuse, do not jump to zero */
+1:
     addi    a1, a1, -32
 
     /* Base save area, for the reason spelled out in win_spill_call0 and in
@@ -369,6 +386,13 @@ rom_call4:
     movi    a10, win_chain_trap
     addi    a11, a1, -16
     s32i    a10, a11, 0
+    /* [step 187] Record WHERE the base a0 slot was primed and with what, so a
+     * return through a zero a0 can be told from a return through a slot that
+     * was primed and then overwritten. */
+    movi    a12, g_romcall_prime
+    s32i    a11, a12, 0             /* address primed */
+    s32i    a10, a12, 4             /* value written */
+    s32i    a1,  a12, 8             /* rom_call4's sp at the time */
 
     s32i    a0,  a1, 0
     s32i    a12, a1, 4              /* callee-saved under call0; CALL8 eats them */
@@ -1267,6 +1291,15 @@ phy_stack_call:
     l32i    a1,  a1, 0              /* switch back, last */
     ret
     .size phy_stack_call, . - phy_stack_call
+
+    .section .bss
+    .align 4
+    .global g_romcall_null
+g_romcall_null:
+    .space 12          /* count, caller a0, first arg */
+    .global g_romcall_prime
+g_romcall_prime:
+    .space 12          /* addr, value, sp */
 
     .section .bss
     .align 16

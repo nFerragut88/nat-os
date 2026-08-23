@@ -895,6 +895,49 @@ uart_puts("  pre-spill : ps ");
                     uart_put_dec(osi_impl_free_heap());
                     uart_puts("\n");
                 }
+                {
+                    /* [step 187] rom_call4 refusals: a null blob target, and
+                     * the call0 return address of whoever asked for it. */
+                    extern volatile uint32_t g_romcall_null[];
+                    {
+                        /* [step 187] rom_call4 primes the base save area's a0
+                         * slot with win_chain_trap so unwinding past it traps
+                         * by name. Re-read it: primed-then-overwritten and
+                         * never-primed are different bugs. */
+                        extern volatile uint32_t g_romcall_prime[];
+                        uart_puts("  chain base: at ");
+                        uart_put_hex(g_romcall_prime[0]);
+                        uart_puts(" primed ");
+                        uart_put_hex(g_romcall_prime[1]);
+                        uart_puts(" now ");
+                        if (g_romcall_prime[0] >= 0x3FF00000u &&
+                            g_romcall_prime[0] <  0x40000000u) {
+                            uart_put_hex(*(volatile uint32_t *)g_romcall_prime[0]);
+                        } else {
+                            uart_puts("(unreadable)");
+                        }
+                        uart_puts("  sp ");
+                        uart_put_hex(g_romcall_prime[2]);
+                        /* [step 187] rom_call4 saves its own call0 return
+                         * address at [sp+0]. Its epilogue reloads a0 from
+                         * there. If this reads 0, the ret goes to 0. */
+                        uart_puts("  saved a0 @sp ");
+                        if (g_romcall_prime[2] >= 0x3FF00000u &&
+                            g_romcall_prime[2] <  0x40000000u) {
+                            uart_put_hex(*(volatile uint32_t *)g_romcall_prime[2]);
+                        } else {
+                            uart_puts("(unreadable)");
+                        }
+                        uart_puts("\n");
+                    }
+                    uart_puts("  romcall0  : n ");
+                    uart_put_dec(g_romcall_null[0]);
+                    uart_puts("  caller ");
+                    uart_put_hex(g_romcall_null[1]);
+                    uart_puts("  arg ");
+                    uart_put_hex(g_romcall_null[2]);
+                    uart_puts("\n");
+                }
                     uart_puts("  worker    : reached ");
                     uart_put_dec(blob_task_reached());
                     uart_puts("  running ");
