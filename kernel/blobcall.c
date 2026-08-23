@@ -168,7 +168,23 @@ static volatile uint32_t g_pin_seq;
  * windowed frames held across a GENUINE preemption. With the pin in force the
  * scheduler refuses to switch away, so the test never tested anything. */
 #ifndef BLOB_PIN_DISABLE
-#define BLOB_PIN_DISABLE 0
+/* [step 163] OFF BY DEFAULT NOW.
+ *
+ * The pin existed for one reason: windowed frames did not survive preemption
+ * (UM-NATOS-038 section 12.3, measured by disabling it and watching wintorture
+ * panic). Tier B changed that. Step 162 ran the same bench and got ten genuine
+ * preemptions with eight windowed frames live and the checksum correct every
+ * time, plus wifiinit clean unpinned.
+ *
+ * So the reason is gone, and what the pin costs is not small: it forbids
+ * preemption inside vendor code, which forces every blocking wait in the radio
+ * path to be step 113's busy-spin -- 600 ms of CPU per _queue_recv, and no way
+ * to write a wait that sleeps until an interrupt arrives.
+ *
+ * Kept as a switch rather than deleted. It is the control for every windowed
+ * measurement in this log, and step 121's baseline is only reproducible with it
+ * back at 0. */
+#define BLOB_PIN_DISABLE 1
 #endif
 
 int      blob_pinned_task(void) { return BLOB_PIN_DISABLE ? -1 : g_pinned; }

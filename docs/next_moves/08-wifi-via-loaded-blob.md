@@ -10363,4 +10363,47 @@ in §5.2 remains unmeasured and should be confirmed with `xt_ccount()`.
 Suite at the committed default (pin ON): boot 11 PASS 0 FAIL, `wintorture`
 CORRECT, `blobphy` rc=0, `blobtx force` 0x3004, `wifiinit` no fault and no reset.
 
+## Step 163 — the pin is off
+
+`BLOB_PIN_DISABLE` now defaults to 1. Full suite, unpinned:
+
+```
+boot 11 PASS 0 FAIL
+wintorture 1000 ms : switches during the call: 10  (preemption really happened)
+                     checksum 1632 expected 1632  CORRECT
+wincollide  ran        wintest ok        blobphy rc=0
+blobtx force 0x3004    wifiinit no fault, no reset
+```
+
+The pin existed for exactly one reason — windowed frames did not survive
+preemption, measured at UM-NATOS-038 §12.3 by disabling it and watching
+`wintorture` panic. Tier B removed that reason, and this is the same measurement
+run again with the opposite result.
+
+### What it cost while it was there
+
+It forbade preemption inside vendor code, which forced every blocking wait in the
+radio path to be step 113's busy-spin: 600 ms of CPU per `_queue_recv`, and no
+way to write a wait that sleeps until an interrupt arrives. That constraint has
+shaped this file since step 106.
+
+### Kept as a switch, not deleted
+
+`BLOB_PIN_DISABLE` stays. It is the control for every windowed measurement in
+this log, and step 121's baseline — `LOST 0x0000aa82`, the immediate
+`IllegalInstruction` — is only reproducible with it back at 0. Deleting it would
+make the strongest before/after comparison in the investigation unreproducible.
+
+### What is now possible that was not
+
+Step 113's spin can become a real block. Step 157 tried exactly that and got the
+original `_WindowUnderflow8` fault back — but that attempt ran **with the pin on
+and without Tier B's restore**, which is to say under the conditions that made it
+impossible. It deserves retrying now that neither holds.
+
+Beyond that, UM-NATOS-042 §9.5's list is unchanged and is what stands between
+here and a working radio: interrupts were never wired, `_task_delay` returns
+immediately, the timer entries are stubs, event callbacks never fire, and there
+is no data path above the MAC.
+
 **Nothing has been on air.**
