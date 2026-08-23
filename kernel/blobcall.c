@@ -258,6 +258,29 @@ struct blob_task {
     uint32_t want_stack;    /* what the blob asked for, in bytes */
 };
 static struct blob_task g_bt[BLOB_TASK_MAX];
+/* [step 179, Tortoise] Where the worker actually is.
+ *
+ * blob_task_entry() takes blob_lock() before it may run any windowed code. If
+ * the worker never gets past that, it can never send the message the init
+ * context is waiting for in _queue_recv, and the two counters below say so
+ * without any inference: reached != running means it is stuck on the mutex. */
+static uint32_t g_bt_reached, g_bt_running, g_bt_returned;
+uint32_t blob_task_reached(void);
+uint32_t blob_task_running(void);
+uint32_t blob_task_returned(void);
+uint32_t blob_task_reached(void)  { return g_bt_reached; }
+uint32_t blob_task_running(void)  { return g_bt_running; }
+uint32_t blob_task_returned(void) { return g_bt_returned; }
+/* [step 179] the blob mutex, read from call0 so the windowed report needs
+ * neither the type nor the symbol. */
+uint32_t blob_mutex_owner(void);
+uint32_t blob_mutex_acq(void);
+uint32_t blob_mutex_cont(void);
+uint32_t blob_mutex_err(void);
+uint32_t blob_mutex_owner(void) { return (uint32_t)g_blob_mutex.owner; }
+uint32_t blob_mutex_acq(void)   { return g_blob_mutex.acquisitions; }
+uint32_t blob_mutex_cont(void)  { return g_blob_mutex.contentions; }
+uint32_t blob_mutex_err(void)   { return g_blob_mutex.errors; }
 static uint32_t g_bt_short;     /* times the request exceeded a nat-os stack */
 static uint32_t g_bt_last_want; /* the largest such request, in bytes */
 
@@ -295,8 +318,11 @@ static void blob_task_entry(void)
     /* The blob task holds the lock while it runs and releases it whenever it
      * blocks, so only one context is ever inside windowed code at a time
      * without the task having to hold it forever. */
+    g_bt_reached++;
     blob_lock();
+    g_bt_running++;
     (void)rom_call3(g_bt[slot].fn, g_bt[slot].arg, 0u, 0u);
+    g_bt_returned++;
     blob_unlock();
 }
 

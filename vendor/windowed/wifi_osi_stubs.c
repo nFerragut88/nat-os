@@ -170,7 +170,10 @@ uint32_t g_osi_intr_clamped;   /* interrupts asked for above CRIT_LEVEL */
  * each entry is touched, which cannot show a loop or a retry. Paired with the
  * argument where the entry has one worth seeing (allocation sizes). */
 #define OSI_TRACE_MAX 48u
+static uint32_t g_st_sem_done, g_st_sem_rc, g_st_relocked;
+extern volatile int g_pinned;   /* kernel/blobcall.c -- needed by osi_trace */
 uint8_t  g_osi_trace[OSI_TRACE_MAX];
+uint8_t  g_osi_trace_who[OSI_TRACE_MAX];
 uint32_t g_osi_trace_arg[OSI_TRACE_MAX];
 uint32_t g_osi_trace_n;
 
@@ -178,6 +181,11 @@ static void osi_trace(uint32_t i, uint32_t arg)
 {
     if (g_osi_trace_n < OSI_TRACE_MAX) {
         g_osi_trace[g_osi_trace_n] = (uint8_t)i;
+        /* [step 179, Tortoise] WHO made the call. g_pinned is the task that is
+         * currently inside the blob and is already in memory here, so this is a
+         * store, not a new read on the blocking path. Without it, "the worker
+         * waits for itself" and "init waits for the worker" have the same trace. */
+        g_osi_trace_who[g_osi_trace_n] = (uint8_t)(g_pinned < 0 ? 99 : g_pinned);
         g_osi_trace_arg[g_osi_trace_n] = arg;
         g_osi_trace_n++;
     }
@@ -209,6 +217,28 @@ extern void blob_unlock(void);
 extern void win_spill_all(void);
 extern unsigned int osi_windowed_idle(unsigned int depth, unsigned int spin);
 extern int  osi_qpoll_w(void *h, void *item, uint32_t *woke);   /* windowed: CALL8, no bridge */
+/* [step 179, Tortoise] Who waits, and on what.
+ *
+ * _queue_recv is the stall. The trace says it is called and never returns, but
+ * not by which task nor on which queue -- and "the worker waits for itself" and
+ * "the init context waits for the worker" are different bugs with the same
+ * trace. Both values are already in registers here; recording them adds no read
+ * to the blocking path (step 167's rule). */
+static uint32_t g_qrw_n;
+static uint32_t g_qrw_task[4];
+static uint32_t g_qrw_queue[4];
+/* Every queue handle nat-os ever hands the blob, and which call made it. */
+static uint32_t g_qmk_n;
+static uint32_t g_qmk_h[8];
+static uint32_t g_qmk_via[8];   /* 23 = _queue_create, 96 = _wifi_create_queue */
+extern uint32_t blob_mutex_owner(void);
+extern uint32_t blob_mutex_acq(void);
+extern uint32_t blob_mutex_cont(void);
+extern uint32_t blob_mutex_err(void);
+extern void uart_put_hex(unsigned int value);
+extern uint32_t blob_task_reached(void);
+extern uint32_t blob_task_running(void);
+extern uint32_t blob_task_returned(void);
 extern int      blob_trylock_w(int me);                        /* windowed */
 extern uint32_t blob_unlock_w(int me);                         /* windowed */
 extern void     blob_wake_waiters(void);                       /* address only */
@@ -595,7 +625,13 @@ static int32_t osi_s_semphr_take(void *semphr, uint32_t block_time_tick)
     int32_t r = (int32_t)w2c_call2((uint32_t)&osi_impl_sem_take,
                                    (uint32_t)semphr, (uint32_t)block_time_tick);
     blk_sample(2u);
+    /* [step 179, Tortoise] Three points on the blocking take, so "still in the
+     * semaphore" and "has the semaphore, waiting for the blob lock back" stop
+     * looking the same from outside. */
+    g_st_sem_done++;
+    g_st_sem_rc = (uint32_t)r;
     (void)w2c_call0f((uint32_t)&blob_lock);
+    g_st_relocked++;
     return r;
 }
 
@@ -748,6 +784,11 @@ static int32_t osi_s_queue_recv(void *queue, void *item, uint32_t block_time_tic
      *
      * We are pinned on entry (the blob was called with the lock held), so the
      * task id can be read safely once and reused for the direct stores. */
+    if (g_qrw_n < 4u) {
+        g_qrw_task[g_qrw_n] = (uint32_t)g_pinned;
+        g_qrw_queue[g_qrw_n] = (uint32_t)queue;
+        g_qrw_n++;
+    }
     int me = g_pinned;
     if (me < 0) {
         /* Not pinned: nothing to protect, so the simple path is correct. */
@@ -902,6 +943,16 @@ static int32_t osi_s_queue_recv(void *queue, void *item, uint32_t block_time_tic
              * `osiused` cannot be reached. This says what the blob actually
              * asked for before it stalled. */
             (void)w2c_call1((uint32_t)&uart_puts,
+                            (uint32_t)"\n   [who] ");
+            {
+                uint32_t k, n = g_osi_trace_n;
+                if (n > 40u) { n = 40u; }
+                for (k = 0u; k < n; k++) {
+                    (void)w2c_call1((uint32_t)&uart_put_dec, g_osi_trace_who[k]);
+                    (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" ");
+                }
+            }
+            (void)w2c_call1((uint32_t)&uart_puts,
                             (uint32_t)"\n   [osi] ");
             {
                 uint32_t k, n = g_osi_trace_n;
@@ -923,6 +974,45 @@ static int32_t osi_s_queue_recv(void *queue, void *item, uint32_t block_time_tic
              * a successful one look identical from the trace -- osi_hit() fires
              * before the decision. These counters are already maintained by
              * blobcall.c; nothing new is measured. */
+            (void)w2c_call1((uint32_t)&uart_puts,
+                            (uint32_t)"\n   [sem] blocking_take done=");
+            (void)w2c_call1((uint32_t)&uart_put_dec, g_st_sem_done);
+            (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" rc=");
+            (void)w2c_call1((uint32_t)&uart_put_dec, g_st_sem_rc);
+            (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" relocked=");
+            (void)w2c_call1((uint32_t)&uart_put_dec, g_st_relocked);
+            (void)w2c_call1((uint32_t)&uart_puts,
+                            (uint32_t)"\n   [wrk] reached=");
+            (void)w2c_call1((uint32_t)&uart_put_dec, w2c_call0f((uint32_t)&blob_task_reached));
+            (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" running=");
+            (void)w2c_call1((uint32_t)&uart_put_dec, w2c_call0f((uint32_t)&blob_task_running));
+            (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" returned=");
+            (void)w2c_call1((uint32_t)&uart_put_dec, w2c_call0f((uint32_t)&blob_task_returned));
+            (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)"  mutex owner=");
+            (void)w2c_call1((uint32_t)&uart_put_dec, w2c_call0f((uint32_t)&blob_mutex_owner));
+            (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" acq=");
+            (void)w2c_call1((uint32_t)&uart_put_dec, w2c_call0f((uint32_t)&blob_mutex_acq));
+            (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" cont=");
+            (void)w2c_call1((uint32_t)&uart_put_dec, w2c_call0f((uint32_t)&blob_mutex_cont));
+            (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" err=");
+            (void)w2c_call1((uint32_t)&uart_put_dec, w2c_call0f((uint32_t)&blob_mutex_err));
+            /* [step 179] made queues, then who waited on what. */
+            (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)"\n   [q] made:");
+            {   uint32_t k;
+                for (k = 0u; k < g_qmk_n; k++) {
+                    (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" via");
+                    (void)w2c_call1((uint32_t)&uart_put_dec, g_qmk_via[k]);
+                    (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)"=");
+                    (void)w2c_call1((uint32_t)&uart_put_hex, g_qmk_h[k]);
+                }
+                (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)"   recv:");
+                for (k = 0u; k < g_qrw_n; k++) {
+                    (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)" t");
+                    (void)w2c_call1((uint32_t)&uart_put_dec, g_qrw_task[k]);
+                    (void)w2c_call1((uint32_t)&uart_puts, (uint32_t)"@");
+                    (void)w2c_call1((uint32_t)&uart_put_hex, g_qrw_queue[k]);
+                }
+            }
             (void)w2c_call1((uint32_t)&uart_puts,
                             (uint32_t)"\n   [mem] alloc calls=");
             (void)w2c_call1((uint32_t)&uart_put_dec, g_osi_alloc_calls);
@@ -1384,6 +1474,7 @@ static void * osi_s_wifi_create_queue(int queue_len, int item_size)
     q[0] = w2c_call2((uint32_t)&osi_impl_queue_create,
                      (uint32_t)queue_len, (uint32_t)item_size);
     q[1] = 0u;
+    if (g_qmk_n < 8u) { g_qmk_h[g_qmk_n] = q[0]; g_qmk_via[g_qmk_n] = 96u; g_qmk_n++; }
     if (!q[0]) {
         (void)w2c_call1((uint32_t)&osi_impl_free, (uint32_t)q);
         return 0;

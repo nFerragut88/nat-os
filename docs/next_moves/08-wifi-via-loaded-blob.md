@@ -11146,4 +11146,191 @@ wifiinit : no fault, no reset
 Not committed: the park change of 178c.
 
 **Nothing has been on air.**
+---
+
+## step 179 — checked against Espressif's own headers, and the stall named
+
+Two sources arrived: a PDF (`ESP32_WiFi.pdf`, the ESP-WROOM-32 module datasheet)
+and, found while looking for it, **ESP-IDF's actual headers and
+`esp_adapter.c`**, already on this machine under the PlatformIO trees.
+
+The datasheet is hardware only — pins, strapping, crystal, RF power, reflow,
+schematics. Grepped for interrupt/window/mutex/queue/ISR/DPORT/cache/RTOS; one
+line confirms the blob targets FreeRTOS + LwIP and nothing else applies. **No
+bearing on any open bug.** Recorded so nobody reads it again for this purpose.
+
+The IDF sources are a different matter, and four things that had been assumed for
+177 steps are now checked rather than assumed.
+
+### 179a. What the headers confirm
+
+| checked against | result |
+|---|---|
+| `wifi_os_adapter.h` v0x00000008 | **the OSI table is exact** |
+| `soc.h` `ETS_WIFI_MAC_INTR_SOURCE` | **`INTR_SRC_WIFI_MAC 0` correct** |
+| `wifi.h` `wifi_static_queue_t` | **`_wifi_create_queue` shape correct** |
+| `esp_adapter.c` `set_intr_wrapper` | **signature matches, 4 args** |
+
+The table check is worth stating precisely, because table drift has been a
+standing suspicion. Diffing nat-os's 118 entries against IDF's function-pointer
+list gives exactly two differences: `_version` at the front and `_magic` at the
+back. 118 = 116 + 2. Order identical, no gaps, no reordering. `_version` and
+`_magic` both match (`0x8`, `0xDEADBEAF`). **Table misalignment is eliminated as
+a cause of anything.**
+
+`_wifi_create_queue` was the best remaining candidate before this: IDF requires a
+`wifi_static_queue_t { handle, storage }` and the blob dereferences `->handle`,
+so returning a bare handle would hand it garbage and produce an eternal wait.
+nat-os already allocates the 8 bytes and fills them correctly. Eliminated.
+
+**Correcting step 177's write-up.** It recorded `INTR_LINE_WIFI_MAC 27` against
+IDF's `ETS_WMAC_INUM = 0` as a divergence that might leave us listening on the
+wrong line. `esp_adapter.c` settles it:
+
+```c
+static void set_intr_wrapper(int32_t cpu_no, uint32_t intr_source,
+                             uint32_t intr_num, int32_t intr_prio)
+{ esp_rom_route_intr_matrix(cpu_no, intr_source, intr_num); }
+```
+
+**The blob supplies `intr_num`.** nat-os's `osi_s_set_intr` passes it straight
+through to `osi_impl_set_intr`; the `27` constant is a reservation for the
+routing path, not a line forced on the blob. The concern was real in shape and
+wrong in fact.
+
+Also noted, not acted on: `osi_hit(N)` numbers are author-assigned IDs, **not**
+struct indices — `osi_hit(85)` sits in `_malloc_internal`, which is IDF field 88.
+The trace readings are right; the numbers must not be used to reason about
+layout. And `osi_s_queue_create` is a bare `return 0` stub. The blob has not
+called it, but a NULL queue would be a silent eternal wait if it ever does.
+
+### 179b. Who is actually waiting — the trace Tortoise asked for
+
+Three instruments, all recording values already in memory at the point of
+recording, so none adds a read to the blocking path (step 167):
+
+- the calling task for **every** OSI call, from `g_pinned`, one store in
+  `osi_trace()`;
+- every queue handle handed to the blob, and the caller and handle of every
+  `_queue_recv`;
+- `reached`/`running`/`returned` around the worker's `blob_lock()`.
+
+```
+[who] 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5  9  9  9  9  9
+[osi] 19 41 21 87 41 22 8 19 85 42 93 13 42 36 15 16 29 29 29 29
+[bt]  created=1 refused=0 want_stack=6656
+[wrk] reached=1 running=1 returned=0   mutex owner=9 acq=76 cont=2 err=0
+[q]   made: via96=0x05100000   recv: t9@0x05100000 x4
+[sem] blocking_take done=1 rc=1 relocked=0
+```
+
+That is the whole answer, and almost none of it is what step 178 supposed.
+
+**There is no deadlock.** `reached=1 running=1` — the worker took the blob lock
+and is running the blob's worker function. Step 178c's account is dead.
+
+**The worker is not the stalled party.** All four `_queue_recv` calls are
+**task 9**, on `0x05100000` — the one queue `_wifi_create_queue` ever made. In
+IDF that is the WiFi task's event queue, and its messages come from
+`_queue_send_from_isr` in the MAC ISR. An empty queue there is the **normal idle
+state**, not a fault. Nothing is supposed to send it a message yet.
+
+**The stalled party is the init task.** Task 5's last OSI call is 15,
+`_semphr_take`; task 9's first is 16, `_semphr_give`. That is the standard
+startup handshake — init creates the worker and waits for it to signal that it
+is up — and it **worked**: `[sem] done=1 rc=1`. The semaphore was taken
+successfully.
+
+`relocked=0` says where task 5 then went. The tail of `osi_s_semphr_take` is:
+
+```c
+(void)w2c_call0f((uint32_t)&blob_unlock);
+int32_t r = osi_impl_sem_take(semphr, block_time_tick);   /* returned 1 */
+(void)w2c_call0f((uint32_t)&blob_lock);                   /* never returned */
+```
+
+**Task 5 is blocked re-acquiring the blob mutex**, which task 9 holds —
+`owner=9`, and `err=0` proves task 9 never once lost it.
+
+### 179c. The defect: a convoy on the blob mutex
+
+`osi_s_queue_recv`'s wait loop is, every round:
+
+```
+blob_unlock_w(me)  ->  blob_wake_waiters(owed)  ->  park 1 tick  ->  blob_trylock_w(me)
+```
+
+The release is real and the hand-off is real: `blob_unlock_w` returns the waiter
+bitmask and `blob_wake_waiters` calls `task_unblock` on each. But the re-acquire
+is a **trylock that succeeds unconditionally whenever the owner is FREE**. It
+does not defer to the waiter it just woke, and the park is **one tick** — the
+shortest sleep the kernel offers.
+
+So task 5 is woken, becomes runnable, and must be scheduled and reach
+`mutex_lock` inside a one-tick window before task 9 takes the lock straight back.
+It never wins. `acq=76` against `cont=2` is the convoy in two numbers: task 9
+acquired seventy-six times while task 5 contended twice and stopped being
+counted, because `mutex_lock` blocks rather than re-contending.
+
+**The worker starves the init task**, which is the exact inverse of the failure
+Tortoise warned about, and it has the same root cause.
+
+### 179d. Priority: nat-os does not honour the blob's request
+
+Checked, because Tortoise asked and because it is load-bearing for 179c.
+
+- `osi_s_task_get_max_priority()` returns **25**, IDF's `configMAX_PRIORITIES`,
+  deliberately — the blob does arithmetic on it. Correct.
+- IDF's wrapper passes the result straight through:
+  `xTaskCreatePinnedToCore(task_func, name, stack_depth, param, prio, ...)`.
+  The blob's WiFi task is meant to run near the top of that scale.
+- **nat-os's `blob_task_create()` discards `r->prio` entirely.** The request
+  struct carries it (`struct blob_task_req { fn, arg, prio, handle,
+  stack_bytes; }`), the slot struct has no field for it, and neither
+  `task_create()` nor `task_create_with_stack()` takes one. Every task is created
+  at `TASK_PRIO_NORMAL` (`task.c:492`).
+
+The stub for `_task_get_max_priority` says where the work was meant to go:
+
+> *The mapping down to `TASK_PRIO_LOW/NORMAL/HIGH` belongs in task creation,
+> where the number is actually used.*
+
+It was never written. nat-os has strict priorities with ageing
+(`TASK_PRIO_LEVELS 3`) and a setter at `task.c:1665`, so honouring the request is
+a mapping and one call — not a scheduler change.
+
+Both parties therefore sit at `TASK_PRIO_NORMAL`, which is why the one-tick
+window in 179c is decided by round-robin luck rather than by policy.
+
+### 179e. What should happen before `_set_intr` is reached
+
+Directly, since it has been an open question since step 177.
+
+`set_intr_wrapper` is **not part of `esp_wifi_init_internal`**. In IDF the MAC
+interrupt is attached on the start path, not the init path. So
+**`[intr] routed=0` at this stage is expected and is not a bug** — the wiring
+committed in 177 is correct and simply has not been reached.
+
+The chain is: `esp_wifi_init_internal` must **return** → which needs task 5 to
+re-acquire the blob mutex → which needs 179c fixed. Only then does
+`esp_wifi_start()` become callable, and only that path calls `_set_intr`.
+
+### What this leaves
+
+Two candidate fixes for 179c, neither applied, because they are design choices
+and not obviously equivalent:
+
+1. **Fair hand-off** — `blob_trylock_w` refuses when a woken waiter is
+   outstanding, so the release actually transfers ownership. Fixes the convoy
+   whatever the priorities are.
+2. **Honour the requested priority** (179d) — correct on its own merits and
+   independently needed, but on its own it would make the worker *higher*
+   priority than init and could deepen the convoy rather than break it.
+
+They interact, and (1) looks like the one that must come first.
+
+Per Tortoise's instruction the interrupt implementation was not touched.
+
+**Nothing has been on air.**
+
 
