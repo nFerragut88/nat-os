@@ -10032,4 +10032,60 @@ one side and a `retw` on the other.
 Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0, `blobtx force`
 0x3004, `wifiinit` no fault and no reset.
 
+## Step 158 — the save-area probe cannot report its own state, and moved the fault
+
+Park reinstated, with `[sp-48 .. sp+12]` sampled before the bridged call and
+again after it returns — spanning the extended save area `_WindowUnderflow8`
+reads at `[a7-32]` and the base save area below it.
+
+```
+save area : park never reached
+exccause  : 9 (LoadStoreAlignment)   epc 0x4008e6af   excvaddr 0x4008d002
+underflow : recovered a0 0x3ffd8f78 from save area 0x3ffb2830
+```
+
+**Two failures, both mine, and neither is a finding about the kernel.**
+
+### The probe cannot distinguish its own states
+
+`g_sa_diff` stays at `-2` until the **post**-capture runs. So "park never
+reached" prints in two completely different situations: the park was never
+reached, or **the park was reached and never returned.** Those are the two
+outcomes the probe exists to separate, and it reports the same string for both.
+
+A separate flag for the pre-capture was needed and is one line. This is the
+fifteenth entry in the catalogue and it is the plainest one yet — not a subtle
+context mismatch, just a state variable doing two jobs.
+
+### And it moved the fault
+
+Step 157 gave `_WindowUnderflow8 + 0x15`. This gives `LoadStoreAlignment` at
+`0x4008e6af` with `excvaddr 0x4008d002` — unaligned, in IROM. Different fault,
+different place. The `underflow` line reports `a0` recovered as `0x3ffd8f78`, a
+blob `.bss` global, from save area `0x3ffb2830` — which is UM-NATOS-042 §4's
+original signature, not step 157's.
+
+So the sixteen-word read either side of the park changed what the path does.
+**Fourth instrument in this stretch to perturb what it measured** — after steps
+152, 153 and 154.
+
+### What that pattern is worth
+
+Six consecutive steps have now produced instrument failures rather than kernel
+findings. Steps 146 and 151 worked because they read data the kernel was
+*already* recording; every failure since has come from adding a new capture into
+the path under test.
+
+That is a usable rule, and it is the one to apply next: **do not add reads to the
+blocking path.** If the question is what happens to that save area across the
+park, the answer has to come from something already being written — the switch
+frame, `g_regsave`, the existing `uf`/`of` probes — or from changing *when* the
+park happens rather than watching it.
+
+### Status
+
+Everything reverted. The busy-spin stands. Suite: boot 11 PASS 0 FAIL,
+`wintorture` CORRECT, `blobphy` rc=0, `blobtx force` 0x3004, `wifiinit` no fault
+and no reset.
+
 **Nothing has been on air.**
