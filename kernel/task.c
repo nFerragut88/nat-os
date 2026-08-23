@@ -105,6 +105,27 @@ volatile uint32_t g_pspill_bs_enc, g_pspill_bs_sp, g_pspill_link, g_pspill_a0slo
  * reading the wrong address. */
 volatile uint32_t g_ih_a1_raw, g_ih_a1_calc, g_ih_ws, g_ih_wb, g_ih_bitset;
 volatile uint32_t g_ih_a1_latched;
+/* [step 141] The `frames :` line predicts the grant by recomputing what
+ * _handler_level3 does. That duplication is not optional -- the vector has no
+ * room to walk a task table -- but it is drift-prone, and step 140 caught it
+ * drifting: the handler was changed to take the grant from the frame and this
+ * kept reporting `granted 0x00000008`, a number nothing had written.
+ *
+ * So the prediction is now CHECKED. The handler already records the grant it
+ * actually wrote, in g_rin_ws. One switch later, that value is compared against
+ * what was predicted for the same task. A mismatch names the task and both
+ * numbers, and means this file's model of the restore has diverged from the
+ * restore -- which makes every `frames :` line since the divergence fiction.
+ *
+ * Lagged by one switch because g_rin_ws is written by the handler AFTER
+ * task_schedule returns. Comparing it in the same call would compare this
+ * event's prediction against the previous event's grant, which is the mistake
+ * step 135 made and step 123 made before it. */
+static int      g_pred_task = -1;
+static uint32_t g_pred_grant;
+volatile int      g_grant_drift_task = -1;
+volatile uint32_t g_grant_drift_pred, g_grant_drift_real;
+
 volatile int      g_lost_task = -1;
 volatile uint32_t g_lost_had, g_lost_grant, g_lost_bits;
 
@@ -1284,6 +1305,22 @@ uint32_t task_schedule(uint32_t current_sp)
      * blob task; if it is always zero, that account is wrong.
      *
      * Latched once, with the task, so it names rather than suggests. */
+    /* [step 141] Did the LAST prediction match what the handler wrote? */
+    if (g_pred_task >= 0 && g_grant_drift_task < 0) {
+        extern volatile uint32_t g_rin_ws;
+        if (g_rin_ws != g_pred_grant) {
+            g_grant_drift_task = g_pred_task;
+            g_grant_drift_pred = g_pred_grant;
+            g_grant_drift_real = g_rin_ws;
+        }
+    }
+
+    {
+        uint32_t base_in = ((const uint32_t *)g_tasks[next].sp)[TASK_FRAME_IDX_WBASE] & 15u;
+        g_pred_task  = next;
+        g_pred_grant = (1u << base_in) | g_win_union;
+    }
+
     if (g_lost_task < 0 && g_out_ws[next] != 0u) {
         uint32_t base_in = ((const uint32_t *)g_tasks[next].sp)[TASK_FRAME_IDX_WBASE] & 15u;
         uint32_t grant   = (1u << base_in) | g_win_union;

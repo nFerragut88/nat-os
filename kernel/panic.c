@@ -487,6 +487,21 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
         {
             extern volatile int g_lost_task;
             extern volatile uint32_t g_lost_had, g_lost_grant, g_lost_bits;
+            {
+                extern volatile int      g_grant_drift_task;
+                extern volatile uint32_t g_grant_drift_pred, g_grant_drift_real;
+                if (g_grant_drift_task >= 0) {
+                    uart_puts("  GRANT DRIFT: task.c predicted ");
+                    uart_put_hex(g_grant_drift_pred);
+                    uart_puts(" but vectors.S wrote ");
+                    uart_put_hex(g_grant_drift_real);
+                    uart_puts(" for task ");
+                    uart_put_dec((unsigned int)g_grant_drift_task);
+                    uart_puts((const char[]){10,0});
+                    uart_puts("               the frames line below is computed from the wrong model");
+                    uart_puts((const char[]){10,0});
+                }
+            }
             uart_puts("  frames    : ");
             if (g_lost_task < 0) { uart_puts("no task was ever granted less than it held"); }
             else {

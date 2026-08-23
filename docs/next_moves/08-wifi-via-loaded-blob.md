@@ -8995,4 +8995,55 @@ been found and named. What has not changed is the phantom, which is now the only
 thing standing between this and a working unpinned switch — exactly where step
 137 said it would be, reached one step sooner than expected.
 
+## Step 141 — the `frames` diagnostic now checks itself, and the check is proven
+
+`task.c` predicts the grant by recomputing what `_handler_level3` assigns. That
+duplication is not optional — the vector has no room to walk a task table — but
+it drifts silently, and step 140 caught it drifting: the handler was changed to
+take the grant from `frame[88]` and this kept reporting `granted 0x00000008`, a
+number nothing had written.
+
+**The prediction is now checked against reality.** The handler already records
+the grant it actually wrote, in `g_rin_ws`. One switch later, `task_schedule`
+compares that against what it predicted for the same task, and a mismatch is
+printed above the `frames` line by name.
+
+Lagged by one switch deliberately: `g_rin_ws` is written *after* `task_schedule`
+returns, so comparing in the same call would test this event's prediction against
+the previous event's grant. That is the mistake step 135 made and step 123 made
+before it, and it is now avoided by construction rather than by care.
+
+### Both directions verified
+
+An alarm that has never fired is the failure mode this log has catalogued
+fourteen times, so it was tested in both states.
+
+**Quiet when the models agree** — forced dump on a healthy system prints nothing.
+
+**Fires when they do not.** Step 140's `frame[88]` change was reintroduced
+deliberately for one build:
+
+```
+GRANT DRIFT: task.c predicted 0x00000002 but vectors.S wrote 0x00000000 for task 6
+             the frames line below is computed from the wrong model
+frames    : no task was ever granted less than it held
+```
+
+The second line is the point. `no task was ever granted less than it held` is
+exactly the reassurance that survived twenty steps of being wrong, and it is now
+labelled unreliable at the moment it becomes so, rather than being discovered to
+have been fiction later.
+
+Divergence reverted; the checker is quiet again.
+
+### What this does not fix
+
+Nothing about the phantom, Tier B, or the grant itself. It makes one diagnostic
+incapable of lying quietly, which is worth a step of its own given how much of
+this investigation has been spent on instruments that reported what they could
+not observe.
+
+Suite: boot 11 PASS 0 FAIL, `wintorture` CORRECT, `blobphy` rc=0, `blobtx force`
+0x3004, `wifiinit` no fault and no reset.
+
 **Nothing has been on air.**
