@@ -9508,10 +9508,21 @@ query saying "absent" was the unreliable one. Reflashed, verified.
 
 **This is the same class as step 128's "build failed, stale image reported
 clean" and step 135's cross-event comparison** -- the third time this session a
-toolchain step failed quietly and the run after it was read as a result. The
-build script's exit status is checked; the *flash* step's is not, and that is the
-gap. `Hash of data verified` / `Leaving...` is the string that means the image
-actually landed.
+toolchain step failed and the run after it was read as a result.
+
+**Correction to the first account of this.** It was recorded as "the build
+script's exit status is checked; the flash step's is not". That is false.
+`build.ps1` has always carried `if ($LASTEXITCODE -ne 0) { throw "flash failed" }`
+on the flash, and `A fatal error occurred: Could not open COM5` was printed in
+that very run. The script did its job. **The suite results underneath the failure
+were read anyway.** The gap was in the reading, not the tooling, and calling it a
+tooling gap would have left the actual habit unexamined.
+
+The script now also *counts* `Hash of data verified` and refuses to continue on
+fewer than three. That is worth having for a reason the exit code cannot cover --
+a flash that succeeds having written only some segments -- and because it turns
+"I should have noticed" into "the build stopped". It is not the fix for what went
+wrong here.
 
 Reverted to green, **verified after a successful reflash**. Kept: the CALL12
 reserve, the `WINDOWSTART` seed, the scratch restore. Suite: boot 11 PASS 0 FAIL,

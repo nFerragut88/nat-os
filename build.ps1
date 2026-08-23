@@ -262,11 +262,32 @@ if ($Flash) {
     }
 
     Write-Host "== flashing $Port ==" -ForegroundColor Cyan
-    & $python $esptool --chip esp32 --port $Port --baud 460800 write_flash -z `
+    # Output is captured so the flash can be VERIFIED rather than assumed, then
+    # echoed so nothing is hidden. esptool prints "Hash of data verified." once
+    # per segment and there are three.
+    #
+    # The exit-code check below is not enough on its own, and not because it is
+    # wrong -- because a human (or a grep) reading the console can see a failure
+    # and still read the suite results printed underneath it. That happened:
+    # next_moves/08 step 148, where a flash refused with "Could not open COM5",
+    # the board kept the previous image, and the run afterwards was reported as
+    # a result. A count that must reach three turns "I should have noticed" into
+    # "the script stopped".
+    #
+    # No 2>&1: redirecting a native command's stderr in PS 5.1 wraps each line in
+    # an ErrorRecord and falsifies $?, which would break the very check this is.
+    $flashOut = & $python $esptool --chip esp32 --port $Port --baud 460800 write_flash -z `
         0x1000  $stage2 `
         0x8000  (Join-Path $borrowed "partitions.bin") `
         0x10000 $bin
+    $flashOut | ForEach-Object { Write-Host $_ }
     if ($LASTEXITCODE -ne 0) { throw "flash failed" }
+
+    $verified = ($flashOut | Select-String -SimpleMatch "Hash of data verified").Count
+    if ($verified -lt 3) {
+        throw "flash did not verify: $verified of 3 segments hashed -- the board may still hold the PREVIOUS image, so do not trust any run against it"
+    }
+    Write-Host "== flash verified: $verified segments ==" -ForegroundColor Green
 }
 
 if ($Monitor) {
