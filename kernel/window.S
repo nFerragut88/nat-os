@@ -844,9 +844,6 @@ w2c_call2:                          /* uint32_t w2c_call2(fn, a, b) */
      * code while it is unexplained costs a working radio to save nine bytes.
      *
      * So they stay, labelled, until the sensitivity itself is understood. */
-    movi    a9, g_win_a0
-    s32i    a0, a9, 0
-    s32i    a1, a9, 4
     /* [X16] PS as it stands immediately before the retw.n that traps.
      * Splits "WOE was cleared somewhere between resume and here" from
      * "retw.n trapped under a clean PS" (which would mean the exccause

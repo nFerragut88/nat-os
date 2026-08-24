@@ -346,9 +346,28 @@ int blob_task_create(void *reqp, const char *name)
 {
     struct blob_task_req *r = (struct blob_task_req *)reqp;
 
+    /* [step 214] What actually arrived. The request struct is built on the
+     * WINDOWED stack of osi_s_task_create_pinned_to_core and its address is
+     * carried across by w2c_call2 -- the bridge UM-NATOS-045 section 8.4 says
+     * allocates over its caller's base save area. If that hazard is live, this
+     * is where it would show: a stack_bytes that is not what the driver asked
+     * for. Printing it is the difference between knowing and assuming. */
+    uart_puts("   [blobtask] req en=");
+    uart_put_dec(g_bt_enabled);
+    uart_puts(" stack=");
+    uart_put_dec(r->stack_bytes);
+    uart_puts(" prio=");
+    uart_put_dec(r->prio);
+    uart_puts(" fn=");
+    uart_put_hex(r->fn);
+    uart_puts("\n");
+
     if (!g_bt_enabled) {
-        g_bt_short++;          /* counted so the refusal is visible */
-        return 0;              /* pdFAIL -- driver reports NO_MEM and unwinds */
+        g_bt_short++;
+        /* [step 214] Was silent -- the fourth unreported pdFAIL in one
+         * function, and the one that fires. */
+        uart_puts("   [blobtask] refused: creation disabled\n");
+        return 0;
     }
 
     /* REFUSED, not merely counted. nat-os stacks are a fixed TASK_STACK_WORDS,
@@ -393,7 +412,15 @@ int blob_task_create(void *reqp, const char *name)
     for (int i = 0; i < BLOB_TASK_MAX; i++) {
         if (!g_bt[i].used) { slot = i; break; }
     }
-    if (slot < 0) { crit_exit(crit); return 0; }        /* pdFAIL */
+    if (slot < 0) {
+        crit_exit(crit);
+        /* [step 214] Was a SILENT return 0. Task creation failing without a
+         * word is how the step-194 layout sensitivity has been able to look
+         * like a mystery: the driver reports ESP_ERR_NO_MEM and unwinds, and
+         * nothing in between says which of two paths declined. */
+        uart_puts("   [blobtask] refused: no free blob task slot\n");
+        return 0;
+    }
     g_bt[slot].used = 1;
     g_bt[slot].id   = -1;
     g_bt[slot].fn   = r->fn;
@@ -407,7 +434,11 @@ int blob_task_create(void *reqp, const char *name)
                  : task_create(name ? name : "blob", blob_task_entry);
     if (id < 0) {
         g_bt[slot].used = 0;
-        return 0;                                        /* pdFAIL */
+        /* [step 214] Also silent until now. */
+        uart_puts("   [blobtask] refused: task_create failed, big=");
+        uart_put_dec(big ? big_words * 4u : 0u);
+        uart_puts(" B\n");
+        return 0;
     }
     if (big) { g_blob_stack_taken = 1; }
 

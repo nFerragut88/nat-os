@@ -101,7 +101,16 @@ static uint32_t osi_null_slots(uint32_t *first_off)
 static int g_want_start;
 
 void wifi_start_enable(int on);
-void wifi_start_enable(int on) { g_want_start = on; }
+/* [step 214] Starting the driver REQUIRES its task, so enabling one enables
+ * the other. Until now `wifiinit start` called blob_task_enable(0) -- the shell
+ * gates it on the literal argument "task" -- and the driver's own task could
+ * therefore never be created. It was created anyway, on every working build,
+ * because a stray write had left a STACK POINTER in g_bt_enabled and a stack
+ * pointer is not zero. That is what the "layout sensitivity" of step 194 has
+ * been all along: remove nine bytes from window.S, the wild write lands
+ * somewhere else, g_bt_enabled stays 0, and the driver correctly reports
+ * ESP_ERR_NO_MEM. The build that failed was the honest one. */
+void wifi_start_enable(int on) { g_want_start = on; blob_task_enable(on); }
 
 uint32_t wifi_bringup(const struct blob_entry *e, int want_null);
 uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
