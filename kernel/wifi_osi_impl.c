@@ -1894,7 +1894,23 @@ void wifi_try_connect(uint32_t cfg_fn, uint32_t conn_fn);
 void wifi_try_connect(uint32_t cfg_fn, uint32_t conn_fn)
 {
     static uint8_t conf[256];
-    static const char ssid[] = "nat-os-no-such-network";
+    /* [step 218] Real credentials if they exist, the impossible SSID if not.
+     * kernel/wifi_secrets.h is gitignored; wifi_secrets.h.example documents the
+     * shape. Without it the tree still builds and still exercises the whole
+     * association path -- the driver answers NO_AP_FOUND, which is what step
+     * 217 measured -- so nothing here depends on a secret being present. */
+#if defined(__has_include)
+#  if __has_include("wifi_secrets.h")
+#    include "wifi_secrets.h"
+#  endif
+#endif
+#ifndef WIFI_STA_SSID
+#  define WIFI_STA_SSID "nat-os-no-such-network"
+#endif
+    static const char ssid[] = WIFI_STA_SSID;
+#ifdef WIFI_STA_PASS
+    static const char pass[] = WIFI_STA_PASS;
+#endif
 
     if (!cfg_fn || !conn_fn) {
         uart_puts("   assoc     : blob entry lacks set_config/connect\n");
@@ -1902,6 +1918,13 @@ void wifi_try_connect(uint32_t cfg_fn, uint32_t conn_fn)
     }
     for (uint32_t i = 0u; i < sizeof conf; i++) { conf[i] = 0u; }
     for (uint32_t i = 0u; i < sizeof ssid - 1u; i++) { conf[i] = (uint8_t)ssid[i]; }
+#ifdef WIFI_STA_PASS
+    /* Password at +32, the second stable field of wifi_config_t's sta member.
+     * Capped at 63 so a long passphrase cannot run into whatever follows. */
+    for (uint32_t i = 0u; i < sizeof pass - 1u && i < 63u; i++) {
+        conf[32u + i] = (uint8_t)pass[i];
+    }
+#endif
 
     uint32_t cr = blob_call(cfg_fn, 0u /* WIFI_IF_STA */, (uint32_t)conf, 0u, 0u);
     uart_puts("   assoc     set_config rc ");
@@ -1914,12 +1937,32 @@ void wifi_try_connect(uint32_t cfg_fn, uint32_t conn_fn)
     uart_put_hex(nr);
     uart_puts("  ssid [");
     uart_puts(ssid);
-    uart_puts("]\n");
+    /* The SSID is broadcast in the clear by the access point itself, so
+     * printing it discloses nothing that an antenna would not. The PASSWORD is
+     * never printed -- only its length, which shows the field was populated
+     * without saying what is in it. A console log is a file, and files get
+     * pasted into reports. */
+    uart_puts("] pass ");
+#ifdef WIFI_STA_PASS
+    uart_put_dec((uint32_t)(sizeof pass - 1u));
+    uart_puts(" chars\n");
+#else
+    uart_puts("none\n");
+#endif
 
     /* Give the driver time to scan for a network that is not there and give
      * up. The answer arrives as an event, not as a return code. */
-    for (uint32_t k = 0u; k < 6u; k++) {
+    /* [step 218] Thirty seconds, not six. A WPA2 association is scan, then
+     * auth, then assoc, then a four-way handshake -- and the handshake is the
+     * SUPPLICANT's work, which this project has only recording stubs for. If it
+     * stalls there the driver times out rather than failing fast, so a short
+     * wait sees nothing at all and proves nothing at all. */
+    for (uint32_t k = 0u; k < 30u; k++) {
         task_sleep(100u);
     }
     wifi_event_report();
+    /* Which supplicant callbacks the driver reached. If the handshake was
+     * attempted, the entries it needed are named here rather than guessed. */
+    wpa_cb_report();
+    uart_puts("\n");
 }

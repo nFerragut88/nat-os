@@ -19,3 +19,6 @@ desktop.ini
 # Host-tool scratch output. The traces worth keeping live in docs/data/.
 regdiff.txt
 tx_trace.json
+
+# Wi-Fi credentials -- never committed. See kernel/wifi_secrets.h.example
+kernel/wifi_secrets.h
