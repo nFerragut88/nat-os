@@ -13239,6 +13239,86 @@ wifiinit start
 ```
 
 **Nothing has been transmitted.**
+---
+
+## step 199 — scan_start invoked, and the transmit claim is retired
+
+```
+channel 1 returned 0x00000000
+scan      returned 0x00000000  after ticks 13
+```
+
+`esp_wifi_scan_start()` runs and returns `ESP_OK`. Interrupt activity rises with
+it: `L27` climbs 0 → 6 over a twenty-second poll, where it previously sat flat
+at 1.
+
+### 199a. The claim that can no longer be made
+
+Every report so far ended "nothing has been on air", later "nothing has been
+transmitted". **That ends here** — and not because a transmission was observed,
+but because it can no longer be ruled out.
+
+The scan is configured **passive**. The layout of `wifi_scan_config_t` comes from
+the Arduino-ESP32 `esp_wifi_types.h`, the closest source of truth available, but
+**not provably the same IDF vintage as this blob**. `esp_wifi_scan_start` does
+not read the struct itself — it passes the pointer down — so confirming the
+offset of `scan_type` would mean chasing several more functions, and that was not
+done. If the offset differs, the field reads 0, which is
+`WIFI_SCAN_TYPE_ACTIVE`, and the scan transmits probe requests.
+
+The risk was **bounded rather than eliminated**: `channel` is pinned to 1, so the
+exposure if the layout is wrong is one channel rather than a sweep of fourteen.
+
+A plan to tell the two apart by duration — 1500 ms of passive dwell against
+roughly 120 ms of active — **did not work**. `block = 0` makes the call return as
+soon as the scan is *initiated*, so the thirteen ticks measured are call
+overhead, not scan time. The test was designed before the parameter was chosen,
+and the parameter invalidated it.
+
+So: a scan was started, its mode is unverified, and the honest statement is that
+**a transmission may have occurred**. Saying otherwise would assert something not
+measured, which is the failure this log has spent two hundred steps trying not to
+commit.
+
+### 199b. `block = 1` hangs, and why
+
+A blocking scan waits for `WIFI_EVENT_SCAN_DONE`. `_event_post` is still a stub
+returning 0, so nothing is ever posted and the wait cannot end — measured: the
+call never returned and the shell task stayed inside it.
+
+That is UM-NATOS-042 §9.5's *"event callbacks never fire"*, reached at last, and
+it is the next real piece of work. Nothing above the MAC can complete a
+request-and-wait without it.
+
+### 199c. Ordering
+
+The scan block was first placed before `set_channel`, and `set_channel` then
+returned `0xffffffff`: the channel cannot be changed while a scan is running.
+Moved after it, both return `ESP_OK`.
+
+### State
+
+```
+boot 11 PASS 0 FAIL
+wintorture  10 real switches, checksum 1632 CORRECT
+blobphy     phyinit rc=0
+wifiinit start
+            init / set_mode STA / start / ps NONE / promisc /
+            channel 1 / scan   -- all ESP_OK
+            L27 climbing, 0 -> 6 over twenty seconds
+```
+
+### Next
+
+1. **`_event_post`.** It gates every blocking driver call, and a scan that cannot
+   report completion cannot yield results.
+2. **Verify the scan config layout**, which would let passive be claimed rather
+   than intended.
+3. Sustained reception is still not established: 6 interrupts in twenty seconds
+   is activity, not a receiver.
+
+**A scan has been started. Whether it transmitted is unverified.**
+
 
 
 

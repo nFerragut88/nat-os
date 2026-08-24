@@ -179,6 +179,39 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
         uart_puts("\n");
     }
 
+    /* [step 199] A PASSIVE scan of ONE channel.
+     *
+     * Layout is wifi_scan_config_t from the Arduino-ESP32 esp_wifi_types.h,
+     * the closest source of truth available -- but NOT provably the same IDF
+     * vintage as this blob. If scan_type sits at a different offset the
+     * field reads 0, which is WIFI_SCAN_TYPE_ACTIVE, and the scan
+     * transmits. That is why channel is pinned to 1: the exposure if the
+     * layout is wrong is one probe request on one channel, not a sweep.
+     *
+     *   +0 ssid   +4 bssid   +8 channel  +9 show_hidden
+     *   +12 scan_type   +16 active.min  +20 active.max
+     *   +24 passive_ms  +28 home_chan_dwell
+     *
+     * 1500 ms of passive dwell also makes the outcome observable: passive
+     * takes about a second and a half, active about a tenth.
+     *
+     * block = 0, NOT 1. A blocking scan waits for WIFI_EVENT_SCAN_DONE, and
+     * _event_post is still a stub returning 0 -- so nothing is ever posted and
+     * the wait cannot end. Measured: with block=1 the call never returned and
+     * the shell task stayed inside it. That is UM-NATOS-042 section 9.5's
+     * "event callbacks never fire", reached. */
+    if (e->wifi_scan_start) {
+        static const uint32_t cfg[8] = { 0u, 0u, 1u, 1u, 0u, 0u, 1500u, 0u };
+        uart_puts("   scan      passive ch1 ...\n");
+        uint32_t t0 = timer_ticks();
+        uint32_t sc = blob_call(e->wifi_scan_start, (uint32_t)cfg, 0u, 0u, 0u);
+        uart_puts("   scan      returned ");
+        uart_put_hex(sc);
+        uart_puts("  after ticks ");
+        uart_put_dec(timer_ticks() - t0);
+        uart_puts("\n");
+    }
+
     /* [step 190] Is the MAC actually armed? _set_intr/_set_isr/_ints_on are
      * reached for the first time here, so the step-177 wiring stops being
      * inert. routed says a line was routed; fired says one has been taken. */
