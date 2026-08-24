@@ -1372,6 +1372,11 @@ static void osi_s_dport_access_stall_other_cpu_end_wrap(void)
     osi_hit(49u);
 }
 
+/* [step 213] EMPTY IS CORRECT, not a stub. ESP-IDF's
+ * wifi_apb80m_request_wrapper body is entirely inside #ifdef
+ * CONFIG_PM_ENABLE, and nat-os has no power management. Checked against the
+ * IDF source on this machine, not from memory. Called x3 per bring-up, so it
+ * WILL look suspicious in an osiused listing -- it is not. */
 static void osi_s_wifi_apb80m_request(void)
 {
     osi_hit(50u);
@@ -1427,6 +1432,12 @@ static void osi_s_phy_common_clock_disable(void)
     osi_hit(118u);
 }
 
+/* [step 213] Returning ESP_OK IS the implementation, not a placeholder.
+ * IDF esp_phy_update_country_info body is entirely inside
+ * #if CONFIG_ESP_PHY_MULTIPLE_INIT_DATA_BIN; nat-os has ONE hardcoded
+ * 128-byte PHY init table, so there is no alternate bin to select.
+ * Called once per bring-up. Verified against the IDF source on this
+ * machine rather than recalled. */
 static int osi_s_phy_update_country_info(const char* country)
 {
     osi_hit(54u);

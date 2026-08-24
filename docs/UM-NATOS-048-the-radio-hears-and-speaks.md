@@ -1,7 +1,7 @@
 # UM-NATOS-048 — The Radio Hears, and Speaks
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.1 · 2026-08-24 · Status: **nat-os receives real 802.11 beacons and transmits frames that an independent device displays. Both directions of the radio work.**
+Revision 1.2 · 2026-08-24 · Status: **nat-os receives real 802.11 beacons and transmits frames that an independent device displays. Both directions of the radio work.**
 
 ---
 
@@ -518,18 +518,72 @@ speculation about *why* the semaphore was at zero was wrong.
    39 events. `event_base` arrives NULL because `WIFI_EVENT` is defined by the
    open-source `esp_event` component and is not in the blob; the ID carries the
    information.
-3. **The `wifi_ap_record_t` stride**, if more than one scan result is ever
-   wanted. §6.1.
-4. **The layout sensitivity**, still unexplained. UM-NATOS-047 §5.3 stands. This
+3. ~~**The `wifi_ap_record_t` stride**~~ **— measured at step 212: 84 bytes.**
+   Not from a header and not from a lucky scan, but from the blob's own address
+   arithmetic in `wifi_get_ap_list_process` (`addx2`/`subx8`/`addx4` → `base +
+   i * 84`), which is true whether or not anything is on air. Confirmed three
+   ways: that arithmetic; the channel byte at +39 of *record one* agreeing with
+   the channel scanned; and record one decoding to a coherent vendor OUI whose
+   SSID is that vendor's default naming form. All records are now read.
+4. ~~**The remaining unwired adapter entries**~~ **— audited at step 213, no
+   live defect.** See §13.
+5. **The layout sensitivity**, still unexplained. UM-NATOS-047 §5.3 stands. This
    stretch routed around it — the sweep moved out of `wifi_init_cfg.c`, twenty-two
-   lines becoming one call — which reduces exposure and explains nothing.
-5. **The `w2c_*` bridges** still allocate over their caller's base save area.
+   lines becoming one call — which reduces exposure and explains nothing. **This
+   is now the only unexplained behaviour left in the Wi-Fi work.**
+6. **The `w2c_*` bridges** still allocate over their caller's base save area.
    Unchanged since UM-NATOS-045 §8.4.
-6. **Association**, which is the next milestone and needs 1 and 2 first.
+7. **Association**, now the next milestone. Item 2 was one of its two
+   prerequisites and is done; the other is that the WPA callbacks are still
+   recording stubs, which is a body of work rather than a defect.
 
 ---
 
-Full experiment log: `docs/next_moves/08-wifi-via-loaded-blob.md`, steps 197–209.
+## 13. The unwired entries, audited
+
+§10 said the remaining untested entries should be **assumed** to share the
+defect pattern rather than hoped not to. Step 213 tested that assumption instead
+of leaving it as a worry. All 116 stubs were scanned for bodies that reach no
+implementation — 64 do — and then `osiused` was read to find which of those the
+driver actually calls.
+
+**The five that looked most dangerous are never called at all:**
+
+| entry | calls | why it does not matter |
+|---|---|---|
+| `_queue_create` | 0 | driver uses `_wifi_create_queue`, which is wired |
+| `_task_create` | 0 | only `_task_create_pinned_to_core`, ×1, wired |
+| `_queue_send_to_back` / `_to_front` | 0 | `_queue_send` ×420, wired |
+| `_realloc_internal` / `_wifi_realloc` | 0 | — |
+| `_task_delete` | 0 | — |
+
+Latent, not live. They should still be implemented before anything new is
+enabled, because "not called" is a property of the current configuration and not
+a guarantee.
+
+**Two ARE called and are empty, and both are empty in ESP-IDF too:**
+
+- `_wifi_apb80m_request` ×3 / `_release` ×2. IDF's wrapper body is entirely
+  inside `#ifdef CONFIG_PM_ENABLE`. nat-os has no power management, so empty is
+  not a stub — it is the correct implementation.
+- `_phy_update_country_info` ×1. IDF's `esp_phy_update_country_info` body is
+  entirely inside `#if CONFIG_ESP_PHY_MULTIPLE_INIT_DATA_BIN`. nat-os has one
+  hardcoded 128-byte PHY init table, so returning `ESP_OK` is correct.
+
+Both were checked against the ESP-IDF source on this machine rather than from
+memory, which is the habit UM-NATOS's own notes require for register and header
+facts and which applies equally to "what does the reference implementation
+actually do here".
+
+**And two that were fixed at step 210 turn out to have been lying constantly:**
+`_env_is_chip` ×99 per run (returning "this is an FPGA") and
+`_esp_timer_get_time` ×340 per run (returning zero). Neither produced a
+measurable symptom, which is exactly what makes this class of defect worth
+hunting deliberately rather than waiting for.
+
+---
+
+Full experiment log: `docs/next_moves/08-wifi-via-loaded-blob.md`, steps 197–213.
 Companion reports: UM-NATOS-042 (rev 1.1), 043 (rev 1.3), 044 (rev 1.0),
 045 (rev 1.0), 046 (rev 1.0), 047 (rev 1.0).
 
