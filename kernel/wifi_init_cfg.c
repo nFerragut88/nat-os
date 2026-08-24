@@ -125,7 +125,7 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
      * wifi_station_start instead. It lives in kernel/wifi_osi_impl.c (call0)
      * and the one stub the blob calls lives in vendor/windowed/wifi_glue.c;
      * this does the registration only. */
-    extern void wifi_ap_report(uint32_t fn, uint32_t count);
+    extern void wifi_scan_sweep(uint32_t s, uint32_t nfn, uint32_t rfn);
     extern uint32_t wpa_cb_table_fill(void);
     extern void wpa_cb_report(void);
     if (e->wifi_register_wpa_cb) {
@@ -230,28 +230,12 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
      * If the AP is on 6 or 11, "found 0" on channel 1 is the CORRECT answer
      * and the radio was never the problem. channel=0 (all channels) still
      * panics, so this walks them one at a time. */
-    if (e->wifi_scan_start && e->wifi_scan_ap_num) {
-        static uint32_t cfg[8] = { 0u, 0u, 1u, 1u, 0u, 0u, 600u, 0u };
-        static volatile unsigned short n;
-        uart_puts("   scan      passive sweep 1-13\n");
-        for (uint32_t ch = 1u; ch <= 13u; ch++) {
-            cfg[2] = ch;
-            uint32_t sc = blob_call(e->wifi_scan_start, (uint32_t)cfg,
-                                    1u, 0u, 0u);
-            n = 0xFFFFu;
-            (void)blob_call(e->wifi_scan_ap_num, (uint32_t)&n, 0u, 0u, 0u);
-            uart_puts("   ch ");
-            uart_put_dec(ch);
-            uart_puts(" rc ");
-            uart_put_hex(sc);
-            uart_puts(" found ");
-            uart_put_dec(n);
-            uart_puts("\n");
-            /* [step 206] and by NAME. One call; the printing is in
-             * wifi_osi_impl.c because this file is the sensitive one. */
-            wifi_ap_report(e->wifi_scan_ap_recs, n);
-        }
-    }
+    /* [step 207] The sweep itself now lives in wifi_osi_impl.c. This file is
+     * the position-sensitive one and it should be SHRINKING, not growing --
+     * the same reasoning that moved wifi_bringup() out of shell.c at step
+     * 190. Twenty-two lines become one. */
+    wifi_scan_sweep(e->wifi_scan_start, e->wifi_scan_ap_num,
+                    e->wifi_scan_ap_recs);
 
     /* [step 190] Is the MAC actually armed? _set_intr/_set_isr/_ints_on are
      * reached for the first time here, so the step-177 wiring stops being

@@ -1313,6 +1313,8 @@ void wpa_cb_report(void)
  *
  * Lives here rather than at the call site because that is wifi_init_cfg.c,
  * where the layout sensitivity was measured. It gets a single call. */
+uint32_t g_ap_expect_ch;   /* [step 208] the channel the sweep asked for */
+
 void wifi_ap_report(uint32_t fn, uint32_t count);
 void wifi_ap_report(uint32_t fn, uint32_t count)
 {
@@ -1339,5 +1341,101 @@ void wifi_ap_report(uint32_t fn, uint32_t count)
     for (uint32_t i = 6u; i < 38u && rec[i]; i++) {
         uart_putc((rec[i] >= 32u && rec[i] < 127u) ? (char)rec[i] : 63);
     }
-    uart_puts("]\n");
+    uart_puts("]");
+
+    /* [step 208] Channel and RSSI -- and the layout is CHECKED, not assumed.
+     *
+     * After ssid[33] the IDF struct is: primary(u8) at +39, second(enum,
+     * 4-aligned) at +40, rssi(int8) at +44. Those offsets come from a header
+     * whose vintage does not provably match this blob, which is the same
+     * reasoning that made step 199 refuse to trust scan_type.
+     *
+     * But this one is falsifiable for free: +39 should hold the channel this
+     * scan was told to dwell on, and that value is already known. If it
+     * matches, the layout is right and the byte at +44 really is the RSSI. If
+     * it does not, the line says so and no dBm figure is printed. */
+    uart_puts(" ch@39=");
+    uart_put_dec(rec[39]);
+    if (rec[39] == g_ap_expect_ch) {
+        int32_t rssi = (int32_t)(int8_t)rec[44];
+        uart_puts(" layoutOK rssi -");
+        uart_put_dec((uint32_t)(0 - rssi));
+        uart_puts("dBm");
+    } else {
+        uart_puts(" MISMATCH want ");
+        uart_put_dec(g_ap_expect_ch);
+        uart_puts(" -- layout unconfirmed, rssi NOT read");
+    }
+    uart_puts("\n");
+}
+
+/* [step 207] The channel sweep, moved out of wifi_init_cfg.c.
+ *
+ * PASSES > 1 because "ch 6 found 1 at 150 ms, found 0 at 600 ms" is not a
+ * result, it is a single sample of something that varies. One pass cannot tell
+ * marginal reception from an environment that genuinely holds two access
+ * points. Repeating the same channel and counting how often it answers can.
+ *
+ * Ordered pass-major (all channels, then all channels again) rather than
+ * channel-major on purpose: consecutive scans of one channel would share
+ * whatever transient state a single scan leaves behind, and the question is
+ * about the radio, not about back-to-back calls. */
+#define SWEEP_PASSES 3u
+#define SWEEP_DWELL  400u
+
+void wifi_scan_sweep(uint32_t scan_fn, uint32_t num_fn, uint32_t recs_fn);
+void wifi_scan_sweep(uint32_t scan_fn, uint32_t num_fn, uint32_t recs_fn)
+{
+    static uint32_t cfg[8] = { 0u, 0u, 1u, 1u, 0u, 0u, SWEEP_DWELL, 0u };
+    static volatile unsigned short n;
+    static uint8_t hits[14];
+    static uint8_t best[14];
+
+    if (!scan_fn || !num_fn) { return; }
+    for (uint32_t i = 0u; i < 14u; i++) { hits[i] = 0u; best[i] = 0u; }
+
+    uart_puts("   scan      passive, 13 channels x ");
+    uart_put_dec(SWEEP_PASSES);
+    uart_puts(" passes, ");
+    uart_put_dec(SWEEP_DWELL);
+    uart_puts(" ms dwell\n");
+
+    for (uint32_t p = 0u; p < SWEEP_PASSES; p++) {
+        for (uint32_t ch = 1u; ch <= 13u; ch++) {
+            cfg[2] = ch;
+            uint32_t sc = blob_call(scan_fn, (uint32_t)cfg, 1u, 0u, 0u);
+            n = 0xFFFFu;
+            (void)blob_call(num_fn, (uint32_t)&n, 0u, 0u, 0u);
+            if (sc == 0u && n != 0xFFFFu && n > 0u) {
+                hits[ch]++;
+                if (n > best[ch]) { best[ch] = (uint8_t)n; }
+                uart_puts("   p");
+                uart_put_dec(p);
+                uart_puts(" ch ");
+                uart_put_dec(ch);
+                uart_puts(" found ");
+                uart_put_dec(n);
+                g_ap_expect_ch = ch;
+                wifi_ap_report(recs_fn, n);
+            }
+        }
+    }
+
+    /* The whole point of the exercise: how RELIABLY does each channel answer,
+     * not whether it answered once. */
+    uart_puts("   summary   ");
+    for (uint32_t ch = 1u; ch <= 13u; ch++) {
+        if (hits[ch]) {
+            uart_puts("ch");
+            uart_put_dec(ch);
+            uart_puts("=");
+            uart_put_dec(hits[ch]);
+            uart_puts("/");
+            uart_put_dec(SWEEP_PASSES);
+            uart_puts(" max");
+            uart_put_dec(best[ch]);
+            uart_puts("  ");
+        }
+    }
+    uart_puts("\n");
 }
