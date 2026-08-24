@@ -1391,7 +1391,16 @@ void wifi_ap_report(uint32_t fn, uint32_t count)
     static uint8_t rec[512];
 
     if (!fn || !count) { return; }
-    want = 1u;
+    /* [step 212] Ask for up to four now, not one. Step 206 read only record
+     * zero because the STRIDE between records is not stated by any header this
+     * project can check -- the blob decides it inside wifi_get_ap_list_process
+     * -- and reading a second record at a guessed offset would have been the
+     * exact error step 199 refused to make with scan_type.
+     *
+     * It is measurable now: a scan finally reported TWO access points, so
+     * asking for both and looking at where the second lands in a zeroed buffer
+     * measures the stride instead of assuming it. */
+    want = (unsigned short)(count > 4u ? 4u : count);
     for (uint32_t i = 0u; i < sizeof rec; i++) { rec[i] = 0u; }
 
     uint32_t rc = blob_call(fn, (uint32_t)&want, (uint32_t)rec, 0u, 0u);
@@ -1400,18 +1409,35 @@ void wifi_ap_report(uint32_t fn, uint32_t count)
     if (rc != 0u) { uart_puts("\n"); return; }
 
     static const char hex[] = "0123456789abcdef";
-    uart_puts("  bssid ");
+    /* [step 212] Every record, at the measured stride of 84. */
+    for (uint32_t r = 0u; r < want && r < 4u; r++) {
+    const uint8_t *q = &rec[r * 84u];
+    uart_puts(r ? "\n            ap[+] bssid " : "  bssid ");
     for (uint32_t i = 0u; i < 6u; i++) {
-        uart_putc(hex[(rec[i] >> 4) & 0xFu]);
-        uart_putc(hex[rec[i] & 0xFu]);
+        uart_putc(hex[(q[i] >> 4) & 0xFu]);
+        uart_putc(hex[q[i] & 0xFu]);
         if (i != 5u) { uart_putc(58); }
     }
     uart_puts("  ssid [");
-    for (uint32_t i = 6u; i < 38u && rec[i]; i++) {
-        uart_putc((rec[i] >= 32u && rec[i] < 127u) ? (char)rec[i] : 63);
+    for (uint32_t i = 6u; i < 38u && q[i]; i++) {
+        uart_putc((q[i] >= 32u && q[i] < 127u) ? (char)q[i] : 63);
     }
     uart_puts("]");
 
+    /* [step 212] THE STRIDE IS 84, and it was read out of the blob rather
+     * than guessed from a header or inferred from one lucky scan.
+     * wifi_get_ap_list_process computes each record's address as:
+     *
+     *     addx2  a10, a8, a8     ; a8 * 3
+     *     subx8  a10, a10, a10   ; * 7        -> a8 * 21
+     *     addx4  a10, a10, a7    ; * 4 + base -> base + a8 * 84
+     *
+     * so sizeof(wifi_ap_record_t) is 84 in THIS blob. That is a deterministic
+     * fact about the binary, not an observation that needed two access points
+     * to be in range -- which matters, because the second one comes and goes.
+     *
+     * Still falsified for free, per 7.1: every record returned by a
+     * single-channel scan must carry that channel at +39. */
     /* [step 208] Channel and RSSI -- and the layout is CHECKED, not assumed.
      *
      * After ssid[33] the IDF struct is: primary(u8) at +39, second(enum,
@@ -1424,9 +1450,9 @@ void wifi_ap_report(uint32_t fn, uint32_t count)
      * matches, the layout is right and the byte at +44 really is the RSSI. If
      * it does not, the line says so and no dBm figure is printed. */
     uart_puts(" ch@39=");
-    uart_put_dec(rec[39]);
-    if (rec[39] == g_ap_expect_ch) {
-        int32_t rssi = (int32_t)(int8_t)rec[44];
+    uart_put_dec(q[39]);
+    if (q[39] == g_ap_expect_ch) {
+        int32_t rssi = (int32_t)(int8_t)q[44];
         uart_puts(" layoutOK rssi -");
         uart_put_dec((uint32_t)(0 - rssi));
         uart_puts("dBm");
@@ -1434,6 +1460,7 @@ void wifi_ap_report(uint32_t fn, uint32_t count)
         uart_puts(" MISMATCH want ");
         uart_put_dec(g_ap_expect_ch);
         uart_puts(" -- layout unconfirmed, rssi NOT read");
+    }
     }
     uart_puts("\n");
 }
