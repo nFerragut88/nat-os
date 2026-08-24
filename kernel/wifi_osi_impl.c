@@ -1238,3 +1238,61 @@ uint32_t osi_impl_timers_used(void)
     for (uint32_t i = 0; i < OSI_TIMER_MAX; i++) { n += (uint32_t)g_timer[i].used; }
     return n;
 }
+
+/* ---- WPA supplicant callback table -- next_moves/08 step 205 ----
+ *
+ * ESP-IDF's esp_wifi_init() WRAPPER calls esp_supplicant_init(), which calls
+ * esp_wifi_register_wpa_cb_internal() with a `struct wpa_funcs`. That wrapper
+ * is open-source IDF code and is NOT in the blob: the symbol is an EXPORT with
+ * no caller anywhere in its 180k instructions. nat-os calls
+ * esp_wifi_init_internal() directly, so g_ic->wpa_cb (+0x1b4) has been NULL
+ * since the driver first initialised.
+ *
+ * A NULL table and an all-zero table each fault, in different places:
+ *
+ *   cannel_scan_connect_state          wifi_station_start
+ *     l32i  a6, a5, 0x1b4                l32i   a9, a3, 0x1b4
+ *     l32i  a6, a6, 84                   beqz.n a9, skip     <- TABLE checked
+ *     beqz.n a6, skip   <- FN checked    l32i   a10, a9, 0
+ *                                        callx8 a10          <- FN not checked
+ *
+ * So this does not guess which entries matter. Every slot points at one
+ * windowed stub that records WHERE IT WAS CALLED FROM, and the driver names
+ * the entries it needs. A static scan of the 41 read sites could not: following
+ * the destination register forward runs into the register being reused, and it
+ * reported offsets like 18 and 22 that cannot be function-pointer slots at all.
+ *
+ * CALL0, deliberately. Only wpa_cb_stub is windowed, because only wpa_cb_stub
+ * is called by the blob. 128 slots is generous; the largest offset read off the
+ * table anywhere in the blob is 92. */
+extern int wpa_cb_stub(void);            /* windowed; only its address crosses */
+extern uint32_t g_wpa_calls, g_wpa_ra[12];
+
+uint32_t g_wpa_table[128];
+
+uint32_t wpa_cb_table_fill(void);
+uint32_t wpa_cb_table_fill(void)
+{
+    for (uint32_t i = 0u; i < 128u; i++) {
+        g_wpa_table[i] = (uint32_t)&wpa_cb_stub;
+    }
+    g_wpa_calls = 0u;
+    return (uint32_t)g_wpa_table;
+}
+
+/* Formatted here rather than at the call site: that is wifi_init_cfg.c, where
+ * the layout sensitivity was measured, and it gets one call instead of a loop.
+ * a0 carries the call-size encoding in its top two bits; the blob runs from
+ * 0x403xxxxx. */
+void wpa_cb_report(void);
+void wpa_cb_report(void)
+{
+    uint32_t n = g_wpa_calls;
+    uart_puts("  wpa hits ");
+    uart_put_dec(n);
+    if (n > 12u) { n = 12u; }
+    for (uint32_t i = 0u; i < n; i++) {
+        uart_puts(" ");
+        uart_put_hex((g_wpa_ra[i] & 0x3FFFFFFFu) | 0x40000000u);
+    }
+}

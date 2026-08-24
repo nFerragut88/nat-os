@@ -148,3 +148,47 @@ double phy_floatundidf(unsigned long long x)
 {
     return ((fn_ull2d)ROM_FLOATUNDIDF)(x);
 }
+
+
+/* ---- WPA supplicant callback table -- next_moves/08 step 205 ----
+ * Folded into this file rather than its own: adding vendor/windowed/wpa_cb.c
+ * as a NEW translation unit panicked inside esp_wifi_init_internal at a
+ * garbage PC, identically whether the kernel-side block was fifteen lines or
+ * four, so it was the unit's presence and not its caller's size. The stub
+ * itself disassembles clean -- entry/l32r/retw, no libgcc window-spill helper
+ * -- so the code was never the problem. See UM-NATOS-042 section 9.2.
+ *
+ * ESP-IDF's esp_wifi_init() WRAPPER calls esp_supplicant_init(), which calls
+ * esp_wifi_register_wpa_cb_internal(). That wrapper is open-source IDF code
+ * and is NOT in the blob -- the symbol is an export with no caller anywhere
+ * in 180k instructions. nat-os calls esp_wifi_init_internal() directly, so
+ * g_ic->wpa_cb (+0x1b4) has been NULL since the driver first initialised.
+ *
+ * A NULL table faults in cannel_scan_connect_state, which checks the
+ * FUNCTION and not the table. An all-zero table faults in
+ * wifi_station_start, which checks the TABLE and not the function. Neither
+ * 'leave it NULL' nor 'hand it zeros' is right, so every slot points at one
+ * stub that records where it was called FROM -- the driver names the entries
+ * it needs instead of a static scan guessing them. */
+uint32_t g_wpa_calls;      /* total calls through the table */
+uint32_t g_wpa_ra[12];     /* raw a0 of the first twelve, encoded call-size */
+uint32_t g_wpa_ret = 1u;   /* what the stub returns; 1 = true for bool entries */
+
+int wpa_cb_stub(void);
+int wpa_cb_stub(void)
+{
+    uint32_t ra = (uint32_t)__builtin_return_address(0);
+    if (g_wpa_calls < 12u) {
+        g_wpa_ra[g_wpa_calls] = ra;
+    }
+    g_wpa_calls++;
+    return (int)g_wpa_ret;
+}
+
+/* The TABLE and the code that fills and reports it are CALL0 and live in
+ * kernel/wifi_osi_impl.c. Only this stub is windowed, because only this stub is
+ * called by the blob (callx8). Calling wpa_cb_table_fill() from wifi_bringup()
+ * -- call0 code reaching straight into a windowed function -- is what produced
+ * the IllegalInstruction at a garbage PC inside esp_wifi_init_internal, three
+ * times, identically, while I was blaming the layout band for it. The rule this
+ * project enforces by directory is the rule: only the ADDRESS crosses. */

@@ -43,6 +43,12 @@ extern int  esp_wifi_set_promiscuous(int en);   /* [step 197] RX only */
 extern int  esp_wifi_set_ps(int type);   /* [step 198] RX only */
 extern void phy_wakeup_init(void);   /* [step 198] wake the PHY from sleep */
 extern int  esp_wifi_scan_get_ap_num(unsigned short *n);  /* [step 202] */
+/* [step 205] The WPA supplicant callback table. In ESP-IDF this is registered
+ * by esp_supplicant_init(), called from the esp_wifi_init() WRAPPER -- which
+ * lives in open-source IDF code, not in this blob. nat-os calls
+ * esp_wifi_init_internal() directly and so has never registered anything, and
+ * g_ic->wpa_cb has been NULL the whole time. */
+extern int  esp_wifi_register_wpa_cb_internal(void *cb);
 
 struct blob_entry {
     uint32_t magic;          /* 'N','8','0','2' */
@@ -83,6 +89,8 @@ struct blob_entry {
     int (*wifi_set_ps)(int type);
     void (*phy_wakeup)(void);
     int (*wifi_scan_ap_num)(unsigned short *n);
+    /* [step 205] version 11. */
+    int (*wifi_register_wpa_cb)(void *cb);
 };
 
 /* `used` because nothing in this translation unit references it and
@@ -91,7 +99,7 @@ struct blob_entry {
 __attribute__((section(".blob_entry"), used))
 const struct blob_entry blob_entry = {
     .magic       = 0x3230384Eu,          /* "N802" little-endian */
-    .version     = 10u,
+    .version     = 11u,
     .image_size  = (uint32_t)&_blob_image_size,
     .text_end    = (uint32_t)&_blob_text_end,
 
@@ -118,4 +126,5 @@ const struct blob_entry blob_entry = {
     .wifi_set_ps      = esp_wifi_set_ps,
     .phy_wakeup       = phy_wakeup_init,
     .wifi_scan_ap_num = esp_wifi_scan_get_ap_num,
+    .wifi_register_wpa_cb = esp_wifi_register_wpa_cb_internal,
 };

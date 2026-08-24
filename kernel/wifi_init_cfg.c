@@ -115,6 +115,27 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
     if (r != 0u || !g_want_start) {
         return r;
     }
+    /* [step 205] Register a WPA callback table. ESP-IDF's esp_wifi_init()
+     * WRAPPER calls esp_supplicant_init() right here; nat-os calls
+     * esp_wifi_init_internal() directly, so g_ic->wpa_cb (+0x1b4) has been
+     * NULL since the driver first initialised. The scan/connect state machine
+     * dereferences it -- that is the LoadProhibited at NULL+0x54.
+     *
+     * The table is ZEROED, not implemented. Read the fault site:
+     *     l32i a6, a5, 0x1b4   ; the table
+     *     l32i a6, a6, 84      ; a function in it
+     *     beqz.n a6, skip      ; <- guarded
+     * An all-zero table is NOT safe either -- see vendor/windowed/wpa_cb.c.
+     * The table and its stubs live there; this does the registration only. */
+    extern uint32_t wpa_cb_table_fill(void);
+    extern void wpa_cb_report(void);
+    if (e->wifi_register_wpa_cb) {
+        uint32_t wr = blob_call(e->wifi_register_wpa_cb,
+                                wpa_cb_table_fill(), 0u, 0u, 0u);
+        uart_puts("   wpa_cb    returned ");
+        uart_put_hex(wr);
+        uart_puts("\n");
+    }
     /* [step 196] STA mode, between init and start, which is the order
      * ESP-IDF requires. No argument parsing: "wifiinit start" now means
      * init + set_mode(STA) + start, because a driver with no interface is
@@ -211,7 +232,7 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
      * and the radio was never the problem. channel=0 (all channels) still
      * panics, so this walks them one at a time. */
     if (e->wifi_scan_start && e->wifi_scan_ap_num) {
-        static uint32_t cfg[8] = { 0u, 0u, 1u, 1u, 0u, 0u, 150u, 0u };
+        static uint32_t cfg[8] = { 0u, 0u, 1u, 1u, 0u, 0u, 600u, 0u };
         static volatile unsigned short n;
         uart_puts("   scan      passive sweep 1-13\n");
         for (uint32_t ch = 1u; ch <= 13u; ch++) {
@@ -280,6 +301,11 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
                 uart_put_dec(g_osi_alloc_bytes);
                 uart_puts("B fails ");
                 uart_put_dec(g_osi_alloc_fails);
+                /* [step 205] wpa_cb call sites, printed by the windowed file
+                 * that owns them. Kept to ONE call: this is wifi_init_cfg.c,
+                 * where the layout sensitivity was measured, and a fifteen-line
+                 * block here panicked inside esp_wifi_init_internal. */
+                wpa_cb_report();
             }
             {
                 /* [step 193] Two words from the hardware RNG. Proves the
