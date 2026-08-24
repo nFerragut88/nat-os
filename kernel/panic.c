@@ -361,13 +361,13 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
         uart_put_hex(ws);
         uart_puts("   bit(base) ");
         uart_puts(((ws >> (wb & 31u)) & 1u) ? "SET\n" : "CLEAR\n");
-        extern volatile uint32_t g_win_a0, g_win_sp;
-        uart_puts("  a0/sp out : ");
-        uart_put_hex(g_win_a0);
-        uart_puts(" / ");
-        uart_put_hex(g_win_sp);
-        uart_puts(((g_win_a0 | g_win_sp) == 0u) ? "   BOTH ZERO -- context clobbered\n"
-                                                : "   non-zero -- context survived\n");
+        /* [step 194] "a0/sp out" removed. It printed g_win_a0/g_win_sp,
+         * which window.S writes on the way OUT of a w2c_* bridge -- not at
+         * the fault -- from a singleton every bridge call overwrites. Its
+         * verdict read "context survived" whenever either half was
+         * non-zero, so sp == 0 alone looked healthy, and step 186 built a
+         * retracted chain of reasoning on exactly that. "fault regs" below
+         * records the real faulting registers and supersedes it. */
         /* [X16] PS read inside w2c_call2 a few instructions before the
          * trapping retw.n. bit18 = WOE, bit4 = EXCM, bit5 = UM. */
         {
@@ -426,43 +426,17 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
             uart_put_hex(dp);
             uart_puts("\n");
         }
-        /* The faulting task's saved switch frame, as it sits in memory.
+        /* [step 194] "saved frame @", "saved hi" and "saved ctl" removed.
          *
-         * This splits the last two possibilities apart. Good values here mean
-         * the frame was saved correctly and the damage happens on the way back
-         * out (the register restore / window state). Zeros here mean the frame
-         * itself was destroyed, and no amount of window bookkeeping would help. */
-        {
-            uint32_t fsp = task_saved_sp(task_current());
-            uart_puts("  saved frame @ ");
-            uart_put_hex(fsp);
-            uart_puts(":");
-            for (int w = 0; w < 8; w++) {
-                uart_puts(" ");
-                uart_put_hex(((volatile uint32_t *)fsp)[w]);
-            }
-            /* [X10 experiment] upper half of the interrupted context: a8-a15.
-             * With a clean window grant and a clean sweep, a corrupted return
-             * chain has to show up HERE -- garbage link registers in the
-             * deeper frames of the faulting task's saved view. */
-            uart_puts("\n  saved hi  @ ");
-            for (int w = 8; w < 16; w++) {
-                uart_puts(" ");
-                uart_put_hex(((volatile uint32_t *)fsp)[w]);
-            }
-            /* [X13] the victim's own control state: SAR/EPC3/EPS3/LBEG/LEND/
-             * LCOUNT. EPS3 is the ps this task is resumed WITH -- the header
-             * 'ps' line is panic-path state and says nothing about the faulting
-             * context. EPC3 is where execution resumes; comparing it with the
-             * fatal epc shows whether death happened at the frozen resume
-             * point or after control wandered there. */
-            uart_puts("\n  saved ctl @");
-            for (int w = 15; w < 21; w++) {
-                uart_puts(" ");
-                uart_put_hex(((volatile uint32_t *)fsp)[w]);
-            }
-            uart_puts("\n");
-        }
+         * They dumped task_saved_sp(task_current()) -- the current task's
+         * LAST SWITCH-OUT. When the current task is the one that faulted,
+         * which is the case in every panic these lines were read for, that
+         * frame is stale by construction. Step 186 read 0xfffffff0 out of
+         * it as "a1 - 16 with a1 = 0" and built a wrong account on it.
+         *
+         * "fault regs" below records a0..a15, WINDOWBASE and WINDOWSTART as
+         * they were AT the fault, from _handler_panic before it takes the
+         * panic stack. That is what these were reaching for. */
 
         {
             extern volatile uint32_t g_woe_lost_ps, g_woe_lost_at;
@@ -899,79 +873,6 @@ uart_puts("  pre-spill : ps ");
                     /* [step 187] rom_call4 refusals: a null blob target, and
                      * the call0 return address of whoever asked for it. */
                     extern volatile uint32_t g_romcall_null[];
-                    {
-                        /* [step 187] rom_call4 primes the base save area's a0
-                         * slot with win_chain_trap so unwinding past it traps
-                         * by name. Re-read it: primed-then-overwritten and
-                         * never-primed are different bugs. */
-                        extern volatile uint32_t g_romcall_prime[];
-                        uart_puts("  chain base: at ");
-                        uart_put_hex(g_romcall_prime[0]);
-                        uart_puts(" primed ");
-                        uart_put_hex(g_romcall_prime[1]);
-                        uart_puts(" now ");
-                        if (g_romcall_prime[0] >= 0x3FF00000u &&
-                            g_romcall_prime[0] <  0x40000000u) {
-                            uart_put_hex(*(volatile uint32_t *)g_romcall_prime[0]);
-                        } else {
-                            uart_puts("(unreadable)");
-                        }
-                        uart_puts("  a0slot ");
-                        uart_put_hex(g_romcall_prime[2]);
-                        /* [step 187] rom_call4 saves its own call0 return
-                         * address at [sp+0]. Its epilogue reloads a0 from
-                         * there. If this reads 0, the ret goes to 0. */
-                        uart_puts("  saved a0 ");
-                        if (g_romcall_prime[2] >= 0x3FF00000u &&
-                            g_romcall_prime[2] <  0x40000000u) {
-                            uart_put_hex(*(volatile uint32_t *)g_romcall_prime[2]);
-                        } else {
-                            uart_puts("(unreadable)");
-                        }
-                        uart_puts("\n");
-                    }
-                    {
-                        /* [step 188] when the saved return address went to 0 */
-                        extern uint32_t g_rcz_seen, g_rcz_idx, g_rcz_call, g_rcz_who;
-                        extern uint32_t g_rcz_site;
-                        uart_puts("  rc0 zero  : ");
-                        if (!g_rcz_seen) { uart_puts("not seen zero at any adapter call"); }
-                        else {
-                            uart_puts("by trace idx ");
-                            uart_put_dec(g_rcz_idx);
-                            uart_puts("  entry ");
-                            uart_put_dec(g_rcz_call);
-                            uart_puts("  task ");
-                            uart_put_dec(g_rcz_who);
-                            uart_puts("  site ");
-                            uart_put_dec(g_rcz_site);
-                        }
-                        uart_puts("\n");
-                    }
-                    {
-                        /* [step 188] window state either side of the spill */
-                        extern uint32_t g_rcz_ws[], g_rcz_wb[], g_rcz_sp[], g_rcz_val[];
-                        for (int k = 0; k < 2; k++) {
-                            uart_puts(k ? "  spill post: " : "  spill pre : ");
-                            uart_puts("ws ");
-                            uart_put_hex(g_rcz_ws[k]);
-                            uart_puts(" wb ");
-                            uart_put_dec(g_rcz_wb[k]);
-                            uart_puts(" sp ");
-                            uart_put_hex(g_rcz_sp[k]);
-                            uart_puts(" [rc0sp] ");
-                            uart_put_hex(g_rcz_val[k]);
-                            uart_puts("\n     "); 
-                            {
-                                extern uint32_t g_rcz_dump[2][16];
-                                for (int q = 0; q < 16; q++) {
-                                    uart_puts(" ");
-                                    uart_put_hex(g_rcz_dump[k][q]);
-                                }
-                            }
-                            uart_puts("\n");
-                        }
-                    }
                     uart_puts("  romcall0  : n ");
                     uart_put_dec(g_romcall_null[0]);
                     uart_puts("  caller ");
@@ -1030,6 +931,7 @@ uart_puts("  pre-spill : ps ");
                 uart_put_dec(g_blk_wb[0]);
                 uart_puts(" | spill ws ");
                 uart_put_hex(g_blk_ws[1]);
+                uart_puts(" ");   /* [step 194] was printing 0x000002802b */
                 uart_put_dec(bits);
                 uart_puts("b wb ");
                 uart_put_dec(g_blk_wb[1]);
@@ -1065,14 +967,22 @@ uart_puts("  pre-spill : ps ");
                 uart_put_dec(g_sbp_skipped);
                 uart_puts(" parks swept-skipped (X8 clamp)\n");
                 extern volatile uint32_t g_sbp_post_ws, g_sbp_post_wb;
-                uart_puts("  sbp-post  : wb ");
-                uart_put_dec(g_sbp_post_wb);
-                uart_puts(" ws ");
-                uart_put_hex(g_sbp_post_ws);
-                if (g_sbp_post_ws && !(g_sbp_post_ws & (g_sbp_post_ws - 1u))) {
-                    uart_puts("  single-bit ok");
+                /* [step 194] Say "never sampled" instead of reading a verdict out of
+                 * the 0xffffffff sentinel. spill_before_parking() has returned
+                 * immediately since step 176, so this never samples -- and it has been
+                 * announcing "SWEEP LEFT MULTI-BIT" off the uninitialised value in
+                 * every panic since. Kept, not deleted: it works again the moment the
+                 * spill is re-enabled. */
+                uart_puts("  sbp-post  : ");
+                if (g_sbp_post_wb == 0xFFFFFFFFu) {
+                    uart_puts("never sampled");
                 } else {
-                    uart_puts("  SWEEP LEFT MULTI-BIT");
+                    uart_puts("wb ");
+                    uart_put_dec(g_sbp_post_wb);
+                    uart_puts(" ws ");
+                    uart_put_hex(g_sbp_post_ws);
+                    uart_puts((g_sbp_post_ws && !(g_sbp_post_ws & (g_sbp_post_ws - 1u)))
+                              ? "  single-bit ok" : "  SWEEP LEFT MULTI-BIT");
                 }
                 uart_puts("\n");
             }

@@ -12784,6 +12784,96 @@ blobphy rc=0          wifiinit start : init ESP_OK, start ESP_OK
 ```
 
 **Nothing has been on air.**
+---
+
+## step 194 — the instrumentation debt, and one probe that could not be removed
+
+UM-NATOS-042 §9.3 has asked for this since step 102, and warned how it goes
+wrong: *"a deliberate pass, file by file with a build between each; an attempt to
+do it as an end-of-session tidy-up cascaded into three build failures and was
+reverted."* Six builds, one file at a time.
+
+### 194a. Removed
+
+| probe | why |
+|---|---|
+| `rc0 zero`, `spill pre/post`, `chain base` | step 187/188 machinery; the defect they found is fixed |
+| `a0/sp out` | written by `w2c_call*` on the way OUT, not at the fault, from a singleton every bridge call overwrote. Its verdict read "context survived" whenever either half was non-zero, so `sp == 0` alone looked healthy — step 186 built a retracted account on exactly that |
+| `saved frame @` / `saved hi` / `saved ctl` | dumped the current task's LAST SWITCH-OUT, stale by construction whenever that task is the one that faulted |
+| the `rcz_*` bracket machinery in `wifi_osi_stubs.c` | its call sites, helpers and globals |
+| `rom_call4`'s prime-site recorder | nothing reads it; verified no behavioural effect |
+
+Both of the first two are superseded by `fault regs`, which records a0..a15,
+`WINDOWBASE` and `WINDOWSTART` as they were **at** the fault.
+
+### 194b. Fixed rather than removed
+
+`blk-window` printed `spill ws 0x000002802b` — twenty-one bits of a sixteen-bit
+register. It was a hex word and a bit count run together with no separator.
+
+`sbp-post` printed `wb 4294967295 ws 0xffffffff SWEEP LEFT MULTI-BIT`. That is
+the never-sampled sentinel, and it has been announcing a defect in a probe that
+never ran since `spill_before_parking()` was disabled at step 176. It now says
+`never sampled`. Kept rather than deleted: it works again the moment the spill is
+re-enabled.
+
+### 194c. The first attempt cascaded, exactly as warned
+
+The panic-dump removals were first done by walking braces outward from each
+print. That cut across block boundaries and left dangling fragments — three
+compile errors in one build, the same shape §9.3 records. Reverted with
+`git checkout` and redone by reading the exact line ranges first. The warning was
+right and the shortcut was not worth taking.
+
+### 194d. One probe that could not be removed
+
+`w2c_call0f` writes three instructions of dead instrumentation:
+
+```asm
+    movi    a9, g_win_a0
+    s32i    a0, a9, 0
+    s32i    a1, a9, 4
+```
+
+Nothing reads `g_win_a0`/`g_win_sp` any more — the panic line that did was
+removed in §194a. They are dead by inspection: stores to a global with no reader.
+
+**Removing them makes `esp_wifi_init_internal` return `0x101`
+(`ESP_ERR_NO_MEM`), reproducibly, from a cold boot.**
+
+Bisected to exactly those three instructions. The `rom_call4` prime recorder next
+door removes with no effect; removing only this block breaks init; restoring only
+this block restores `ESP_OK`.
+
+Three stores to an unread global cannot change program semantics. So the cause is
+**positional** — code layout, or the timing of a bridge on the hot path — and it
+is the same shape as the step-7 layout band UM-NATOS-042 §9.2 records for
+`shell.c`, where nine lines of `uart_puts` hung `blob_map`. That band is still
+unexplained.
+
+They stay, with a comment saying all of this. Deleting dead code while the
+sensitivity is unexplained costs a working radio to save nine bytes, and the
+right time to remove them is after the sensitivity is understood, not before.
+
+### 194e. State
+
+```
+boot 11 PASS 0 FAIL
+wintorture  10 real switches, checksum 1632 CORRECT
+blobphy     phyinit rc=0
+wifiinit start
+            phyinit rc=1
+            init  returned 0x00000000  (ESP_OK)
+            start returned 0x00000000  (ESP_OK)
+            [intr] src=0 line=27 prio=1 routed=1 nofn=0 fired: none
+                   timers=15 refused=0  rng=0xd3016921,0xd3892460
+```
+
+Still outstanding: the trace prints `_phy_common_clock_enable` as `_magic`,
+because step 185 gave it a trace id outside the 1..116 the name table knows.
+
+**Nothing has been on air.**
+
 
 
 

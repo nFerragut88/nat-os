@@ -410,17 +410,7 @@ rom_call4:
     movi    a10, win_chain_trap
     addi    a11, a1, -16
     s32i    a10, a11, 0
-    /* [step 187] Record WHERE the base a0 slot was primed and with what, so a
-     * return through a zero a0 can be told from a return through a slot that
-     * was primed and then overwritten. */
-    movi    a12, g_romcall_prime
-    s32i    a11, a12, 0             /* address primed */
-    s32i    a10, a12, 4             /* value written */
-    /* [step 189] the ADDRESS of the saved-a0 slot, not the sp. The probes
-     * that read this must follow the frame layout, and deriving the slot
-     * from sp went stale the moment the layout changed. */
-    mov     a11, a1
-    s32i    a11, a12, 8
+    /* [step 194] prime-site recorder removed; nothing reads it. */
 
     s32i    a0,  a1, 0
     s32i    a12, a1, 4              /* callee-saved under call0; CALL8 eats them */
@@ -836,10 +826,24 @@ w2c_call2:                          /* uint32_t w2c_call2(fn, a, b) */
     l32i    a10, a1, 12
     s32i    a10, a9, 32
 2:
-    /* Diagnostic: a0 and a1 as they are on the way out. The blocking adapter
-     * path returns through here after the task has been switched away and
-     * back, so these are the two values that say whether the context came back
-     * intact or came back as zeros. */
+    /* [step 194] KEPT, and not because it is useful.
+     *
+     * Nothing reads g_win_a0/g_win_sp any more -- the panic dump line that did
+     * was removed this step, as a singleton that misled step 186. These three
+     * stores are dead by inspection: they write a global with no reader.
+     *
+     * Removing them makes esp_wifi_init_internal return 0x101 (ESP_ERR_NO_MEM),
+     * reproducibly, from a cold boot. Bisected to exactly these three
+     * instructions: the rom_call4 prime recorder next door can be removed with
+     * no effect, and restoring only this block restores ESP_OK.
+     *
+     * Three stores to an unread global cannot change program semantics, so the
+     * cause is positional -- code layout or the timing of a bridge on the hot
+     * path -- and is the same shape as the step-7 layout band UM-NATOS-042
+     * section 9.2 records for shell.c. That is unexplained, and deleting dead
+     * code while it is unexplained costs a working radio to save nine bytes.
+     *
+     * So they stay, labelled, until the sensitivity itself is understood. */
     movi    a9, g_win_a0
     s32i    a0, a9, 0
     s32i    a1, a9, 4
