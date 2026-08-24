@@ -13146,6 +13146,100 @@ wifiinit start
 ```
 
 **Nothing has been transmitted.**
+---
+
+## step 198 — modem sleep, tested; and a correction to step 197
+
+### 198a. The correction
+
+Step 197 said "the receiver is live" and "taking interrupts from frames already
+in the air". That was over-read from one sample. Repeated measurement:
+
+```
+poll 1   fired: (none)
+poll 2   fired: L27=1
+poll 3   fired: L27=1
+```
+
+`L27` reaches one, occasionally a few, and stops. One earlier run read 1 then 9,
+which looked like a climbing count and is what the claim was built on. **It does
+not reproduce.** The MAC raises an interrupt or two around start-up and goes
+quiet.
+
+What is true, and is not small: the MAC raises interrupts where it never did, so
+the whole path — matrix, line remap, `_handler_level3`, trampoline, the driver's
+own ISR — is proven end to end. What is not true is **sustained reception**.
+
+One sample was enough to see a signal and not enough to describe it, and the
+report was written before the second measurement. That is the same error as
+step 190's, three steps later.
+
+### 198b. The hypothesis, and it was a good one
+
+Modem sleep was proposed as something that would stop the radio starting without
+reporting an error. It is real, and documented in `esp_wifi.h` on
+`esp_wifi_set_ps`:
+
+> **`@attention Default power save type is WIFI_PS_MIN_MODEM.`**
+
+with `WIFI_PS_MIN_MODEM` described as *"station wakes up to receive beacon every
+DTIM period"*. An unassociated station has no DTIM to sync to, and nothing
+reports an error either way.
+
+**Tested.** `esp_wifi_set_ps(WIFI_PS_NONE)` added to the entry table and called
+after start. It returns `ESP_OK` and the interrupt count does not change.
+
+So power save is not what is holding this back. The hypothesis was sound,
+documented, and worth the two builds — a mechanism that fails silently is exactly
+the class this investigation keeps finding, and ruling it out is worth as much as
+confirming it would have been.
+
+### 198c. What chasing it found
+
+ESP-IDF's `esp_phy_enable()`:
+
+```c
+if (!s_is_phy_calibrated) { esp_phy_load_cal_and_init(); ... }
+else                      { phy_wakeup_init(); }
+```
+
+Calibrate on the first call; **wake the PHY on every one after**. And
+`_phy_disable()` is `phy_close_rf()`, which sleeps it.
+
+Both of ours were empty. Anything that slept the radio would have left it asleep
+permanently and silently — precisely the failure described. `_phy_enable` now
+calls `phy_wakeup_init()`.
+
+It did not change the count either, so the PHY was evidently not asleep. The
+entry is correct now regardless, and the failure it would have caused was real.
+
+### 198d. Two implementation notes
+
+**`blob_map()` is not a getter.** It reprograms the flash MMU with the cache off.
+Calling it from inside a blob call — while executing out of the mapping it is
+rewriting — is an `IllegalInstruction`, measured. The address is cached at
+bring-up instead, while nothing is running out of the blob.
+
+**`phy_wakeup_init` is vendor code called from a vendor stub**, so it is a plain
+windowed-to-windowed call: no bridge, no blob mutex, no pin. Only the address
+crosses the ABI boundary.
+
+### State
+
+Entry table at version 9: `set_channel`, `scan_start`, `set_promiscuous`,
+`set_ps`, `phy_wakeup`. **`scan_start` is present and still not invoked.**
+
+```
+boot 11 PASS 0 FAIL
+wintorture  10 real switches, checksum 1632 CORRECT
+blobphy     phyinit rc=0
+wifiinit start
+            init / set_mode STA / start / ps NONE / promisc / channel 1
+            all ESP_OK,  fired: L27=1
+```
+
+**Nothing has been transmitted.**
+
 
 
 

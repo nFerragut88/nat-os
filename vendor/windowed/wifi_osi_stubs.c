@@ -213,6 +213,7 @@ extern void osi_impl_read_mac(void);       /* [step 186] */
 extern void osi_impl_wifi_clock_enable(void);   /* [step 197] */
 extern void osi_impl_wifi_clock_disable(void);
 extern void osi_impl_wifi_reset_mac(void);
+extern void osi_impl_phy_wakeup_addr(void);     /* [step 198] */
 extern void osi_impl_random(void);         /* [step 193] */
 extern void osi_impl_get_random(void);
 extern void osi_impl_timer_arm(void);      /* [step 191] */
@@ -1275,6 +1276,13 @@ static void osi_s_phy_disable(void)
 static void osi_s_phy_enable(void)
 {
     osi_hit(53u);
+    /* [step 198] Windowed calling windowed: phy_wakeup_init is vendor code and
+     * so is this stub, so it is a plain call with no bridge, no blob mutex and
+     * no pin. Only the ADDRESS comes from the kernel. */
+    {
+        uint32_t fn = w2c_call0f((uint32_t)&osi_impl_phy_wakeup_addr);
+        if (fn) { ((void (*)(void))fn)(); }
+    }
 }
 
 /* [step 185] Five slots the struct declared and the initializer never set.

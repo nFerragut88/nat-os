@@ -28,6 +28,7 @@
 #include "intr.h"
 #include "timer.h"
 #include "blobcall.h"
+#include "blob.h"
 #include "heap.h"
 #include "critical.h"
 
@@ -346,6 +347,26 @@ int32_t osi_impl_get_random(uint8_t *buf, uint32_t len)
 #define DP_WIFI_CLK_BITS 0x00000406u
 #define DP_CORE_RST_EN   0x3FF000D0u
 #define DP_WIFIMAC_RST   0x00000004u
+
+/* [step 198] _phy_enable: wake the PHY, do not just count the call.
+ *
+ * ESP-IDF esp_phy_enable() calibrates on the FIRST call and calls
+ * phy_wakeup_init() on every one after -- and _phy_disable() is
+ * phy_close_rf(), which puts the PHY to sleep. Ours were empty, so once
+ * anything slept the radio it was never woken, and no error was reported
+ * by anybody, which is precisely the failure this looks like.
+ *
+ * phyinit_run_at() does the one-time calibration and guards itself, so
+ * this is the "every call after" half. */
+/* [step 198] The address only, cached. NOT blob_map(): that function
+ * reprograms the flash MMU with the cache off, and calling it from inside a
+ * blob call -- while executing out of the mapping it is rewriting -- is an
+ * IllegalInstruction, measured. wifi_bringup() records the pointer once,
+ * while nothing is running out of the blob. */
+uint32_t g_phy_wakeup_fn;
+
+uint32_t osi_impl_phy_wakeup_addr(void);
+uint32_t osi_impl_phy_wakeup_addr(void) { return g_phy_wakeup_fn; }
 
 void osi_impl_wifi_clock_enable(void);
 void osi_impl_wifi_clock_enable(void)

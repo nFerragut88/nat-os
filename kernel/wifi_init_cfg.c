@@ -153,6 +153,19 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
     /* [step 197] Promiscuous mode: hand us every frame on the channel.
      * Receive only -- it disables the address filter, it does not transmit.
      * If interrupts start arriving, the whole receive path is proven. */
+    /* [step 198] Turn modem power save OFF.
+     * esp_wifi.h: "Default power save type is WIFI_PS_MIN_MODEM" -- the
+     * station powers the modem down and wakes only every DTIM period, and
+     * an unassociated station has no DTIM to sync to. It reports no error
+     * either way, which is exactly the shape of the low interrupt counts.
+     * WIFI_PS_NONE is 0. */
+    { extern uint32_t g_phy_wakeup_fn; g_phy_wakeup_fn = e->phy_wakeup; }
+    if (e->wifi_set_ps) {
+        uint32_t ps = blob_call(e->wifi_set_ps, 0u, 0u, 0u, 0u);
+        uart_puts("   ps NONE   returned ");
+        uart_put_hex(ps);
+        uart_puts("\n");
+    }
     if (e->wifi_promiscuous) {
         uint32_t pr = blob_call(e->wifi_promiscuous, 1u, 0u, 0u, 0u);
         uart_puts("   promisc   returned ");
