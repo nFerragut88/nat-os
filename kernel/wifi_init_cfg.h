@@ -19,6 +19,13 @@
 #include <stdbool.h>
 #include "wifi_osi_table.h"   /* wifi_osi_funcs_t, referenced by the struct */
 
+/* [step 190] Bring-up lives here, not in shell.c -- see the comment on
+ * wifi_bringup(). `wifiinit start` runs esp_wifi_start() after a successful
+ * esp_wifi_init_internal(); plain `wifiinit` runs init only. */
+struct blob_entry;
+void     wifi_start_enable(int on);
+uint32_t wifi_bringup(const struct blob_entry *e, int want_null);
+
 #define WIFI_INIT_CONFIG_MAGIC   0x1F2F3F4F
 #define ESP_WIFI_CRYPTO_VERSION  0x00000001
 

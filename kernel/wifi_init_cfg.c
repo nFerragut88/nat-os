@@ -3,6 +3,8 @@
 #include "wifi_init_cfg.h"
 #include "wifi_osi_table.h"
 #include "uart.h"
+#include "blob.h"
+#include "blobcall.h"
 
 /* THE REAL TABLE, in vendor/windowed/wifi_osi.c.
  *
@@ -79,6 +81,78 @@ static uint32_t osi_null_slots(uint32_t *first_off)
         }
     }
     return bad;
+}
+
+/* [step 190] Bring-up, moved out of shell.c.
+ *
+ * esp_wifi_init_internal returns ESP_OK as of step 189, so esp_wifi_start() is
+ * reachable for the first time. It needs a call site, and shell.c is the one
+ * file this project does not add to: it is first in .flash.text, so anything
+ * appended shifts everything the flash MMU maps and walks into the step-7
+ * layout band -- measured, nine lines of uart_puts there hung blob_map
+ * (UM-NATOS-042 section 9.2).
+ *
+ * So the work moves here and shell.c gets SMALLER: a three-line blob_call
+ * becomes a one-line wifi_bringup(). The rule is about growth, and this is the
+ * opposite of growth.
+ *
+ * `wifiinit start` runs both; plain `wifiinit` runs init only, so every
+ * measurement taken up to step 189 stays reproducible unchanged. */
+static int g_want_start;
+
+void wifi_start_enable(int on);
+void wifi_start_enable(int on) { g_want_start = on; }
+
+uint32_t wifi_bringup(const struct blob_entry *e, int want_null);
+uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
+{
+    /* blob_call, not phy_stack_call: the driver reaches
+     * _task_create_pinned_to_core, and a task created inside a masked call can
+     * never run. Exclusion is the mutex; the scheduler keeps running. */
+    uint32_t r = blob_call(e->wifi_init,
+                           want_null ? 0u : (uint32_t)wifi_init_cfg(),
+                           0u, 0u, 0u);
+    if (r != 0u || !g_want_start) {
+        return r;
+    }
+    if (!e->wifi_start) {
+        uart_puts("   start     : blob entry has no esp_wifi_start\n");
+        return r;
+    }
+
+    uart_puts("   calling esp_wifi_start at ");
+    uart_put_hex(e->wifi_start);
+    uart_puts("\n");
+    uint32_t sr = blob_call(e->wifi_start, 0u, 0u, 0u, 0u);
+    uart_puts("   start     returned ");
+    uart_put_hex(sr);
+    uart_puts(sr == 0u ? "  (ESP_OK)\n" : "  (an esp_err_t, not OK)\n");
+
+    /* [step 190] Is the MAC actually armed? _set_intr/_set_isr/_ints_on are
+     * reached for the first time here, so the step-177 wiring stops being
+     * inert. routed says a line was routed; fired says one has been taken. */
+    {
+        extern volatile uint32_t g_blob_intr_routed, g_blob_isr_nofn;
+        extern volatile uint32_t g_blob_isr_calls[];
+        uart_puts("   [intr]    routed=");
+        uart_put_dec(g_blob_intr_routed);
+        uart_puts(" nofn=");
+        uart_put_dec(g_blob_isr_nofn);
+        uart_puts(" fired:");
+        uint32_t any = 0;
+        for (uint32_t k = 0; k < 32u; k++) {
+            if (g_blob_isr_calls[k]) {
+                any = 1;
+                uart_puts(" L");
+                uart_put_dec(k);
+                uart_puts("=");
+                uart_put_dec(g_blob_isr_calls[k]);
+            }
+        }
+        if (!any) { uart_puts(" none"); }
+        uart_puts("\n");
+    }
+    return r;
 }
 
 const void *wifi_init_cfg(void)

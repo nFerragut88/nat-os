@@ -812,14 +812,13 @@ static void execute(char *line)
              * panics -- two contexts in windowed code. Kept reachable because
              * it is the reproducer for the next piece of work. */
             blob_task_enable(str_eq(arg, "task"));
+            wifi_start_enable(str_eq(arg, "start"));
             if (str_eq(arg, "nvs")) { wifi_init_cfg_nvs(1); }
             /* blob_call, not phy_stack_call: the driver has reached
              * _task_create_pinned_to_core, and a task created inside a masked
              * call can never run. Exclusion moves to a mutex; the scheduler
              * keeps running. */
-            uint32_t r = blob_call(e->wifi_init,
-                                   want_null ? 0u : (uint32_t)wifi_init_cfg(),
-                                   0u, 0u, 0u);
+            uint32_t r = wifi_bringup(e, want_null);
             uart_puts("   init      returned ");
             uart_put_hex(r);
             uart_puts(r == 0u ? "  (ESP_OK)\n" : "  (an esp_err_t, not OK)\n");

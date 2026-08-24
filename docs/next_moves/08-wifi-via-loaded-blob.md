@@ -12408,6 +12408,116 @@ the caller's buffer — the same defect `_read_mac` had — and the instrumentat
 debt from steps 183 and 184.
 
 **Nothing has been on air.**
+---
+
+## step 190 — `esp_wifi_start()` returns ESP_OK
+
+```
+   calling esp_wifi_start at 0x40301794
+   start     returned 0x00000000  (ESP_OK)
+   init      returned 0x00000000  (ESP_OK)
+   osi       46 of 118 adapter entries were called
+   [intr]    routed=1 nofn=0 fired: none
+```
+
+The driver initialises and starts. Forty-six adapter entries, up from
+thirty-two, and `_set_intr`, `_set_isr` and `_ints_on` are reached for the first
+time — the interrupt wiring committed in step 177 has been inert for thirteen
+steps and is now exercised.
+
+### 190a. A call site without growing `shell.c`
+
+`esp_wifi_start` needed somewhere to be called from, and `shell.c` is the one
+file this project does not add to: it is first in `.flash.text`, so anything
+appended shifts everything the flash MMU maps and walks into the step-7 layout
+band — measured, nine lines of `uart_puts` there hung `blob_map`
+(UM-NATOS-042 §9.2).
+
+The rule is about growth, so the bring-up moved to `wifi_init_cfg.c` and
+`shell.c` got **smaller**: a three-line `blob_call` became
+`uint32_t r = wifi_bringup(e, want_null);`, plus one line for the new argument.
+Two insertions, three deletions.
+
+`wifiinit start` runs both; plain `wifiinit` runs init only, so every
+measurement taken up to step 189 stays reproducible unchanged — verified, byte
+for byte.
+
+### 190b. What start reached
+
+Newly called, beyond the thirty-two init already used:
+
+```
+_set_intr  _set_isr  _ints_on  _phy_enable  _wifi_clock_enable  _timer_arm
+_event_post  _coex_init  _coex_enable  _coex_wifi_request  _coex_wifi_release
+_coex_schm_register_cb  _coex_register_start_cb
+```
+
+`intr clamped to CRIT_LEVEL: 0` — the clamp that keeps WiFi ISRs below the level
+`flash_erase_sector()` masks has not had to fire.
+
+### 190c. What is on air: nothing, and the claim is now worth stating carefully
+
+Every report in this series has ended "nothing has been on air", and until now
+that was trivially true because the driver never started. It is still true, and
+here is the basis rather than the assertion:
+
+- **One line is routed** (`routed=1`) and **no interrupt has been taken**
+  (`fired: none`). The MAC is armed and silent.
+- **No mode was set.** `esp_wifi_set_mode()` is never called, so there is no
+  station or AP interface.
+- **Nothing was commanded to transmit** — no scan, no connect, no beacon.
+
+What *has* changed: `_phy_enable` and `_wifi_clock_enable` were called, so the
+PHY is powered where before it was not. That is a real change of hardware state
+and it should not be glossed. Powered is not transmitting, and no path to a
+transmit exists yet, but the sign-off no longer means "the radio hardware was
+never touched".
+
+### 190d. It does not survive `blobphy` first
+
+Standalone, `wifiinit start` is clean and reproducible. Run after `blobphy` in
+the same boot, it panics **inside** the blob:
+
+```
+exccause 28  LoadProhibited   epc 0x4035c61d   excvaddr 0x0000006c
+last osi : entry 57  _timer_disarm
+```
+
+`0x4035c61d` is `set_chanfreq_nomac` in the blob. A null structure dereferenced
+at offset `0x6c`, immediately after `_timer_disarm`.
+
+All five timer entries — `_timer_arm`, `_timer_disarm`, `_timer_setfn`,
+`_timer_done`, `_timer_arm_us` — are empty stubs. `esp_wifi_start` arms a timer
+and then relies on it, and the state `blobphy` leaves behind is enough to make
+the difference show. This is UM-NATOS-042 §9.5's "the timer entries are stubs",
+reached at last.
+
+Recorded as a **conditional** result, not a clean one: init and start both
+return ESP_OK, and they do so from a cold boot. The suite's combined ordering
+does not yet pass.
+
+```
+boot 11 PASS 0 FAIL
+wintorture 1000 ms : switches during the call: 10  (preemption really happened)
+                     checksum 1632 expected 1632  CORRECT
+blobphy rc=0
+wifiinit start, from cold : init ESP_OK, start ESP_OK
+wifiinit start, after blobphy : panic in set_chanfreq_nomac
+```
+
+### Next
+
+1. **Implement the timer entries.** They are the named cause of the only
+   remaining failure, and nat-os has `timer.h` already.
+2. **`_get_random`** still returns success without filling the caller's buffer —
+   the defect `_read_mac` had. It is called during start.
+3. Then a mode and a scan, which is the first thing that would put anything on
+   air and should not be attempted casually.
+4. The naming table needs `_phy_common_clock_enable`/`_disable` added; they print
+   as `_magic` because step 185 gave them ids outside 1..116.
+
+**Nothing has been on air.**
+
 
 
 
