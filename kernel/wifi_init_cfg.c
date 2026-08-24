@@ -202,26 +202,29 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
      * groups to their implementation, on the theory that a NULL event group
      * was what it waited on. It hangs identically, so that was not it and
      * _event_post remains the suspect. */
-    if (e->wifi_scan_start) {
-        static const uint32_t cfg[8] = { 0u, 0u, 1u, 1u, 0u, 0u, 500u, 0u };
-        uart_puts("   scan      passive ch1 ...\n");
-        uint32_t t0 = timer_ticks();
-        uint32_t sc = blob_call(e->wifi_scan_start, (uint32_t)cfg, 1u, 0u, 0u);
-        uart_puts("   scan      returned ");
-        uart_put_hex(sc);
-        uart_puts("  after ticks ");
-        uart_put_dec(timer_ticks() - t0);
-        uart_puts("\n");
-        /* [step 202] What the scan actually HEARD. Interrupt counts are an
-         * inference about reception; this is the measurement. A passive scan
-         * that dwells 500 ms on a live channel should find several APs. */
-        if (e->wifi_scan_ap_num) {
-            static volatile unsigned short n;
+    /* [step 204] SWEEP THE CHANNELS. Every scan this project has run was
+     * pinned to channel 1, because step 199 pinned it to bound the exposure
+     * if scan_type had been read at the wrong offset and the scan
+     * transmitted. Step 201 proved the layout is right and the scan is
+     * passive, so that reason expired -- and nobody moved the channel back.
+     * If the AP is on 6 or 11, "found 0" on channel 1 is the CORRECT answer
+     * and the radio was never the problem. channel=0 (all channels) still
+     * panics, so this walks them one at a time. */
+    if (e->wifi_scan_start && e->wifi_scan_ap_num) {
+        static uint32_t cfg[8] = { 0u, 0u, 1u, 1u, 0u, 0u, 150u, 0u };
+        static volatile unsigned short n;
+        uart_puts("   scan      passive sweep 1-13\n");
+        for (uint32_t ch = 1u; ch <= 13u; ch++) {
+            cfg[2] = ch;
+            uint32_t sc = blob_call(e->wifi_scan_start, (uint32_t)cfg,
+                                    1u, 0u, 0u);
             n = 0xFFFFu;
-            uint32_t ar = blob_call(e->wifi_scan_ap_num, (uint32_t)&n, 0u, 0u, 0u);
-            uart_puts("   scan      ap_num rc ");
-            uart_put_hex(ar);
-            uart_puts("  found ");
+            (void)blob_call(e->wifi_scan_ap_num, (uint32_t)&n, 0u, 0u, 0u);
+            uart_puts("   ch ");
+            uart_put_dec(ch);
+            uart_puts(" rc ");
+            uart_put_hex(sc);
+            uart_puts(" found ");
             uart_put_dec(n);
             uart_puts("\n");
         }
@@ -265,6 +268,19 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
             uart_put_dec(osi_impl_timers_used());
             uart_puts(" refused=");
             uart_put_dec(g_timer_short);
+            {
+                /* [step 203] Did the driver get what it asked for? RX buffers
+                 * are allocated at init and _wifi_malloc only started working
+                 * at step 182; nothing has checked the result since. */
+                extern uint32_t g_osi_alloc_calls, g_osi_alloc_bytes;
+                extern uint32_t g_osi_alloc_fails;
+                uart_puts("  alloc ");
+                uart_put_dec(g_osi_alloc_calls);
+                uart_puts("/");
+                uart_put_dec(g_osi_alloc_bytes);
+                uart_puts("B fails ");
+                uart_put_dec(g_osi_alloc_fails);
+            }
             {
                 /* [step 193] Two words from the hardware RNG. Proves the
                  * register decodes and is not stuck; it is not a test of
@@ -330,8 +346,8 @@ const void *wifi_init_cfg(void)
      * the configuration Espressif ships is the shape of argument the driver is
      * known to accept; trimming it is a later optimisation with a measurement
      * attached, not a starting point. */
-    g_cfg.ampdu_rx_enable        = 1;
-    g_cfg.ampdu_tx_enable        = 1;
+    g_cfg.ampdu_rx_enable        = 0;   /* [step 203] was 1 */
+    g_cfg.ampdu_tx_enable        = 0;   /* [step 203] was 1 */
     g_cfg.amsdu_tx_enable        = 0;
     g_cfg.nvs_enable             = 0;
     g_cfg.nano_enable            = 0;
