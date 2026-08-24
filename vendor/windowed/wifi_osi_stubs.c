@@ -220,6 +220,8 @@ extern void osi_impl_evt_clear(void);
 extern void osi_impl_evt_wait_args(void);
 extern void osi_impl_evt_wait2(void);
 extern void osi_impl_delay(void);              /* [step 201] */
+extern void osi_impl_queue_send_isr(void);     /* [step 202] */
+extern void osi_impl_in_isr(void);
 extern void osi_impl_random(void);         /* [step 193] */
 extern void osi_impl_get_random(void);
 extern void osi_impl_timer_arm(void);      /* [step 191] */
@@ -536,7 +538,7 @@ static void osi_s_ints_off(uint32_t mask)
 static bool osi_s_is_from_isr(void)
 {
     osi_hit(7u);
-    return false;
+    return w2c_call0f((uint32_t)&osi_impl_in_isr) != 0u;
 }
 
 static void * osi_s_spin_lock_create(void)
@@ -778,7 +780,12 @@ static int32_t osi_s_queue_send(void *queue, void *item, uint32_t block_time_tic
 static int32_t osi_s_queue_send_from_isr(void *queue, void *item, void *hptw)
 {
     osi_hit(26u);
-    return 0;
+    /* [step 202] Post it. This returned 0 and dropped the frame. hptw is
+     * FreeRTOS's higher-priority-task-woken flag; nat-os reschedules on its
+     * own tick, so nothing here needs it and it is cleared rather than left. */
+    if (hptw) { *(volatile int32_t *)hptw = 0; }
+    return (int32_t)w2c_call2((uint32_t)&osi_impl_queue_send_isr,
+                              (uint32_t)queue, (uint32_t)item);
 }
 
 static int32_t osi_s_queue_send_to_back(void *queue, void *item, uint32_t block_time_tick)

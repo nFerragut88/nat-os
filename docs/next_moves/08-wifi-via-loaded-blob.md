@@ -13458,6 +13458,86 @@ Sustained reception is still not established — `L27` sits at 2 — and that re
 the open question.
 
 **Nothing has been transmitted, and this time it is measured.**
+---
+
+## step 202 — measure reception instead of inferring it
+
+```
+scan      returned 0x00000000  after ticks 80
+scan      ap_num rc 0x00000000  found 0
+```
+
+`esp_wifi_scan_get_ap_num()` added to the entry table (version 10) and reported
+after the scan. **A 500 ms passive dwell on channel 1 finds zero access
+points.**
+
+That is the measurement this has needed. Interrupt counts were an *inference*
+about reception — "`L27` climbed to 6" reads like progress and says nothing about
+whether a frame was decoded. `ap_num` is the driver's own answer to the only
+question that matters, and the answer is no.
+
+### 202a. Two ISR entries, fixed, and not the cause
+
+`_queue_send_from_isr` returned 0 and posted nothing. The MAC ISR hands each
+received frame to the driver task through it, so every frame would have been
+dropped and reported as a failed post. `_is_from_isr` answered `false`
+unconditionally, which tells the driver it may use blocking variants from an
+interrupt; it now reports whether the trampoline is on the stack.
+
+Both are real defects and both are kept. But `osiused` shows **the driver never
+calls either**, so neither is on the path that is failing.
+
+Fixing things because they are broken is right. Claiming they were the cause
+would not have been, and the temptation was there — the first was a very good
+story for "two interrupts then silence".
+
+### 202b. A second defect: the all-channel scan panics
+
+Setting the config's `channel` to 0 — scan all channels — panics:
+
+```
+exccause 28  LoadProhibited,  during config, before init returns
+```
+
+Reproducible. **It is not the layout sensitivity**, and that was checked rather
+than assumed: the log string was padded back to the exact length of the working
+build and it still panicked, then reverting only the channel field made it work
+again. So the all-channel scan path reaches something the single-channel path
+does not.
+
+Recorded, not chased.
+
+### State
+
+The driver initialises, has a station interface, starts, sets a channel, and runs
+a blocking passive scan to completion — that hears nothing. 53 of 118 adapter
+entries are exercised.
+
+```
+boot 11 PASS 0 FAIL
+wintorture  10 real switches, checksum 1632 CORRECT
+blobphy     phyinit rc=0
+wifiinit start
+            init / set_mode STA / start / ps NONE / promisc /
+            channel 1 / passive scan   -- all ESP_OK, found 0
+```
+
+### Next
+
+The question is now narrow and well-posed: **the radio decodes nothing.** Not
+"interrupts are low" — nothing. Candidates, none tested:
+
+1. RX buffers. The driver allocates them at init from a config nat-os trimmed
+   hard; `_wifi_malloc` and friends only started working at step 182, so the
+   counts have never been checked against what the driver actually got.
+2. `_wifi_apb80m_request`/`_release` and `_wifi_rtc_enable_iso`/`_disable_iso`,
+   all still empty, all clock- and power-domain related.
+3. The PHY calibration data. `phyinit_run_at()` runs `register_chipv7_phy` with a
+   calibration buffer nat-os builds; whether the result is a working RF front end
+   has never been checked beyond `rc=0`.
+
+**Nothing has been transmitted, and it is measured.**
+
 
 
 

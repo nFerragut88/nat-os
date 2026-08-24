@@ -389,6 +389,31 @@ uint32_t osi_impl_evt_wait2(void *h, uint32_t bits)
                              g_evt_ticks);
 }
 
+/* [step 202] The ISR side of the receive path.
+ *
+ * _queue_send_from_isr returned 0 -- failure -- and posted nothing. The MAC
+ * ISR hands each received frame to the driver task through this entry, so
+ * every frame was dropped and reported as a failed post. Measured before
+ * this: the MAC asserts twice after start and then never again, and the
+ * pending register never shows bit 27 thereafter.
+ *
+ * osi_impl_queue_send takes four arguments and the widest bridge carries
+ * three, so this fixes ticks at 0 -- correct from an ISR, which must never
+ * block -- and to_front at 0. */
+int32_t osi_impl_queue_send_isr(void *h, void *item);
+int32_t osi_impl_queue_send_isr(void *h, void *item)
+{
+    return osi_impl_queue_send(h, item, 0u, 0);
+}
+
+/* [step 202] Whether the caller is inside our interrupt trampoline.
+ * _is_from_isr answered false unconditionally, which tells the driver it
+ * may use the blocking variants from an interrupt. */
+volatile uint32_t g_blob_in_isr;
+
+uint32_t osi_impl_in_isr(void);
+uint32_t osi_impl_in_isr(void) { return g_blob_in_isr; }
+
 uint32_t osi_impl_phy_wakeup_addr(void);
 uint32_t osi_impl_phy_wakeup_addr(void) { return g_phy_wakeup_fn; }
 
@@ -977,7 +1002,9 @@ static void blob_isr_run(uint32_t line)
         return;
     }
     g_blob_isr_calls[line]++;
+    g_blob_in_isr++;
     (void)rom_call4(fn, arg, 0u, 0u, 0u);
+    g_blob_in_isr--;
 }
 
 static void blob_isr_0(void) { blob_isr_run(0u); }

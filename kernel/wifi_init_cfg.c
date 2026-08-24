@@ -212,6 +212,19 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
         uart_puts("  after ticks ");
         uart_put_dec(timer_ticks() - t0);
         uart_puts("\n");
+        /* [step 202] What the scan actually HEARD. Interrupt counts are an
+         * inference about reception; this is the measurement. A passive scan
+         * that dwells 500 ms on a live channel should find several APs. */
+        if (e->wifi_scan_ap_num) {
+            static volatile unsigned short n;
+            n = 0xFFFFu;
+            uint32_t ar = blob_call(e->wifi_scan_ap_num, (uint32_t)&n, 0u, 0u, 0u);
+            uart_puts("   scan      ap_num rc ");
+            uart_put_hex(ar);
+            uart_puts("  found ");
+            uart_put_dec(n);
+            uart_puts("\n");
+        }
     }
 
     /* [step 190] Is the MAC actually armed? _set_intr/_set_isr/_ints_on are
