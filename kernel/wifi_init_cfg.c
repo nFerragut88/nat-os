@@ -121,12 +121,11 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
      * NULL since the driver first initialised. The scan/connect state machine
      * dereferences it -- that is the LoadProhibited at NULL+0x54.
      *
-     * The table is ZEROED, not implemented. Read the fault site:
-     *     l32i a6, a5, 0x1b4   ; the table
-     *     l32i a6, a6, 84      ; a function in it
-     *     beqz.n a6, skip      ; <- guarded
-     * An all-zero table is NOT safe either -- see vendor/windowed/wpa_cb.c.
-     * The table and its stubs live there; this does the registration only. */
+     * The table is STUBS, not zeros -- an all-zero table faults too, just in
+     * wifi_station_start instead. It lives in kernel/wifi_osi_impl.c (call0)
+     * and the one stub the blob calls lives in vendor/windowed/wifi_glue.c;
+     * this does the registration only. */
+    extern void wifi_ap_report(uint32_t fn, uint32_t count);
     extern uint32_t wpa_cb_table_fill(void);
     extern void wpa_cb_report(void);
     if (e->wifi_register_wpa_cb) {
@@ -248,6 +247,9 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
             uart_puts(" found ");
             uart_put_dec(n);
             uart_puts("\n");
+            /* [step 206] and by NAME. One call; the printing is in
+             * wifi_osi_impl.c because this file is the sensitive one. */
+            wifi_ap_report(e->wifi_scan_ap_recs, n);
         }
     }
 

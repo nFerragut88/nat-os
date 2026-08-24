@@ -1296,3 +1296,48 @@ void wpa_cb_report(void)
         uart_put_hex((g_wpa_ra[i] & 0x3FFFFFFFu) | 0x40000000u);
     }
 }
+
+/* [step 206] Print what the scan actually heard, by NAME.
+ *
+ * ap_num returning 1 is the driver's own count and it is good evidence, but it
+ * is still the driver marking its own homework. An SSID is a string that was
+ * transmitted by somebody else's hardware and can only have arrived through the
+ * antenna, the PHY, the MAC, the interrupt, the queue and the worker. If one
+ * comes out of here, every one of those works.
+ *
+ * Only record ZERO is read, and only its first two fields. wifi_ap_record_t has
+ * begun with bssid[6] then ssid[33] in every ESP-IDF version, but the stride
+ * between records does NOT come from a header this project can check -- the
+ * blob decides it inside wifi_get_ap_list_process. Reading one record needs no
+ * stride; reading two would need one that is not in evidence, so it reads one.
+ *
+ * Lives here rather than at the call site because that is wifi_init_cfg.c,
+ * where the layout sensitivity was measured. It gets a single call. */
+void wifi_ap_report(uint32_t fn, uint32_t count);
+void wifi_ap_report(uint32_t fn, uint32_t count)
+{
+    static volatile unsigned short want;
+    static uint8_t rec[512];
+
+    if (!fn || !count) { return; }
+    want = 1u;
+    for (uint32_t i = 0u; i < sizeof rec; i++) { rec[i] = 0u; }
+
+    uint32_t rc = blob_call(fn, (uint32_t)&want, (uint32_t)rec, 0u, 0u);
+    uart_puts("   ap[0] rc ");
+    uart_put_hex(rc);
+    if (rc != 0u) { uart_puts("\n"); return; }
+
+    static const char hex[] = "0123456789abcdef";
+    uart_puts("  bssid ");
+    for (uint32_t i = 0u; i < 6u; i++) {
+        uart_putc(hex[(rec[i] >> 4) & 0xFu]);
+        uart_putc(hex[rec[i] & 0xFu]);
+        if (i != 5u) { uart_putc(58); }
+    }
+    uart_puts("  ssid [");
+    for (uint32_t i = 6u; i < 38u && rec[i]; i++) {
+        uart_putc((rec[i] >= 32u && rec[i] < 127u) ? (char)rec[i] : 63);
+    }
+    uart_puts("]\n");
+}

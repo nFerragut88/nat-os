@@ -49,6 +49,8 @@ extern int  esp_wifi_scan_get_ap_num(unsigned short *n);  /* [step 202] */
  * esp_wifi_init_internal() directly and so has never registered anything, and
  * g_ic->wpa_cb has been NULL the whole time. */
 extern int  esp_wifi_register_wpa_cb_internal(void *cb);
+/* [step 206] The scan RESULTS, not just the count. */
+extern int  esp_wifi_scan_get_ap_records(unsigned short *n, void *recs);
 
 struct blob_entry {
     uint32_t magic;          /* 'N','8','0','2' */
@@ -91,6 +93,8 @@ struct blob_entry {
     int (*wifi_scan_ap_num)(unsigned short *n);
     /* [step 205] version 11. */
     int (*wifi_register_wpa_cb)(void *cb);
+    /* [step 206] version 12. */
+    int (*wifi_scan_ap_recs)(unsigned short *n, void *recs);
 };
 
 /* `used` because nothing in this translation unit references it and
@@ -99,7 +103,7 @@ struct blob_entry {
 __attribute__((section(".blob_entry"), used))
 const struct blob_entry blob_entry = {
     .magic       = 0x3230384Eu,          /* "N802" little-endian */
-    .version     = 11u,
+    .version     = 12u,
     .image_size  = (uint32_t)&_blob_image_size,
     .text_end    = (uint32_t)&_blob_text_end,
 
@@ -127,4 +131,5 @@ const struct blob_entry blob_entry = {
     .phy_wakeup       = phy_wakeup_init,
     .wifi_scan_ap_num = esp_wifi_scan_get_ap_num,
     .wifi_register_wpa_cb = esp_wifi_register_wpa_cb_internal,
+    .wifi_scan_ap_recs    = esp_wifi_scan_get_ap_records,
 };
