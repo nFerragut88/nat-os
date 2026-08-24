@@ -1801,7 +1801,10 @@ int64_t osi_impl_time_us(void)
  * checked before being followed, in case a build ever does resolve it. */
 #define OSI_EVT_LOG 16u
 
-static struct { uint32_t base, id, data; } g_evt_log[OSI_EVT_LOG];
+/* [step 217] A COPY of the payload, taken at post time. The pointer alone is
+ * useless -- the driver owns that memory and is free to release it the moment
+ * the post returns, so reading it later would be reading whatever came next. */
+static struct { uint32_t base, id, data; uint8_t d[48]; } g_evt_log[OSI_EVT_LOG];
 static uint32_t g_evt_n;
 
 int32_t osi_impl_event_post(uint32_t base, uint32_t id, uint32_t data);
@@ -1812,6 +1815,11 @@ int32_t osi_impl_event_post(uint32_t base, uint32_t id, uint32_t data)
         g_evt_log[g_evt_n].base = base;
         g_evt_log[g_evt_n].id   = id;
         g_evt_log[g_evt_n].data = data;
+        for (uint32_t k = 0u; k < 48u; k++) { g_evt_log[g_evt_n].d[k] = 0u; }
+        if (data >= 0x3F400000u && data < 0x40000000u) {
+            const uint8_t *s = (const uint8_t *)data;
+            for (uint32_t k = 0u; k < 48u; k++) { g_evt_log[g_evt_n].d[k] = s[k]; }
+        }
     }
     g_evt_n++;
     crit_exit(crit);
@@ -1840,6 +1848,78 @@ void wifi_event_report(void)
         }
         uart_puts(":");
         uart_put_dec(g_evt_log[i].id);
+        /* [step 217] id 5 is WIFI_EVENT_STA_DISCONNECTED, whose payload is
+         * ssid[32], ssid_len, bssid[6], reason -- so reason sits at +39.
+         * CHECKED rather than assumed, the same way section 7.1 checked the
+         * scan record: ssid_len at +32 must equal the length of the SSID we
+         * asked for. If it does not, the offset is not trusted and no reason
+         * is printed. */
+        if (g_evt_log[i].id == 5u && g_evt_log[i].data) {
+            uint32_t n = g_evt_log[i].d[32];
+            uart_puts("(len");
+            uart_put_dec(n);
+            if (n == 22u) {
+                uart_puts(" reason");
+                uart_put_dec(g_evt_log[i].d[39]);
+            } else {
+                uart_puts(" layout?");
+            }
+            uart_puts(")");
+        }
     }
     uart_puts("\n");
+}
+
+/* ---- ASSOCIATION -- next_moves/08 step 217 ------------------------------
+ *
+ * The first attempt to join a network. It is deliberately aimed at an SSID
+ * that DOES NOT EXIST, and that is the point: no credentials are needed, and
+ * the driver still runs the whole path -- config, connect, scan for the
+ * target, fail to find it -- and then says what happened through the event
+ * stream that step 211 wired up. A reason code from a failed association is
+ * worth more than a guess about a successful one.
+ *
+ * wifi_config_t is a union whose sta member begins ssid[32] then password[64].
+ * Those two offsets have been stable across every IDF version; everything
+ * after them has not, so the buffer is ZEROED and nothing else is set. Zero is
+ * a sane default for all of it -- scan_method FAST, bssid_set 0, channel 0
+ * (any), threshold rssi 0, authmode OPEN -- which is exactly the configuration
+ * this test wants anyway. The same discipline as step 206: use the offsets
+ * that are in evidence and leave the rest alone.
+ *
+ * This DOES transmit. A station looking for an SSID sends probe requests, and
+ * if it found the network it would authenticate. Transmit was established at
+ * step 209 and this is the same radio doing the same thing. */
+void wifi_try_connect(uint32_t cfg_fn, uint32_t conn_fn);
+void wifi_try_connect(uint32_t cfg_fn, uint32_t conn_fn)
+{
+    static uint8_t conf[256];
+    static const char ssid[] = "nat-os-no-such-network";
+
+    if (!cfg_fn || !conn_fn) {
+        uart_puts("   assoc     : blob entry lacks set_config/connect\n");
+        return;
+    }
+    for (uint32_t i = 0u; i < sizeof conf; i++) { conf[i] = 0u; }
+    for (uint32_t i = 0u; i < sizeof ssid - 1u; i++) { conf[i] = (uint8_t)ssid[i]; }
+
+    uint32_t cr = blob_call(cfg_fn, 0u /* WIFI_IF_STA */, (uint32_t)conf, 0u, 0u);
+    uart_puts("   assoc     set_config rc ");
+    uart_put_hex(cr);
+    uart_puts("\n");
+    if (cr != 0u) { return; }
+
+    uint32_t nr = blob_call(conn_fn, 0u, 0u, 0u, 0u);
+    uart_puts("   assoc     connect rc ");
+    uart_put_hex(nr);
+    uart_puts("  ssid [");
+    uart_puts(ssid);
+    uart_puts("]\n");
+
+    /* Give the driver time to scan for a network that is not there and give
+     * up. The answer arrives as an event, not as a return code. */
+    for (uint32_t k = 0u; k < 6u; k++) {
+        task_sleep(100u);
+    }
+    wifi_event_report();
 }

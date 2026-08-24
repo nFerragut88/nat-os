@@ -51,6 +51,10 @@ extern int  esp_wifi_scan_get_ap_num(unsigned short *n);  /* [step 202] */
 extern int  esp_wifi_register_wpa_cb_internal(void *cb);
 /* [step 206] The scan RESULTS, not just the count. */
 extern int  esp_wifi_scan_get_ap_records(unsigned short *n, void *recs);
+/* [step 217] Association. */
+extern int  esp_wifi_set_config(int ifx, void *conf);
+extern int  esp_wifi_connect(void);
+extern int  esp_wifi_disconnect(void);
 
 struct blob_entry {
     uint32_t magic;          /* 'N','8','0','2' */
@@ -95,6 +99,10 @@ struct blob_entry {
     int (*wifi_register_wpa_cb)(void *cb);
     /* [step 206] version 12. */
     int (*wifi_scan_ap_recs)(unsigned short *n, void *recs);
+    /* [step 217] version 13. */
+    int (*wifi_set_config)(int ifx, void *conf);
+    int (*wifi_connect)(void);
+    int (*wifi_disconnect)(void);
 };
 
 /* `used` because nothing in this translation unit references it and
@@ -103,7 +111,7 @@ struct blob_entry {
 __attribute__((section(".blob_entry"), used))
 const struct blob_entry blob_entry = {
     .magic       = 0x3230384Eu,          /* "N802" little-endian */
-    .version     = 12u,
+    .version     = 13u,
     .image_size  = (uint32_t)&_blob_image_size,
     .text_end    = (uint32_t)&_blob_text_end,
 
@@ -132,4 +140,7 @@ const struct blob_entry blob_entry = {
     .wifi_scan_ap_num = esp_wifi_scan_get_ap_num,
     .wifi_register_wpa_cb = esp_wifi_register_wpa_cb_internal,
     .wifi_scan_ap_recs    = esp_wifi_scan_get_ap_records,
+    .wifi_set_config      = esp_wifi_set_config,
+    .wifi_connect         = esp_wifi_connect,
+    .wifi_disconnect      = esp_wifi_disconnect,
 };

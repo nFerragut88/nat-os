@@ -136,6 +136,7 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
      * this does the registration only. */
     extern void wifi_scan_sweep(uint32_t s, uint32_t nfn, uint32_t rfn);
     extern void wifi_tx_beacons(uint32_t tx, uint32_t chan);
+    extern void wifi_try_connect(uint32_t cfg, uint32_t conn);
     extern uint32_t wpa_cb_table_fill(void);
     extern void wpa_cb_report(void);
     if (e->wifi_register_wpa_cb) {
@@ -245,6 +246,9 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
      * the same reasoning that moved wifi_bringup() out of shell.c at step
      * 190. Twenty-two lines become one. */
     wifi_tx_beacons(e->wifi_80211_tx, e->wifi_set_channel);
+
+    /* [step 217] Then try to associate. One call; see wifi_osi_impl.c. */
+    wifi_try_connect(e->wifi_set_config, e->wifi_connect);
     wifi_scan_sweep(e->wifi_scan_start, e->wifi_scan_ap_num,
                     e->wifi_scan_ap_recs);
 
