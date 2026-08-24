@@ -172,7 +172,32 @@ double phy_floatundidf(unsigned long long x)
  * it needs instead of a static scan guessing them. */
 uint32_t g_wpa_calls;      /* total calls through the table */
 uint32_t g_wpa_ra[12];     /* raw a0 of the first twelve, encoded call-size */
-uint32_t g_wpa_ret = 1u;   /* what the stub returns; 1 = true for bool entries */
+/* [step 220] ZERO, was 1.
+ *
+ * Step 205 chose 1 because the entries it knew about returned bool and true is
+ * 1. But struct wpa_funcs also contains POINTER-returning entries --
+ * wpa_ap_init, wpa_ap_get_wpa_ie, wpa_config_parse_string, wpa3_build_sae_msg
+ * -- and a WPA3/SAE-capable access point reaches one of them. Measured against
+ * an iPhone hotspot:
+ *
+ *     exccause 28 LoadProhibited   epc 0x4000c2af (a ROM copy routine)
+ *     excvaddr 0x00000001
+ *
+ * The driver took the 1 as a pointer and handed it to memcpy. NULL is the
+ * value every one of these entries is checked against; 1 is checked by
+ * nothing, and it is a valid-looking non-zero for the bool ones by accident
+ * rather than by design. */
+uint32_t g_wpa_ret;                     /* 0 -- NULL, and false */
+
+/* The one entry known to need TRUE. wifi_station_start calls wpa_cb + 0
+ * unguarded and a false there refuses the interface. */
+int wpa_cb_true_stub(void);
+int wpa_cb_true_stub(void)
+{
+    if (g_wpa_calls < 12u) { g_wpa_ra[g_wpa_calls] = (uint32_t)__builtin_return_address(0); }
+    g_wpa_calls++;
+    return 1;
+}
 
 int wpa_cb_stub(void);
 int wpa_cb_stub(void)

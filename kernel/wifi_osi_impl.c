@@ -1353,7 +1353,36 @@ uint32_t wpa_cb_table_fill(uint32_t sta_connect)
          * reprograms the flash MMU with the cache off (step 198) -- so the
          * caller, which already holds the entry table, hands it over. */
         extern int wpa_sta_connect_impl(void *bssid);
+        extern int wpa_cb_true_stub(void);
         extern uint32_t g_sta_connect_fn;
+        /* [step 220] PER ENTRY, from struct wpa_funcs in esp_wifi_driver.h.
+         *
+         * No single constant works, and both blanket answers were measured
+         * wrong. Returning 1 everywhere crashed against a WPA3-capable access
+         * point -- LoadProhibited, excvaddr 0x00000001, inside a ROM copy
+         * routine -- because entries 7, 11, 14, 18 and 23 return POINTERS and
+         * the driver dereferenced the 1. Returning 0 everywhere then hung
+         * before set_mode and watchdog-reset the board, because the bool
+         * entries treat false as refusal.
+         *
+         *   bool, must be TRUE : 0 sta_init, 1 sta_deinit, 8 ap_deinit,
+         *                        9 ap_join, 10 ap_remove, 12 ap_rx_eapol
+         *   bool, must be FALSE: 6 sta_in_4way_handshake -- we are never in
+         *                        one, and true would have the driver wait for
+         *                        a handshake that cannot complete
+         *   pointer, must be 0 : 7 ap_init, 11 ap_get_wpa_ie,
+         *                        14 config_parse_string, 18 wpa3_build_sae_msg,
+         *                        23 owe_build_dhie
+         *   int / void         : 0
+         *
+         * The header is on this machine. Reading it beat guessing twice. */
+        static const uint32_t true_slots = (1u<<0)|(1u<<1)|(1u<<8)|(1u<<9)
+                                         | (1u<<10)|(1u<<12);
+        for (uint32_t i = 0u; i < 32u; i++) {
+            if (true_slots & (1u << i)) {
+                g_wpa_table[i] = (uint32_t)&wpa_cb_true_stub;
+            }
+        }
         g_sta_connect_fn = sta_connect;
         g_wpa_table[2] = (uint32_t)&wpa_sta_connect_impl;
     }
