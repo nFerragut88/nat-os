@@ -327,6 +327,46 @@ int32_t osi_impl_get_random(uint8_t *buf, uint32_t len)
     return 0;                               /* ESP_OK, and it means it */
 }
 
+/* [step 197] The entries that actually turn the radio on.
+ *
+ * _wifi_clock_enable, _wifi_clock_disable and _wifi_reset_mac were empty.
+ * The driver calls them to ungate the WiFi clock and pulse the MAC out of
+ * reset, and neither happened -- the same "success reported for work never
+ * done" as _read_mac and _get_random, except here the work is powering the
+ * radio. Measured before this: intenable had bit 27 set and the pending
+ * register never showed it, so the routing was right and the MAC was off.
+ *
+ * Constants are Espressif's, from soc/esp32/dport_reg.h:
+ *   DPORT_WIFI_CLK_EN_REG  0x3FF000CC   DPORT_WIFI_CLK_WIFI_EN 0x406
+ *   DPORT_CORE_RST_EN_REG  0x3FF000D0   DPORT_WIFIMAC_RST      BIT(2)
+ *
+ * phyinit_run_at() already ungates the shared WIFI_BT_COMMON bits once per
+ * boot; these are the WiFi-specific ones the driver expects to control. */
+#define DP_WIFI_CLK_EN   0x3FF000CCu
+#define DP_WIFI_CLK_BITS 0x00000406u
+#define DP_CORE_RST_EN   0x3FF000D0u
+#define DP_WIFIMAC_RST   0x00000004u
+
+void osi_impl_wifi_clock_enable(void);
+void osi_impl_wifi_clock_enable(void)
+{
+    *(volatile uint32_t *)DP_WIFI_CLK_EN |= DP_WIFI_CLK_BITS;
+}
+
+void osi_impl_wifi_clock_disable(void);
+void osi_impl_wifi_clock_disable(void)
+{
+    *(volatile uint32_t *)DP_WIFI_CLK_EN &= ~DP_WIFI_CLK_BITS;
+}
+
+void osi_impl_wifi_reset_mac(void);
+void osi_impl_wifi_reset_mac(void)
+{
+    volatile uint32_t *r = (volatile uint32_t *)DP_CORE_RST_EN;
+    *r |= DP_WIFIMAC_RST;
+    *r &= ~DP_WIFIMAC_RST;
+}
+
 void *osi_impl_thread_sem_get(void);
 void *osi_impl_thread_sem_get(void)
 {

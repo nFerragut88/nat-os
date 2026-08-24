@@ -210,6 +210,9 @@ extern void osi_impl_free_heap(void);      /* [step 182] */
 extern void osi_impl_queue_waiting(void); /* [step 182] */
 extern void osi_impl_thread_sem_get(void); /* [step 182] */
 extern void osi_impl_read_mac(void);       /* [step 186] */
+extern void osi_impl_wifi_clock_enable(void);   /* [step 197] */
+extern void osi_impl_wifi_clock_disable(void);
+extern void osi_impl_wifi_reset_mac(void);
 extern void osi_impl_random(void);         /* [step 193] */
 extern void osi_impl_get_random(void);
 extern void osi_impl_timer_arm(void);      /* [step 191] */
@@ -1350,16 +1353,19 @@ static void osi_s_timer_arm_us(void *ptimer, uint32_t us, bool repeat)
 static void osi_s_wifi_reset_mac(void)
 {
     osi_hit(61u);
+    (void)w2c_call0f((uint32_t)&osi_impl_wifi_reset_mac);
 }
 
 static void osi_s_wifi_clock_enable(void)
 {
     osi_hit(62u);
+    (void)w2c_call0f((uint32_t)&osi_impl_wifi_clock_enable);
 }
 
 static void osi_s_wifi_clock_disable(void)
 {
     osi_hit(63u);
+    (void)w2c_call0f((uint32_t)&osi_impl_wifi_clock_disable);
 }
 
 static void osi_s_wifi_rtc_enable_iso(void)

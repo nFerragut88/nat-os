@@ -13057,6 +13057,96 @@ The next action is a **scan**, and that is the first one that would put energy o
 air. It is not taken here.
 
 **Nothing has been on air.**
+---
+
+## step 197 — the receiver is live
+
+```
+[intr] routed=1 nofn=0 fired: L27=1
+[intr] routed=1 nofn=0 fired: L27=9
+```
+
+The WiFi MAC raises interrupts and nat-os services them. The interrupt matrix,
+the line remap, `_handler_level3`, the trampoline and the driver's own ISR all
+work end to end. Nothing had ever fired before.
+
+### 197a. Three things that returned ESP_OK and changed nothing
+
+`set_mode(STA)`, then `esp_wifi_set_channel(1)`, then
+`esp_wifi_set_promiscuous(true)` were added one at a time. Every one returned
+`ESP_OK`. Not one produced an interrupt.
+
+`nofn` stayed **0** throughout, and that is the half that mattered: not one
+interrupt arrived even to be counted as *unhandled*, so the fault was not in the
+routing. The hardware agreed:
+
+```
+intenable = 0x08808000    bits 15, 23, 27 -- our line IS unmasked
+interrupt = 0x00010060    bits 5, 6, 16   -- bit 27 never pending
+```
+
+Correct plumbing, silent MAC.
+
+### 197b. The entries that turn the radio on were empty
+
+```
+_phy_enable          osi_hit(53u);
+_wifi_clock_enable   osi_hit(62u);
+_wifi_clock_disable  osi_hit(63u);
+_wifi_reset_mac      osi_hit(61u);
+```
+
+All four counted the call and did nothing. The driver calls them to ungate the
+WiFi clock and pulse the MAC out of reset, and neither happened — the same
+**success reported for work never done** as `_read_mac` (step 186) and
+`_get_random` (step 193), except that here the work is powering the radio.
+
+Three of them now write the registers, with Espressif's own constants from
+`soc/esp32/dport_reg.h`:
+
+| register | address | bits |
+|---|---|---|
+| `DPORT_WIFI_CLK_EN_REG` | `0x3FF000CC` | `0x406` |
+| `DPORT_CORE_RST_EN_REG` | `0x3FF000D0` | `BIT(2)` |
+
+`_phy_enable` is deliberately left empty — `phyinit_run_at()` already does the
+one-time PHY bring-up, and it is the next candidate if more is needed.
+
+### 197c. What is on air
+
+**Nothing has been transmitted.** No scan, no probe request, no association, no
+frame of any kind has left this board.
+
+What is new is that the **receiver** is running. Promiscuous mode on channel 1,
+taking interrupts from frames that were already in the air. Receiving is not
+emitting, and doing it in this order was the point: the entire RX path is now
+proven without a single transmission.
+
+The entry table gained `set_channel`, `scan_start` and `set_promiscuous`
+(version 7). Only the two receive-side entries are called. **`scan_start` is
+present and not invoked** — an active scan transmits, and that stays a decision.
+
+### 197d. What the counts say
+
+Single digits over seconds, where a busy 2.4 GHz channel would give hundreds of
+beacons. So the ISR fires but the driver is probably not consuming or re-arming
+fully.
+
+That is a question about the RX path rather than about whether there is one, and
+it is the next thing to measure.
+
+```
+boot 11 PASS 0 FAIL
+wintorture  10 real switches, checksum 1632 CORRECT
+blobphy     phyinit rc=0
+wifiinit start
+            init      ESP_OK     set_mode STA  ESP_OK
+            start     ESP_OK     promisc       ESP_OK
+            channel 1 ESP_OK     L27 firing
+```
+
+**Nothing has been transmitted.**
+
 
 
 

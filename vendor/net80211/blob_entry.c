@@ -37,6 +37,9 @@ extern int  esp_wifi_init_internal(const void *cfg);
 extern int  esp_wifi_start(void);
 extern int  esp_wifi_set_mode(int mode);   /* [step 195] */
 extern int  esp_wifi_get_mode(int *mode);
+extern int  esp_wifi_set_channel(unsigned char pri, int sec);  /* [step 197] */
+extern int  esp_wifi_scan_start(const void *cfg, int block);
+extern int  esp_wifi_set_promiscuous(int en);   /* [step 197] RX only */
 
 struct blob_entry {
     uint32_t magic;          /* 'N','8','0','2' */
@@ -69,6 +72,11 @@ struct blob_entry {
      * backward compatible: an older kernel simply never reads them. */
     int (*wifi_set_mode)(int mode);
     int (*wifi_get_mode)(int *mode);
+    /* [step 197] version 6. set_channel is receive-side only. scan_start is
+     * present but transmits when asked for an ACTIVE scan; see the kernel. */
+    int (*wifi_set_channel)(unsigned char pri, int sec);
+    int (*wifi_scan_start)(const void *cfg, int block);
+    int (*wifi_promiscuous)(int en);
 };
 
 /* `used` because nothing in this translation unit references it and
@@ -77,7 +85,7 @@ struct blob_entry {
 __attribute__((section(".blob_entry"), used))
 const struct blob_entry blob_entry = {
     .magic       = 0x3230384Eu,          /* "N802" little-endian */
-    .version     = 5u,
+    .version     = 7u,
     .image_size  = (uint32_t)&_blob_image_size,
     .text_end    = (uint32_t)&_blob_text_end,
 
@@ -98,4 +106,7 @@ const struct blob_entry blob_entry = {
     .wifi_start    = esp_wifi_start,
     .wifi_set_mode = esp_wifi_set_mode,
     .wifi_get_mode = esp_wifi_get_mode,
+    .wifi_set_channel = esp_wifi_set_channel,
+    .wifi_scan_start  = esp_wifi_scan_start,
+    .wifi_promiscuous = esp_wifi_set_promiscuous,
 };

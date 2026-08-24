@@ -146,6 +146,25 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
     uart_puts("   start     returned ");
     uart_put_hex(sr);
     uart_puts(sr == 0u ? "  (ESP_OK)\n" : "  (an esp_err_t, not OK)\n");
+    /* [step 197] Park the receiver on a channel.
+     * esp_wifi_set_channel does not transmit. If the MAC starts taking
+     * interrupts after this, the whole receive path works -- routing,
+     * trampoline, handler, all of it -- without a frame having left. */
+    /* [step 197] Promiscuous mode: hand us every frame on the channel.
+     * Receive only -- it disables the address filter, it does not transmit.
+     * If interrupts start arriving, the whole receive path is proven. */
+    if (e->wifi_promiscuous) {
+        uint32_t pr = blob_call(e->wifi_promiscuous, 1u, 0u, 0u, 0u);
+        uart_puts("   promisc   returned ");
+        uart_put_hex(pr);
+        uart_puts("\n");
+    }
+    if (e->wifi_set_channel) {
+        uint32_t cr = blob_call(e->wifi_set_channel, 1u, 0u, 0u, 0u);
+        uart_puts("   channel 1 returned ");
+        uart_put_hex(cr);
+        uart_puts("\n");
+    }
 
     /* [step 190] Is the MAC actually armed? _set_intr/_set_isr/_ints_on are
      * reached for the first time here, so the step-177 wiring stops being
