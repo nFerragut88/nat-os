@@ -258,9 +258,15 @@ failed, every time: reasoning about which function *must* be responsible.
 
 1. **Run the §7 test first.** It is one constant, one build, one run, and it
    either hands over the mechanism or removes the last standing lead.
-2. **Do not add instrumentation to `shell.c`.** It is the first object in
-   `.flash.text`; adding to it shifts everything the flash MMU maps and walks
-   into the step-7 layout band, which is reproducible and still unexplained.
+2. ~~**Do not add instrumentation to `shell.c`.**~~ **SUPERSEDED — see
+   UM-NATOS-048 §14.6.** This said `shell.c` is first in `.flash.text`, so adding
+   to it shifts what the flash MMU maps and walks into the step-7 layout band.
+   Step 216 reproduced the test deliberately: nine extra `uart_puts` lines, then
+   one hundred and twenty, and `blobphy` returns `rc=0` in both, with full Wi-Fi
+   bring-up unaffected. The band does not reproduce. The likely mechanism is the
+   out-of-bounds store found at step 214 — `window.S` writing a stack pointer
+   four bytes past `g_win_a0` into a neighbouring global — which is now deleted.
+   The constraint is lifted.
 3. **The instrumentation debt is now substantial** — probes across `window.S`,
    `task.c`, `panic.c`, `wifi_osi_stubs.c` and `wifi_osi_impl.c`, several built
    on premises since disproved. It needs a deliberate pass, file by file with a

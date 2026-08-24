@@ -1,7 +1,7 @@
 # UM-NATOS-048 — The Radio Hears, and Speaks
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.3 · 2026-08-24 · Status: **nat-os receives real 802.11 beacons and transmits frames that an independent device displays. Both directions of the radio work.**
+Revision 1.4 · 2026-08-24 · Status: **nat-os receives real 802.11 beacons and transmits frames that an independent device displays. Both directions of the radio work.**
 
 ---
 
@@ -663,6 +663,40 @@ load-bearing.
 It also does not explain §9.2's `shell.c` instance, which hung `blob_map` rather
 than refusing a task. Same class most likely — the same wild write landing on a
 different global — but that is a hypothesis and is recorded as one.
+
+### 14.6 And the `shell.c` band is gone too
+
+§14.4 recorded as a *hypothesis* that UM-NATOS-042 §9.2's `shell.c` instance was
+the same class. Step 216 tested it instead of leaving it open.
+
+That instance is the oldest standing constraint in the project: **"do not add
+instrumentation to `shell.c`"**, because it is first in `.flash.text` and nine
+lines of `uart_puts` there — code that never executes during the test — hung
+`blob_map()`. It has shaped where every diagnostic in this investigation was
+allowed to live, including three times in this report's own stretch.
+
+Reproduced deliberately, at the documented size and then far beyond it:
+
+| shell.c | `blobphy` | full bring-up |
+|---|---|---|
+| +9 `uart_puts` lines | **rc=0** | — |
+| +120 `uart_puts` lines | **rc=0** | **init/start ESP_OK, 20 beacons, ch6+ch11 found** |
+
+It does not reproduce. Not at the size that defined it, and not at thirteen
+times that size.
+
+The constraint is **obsolete** and is lifted. This does not prove the historical
+failure was the same out-of-bounds store — the tree has changed enormously since
+— but the store is the only known mechanism that was removed, it produced
+exactly this signature elsewhere, and no position-dependence survives its
+removal. Recorded as strong evidence, not as proof.
+
+What that constraint cost is worth stating: `wifi_bringup()` was moved out of
+`shell.c` to obey it, the channel sweep was moved out of `wifi_init_cfg.c` for
+the same reason, and three builds in §9.2 were spent blaming it for an ABI
+violation. A rule kept past its evidence is not free.
+
+---
 
 ### 14.5 Method
 
