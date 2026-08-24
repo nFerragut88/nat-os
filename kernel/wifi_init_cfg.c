@@ -134,7 +134,14 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
     {
         extern volatile uint32_t g_blob_intr_routed, g_blob_isr_nofn;
         extern volatile uint32_t g_blob_isr_calls[];
-        uart_puts("   [intr]    routed=");
+        extern volatile uint32_t g_blob_intr_src, g_blob_intr_line, g_blob_intr_prio;
+        uart_puts("   [intr]    src=");
+        uart_put_dec(g_blob_intr_src);
+        uart_puts(" line=");
+        uart_put_dec(g_blob_intr_line);
+        uart_puts(" prio=");
+        uart_put_dec(g_blob_intr_prio);
+        uart_puts(" routed=");
         uart_put_dec(g_blob_intr_routed);
         uart_puts(" nofn=");
         uart_put_dec(g_blob_isr_nofn);
@@ -150,6 +157,16 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
             }
         }
         if (!any) { uart_puts(" none"); }
+        {
+            /* [step 191] Timer slots the driver actually bound. Zero here means
+             * the ETS entries are still no-ops, which is what they were. */
+            extern uint32_t osi_impl_timers_used(void);
+            extern uint32_t g_timer_short;
+            uart_puts("  timers=");
+            uart_put_dec(osi_impl_timers_used());
+            uart_puts(" refused=");
+            uart_put_dec(g_timer_short);
+        }
         uart_puts("\n");
     }
     return r;

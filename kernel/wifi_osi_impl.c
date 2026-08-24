@@ -27,13 +27,20 @@
 #include "window.h"
 #include "intr.h"
 #include "timer.h"
+#include "blobcall.h"
 #include "heap.h"
 #include "critical.h"
 
 #define OSI_SEM_MAX     12u
 #define OSI_QUEUE_MAX    8u
 #define OSI_EVT_MAX      4u
-#define OSI_TIMER_MAX   12u
+/* [step 191] 24, was 12. With the ETS entries actually bound, esp_wifi_start
+ * arms sixteen timers and the pool refused four of them -- measured,
+ * "timers=12 refused=4". Refusing a timer the driver believes it armed is
+ * exactly the class of silent failure this investigation keeps finding, so
+ * the pool is sized above the observed need and g_timer_short stays
+ * reported. Each slot is a little over thirty bytes of bss. */
+#define OSI_TIMER_MAX 24u
 /* Queue storage is HEAP-ALLOCATED per queue, not a fixed array.
  *
  * It was uint8_t buf[512] inline, and osi_impl_queue_create refused anything
@@ -83,6 +90,11 @@ typedef struct {
     uint32_t period_ticks, due_tick;
     void   (*fn)(void *);
     void    *arg;
+    /* [step 191] The blob's own ETSTimer *, when this slot is standing in for
+     * one. The ETS contract is that the CALLER owns the structure and passes
+     * its address, so the handle-shaped lookup below never matched anything the
+     * driver passed and every timer call was a silent no-op. */
+    uint32_t owner;
 } osi_timer_t;
 
 static osi_sem_t   g_sem[OSI_SEM_MAX];
@@ -91,6 +103,7 @@ static osi_sem_t   g_sem[OSI_SEM_MAX];
 osi_queue_t g_queue[OSI_QUEUE_MAX];
 static osi_evt_t   g_evt[OSI_EVT_MAX];
 static osi_timer_t g_timer[OSI_TIMER_MAX];
+uint32_t g_timer_short;   /* [step 191] ETS timers refused: pool full */
 static uint32_t    g_rng = 0x12345678u;
 
 /* ---- blocking ----------------------------------------------------------- */
@@ -557,17 +570,49 @@ void *osi_impl_timer_alloc(void)
 /* Validates by identity against the pool rather than trusting the pointer. */
 static osi_timer_t *timer_of(void *p)
 {
+    if (!p) { return 0; }
     for (uint32_t i = 0; i < OSI_TIMER_MAX; i++) {
+        if (g_timer[i].used && g_timer[i].owner == (uint32_t)p) {
+            return &g_timer[i];              /* an ETSTimer the blob owns */
+        }
         if ((void *)&g_timer[i] == p) {
-            return &g_timer[i];
+            return &g_timer[i];              /* a handle from timer_alloc()  */
         }
     }
     return 0;
 }
 
+/* [step 191] Find the slot standing in for this ETSTimer, or take one.
+ *
+ * ets_timer_setfn()/ets_timer_arm() are both valid first calls on a timer the
+ * caller has just allocated, so either has to be able to bind it. */
+static osi_timer_t *timer_bind(void *p)
+{
+    if (!p) { return 0; }
+    osi_timer_t *t = timer_of(p);
+    if (t) { return t; }
+
+    uint32_t crit = crit_enter();
+    for (uint32_t i = 0; i < OSI_TIMER_MAX; i++) {
+        if (!g_timer[i].used) {
+            g_timer[i].used     = 1;
+            g_timer[i].armed    = 0;
+            g_timer[i].periodic = 0;
+            g_timer[i].fn       = 0;
+            g_timer[i].arg      = 0;
+            g_timer[i].owner    = (uint32_t)p;
+            crit_exit(crit);
+            return &g_timer[i];
+        }
+    }
+    crit_exit(crit);
+    g_timer_short++;
+    return 0;
+}
+
 void osi_impl_timer_setfn(void *p, void *fn, void *arg)
 {
-    osi_timer_t *t = timer_of(p);
+    osi_timer_t *t = timer_bind(p);
     if (t) {
         t->fn = (void (*)(void *))fn;
         t->arg = arg;
@@ -576,7 +621,8 @@ void osi_impl_timer_setfn(void *p, void *fn, void *arg)
 
 static void arm_ticks(void *p, uint32_t ticks, int periodic)
 {
-    osi_timer_t *t = timer_of(p);
+    (void)osi_impl_service_start();     /* [step 191] nothing else starts it */
+    osi_timer_t *t = timer_bind(p);
     if (!t) {
         return;
     }
@@ -666,7 +712,14 @@ void osi_impl_timer_service(void)
             } else {
                 t->armed = 0;
             }
-            t->fn(t->arg);
+            /* [step 191] Through blob_call, not directly.
+             *
+             * The handler is windowed vendor code. A direct call from here --
+             * call0 -- is the ABI mismatch step 186 measured twice: the callee
+             * never executes ENTRY, so it returns through an a0 the caller
+             * never set. blob_call also takes the blob mutex, which the handler
+             * needs and a bare call would not provide. */
+            (void)blob_call((uint32_t)t->fn, (uint32_t)t->arg, 0u, 0u, 0u);
         }
     }
 }
@@ -780,6 +833,7 @@ static volatile blob_isr_t g_blob_isr[32];
 volatile uint32_t g_blob_isr_calls[32];
 volatile uint32_t g_blob_isr_nofn;      /* line fired with no ISR recorded */
 volatile uint32_t g_blob_intr_routed;   /* _set_intr calls that reached the matrix */
+volatile uint32_t g_blob_intr_src, g_blob_intr_line, g_blob_intr_prio;
 
 static void blob_isr_run(uint32_t line)
 {
@@ -880,12 +934,46 @@ void osi_impl_set_isr(int32_t n, void *f, void *arg)
  * single-core kernel and the app CPU is not started. */
 void osi_impl_set_intr(uint32_t source, uint32_t num, uint32_t prio);
 
+/* [step 191] Translate the blob's CPU interrupt line onto one nat-os can
+ * actually service.
+ *
+ * The driver asks for what ESP-IDF reserves -- measured, `src=0 line=0 prio=1`,
+ * which is ETS_WIFI_MAC_INTR_SOURCE on ETS_WMAC_INUM. nat-os installs ONE
+ * interrupt handler, at level 3. Routing source 0 to line 0 faithfully and then
+ * unmasking it produced exactly what that implies:
+ *
+ *     exccause 4  Level1Interrupt   epc 0x40083933  (spi_tx)
+ *
+ * a priority-1 interrupt taken asynchronously with nothing to service it.
+ *
+ * The interrupt matrix does not care which line a source lands on, so the line
+ * is remapped to INTR_LINE_WIFI_MAC -- 27, priority 3, extern level, which the
+ * existing _handler_level3 serves and which UM-NATOS-042 reserved for this and
+ * never used. The blob's own number is kept only for reporting.
+ *
+ * The remap has to be applied in three places or it is worse than useless:
+ * here, and in _ints_on/_ints_off, which are handed a MASK of the blob's line
+ * numbers. Enabling bit 0 while the handler sits on 27 would arm an unserviced
+ * line and disarm nothing. */
+static uint32_t blob_line_map(uint32_t num)
+{
+    return (num == INTR_LINE_WIFI_MAC_BLOB) ? INTR_LINE_WIFI_MAC : num;
+}
+
 void osi_impl_set_intr(uint32_t source, uint32_t num, uint32_t prio)
 {
     (void)prio;                     /* clamped by the caller; see the stub */
     if (num >= 32u) {
         return;
     }
+    num = blob_line_map(num);
+    /* [step 191] Record WHAT was routed. nat-os installs only a level-3
+     * handler, and ESP-IDF's convention puts the WiFi MAC on CPU interrupt 0,
+     * which is priority 1 -- so the line the blob asks for decides whether
+     * anything can service it. */
+    g_blob_intr_src  = source;
+    g_blob_intr_line = num;
+    g_blob_intr_prio = prio;
     g_blob_intr_routed++;
     intr_route(source, num, g_blob_tramp[num]);
 }
@@ -897,7 +985,7 @@ void osi_impl_ints_on(uint32_t mask)
 {
     for (uint32_t line = 0u; line < 32u; line++) {
         if (mask & (1u << line)) {
-            xt_enable_interrupt(line);
+            xt_enable_interrupt(blob_line_map(line));
         }
     }
 }
@@ -906,7 +994,7 @@ void osi_impl_ints_off(uint32_t mask)
 {
     for (uint32_t line = 0u; line < 32u; line++) {
         if (mask & (1u << line)) {
-            xt_disable_interrupt(line);
+            xt_disable_interrupt(blob_line_map(line));
         }
     }
 }

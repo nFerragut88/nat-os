@@ -276,6 +276,11 @@ extern void osi_impl_free_heap(void);      /* [step 182] */
 extern void osi_impl_queue_waiting(void); /* [step 182] */
 extern void osi_impl_thread_sem_get(void); /* [step 182] */
 extern void osi_impl_read_mac(void);       /* [step 186] */
+extern void osi_impl_timer_arm(void);      /* [step 191] */
+extern void osi_impl_timer_arm_us(void);
+extern void osi_impl_timer_disarm(void);
+extern void osi_impl_timer_done(void);
+extern void osi_impl_timer_setfn(void);
 extern void osi_impl_free(void);
 extern void task_current(void);
 extern void osi_impl_queue_create(void);
@@ -1386,26 +1391,31 @@ static int osi_s_read_mac(uint8_t* mac, unsigned int type)
 static void osi_s_timer_arm(void *timer, uint32_t tmout, bool repeat)
 {
     osi_hit(56u);
+    (void)w2c_call3((uint32_t)&osi_impl_timer_arm, (uint32_t)timer, tmout, (uint32_t)repeat);
 }
 
 static void osi_s_timer_disarm(void *timer)
 {
     osi_hit(57u);
+    (void)w2c_call1((uint32_t)&osi_impl_timer_disarm, (uint32_t)timer);
 }
 
 static void osi_s_timer_done(void *ptimer)
 {
     osi_hit(58u);
+    (void)w2c_call1((uint32_t)&osi_impl_timer_done, (uint32_t)ptimer);
 }
 
 static void osi_s_timer_setfn(void *ptimer, void *pfunction, void *parg)
 {
     osi_hit(59u);
+    (void)w2c_call3((uint32_t)&osi_impl_timer_setfn, (uint32_t)ptimer, (uint32_t)pfunction, (uint32_t)parg);
 }
 
 static void osi_s_timer_arm_us(void *ptimer, uint32_t us, bool repeat)
 {
     osi_hit(60u);
+    (void)w2c_call3((uint32_t)&osi_impl_timer_arm_us, (uint32_t)ptimer, us, (uint32_t)repeat);
 }
 
 static void osi_s_wifi_reset_mac(void)

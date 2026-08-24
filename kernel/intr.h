@@ -48,6 +48,12 @@
  * edge and software respectively. */
 #define INTR_LINE_WIFI_MAC  27u
 
+/* [step 191] The line the BLOB asks for: ESP-IDF's ETS_WMAC_INUM. It is
+ * priority 1, and nat-os has no priority-1 handler, so osi_impl_set_intr()
+ * remaps it onto INTR_LINE_WIFI_MAC above. Named rather than written as 0 in
+ * three places. */
+#define INTR_LINE_WIFI_MAC_BLOB  0u
+
 typedef void (*intr_handler_fn)(void);
 
 /* Routes a peripheral source onto a CPU line, installs its handler and enables

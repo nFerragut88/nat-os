@@ -12517,6 +12517,132 @@ wifiinit start, after blobphy : panic in set_chanfreq_nomac
    as `_magic` because step 185 gave them ids outside 1..116.
 
 **Nothing has been on air.**
+---
+
+## step 191 — the timers were already written, and the interrupt line was wrong
+
+```
+   init      returned 0x00000000  (ESP_OK)
+   start     returned 0x00000000  (ESP_OK)
+   [intr]    src=0 line=27 prio=1 routed=1 nofn=0 fired: none  timers=15 refused=0
+```
+
+### 191a. A correction to step 190
+
+Step 190 named the timer stubs as "the named cause of the only remaining
+failure". They were not. Implementing them changed the panic not at all —
+identical `exccause`, `epc` and `excvaddr`.
+
+`last osi : entry 57 _timer_disarm` is the last adapter entry *before* the
+fault, which is correlation. It was written up as cause. The habit this
+investigation keeps having to relearn: the last thing recorded before a fault is
+not the thing that caused it, and step 183 caught the same error with `a8`.
+
+### 191b. And the timers were already implemented
+
+`kernel/wifi_osi_impl.c` has had a full timer implementation the whole time —
+`osi_impl_timer_alloc/setfn/arm/arm_us/disarm/done`, a service task polling at
+tick granularity, and `osi_impl_timers_used()` for reporting. A duplicate ETS
+emulation was written before checking, and thrown away.
+
+Two real defects in what already existed:
+
+**`timer_of()` never matched anything the driver passed.** It compared the
+pointer against `&g_timer[i]` — i.e. handles from `osi_impl_timer_alloc()`. But
+the ETS contract is that the **caller owns the structure**: the blob allocates
+its own `ETSTimer` and passes its address. Every timer call was a silent no-op.
+Fixed with `timer_bind()`, which binds a blob-owned pointer to a free slot on
+first use and keeps the old handle lookup working.
+
+**The service called windowed code directly.** `osi_impl_timer_service()` did
+`t->fn(t->arg)`. The handler is windowed vendor code and this file is call0 —
+step 186's ABI trap, where the callee never executes `ENTRY` and returns through
+an `a0` the caller never set. It now goes through `blob_call()`, which also
+takes the blob mutex the handler needs.
+
+Nothing started the service task, either; `arm_ticks()` now does.
+
+Measured: `timers=12 refused=4` — the driver arms sixteen timers and the pool
+held twelve. Refusing a timer the driver believes it armed is the same class of
+silent failure this investigation keeps finding, so `OSI_TIMER_MAX` went 12 → 24
+and `g_timer_short` is reported. Now `timers=15 refused=0`.
+
+### 191c. The interrupt line, which step 179 flagged and got half right
+
+With the timers actually working, `esp_wifi_start` got further and armed its
+interrupt — and the board panicked asynchronously, in the display task:
+
+```
+exccause 4  Level1Interrupt   epc 0x40083933  (spi_tx)
+```
+
+Recording what the blob asked for:
+
+```
+[intr] src=0 line=0 prio=1
+```
+
+`src=0` is `ETS_WIFI_MAC_INTR_SOURCE` and `line=0` is `ETS_WMAC_INUM` — priority
+**1**. nat-os installs exactly one interrupt handler, at level 3. Routing the
+source to line 0 faithfully and then unmasking it arms a line nothing can
+service, and the first time it fires the CPU takes a Level1Interrupt with no
+handler.
+
+Step 179 raised this and reached the wrong shape. It worried that the blob might
+arm line 0 *behind our backs* through ROM helpers while we listened on 27. What
+actually happens is simpler and was visible in `esp_adapter.c` all along: **the
+blob passes the line number to `_set_intr`**, we route it faithfully, and
+faithful is wrong.
+
+The interrupt matrix does not care which line a source lands on, so the line is
+remapped onto `INTR_LINE_WIFI_MAC` — 27, priority 3, extern level, served by the
+existing `_handler_level3` and reserved for exactly this in UM-NATOS-042 without
+ever being used.
+
+The remap has to be applied in **three** places or it is worse than nothing:
+`_set_intr`, and `_ints_on`/`_ints_off`, which are handed a *mask* of the blob's
+line numbers. Unmasking bit 0 while the handler sits on 27 would arm an
+unserviced line and disarm nothing.
+
+### 191d. Where it stands
+
+```
+boot 11 PASS 0 FAIL
+wintorture 1000 ms : switches during the call: 10  (preemption really happened)
+                     checksum 1632 expected 1632  CORRECT
+blobphy rc=0
+wifiinit start, from cold : init ESP_OK, start ESP_OK, no fault
+```
+
+`fired: none` — the MAC is now routed to a line that *can* be serviced, and has
+not fired. Nothing has been received and nothing transmitted. No mode is set.
+
+**Still failing: `wifiinit start` after `blobphy` in the same boot.** Unchanged
+by any of this work, and now understood well enough to state:
+
+```
+exccause 28  LoadProhibited  epc 0x4035c61d (set_chanfreq_nomac)  excvaddr 0x6c
+```
+
+Both commands run `phyinit`, so the combined ordering calls
+`register_chipv7_phy` **twice**, which ESP-IDF never does. The control that
+separates it from "start is fragile": running `wifiinit` twice — double *init*,
+single extra phyinit — returns `0x101` (`ESP_ERR_NO_MEM`) and refuses cleanly,
+with no fault. So double-init is handled and double-phyinit is not.
+
+That is a sequencing property of the test harness rather than a defect in the
+bring-up, and it should be fixed by making `phyinit` idempotent or by not
+repeating it — not by changing anything downstream.
+
+### Next
+
+1. Make `phyinit` run once per boot.
+2. `_get_random` still reports success without filling the caller's buffer.
+3. A mode and a scan — the first thing that would put anything on air, and not
+   to be attempted casually.
+
+**Nothing has been on air.**
+
 
 
 
