@@ -12980,6 +12980,84 @@ one of them (step 194) is bisected to three specific instructions, which is as
 small a reproducer as this is likely to get.
 
 **Nothing has been on air.**
+---
+
+## step 196 — a station interface, and the wall has a width
+
+```
+   init      returned 0x00000000  (ESP_OK)
+   set_mode  STA returned 0x00000000
+   start     returned 0x00000000  (ESP_OK)
+```
+
+`esp_wifi_set_mode(WIFI_MODE_STA)` succeeds. The driver builds a station
+interface where before it was `WIFI_MODE_NULL`.
+
+### 196a. Retried unmodified, then made smaller
+
+Step 195's change was retried exactly as written first. It reproduced the
+`phyinit` watchdog reset precisely — **the sensitivity is deterministic, not
+flaky**. Worth knowing: a marginal timing race would have passed sometimes.
+
+Then it was shrunk. Comments are free; only instructions move the image. Step
+195 added roughly a hundred bytes — a new global, `wifi_start_enable()` rewritten
+to parse the shell argument, and the mode call. Dropping the argument parsing
+entirely leaves about thirty, and thirty bytes fits where a hundred did not.
+
+`wifiinit start` now means init + `set_mode(STA)` + start. A driver with no
+interface is not a state worth keeping a command for, so nothing is lost.
+
+**This measures the wall; it does not remove it.** The sensitivity is to size and
+position, and the margin in this file is somewhere between 30 and 100 bytes.
+That is the first quantitative thing known about it, and it is worth more than
+the workaround.
+
+### 196b. A fourth place for the remap
+
+Asking why no interrupt had fired turned up a real bug.
+
+`osi_impl_set_isr()` files the driver's handler under the line the **driver**
+asked for — 0 — while the trampoline that actually runs is the one for the line
+we routed it to, 27. The handler was stored where nothing looks; a MAC interrupt
+would have found `g_blob_isr[27].fn == 0` and counted itself as `nofn`.
+
+Step 191 recorded that the remap belongs in three places: `_set_intr`,
+`_ints_on`, `_ints_off`. **It is four.** A translation applied to some of the
+paths that use a number and not all of them is worse than no translation, and
+this is the second time in two steps that the count was wrong.
+
+### 196c. It changed nothing, and that is the useful part
+
+```
+[intr] src=0 line=27 prio=1 routed=1 nofn=0 fired: none
+```
+
+Polled over twenty-five seconds in STA mode. `nofn=0` is the informative half:
+not one interrupt arrives even to be counted as unhandled. So the MAC is **idle**,
+not mis-routed — which is what a station that has been started and never told to
+scan or associate should be.
+
+### State
+
+```
+boot 11 PASS 0 FAIL
+wintorture  10 real switches, checksum 1632 CORRECT
+blobphy     phyinit rc=0
+wifiinit start
+            init      returned 0x00000000  (ESP_OK)
+            set_mode  STA returned 0x00000000
+            start     returned 0x00000000  (ESP_OK)
+            [intr] routed=1 nofn=0 fired: none  timers=14 refused=0
+```
+
+The driver initialises, has a station interface, and is started. It receives
+nothing and sends nothing.
+
+The next action is a **scan**, and that is the first one that would put energy on
+air. It is not taken here.
+
+**Nothing has been on air.**
+
 
 
 

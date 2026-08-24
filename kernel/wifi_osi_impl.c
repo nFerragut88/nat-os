@@ -966,6 +966,7 @@ static const intr_handler_fn g_blob_tramp[32] = {
 /* _set_isr(n, f, arg). Recorded rather than installed: the blob may call this
  * before or after _set_intr, and the trampoline reads the record when it
  * fires, so either order works. */
+static uint32_t blob_line_map(uint32_t num);   /* [step 196] defined below */
 void osi_impl_set_isr(int32_t n, void *f, void *arg);
 
 void osi_impl_set_isr(int32_t n, void *f, void *arg)
@@ -973,6 +974,13 @@ void osi_impl_set_isr(int32_t n, void *f, void *arg)
     if (n < 0 || n >= 32) {
         return;
     }
+    /* [step 196] The remap belongs here too. Step 191 said three places --
+     * _set_intr, _ints_on, _ints_off -- and it is four. The driver files its
+     * handler under the line IT asked for (0), while the trampoline that
+     * actually runs is the one for the line we routed it to (27). Without
+     * this the handler is stored where nothing looks, and a MAC interrupt
+     * would find g_blob_isr[27].fn == 0 and count itself as nofn. */
+    n = (int32_t)blob_line_map((uint32_t)n);
     g_blob_isr[n].fn  = (uint32_t)f;
     g_blob_isr[n].arg = (uint32_t)arg;
 }

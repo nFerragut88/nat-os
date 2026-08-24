@@ -115,6 +115,25 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
     if (r != 0u || !g_want_start) {
         return r;
     }
+    /* [step 196] STA mode, between init and start, which is the order
+     * ESP-IDF requires. No argument parsing: "wifiinit start" now means
+     * init + set_mode(STA) + start, because a driver with no interface is
+     * not a state worth having a command for.
+     *
+     * Setting a mode does NOT transmit. It tells the driver which interface
+     * to build; a station only puts energy on air when it scans, associates
+     * or is asked to send, and none of those is reachable from here.
+     *
+     * Deliberately as few instructions as possible: step 195 added about a
+     * hundred bytes here to do the same thing and the board watchdog-reset
+     * inside phyinit. */
+    if (e->wifi_set_mode) {
+        uint32_t mr = blob_call(e->wifi_set_mode, 1u, 0u, 0u, 0u);
+        uart_puts("   set_mode  STA returned ");
+        uart_put_hex(mr);
+        uart_puts("\n");
+    }
+
     if (!e->wifi_start) {
         uart_puts("   start     : blob entry has no esp_wifi_start\n");
         return r;
