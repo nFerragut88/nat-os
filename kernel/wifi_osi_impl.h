@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 void    *osi_impl_sem_create(uint32_t max, uint32_t init);
+void    *osi_impl_recursive_mutex_create(void);   /* [step 209] */
 void     osi_impl_sem_delete(void *h);
 int32_t  osi_impl_sem_take(void *h, uint32_t ticks);
 int32_t  osi_impl_sem_give(void *h);

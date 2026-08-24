@@ -72,6 +72,16 @@
 typedef struct {
     int      used;
     uint32_t count, max, waiters;
+    /* [step 209] Recursion, for the mutexes the driver creates with
+     * _recursive_mutex_create. A recursive mutex re-entered by the task that
+     * already holds it MUST succeed; a binary semaphore re-entered by its own
+     * holder deadlocks. nat-os handed the driver a binary semaphore for both,
+     * and esp_wifi_80211_tx -- which takes g_wifi_global_lock on a task that
+     * was already holding it -- hung on the very first call, forever, with the
+     * pool showing "#2=0/1 heldByTask5" and task 5 being the caller itself. */
+    int      recursive;
+    int      owner;              /* task id holding it, -1 when free */
+    uint32_t depth;              /* nesting level of that owner */
 } osi_sem_t;
 
 typedef struct {
@@ -106,6 +116,7 @@ static osi_evt_t   g_evt[OSI_EVT_MAX];
 static osi_timer_t g_timer[OSI_TIMER_MAX];
 uint32_t g_timer_short;   /* [step 191] ETS timers refused: pool full */
 static uint32_t    g_rng = 0x12345678u;
+uint32_t g_sem_owner[OSI_SEM_MAX];   /* [step 209] task id + 1 of last taker */
 
 /* ---- blocking ----------------------------------------------------------- */
 
@@ -465,8 +476,21 @@ int32_t osi_impl_sem_take(void *h, uint32_t ticks)
     osi_sem_t *s = &g_sem[H_INDEX(h)];
     for (uint32_t spent = 0; ; spent++) {
         uint32_t crit = crit_enter();
+        if (s->recursive && s->depth && s->owner == task_current()) {
+            s->depth++;                      /* already ours: re-enter */
+            crit_exit(crit);
+            return 1;
+        }
         if (s->count) {
             s->count--;
+            if (s->recursive) {
+                s->owner = task_current();
+                s->depth = 1u;
+            }
+            /* [step 209] Who took it. A count of 0 says a mutex is held; it
+             * does not say by whom, and "whom" is the whole question when the
+             * holder never gives it back. */
+            g_sem_owner[H_INDEX(h)] = (uint32_t)(task_current() + 1);
             crit_exit(crit);
             return 1;
         }
@@ -485,12 +509,42 @@ int32_t osi_impl_sem_give(void *h)
     }
     osi_sem_t *s = &g_sem[H_INDEX(h)];
     uint32_t crit = crit_enter();
+    /* [step 209] Unwind one level of recursion. The mutex only becomes
+     * available again at depth zero -- releasing it on the inner unlock would
+     * hand it to another task while this one is still inside the region it
+     * thinks it owns, which is worse than the deadlock it replaces. */
+    if (s->recursive && s->depth && s->owner == task_current()) {
+        s->depth--;
+        if (s->depth) {
+            crit_exit(crit);
+            return 1;
+        }
+        s->owner = -1;
+    }
     if (s->count < s->max) {
         s->count++;
     }
     crit_exit(crit);
     wake_all(&s->waiters);
     return 1;
+}
+
+/* [step 209] The recursive variant the driver actually asked for.
+ * _recursive_mutex_create has been aliased to a plain binary semaphore since
+ * the table was written -- the same shape of defect as the timer entries and
+ * the event groups: an entry that returns a plausible handle and has the wrong
+ * semantics, which nothing in a build or a stub audit can see. */
+void *osi_impl_recursive_mutex_create(void);
+void *osi_impl_recursive_mutex_create(void)
+{
+    void *h = osi_impl_sem_create(1u, 1u);
+    if (h) {
+        osi_sem_t *s = &g_sem[H_INDEX(h)];
+        s->recursive = 1;
+        s->owner = -1;
+        s->depth = 0u;
+    }
+    return h;
 }
 
 /* ---- queues ------------------------------------------------------------- */
@@ -1435,6 +1489,178 @@ void wifi_scan_sweep(uint32_t scan_fn, uint32_t num_fn, uint32_t recs_fn)
             uart_puts(" max");
             uart_put_dec(best[ch]);
             uart_puts("  ");
+        }
+    }
+    uart_puts("\n");
+}
+
+/* ---- TRANSMIT -- next_moves/08 step 209 ---------------------------------
+ *
+ * Every report in this investigation has ended "nothing has been transmitted",
+ * and every one of them meant it: the scans were proven passive at step 201 by
+ * changing the dwell and watching the duration track it one-for-one. This is
+ * the code that ends that sentence, so it is worth being exact about what it
+ * does and how it is checked.
+ *
+ * HOW IT IS VERIFIED, and why not by the return code. esp_wifi_80211_tx
+ * returning ESP_OK says the driver accepted a buffer. Step 199 already learned
+ * what a success code is worth here -- scan_start returned ESP_OK for six steps
+ * while the radio decoded nothing. A transmission can only be confirmed by
+ * something that is not this board.
+ *
+ * So it sends BEACONS. A beacon carries an SSID, and any phone or laptop
+ * scanning nearby will list that SSID in its network picker. That is an
+ * independent receiver, owned by someone else, displaying a string that this
+ * code chose. Nothing about it can be faked by a mistaken return value.
+ *
+ * The name is deliberately unmistakable and deliberately not anyone else's.
+ * Impersonating a real network would be trivial here and is not something this
+ * project will do; the SSID says what it is.
+ *
+ * Channel 1, and not 6 or 11, because those are the two channels the sweep
+ * found real access points on and there is no reason to sit on top of them.
+ *
+ * The frame is a textbook beacon:
+ *   fc(2) dur(2) da(6) sa(6) bssid(6) seq(2)
+ *   timestamp(8) beacon_interval(2) capability(2)
+ *   SSID tag, supported-rates tag, DS-parameter tag
+ * built by hand rather than by asking the driver for AP mode, because AP mode
+ * would pull in esp_wifi_set_config and a second interface, and the point here
+ * is to establish that the transmit path works at all. */
+
+#define TX_BEACONS   500u          /* [step 209] ~65 s at the MEASURED rate */
+#define TX_CHANNEL   1u
+
+static uint8_t g_tx_frame[128];
+
+static uint32_t tx_build_beacon(const uint8_t *mac)
+{
+    static const char ssid[] = "nat-os-transmitting";
+    uint32_t i = 0u;
+
+    g_tx_frame[i++] = 0x80u; g_tx_frame[i++] = 0x00u;   /* beacon */
+    g_tx_frame[i++] = 0x00u; g_tx_frame[i++] = 0x00u;   /* duration */
+    for (uint32_t k = 0u; k < 6u; k++) { g_tx_frame[i++] = 0xFFu; }   /* DA */
+    for (uint32_t k = 0u; k < 6u; k++) { g_tx_frame[i++] = mac[k]; }  /* SA */
+    for (uint32_t k = 0u; k < 6u; k++) { g_tx_frame[i++] = mac[k]; }  /* BSSID */
+    g_tx_frame[i++] = 0x00u; g_tx_frame[i++] = 0x00u;   /* seq: driver fills */
+
+    for (uint32_t k = 0u; k < 8u; k++) { g_tx_frame[i++] = 0x00u; }   /* tsf */
+    g_tx_frame[i++] = 0x64u; g_tx_frame[i++] = 0x00u;   /* 100 TU */
+    g_tx_frame[i++] = 0x01u; g_tx_frame[i++] = 0x04u;   /* ESS, short preamble */
+
+    g_tx_frame[i++] = 0x00u;                            /* tag 0: SSID */
+    uint32_t n = (uint32_t)(sizeof ssid - 1u);
+    g_tx_frame[i++] = (uint8_t)n;
+    for (uint32_t k = 0u; k < n; k++) { g_tx_frame[i++] = (uint8_t)ssid[k]; }
+
+    g_tx_frame[i++] = 0x01u; g_tx_frame[i++] = 0x08u;   /* tag 1: rates */
+    g_tx_frame[i++] = 0x82u; g_tx_frame[i++] = 0x84u;
+    g_tx_frame[i++] = 0x8Bu; g_tx_frame[i++] = 0x96u;
+    g_tx_frame[i++] = 0x0Cu; g_tx_frame[i++] = 0x12u;
+    g_tx_frame[i++] = 0x18u; g_tx_frame[i++] = 0x24u;
+
+    g_tx_frame[i++] = 0x03u; g_tx_frame[i++] = 0x01u;   /* tag 3: DS param */
+    g_tx_frame[i++] = (uint8_t)TX_CHANNEL;
+
+    return i;
+}
+
+void wifi_tx_beacons(uint32_t tx_fn, uint32_t chan_fn);
+void wifi_tx_beacons(uint32_t tx_fn, uint32_t chan_fn)
+{
+    uint8_t mac[6];
+
+    if (!tx_fn) {
+        uart_puts("   tx        : blob entry has no esp_wifi_80211_tx\n");
+        return;
+    }
+    if (osi_impl_read_mac(mac, 0u) != 0) {
+        uart_puts("   tx        : no MAC\n");
+        return;
+    }
+    if (chan_fn) {
+        (void)blob_call(chan_fn, TX_CHANNEL, 0u, 0u, 0u);
+    }
+
+    wifi_sem_dump("before tx");
+    uint32_t len = tx_build_beacon(mac);
+    uart_puts("   tx        beacon ");
+    uart_put_dec(len);
+    uart_puts(" B, ch ");
+    uart_put_dec(TX_CHANNEL);
+    uart_puts(", ssid [nat-os-transmitting] x");
+    uart_put_dec(TX_BEACONS);
+    uart_puts("\n   tx        LOOK FOR IT ON A PHONE. rc is not evidence.\n");
+
+    uint32_t t_start = timer_ticks();
+    uint32_t ok = 0u, first_bad = 0u, bad = 0u;
+    for (uint32_t k = 0u; k < TX_BEACONS; k++) {
+        /* [step 209] Progress, with a TICK COUNT. 900 beacons at an assumed
+         * 100 ms each should have taken 90 seconds and had not finished after
+         * 170. "assumed 100 ms" was the error -- task_sleep(10) is ten TICKS,
+         * and the loop also contends with the driver task for the blob mutex.
+         * So the loop reports its own rate instead of being predicted. */
+        if ((k % 50u) == 0u) {
+            uart_puts("   tx        ");
+            uart_put_dec(k);
+            uart_puts(" @tick ");
+            uart_put_dec(timer_ticks() - t_start);
+            uart_puts("\n");
+        }
+        uint32_t rc = blob_call(tx_fn, 0u, (uint32_t)g_tx_frame, len, 1u);
+        if (rc == 0u) {
+            ok++;
+        } else {
+            if (!bad) { first_bad = rc; }
+            bad++;
+        }
+        /* [step 209] ONE tick, not ten. Measured: the loop ran at 22 ticks per
+         * beacon with task_sleep(10), because the sleep is in TICKS and the
+         * blob_call costs about twelve more on its own. A real AP beacons
+         * every 102 ms; at 22 ticks this was sending less than half as often
+         * as that, which is a thinner target for a phone's scan than it needs
+         * to be. Dropping the sleep leaves the call overhead as the pace. */
+        task_sleep(1u);
+    }
+
+    uart_puts("   tx        accepted ");
+    uart_put_dec(ok);
+    uart_puts("  refused ");
+    uart_put_dec(bad);
+    if (bad) {
+        uart_puts("  first rc ");
+        uart_put_hex(first_bad);
+    }
+    uart_puts("\n");
+}
+
+/* [step 209] The semaphore pool, printed. esp_wifi_80211_tx hangs in
+ * _mutex_lock(g_wifi_global_lock) -- read out of the blob, offset 84 in
+ * wifi_osi_funcs_t with g_wifi_global_lock as the argument -- and it does so
+ * whether or not a scan has run first. That rules out the sweep leaking it and
+ * leaves the question of who holds it, which the pool can answer directly.
+ * count 0 with a nonzero waiters mask is a mutex somebody is sitting on. */
+void wifi_sem_dump(const char *when);
+void wifi_sem_dump(const char *when)
+{
+    uart_puts("   [sem] ");
+    uart_puts(when);
+    for (uint32_t i = 0u; i < OSI_SEM_MAX; i++) {
+        if (!g_sem[i].used) { continue; }
+        uart_puts("  #");
+        uart_put_dec(i);
+        uart_puts("=");
+        uart_put_dec(g_sem[i].count);
+        uart_puts("/");
+        uart_put_dec(g_sem[i].max);
+        if (g_sem[i].count == 0u && g_sem_owner[i]) {
+            uart_puts(" heldByTask");
+            uart_put_dec(g_sem_owner[i] - 1u);
+        }
+        if (g_sem[i].waiters) {
+            uart_puts(" w");
+            uart_put_hex(g_sem[i].waiters);
         }
     }
     uart_puts("\n");

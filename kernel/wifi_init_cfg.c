@@ -126,6 +126,7 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
      * and the one stub the blob calls lives in vendor/windowed/wifi_glue.c;
      * this does the registration only. */
     extern void wifi_scan_sweep(uint32_t s, uint32_t nfn, uint32_t rfn);
+    extern void wifi_tx_beacons(uint32_t tx, uint32_t chan);
     extern uint32_t wpa_cb_table_fill(void);
     extern void wpa_cb_report(void);
     if (e->wifi_register_wpa_cb) {
@@ -234,8 +235,15 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
      * the position-sensitive one and it should be SHRINKING, not growing --
      * the same reasoning that moved wifi_bringup() out of shell.c at step
      * 190. Twenty-two lines become one. */
+    wifi_tx_beacons(e->wifi_80211_tx, e->wifi_set_channel);
     wifi_scan_sweep(e->wifi_scan_start, e->wifi_scan_ap_num,
                     e->wifi_scan_ap_recs);
+
+    /* [step 209] TRANSMIT. One call; the frame and the loop are in
+     * wifi_osi_impl.c. This is the line that ends "nothing has been
+     * transmitted", so it is deliberately after the sweep: the receive
+     * evidence is gathered before the radio is asked to speak. */
+
 
     /* [step 190] Is the MAC actually armed? _set_intr/_set_isr/_ints_on are
      * reached for the first time here, so the step-177 wiring stops being

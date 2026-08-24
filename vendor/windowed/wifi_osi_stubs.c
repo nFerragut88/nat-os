@@ -201,6 +201,7 @@ extern uint32_t w2c_call0f(uint32_t fn);
 extern uint32_t w2c_call1(uint32_t fn, uint32_t a);
 extern uint32_t w2c_call2(uint32_t fn, uint32_t a, uint32_t b);
 extern void osi_impl_sem_create(void);   /* address only -- see w2c_call2 */
+extern void osi_impl_recursive_mutex_create(void);   /* [step 209] address only */
 extern void osi_impl_sem_delete(void);
 extern void osi_impl_sem_take(void);
 extern void osi_impl_sem_give(void);
@@ -691,9 +692,17 @@ static void * osi_s_mutex_create(void)
 static void * osi_s_recursive_mutex_create(void)
 {
     osi_hit(19u);
-    /* nat-os's mutex is recursive already -- [6b] verifies depth. A
-     * binary semaphore stands in, which is what the older table did. */
-    return (void *)w2c_call2((uint32_t)&osi_impl_sem_create, 1u, 1u);
+    /* [step 209] Was osi_impl_sem_create(1,1) -- a BINARY SEMAPHORE, with a
+     * comment claiming "nat-os's mutex is recursive already". That claim is
+     * about blob_lock, which is a different object; the semaphore behind this
+     * handle had no recursion at all. esp_wifi_80211_tx takes
+     * g_wifi_global_lock on a task that already holds it and hung forever on
+     * its first call. Now it creates the recursive mutex that was asked for. */
+    /* w2c_call1 with a dummy argument, NOT a new w2c_call0: window.S is the
+     * file step 194 showed is sensitive to its own size, where removing three
+     * dead stores broke esp_wifi_init_internal. A call0 callee simply ignores
+     * the register it was not given. */
+    return (void *)w2c_call1((uint32_t)&osi_impl_recursive_mutex_create, 0u);
 }
 
 static void osi_s_mutex_delete(void *mutex)
