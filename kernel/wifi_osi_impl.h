@@ -10,6 +10,7 @@ int64_t  osi_impl_time_us(void);                 /* [step 210] */
 int32_t  osi_impl_event_post(uint32_t base, uint32_t id, uint32_t data); /* [211] */
 uint32_t osi_impl_time_us_lo(void);
 uint32_t osi_impl_time_us_hi(void);
+uint32_t wpa_cb_table_fill(uint32_t sta_connect);  /* [step 219] */
 void     osi_impl_sem_delete(void *h);
 int32_t  osi_impl_sem_take(void *h, uint32_t ticks);
 int32_t  osi_impl_sem_give(void *h);

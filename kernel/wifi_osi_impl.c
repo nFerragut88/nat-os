@@ -1339,11 +1339,23 @@ extern uint32_t g_wpa_calls, g_wpa_ra[12];
 
 uint32_t g_wpa_table[128];
 
-uint32_t wpa_cb_table_fill(void);
-uint32_t wpa_cb_table_fill(void)
+uint32_t wpa_cb_table_fill(uint32_t sta_connect);
+uint32_t wpa_cb_table_fill(uint32_t sta_connect)
 {
     for (uint32_t i = 0u; i < 128u; i++) {
         g_wpa_table[i] = (uint32_t)&wpa_cb_stub;
+    }
+    /* [step 219] Slot 2 -- byte offset 8 -- is wpa_sta_connect, and it is the
+     * one entry that stalls an association. Everything else stays a recording
+     * stub, because everything else is still only observed and not needed. */
+    {
+        /* The address is passed IN. blob_map() is not a getter -- it
+         * reprograms the flash MMU with the cache off (step 198) -- so the
+         * caller, which already holds the entry table, hands it over. */
+        extern int wpa_sta_connect_impl(void *bssid);
+        extern uint32_t g_sta_connect_fn;
+        g_sta_connect_fn = sta_connect;
+        g_wpa_table[2] = (uint32_t)&wpa_sta_connect_impl;
     }
     g_wpa_calls = 0u;
     return (uint32_t)g_wpa_table;
@@ -1383,6 +1395,7 @@ void wpa_cb_report(void)
  * Lives here rather than at the call site because that is wifi_init_cfg.c,
  * where the layout sensitivity was measured. It gets a single call. */
 uint32_t g_ap_expect_ch;   /* [step 208] the channel the sweep asked for */
+uint32_t g_assoc_ssid_len; /* [step 219] length of the SSID we tried to join */
 
 void wifi_ap_report(uint32_t fn, uint32_t count);
 void wifi_ap_report(uint32_t fn, uint32_t count)
@@ -1858,9 +1871,26 @@ void wifi_event_report(void)
             uint32_t n = g_evt_log[i].d[32];
             uart_puts("(len");
             uart_put_dec(n);
-            if (n == 22u) {
+            /* [step 219] Compare against the SSID we actually asked for, not a
+             * literal. It was hardcoded to 22 -- the length of step 217's
+             * impossible SSID -- so a real network of a different length read
+             * as "layout?" when the layout was in fact fine. A self-check that
+             * only passes for one input is not a self-check. */
+            if (n == g_assoc_ssid_len) {
                 uart_puts(" reason");
-                uart_put_dec(g_evt_log[i].d[39]);
+                uint32_t rr = g_evt_log[i].d[39];
+                uart_put_dec(rr);
+                /* [step 219] Named, because a bare number sends the next
+                 * reader to a header and the distinction between 201 and 203
+                 * is the whole result. wifi_err_reason_t. */
+                uart_puts(rr == 200u ? " BEACON_TIMEOUT"
+                        : rr == 201u ? " NO_AP_FOUND"
+                        : rr == 202u ? " AUTH_FAIL"
+                        : rr == 203u ? " ASSOC_FAIL"
+                        : rr == 204u ? " HANDSHAKE_TIMEOUT"
+                        : rr == 205u ? " CONNECTION_FAIL"
+                        : rr == 15u  ? " 4WAY_TIMEOUT"
+                        : "");
             } else {
                 uart_puts(" layout?");
             }
@@ -1926,6 +1956,7 @@ void wifi_try_connect(uint32_t cfg_fn, uint32_t conn_fn)
     }
 #endif
 
+    g_assoc_ssid_len = (uint32_t)(sizeof ssid - 1u);
     uint32_t cr = blob_call(cfg_fn, 0u /* WIFI_IF_STA */, (uint32_t)conf, 0u, 0u);
     uart_puts("   assoc     set_config rc ");
     uart_put_hex(cr);

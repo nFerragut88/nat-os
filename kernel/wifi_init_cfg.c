@@ -137,11 +137,12 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
     extern void wifi_scan_sweep(uint32_t s, uint32_t nfn, uint32_t rfn);
     extern void wifi_tx_beacons(uint32_t tx, uint32_t chan);
     extern void wifi_try_connect(uint32_t cfg, uint32_t conn);
-    extern uint32_t wpa_cb_table_fill(void);
+    extern uint32_t wpa_cb_table_fill(uint32_t sta_connect);
     extern void wpa_cb_report(void);
     if (e->wifi_register_wpa_cb) {
         uint32_t wr = blob_call(e->wifi_register_wpa_cb,
-                                wpa_cb_table_fill(), 0u, 0u, 0u);
+                                wpa_cb_table_fill(e->sta_connect_internal),
+                                0u, 0u, 0u);
         uart_puts("   wpa_cb    returned ");
         uart_put_hex(wr);
         uart_puts("\n");

@@ -192,3 +192,50 @@ int wpa_cb_stub(void)
  * the IllegalInstruction at a garbage PC inside esp_wifi_init_internal, three
  * times, identically, while I was blaming the layout band for it. The rule this
  * project enforces by directory is the rule: only the ADDRESS crosses. */
+
+/* ---- wpa_sta_connect -- next_moves/08 step 219 --------------------------
+ *
+ * The one supplicant entry that stalls an association, implemented.
+ *
+ * Step 218 measured where the driver stops: cnx_connect_next_ap loads
+ * wpa_cb + 8 and calls it, and offset 8 is wpa_sta_connect. Our recording stub
+ * returned 1 and did nothing, so nothing drove the next step and the driver sat
+ * silent for thirty seconds -- no CONNECTED, no DISCONNECTED, no reason code.
+ *
+ * ESP-IDF's version, read from the source rather than guessed:
+ *
+ *     int wpa_sta_connect(uint8_t *bssid) {
+ *         ret = wpa_config_profile(bssid);
+ *         if (ret == 0) { ret = wpa_config_bss(bssid); if (ret) return ret; }
+ *         else if (authmode == NONE_AUTH) esp_set_assoc_ie(bssid, NULL, 0, 0);
+ *         return esp_wifi_sta_connect_internal(bssid);
+ *     }
+ *
+ * wpa_config_profile and wpa_config_bss are the WPA half -- RSN IE parsing, PMK
+ * derivation, the four-way handshake state. That is the subsystem this project
+ * does not have. The LAST line is what moves the driver, and for an open
+ * network it is very nearly the whole function.
+ *
+ * So this is that line and nothing else. An open network should associate. A
+ * protected one should NOT -- but it should now fail with a reason code
+ * instead of silence, which is worth having either way.
+ *
+ * Windowed, because the blob calls it with callx8 and it calls back into the
+ * blob. Only the ADDRESS crosses, exactly as phy_wakeup_init does. */
+
+uint32_t g_sta_connect_fn;     /* set from the entry table at bring-up */
+uint32_t g_sta_connect_calls;
+uint32_t g_sta_connect_rc = 0xFFFFFFFFu;
+
+int wpa_sta_connect_impl(void *bssid);
+int wpa_sta_connect_impl(void *bssid)
+{
+    typedef int (*sta_conn_fn)(void *);
+    g_sta_connect_calls++;
+    if (!g_sta_connect_fn) {
+        return 1;                       /* nothing to call; behave as before */
+    }
+    int rc = ((sta_conn_fn)g_sta_connect_fn)(bssid);
+    g_sta_connect_rc = (uint32_t)rc;
+    return rc;
+}

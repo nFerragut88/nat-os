@@ -55,6 +55,10 @@ extern int  esp_wifi_scan_get_ap_records(unsigned short *n, void *recs);
 extern int  esp_wifi_set_config(int ifx, void *conf);
 extern int  esp_wifi_connect(void);
 extern int  esp_wifi_disconnect(void);
+/* [step 219] What the SUPPLICANT calls to drive an association forward.
+ * ESP-IDF wpa_sta_connect() ends in exactly this call; for an open network
+ * it is very nearly the whole function. */
+extern int  esp_wifi_sta_connect_internal(void *bssid);
 
 struct blob_entry {
     uint32_t magic;          /* 'N','8','0','2' */
@@ -103,6 +107,8 @@ struct blob_entry {
     int (*wifi_set_config)(int ifx, void *conf);
     int (*wifi_connect)(void);
     int (*wifi_disconnect)(void);
+    /* [step 219] version 14. */
+    int (*sta_connect_internal)(void *bssid);
 };
 
 /* `used` because nothing in this translation unit references it and
@@ -111,7 +117,7 @@ struct blob_entry {
 __attribute__((section(".blob_entry"), used))
 const struct blob_entry blob_entry = {
     .magic       = 0x3230384Eu,          /* "N802" little-endian */
-    .version     = 13u,
+    .version     = 14u,
     .image_size  = (uint32_t)&_blob_image_size,
     .text_end    = (uint32_t)&_blob_text_end,
 
@@ -143,4 +149,5 @@ const struct blob_entry blob_entry = {
     .wifi_set_config      = esp_wifi_set_config,
     .wifi_connect         = esp_wifi_connect,
     .wifi_disconnect      = esp_wifi_disconnect,
+    .sta_connect_internal = esp_wifi_sta_connect_internal,
 };
