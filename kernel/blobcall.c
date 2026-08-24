@@ -311,7 +311,23 @@ static uint32_t g_bt_last_prio, g_bt_last_lvl;
  * WINDOWBASE/WINDOWSTART when switching away from a task with more than one
  * live frame. See next_moves/08. Until then this stays off, so the default
  * path fails cleanly instead of taking the board down. */
-static int g_bt_enabled;
+/* [step 215] Hunting the wild write.
+ *
+ * Step 214 found a DRAM stack pointer (0x3FFB9430) sitting in this flag, and
+ * that corruption is what made "layout sensitivity" look like a thing. The
+ * dependence on it is gone; the writer is not.
+ *
+ * First question is the SHAPE, and guards answer it in one run. Both intact
+ * with the flag clobbered means a single targeted word -- pointer arithmetic
+ * landing exactly here. Guards damaged too means a range overrun (a memcpy or
+ * a memset running long), and the pattern of which one dies says which
+ * direction it ran.
+ *
+ * One struct, not three globals: separate objects would land in .data and
+ * .bss and would not be adjacent, so the guards would guard nothing. */
+static volatile struct { uint32_t lo; int en; uint32_t hi; } g_bten =
+    { 0xA5A5A5A5u, 0, 0x5A5A5A5Au };
+#define g_bt_enabled (g_bten.en)
 void blob_task_enable(int on) { g_bt_enabled = on; }
 
 static void blob_task_entry(void)
@@ -352,8 +368,16 @@ int blob_task_create(void *reqp, const char *name)
      * allocates over its caller's base save area. If that hazard is live, this
      * is where it would show: a stack_bytes that is not what the driver asked
      * for. Printing it is the difference between knowing and assuming. */
-    uart_puts("   [blobtask] req en=");
-    uart_put_dec(g_bt_enabled);
+    uart_puts("   [blobtask] guards ");
+    uart_put_hex(g_bten.lo);
+    uart_puts("/");
+    uart_put_hex(g_bten.hi);
+    uart_puts(g_bten.lo == 0xA5A5A5A5u && g_bten.hi == 0x5A5A5A5Au
+              ? " intact" : " DAMAGED");
+    uart_puts("  &en=");
+    uart_put_hex((uint32_t)&g_bten.en);
+    uart_puts("\n   [blobtask] req en=");
+    uart_put_hex((uint32_t)g_bt_enabled);
     uart_puts(" stack=");
     uart_put_dec(r->stack_bytes);
     uart_puts(" prio=");

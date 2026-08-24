@@ -1,7 +1,7 @@
 # UM-NATOS-048 — The Radio Hears, and Speaks
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.2 · 2026-08-24 · Status: **nat-os receives real 802.11 beacons and transmits frames that an independent device displays. Both directions of the radio work.**
+Revision 1.3 · 2026-08-24 · Status: **nat-os receives real 802.11 beacons and transmits frames that an independent device displays. Both directions of the radio work.**
 
 ---
 
@@ -527,10 +527,9 @@ speculation about *why* the semaphore was at zero was wrong.
    SSID is that vendor's default naming form. All records are now read.
 4. ~~**The remaining unwired adapter entries**~~ **— audited at step 213, no
    live defect.** See §13.
-5. **The layout sensitivity**, still unexplained. UM-NATOS-047 §5.3 stands. This
-   stretch routed around it — the sweep moved out of `wifi_init_cfg.c`, twenty-two
-   lines becoming one call — which reduces exposure and explains nothing. **This
-   is now the only unexplained behaviour left in the Wi-Fi work.**
+5. ~~**The layout sensitivity**~~ **— explained and eliminated at step 214. It
+   was never positional.** See §14. What replaces it on this list is the wild
+   write that caused it, which is still unfound.
 6. **The `w2c_*` bridges** still allocate over their caller's base save area.
    Unchanged since UM-NATOS-045 §8.4.
 7. **Association**, now the next milestone. Item 2 was one of its two
@@ -580,6 +579,106 @@ actually do here".
 `_esp_timer_get_time` ×340 per run (returning zero). Neither produced a
 measurable symptom, which is exactly what makes this class of defect worth
 hunting deliberately rather than waiting for.
+
+---
+
+## 14. The layout sensitivity was a wild write
+
+**UM-NATOS-047 §5.3 called this "the thing blocking work" and measured its width
+at 30–100 bytes. UM-NATOS-042 §9.2 recorded the same shape for `shell.c` as the
+step-7 layout band. Both explained it as code position — the flash MMU,
+alignment, the timing of a bridge on the hot path. It is none of those.**
+
+The reproducer was three dead stores in `window.S`, kept since step 194 because
+deleting them made `esp_wifi_init_internal` return `ESP_ERR_NO_MEM` from a cold
+boot, reproducibly, bisected to exactly those instructions. They are deleted
+now and everything works.
+
+### 14.1 The chain
+
+`0x101` is a resource refusal, not a fault — which meant the failure could be
+followed rather than guessed at. The OSI call sequence diverges at one point:
+
+```
+working  ... _task_create_pinned_to_core(6656) -> _semphr_take -> _queue_recv ...
+broken   ... _task_create_pinned_to_core(6656) -> _wifi_delete_queue -> _free
+```
+
+Task creation failed. `blob_task_create` has **four** paths that return `pdFAIL`,
+and three of them printed nothing whatsoever — so the driver reported `NO_MEM`
+and nothing in between said which one fired. Making all four report turned six
+steps of mystery into one line:
+
+```
+[blobtask] req en=0 stack=6656 prio=23 fn=0x4036bb64
+[blobtask] refused: creation disabled
+```
+
+**The request is perfect.** `stack=6656`, `prio=23`, a valid function pointer.
+Not a corrupted argument, and not the `w2c_*` save-area overlap of UM-NATOS-045
+§8.4 — which was the hypothesis going in, and was wrong. `g_bt_enabled` was 0.
+
+### 14.2 The shell disables it on purpose
+
+```c
+blob_task_enable(str_eq(arg, "task"));
+wifi_start_enable(str_eq(arg, "start"));
+```
+
+`wifiinit start` calls `blob_task_enable(0)`. It always has. **The driver's own
+task could never legitimately be created by the command this project has run
+several hundred times.**
+
+### 14.3 So why did it ever work
+
+The working build reports:
+
+```
+[blobtask] req en=1073452080
+```
+
+`0x3FFB9430` — a **DRAM stack pointer**, in an `int` that holds 0 or 1.
+Something writes a stack pointer over that global, and a stack pointer is not
+zero, so `if (!g_bt_enabled)` passes and the task is created.
+
+That is the entire sensitivity. Move nine bytes of code, the wild write lands
+elsewhere, `g_bt_enabled` stays 0, and the driver **correctly** refuses. **The
+build that failed was the honest one.** Every build that has "worked" since step
+194 depended on memory corruption to enable a feature the command line had
+switched off.
+
+The fix is what the code always meant — starting the driver enables its task:
+
+```c
+void wifi_start_enable(int on) { g_want_start = on; blob_task_enable(on); }
+```
+
+### 14.4 What this does not fix
+
+**The wild write is still there and still unfound.** This removes the
+*dependence* on it, not the bug. It will corrupt something else eventually — but
+nothing benefits from it now, so the next symptom will be honest rather than
+load-bearing.
+
+It also does not explain §9.2's `shell.c` instance, which hung `blob_map` rather
+than refusing a task. Same class most likely — the same wild write landing on a
+different global — but that is a hypothesis and is recorded as one.
+
+### 14.5 Method
+
+**A silent failure path is not a small defect.** Three unreported `return 0`s in
+one function cost this project six steps, two reports' worth of wrong
+explanation, and a piece of dead code that could not be deleted. The fix was
+four `uart_puts` calls.
+
+**"Positional" was a category, not an explanation.** Once named, it stopped
+anyone looking further — including me, three times in one session (§9.2). A
+label that ends inquiry is worse than an open question.
+
+**An error code is more tractable than a crash.** `ESP_ERR_NO_MEM` says a
+resource was refused, which narrows the search to code that refuses resources.
+The instinct to treat it as "the wall again" wasted more time than reading it
+did.
 
 ---
 

@@ -1023,14 +1023,29 @@ uart_puts("  pre-spill : ps ");
                  * wsr.windowstart (junksrc) versus what the readback saw.
                  * Healthy switches where junksrc == intended mask would mean
                  * correctness has been accidental all along. */
-                extern volatile uint32_t g_rjunk;
+                /* [step 215] Declared with its REAL shape. vectors.S reserves
+                 * `.space 16 * 12` -- sixteen three-word entries -- and this was
+                 * declared as a bare scalar, so &g_rjunk + idx*3 was an
+                 * out-of-bounds access as far as the compiler could tell and it
+                 * said so on every build. The accesses are in range; the
+                 * DECLARATION was wrong.
+                 *
+                 * Worth more than silencing a warning. Step 214's wild write was
+                 * exactly this pattern in the other direction: g_win_a0 and
+                 * g_win_sp declared as two independent scalars in C, and assembly
+                 * storing through g_win_a0+4 on the assumption they were adjacent.
+                 * The linker had placed g_win_sp FIRST, so that store landed on an
+                 * unrelated global and enabled a feature the shell had switched
+                 * off. Declaring assembly-backed storage with its true shape is
+                 * what lets the compiler catch that class at all. */
+                extern volatile uint32_t g_rjunk[16 * 3];
                 extern volatile uint32_t g_rin_seq;
                 uart_puts("  rst-hist  :");
                 for (uint32_t k = 8u; k >= 1u; k--) {
                     if (g_rin_seq < k) { continue; }
                     uint32_t s   = g_rin_seq - k + 1u;
                     uint32_t idx = s & 15u;
-                    const volatile uint32_t *e = &g_rjunk + idx * 3u;
+                    const volatile uint32_t *e = &g_rjunk[idx * 3u];
                     uart_puts("  ");
                     uart_put_dec(s);
                     uart_puts(":");
@@ -1046,19 +1061,22 @@ uart_puts("  pre-spill : ps ");
                  * wb/ws}. The first entry whose ws carries bits beyond the
                  * single-bit grant timestamps the pollution and names the
                  * task that was current when it happened. */
-                extern volatile uint32_t g_ring;
-                extern volatile uint32_t g_ring_task;
+                /* [step 215] Real shapes, per vectors.S: g_ring reserves
+                 * `.space 64 * 12` (64 three-word entries) and g_ring_task
+                 * `.space 64 * 4`. Both were declared as bare scalars. */
+                extern volatile uint32_t g_ring[64 * 3];
+                extern volatile uint32_t g_ring_task[64];
                 extern volatile uint32_t g_rout_seq;
                 uart_puts("  win-ring   :");
                 for (uint32_t k = 24u; k >= 1u; k--) {
                     if (g_rout_seq < k) { continue; }
                     uint32_t s   = g_rout_seq - k + 1u;
                     uint32_t idx = s & 63u;
-                    const volatile uint32_t *e = &g_ring + idx * 3u;
+                    const volatile uint32_t *e = &g_ring[idx * 3u];
                     uart_puts("  ");
                     uart_put_dec(s);
                     uart_puts("t");
-                    uart_put_dec((&g_ring_task)[idx]);
+                    uart_put_dec(g_ring_task[idx]);
                     uart_puts(":");
                     uart_put_dec(e[1]);
                     uart_puts("/");
