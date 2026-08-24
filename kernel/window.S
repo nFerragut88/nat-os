@@ -371,7 +371,31 @@ rom_call4:
     movi    a2, 0
     ret                             /* refuse, do not jump to zero */
 1:
-    addi    a1, a1, -32
+    /* [step 189] 80 bytes, and this function's saves live at the BOTTOM.
+     *
+     * _WindowOverflow8 writes TWO regions, not one (kernel/window.S):
+     *
+     *     s32e a0, a9, -16      a0..a3 -> [a9-16, a9)
+     *     l32e a0, a1, -12      a0 <- the caller's sp
+     *     s32e a4, a0, -32      a4..a7 -> [a0-32, a0-16)
+     *
+     * The second is the CALL8 extended save area, and it is addressed from the
+     * CALLER's stack pointer -- the value this function itself primes into
+     * [a1-12] a few instructions below. With a 32-byte frame that range is
+     * [caller_sp-32, caller_sp-16), which is exactly where a0, a12, a13 and a14
+     * were being saved. Measured: sixteen bytes at [0x3ffb9540, 0x3ffb9550)
+     * with caller_sp 0x3ffb9560, taking blob_call's return address with them.
+     *
+     * CALL12's extended area reaches further, [caller_sp-48, caller_sp-20], so
+     * 48 bytes below the caller must be left alone -- the same reserve, for the
+     * same reason, as TASK_FRAME_RESERVE in task.c (step 145). 48 reserved plus
+     * 32 for this frame's own five words and alignment is 80.
+     *
+     * An earlier attempt widened the frame to 48 and moved the saves UP by 16.
+     * That moved sp down and the slot up by the same amount and changed the
+     * slot's address not at all -- the danger zone is anchored to the caller's
+     * sp, not to ours, so the saves have to go DOWN, not up. */
+    addi    a1, a1, -80
 
     /* Base save area, for the reason spelled out in win_spill_call0 and in
      * phy_stack_call: _WindowOverflow8/12 recover the caller's sp with
@@ -379,7 +403,7 @@ rom_call4:
      * slot; this function is call0 and must write it by hand, or a spill that
      * unwinds this far stores through whatever was already at [sp-12] -- from
      * inside a window vector, with PS.EXCM set. */
-    addi    a8, a1, 32
+    addi    a8, a1, 80
     addi    a9, a1, -12
     s32i    a8, a9, 0
     /* [step 92] and the a0 slot, which the underflow also reads. */
@@ -414,7 +438,7 @@ rom_call4:
     l32i    a13, a1, 8
     l32i    a14, a1, 12
     l32i    a15, a1, 16
-    addi    a1, a1, 32
+    addi    a1, a1, 80
     ret
     .size rom_call4, . - rom_call4
 
@@ -478,7 +502,17 @@ win_spill_all:
     .global win_spill_call0
     .type win_spill_call0, @function
 win_spill_call0:
-    addi    a1, a1, -32
+    /* [step 189] 80, not 32. Same defect as rom_call3/rom_call4: the overflow
+     * handlers write the caller's a4..a11 through the sp primed into [a1-12],
+     * and that extended save area covers [caller_sp-48, caller_sp-20]. At 32
+     * bytes it sat on this function's own a0, a12, a13 and a14.
+     *
+     * Sharper here than anywhere else, because this function exists to CAUSE
+     * the spill that overwrites it. Step 188 called it from blob_call to flush
+     * stale windows and the panic moved earlier, with rom_call4 reporting a
+     * stack pointer inside the blob's DRAM -- this is why. The idea was sound;
+     * the tool was eating its own return address. */
+    addi    a1, a1, -80
 
     /* Write this frame's BASE SAVE AREA before rotating into windowed code.
      *
@@ -497,7 +531,7 @@ win_spill_call0:
      * phy_stack_call already does exactly this and says so in its own comment;
      * this bridge was written from rom_call3's shape and inherited the gap.
      * s32i takes no negative offset, hence the second addi. */
-    addi    a8, a1, 32              /* the caller's sp */
+    addi    a8, a1, 80              /* the caller's sp */
     addi    a9, a1, -12
     s32i    a8, a9, 0
 
@@ -512,7 +546,7 @@ win_spill_call0:
     l32i    a13, a1, 8
     l32i    a14, a1, 12
     l32i    a15, a1, 16
-    addi    a1, a1, 32
+    addi    a1, a1, 80
     ret
     .size win_spill_call0, . - win_spill_call0
 
@@ -549,7 +583,16 @@ win_chain_trap:
     .type rom_call3, @function
     .align 4
 rom_call3:
-    addi    a1, a1, -48
+    /* [step 189] 80, not 48, for the reason spelled out in rom_call4: the
+     * window overflow handlers write the caller's a4..a11 through the sp this
+     * function primes into [a1-12], and that extended save area reaches
+     * [caller_sp-48, caller_sp-20] for CALL12. At 48 bytes it covered EVERY
+     * one of this function's saves, a0 and a12..a15 and a2 and a3 alike.
+     *
+     * Not measured failing, unlike rom_call4's -- it is the bridge the blob
+     * worker task runs through, and it is the same defect by construction.
+     * Reserving 48 above the saves costs 32 bytes of stack per blob call. */
+    addi    a1, a1, -80
 
     /* Base save area, for the reason spelled out in win_spill_call0 and in
      * phy_stack_call: _WindowOverflow8/12 recover the caller's sp with
@@ -557,7 +600,7 @@ rom_call3:
      * slot; this function is call0 and must write it by hand, or a spill that
      * unwinds this far stores through whatever was already at [sp-12] -- from
      * inside a window vector, with PS.EXCM set. */
-    addi    a8, a1, 48
+    addi    a8, a1, 80
     addi    a9, a1, -12
     s32i    a8, a9, 0
     /* [step 92] and the a0 slot, which the underflow also reads. */
@@ -625,7 +668,7 @@ rom_call3:
     l32i    a13, a1, 8
     l32i    a14, a1, 12
     l32i    a15, a1, 16
-    addi    a1, a1, 48
+    addi    a1, a1, 80
     ret
     .size rom_call3, . - rom_call3
 

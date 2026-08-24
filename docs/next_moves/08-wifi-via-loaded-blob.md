@@ -12267,6 +12267,148 @@ none tried:
 should own.
 
 **Nothing has been on air.**
+---
+
+## step 189 — `esp_wifi_init_internal` returns ESP_OK
+
+```
+   calling esp_wifi_init_internal at 0x403014dc
+   init      returned 0x00000000  (ESP_OK)
+   osi       32 of 118 adapter entries were called
+   intr clamped to CRIT_LEVEL: 0  (must stay zero)
+```
+
+The shell returns to its prompt and the system keeps running. That call has
+never returned before.
+
+### 189a. Reading the other party's code
+
+The fix came from a question asked from outside the work: *does §4.7 of the book
+apply here?*
+
+§4.7 is about a different overlap — a bootloader IRAM segment that looked like it
+would clobber the kernel and did not — and its conclusion was that the conflict
+was imaginary. But the rule it produced is exact:
+
+> an apparent conflict in an address map is a prompt to read the other party's
+> link script, not to move our own
+
+Step 188's write was measured, not inferred, so the conflict was real. The
+**interpretation** was not measured. Sixteen bytes at `[0x3ffb9540, 0x3ffb9550)`
+was read as a base save area — `[sp-16, sp)` for a frame with sp `0x3ffb9550` —
+because that is what the ISA's convention says a base save area looks like. From
+there the account required a stale window, and neither of the two fixes built on
+it worked.
+
+nat-os's own `_WindowOverflow8` is the source of truth, and it writes **two**
+regions:
+
+```asm
+    s32e    a0, a9, -16      /* a0..a3 -> [a9-16, a9)     the base save area */
+    l32e    a0, a1, -12      /* a0 <- the CALLER's sp                        */
+    s32e    a4, a0, -32      /* a4..a7 -> [a0-32, a0-16)  the extended area  */
+```
+
+It was the second. With `a0` = `0x3ffb9560`, `[a0-32, a0-16)` is
+`[0x3ffb9540, 0x3ffb9550)` — the measured range exactly. **There is no stale
+frame.** Both readings fit the addresses; only one fits the handler.
+
+### 189b. The defect
+
+`a0` is loaded from `[a1-12]`, and that slot is primed by `rom_call4` itself:
+
+```asm
+    addi    a1, a1, -32
+    addi    a8, a1, 32       /* = the caller's sp */
+    addi    a9, a1, -12
+    s32i    a8, a9, 0
+    ...
+    s32i    a0,  a1, 0       /* its own return address, at caller_sp - 32 */
+```
+
+So `rom_call4` hands the overflow handler a pointer to the caller's stack, and
+the handler writes the caller's `a4..a7` at `caller_sp-32`, which with a 32-byte
+frame is `rom_call4`'s own `[sp+0]` — the saved return address. The bridge armed
+the write that destroyed it.
+
+This is **step 145's defect in a second place**. That step found the task switch
+frame written through the CALL12 extended save area and answered it with
+`TASK_FRAME_RESERVE 48`; the same 48 bytes, for the same reason, were missing
+here. CALL8 reaches `[caller_sp-32, caller_sp-16)`; CALL12 reaches
+`[caller_sp-48, caller_sp-20]`.
+
+### 189c. The fix
+
+Reserve 48 bytes below the caller and put the bridge's own saves **below** that:
+frame 80, saves at `sp+0..sp+28`, which is `[caller_sp-80, caller_sp-52)`.
+
+Step 188's first attempt failed for a reason worth keeping: it widened the frame
+to 48 and moved the saves *up* by 16. The caller's sp is fixed, so a bigger
+frame moves `sp` down and the offset up by the same amount and the slot's
+address does not change at all. **The danger zone is anchored to the caller's
+stack pointer, not to ours** — so the saves have to go down, not up.
+
+Three bridges had it:
+
+| | before | after | evidence |
+|---|---|---|---|
+| `rom_call4` | 32 | 80 | measured failing |
+| `rom_call3` | 48 | 80 | same defect by construction; the worker's bridge |
+| `win_spill_call0` | 32 | 80 | same, and it exists to *cause* the spill |
+
+`win_spill_call0` also explains step 188's second failed fix. Calling it from
+`blob_call` to flush stale windows moved the panic earlier, with `rom_call4`
+reporting a stack pointer inside the blob's DRAM. It was eating its own return
+address on the way out. The idea was sound; the tool was broken in the same way
+as the thing it was meant to help.
+
+Cost: 32 bytes of stack per bridged call. Tightest stack after: shell
+828/2048 B free.
+
+### 189d. Result
+
+```
+boot 11 PASS 0 FAIL
+wintorture 1000 ms : switches during the call: 10  (preemption really happened)
+                     checksum 1632 expected 1632  CORRECT
+blobphy rc=0
+wifiinit : init returned 0x00000000 (ESP_OK), shell returns, system keeps running
+```
+
+Thirty-two adapter entries are called, in this order:
+
+```
+_recursive_mutex_create, _task_get_current_task, _mutex_lock, _calloc_internal(32),
+_task_get_current_task, _mutex_unlock, _spin_lock_create, _recursive_mutex_create,
+_malloc_internal(60), _task_get_max_priority, _wifi_create_queue, _semphr_create,
+_task_get_max_priority, _task_create_pinned_to_core(6656), _semphr_take,
+_semphr_give, _queue_recv, _task_delay, _semphr_delete, _wifi_zalloc,
+_task_get_current_task, _wifi_thread_semphr_get, _task_get_current_task,
+_mutex_lock, _wifi_int_disable, _wifi_int_restore, _task_ms_to_tick, _queue_send,
+_task_get_current_task, _mutex_unlock, _semphr_take, _wifi_int_disable,
+_wifi_int_restore, _phy_common_clock_enable, _timer_disarm, _read_mac, _read_mac,
+_get_random, _wifi_zalloc, _malloc_internal(1024), _free, _wifi_zalloc x3,
+_mutex_lock, _mutex_unlock, _wifi_malloc, _mutex_lock
+```
+
+Cosmetic: the trace prints `_phy_common_clock_enable` as `_magic`, because step
+185 gave it trace id 117 and `wifi_osi_name()` only knows 1..116. The id is
+outside the field numbering on purpose; the name table needs the two entries
+added.
+
+### Next
+
+`esp_wifi_start()` is now **reachable and has never been called**. `e->wifi_start`
+sits in the blob entry table with nothing invoking it, and there is no shell
+command for it. That is the next step, and it is the first one where the radio
+could do something.
+
+Also outstanding, unchanged: `_get_random` still returns success without filling
+the caller's buffer — the same defect `_read_mac` had — and the instrumentation
+debt from steps 183 and 184.
+
+**Nothing has been on air.**
+
 
 
 
