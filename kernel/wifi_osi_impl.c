@@ -1270,7 +1270,22 @@ uint32_t osi_impl_random(void)
 uint32_t osi_impl_ms_to_tick(uint32_t ms) { return (ms / 10u) ? (ms / 10u) : 1u; }
 void     osi_impl_delay(uint32_t ticks)   { task_sleep(ticks ? ticks : 1u); }
 int32_t  osi_impl_current_task(void)      { return task_current(); }
-uint32_t osi_impl_time_us_lo(void)        { return timer_ticks() * 10000u; }
+/* [step 210] Was `timer_ticks() * 10000u` -- correct but 10 ms granular and
+ * 32-bit, so it wrapped every 71 minutes and a driver polling a deadline saw
+ * time frozen for a whole tick. osi_impl_time_us() below is microsecond
+ * resolution and 64-bit; _lo latches the high half so both halves come from ONE
+ * reading. Sampling the clock twice could straddle a carry and produce a
+ * timestamp that never existed, so call order is load-bearing: _lo first. */
+static uint32_t g_time_us_hi_latch;
+
+uint32_t osi_impl_time_us_lo(void)
+{
+    uint64_t v = (uint64_t)osi_impl_time_us();
+    g_time_us_hi_latch = (uint32_t)(v >> 32);
+    return (uint32_t)v;
+}
+
+uint32_t osi_impl_time_us_hi(void)        { return g_time_us_hi_latch; }
 
 uint32_t osi_impl_sems_used(void)
 {
@@ -1528,7 +1543,7 @@ void wifi_scan_sweep(uint32_t scan_fn, uint32_t num_fn, uint32_t recs_fn)
  * would pull in esp_wifi_set_config and a second interface, and the point here
  * is to establish that the transmit path works at all. */
 
-#define TX_BEACONS   500u          /* [step 209] ~65 s at the MEASURED rate */
+#define TX_BEACONS   20u           /* transmit is proven; keep the run short for RX work */
 #define TX_CHANNEL   1u
 
 static uint8_t g_tx_frame[128];
@@ -1664,4 +1679,45 @@ void wifi_sem_dump(const char *when)
         }
     }
     uart_puts("\n");
+}
+
+/* [step 210] A monotonic microsecond clock.
+ *
+ * _esp_timer_get_time and _get_time both returned 0, so every "now" the driver
+ * asked for was the same instant and every elapsed-time computation was zero.
+ * That is the §10 shape again: a plausible value, wrong semantics, invisible to
+ * any audit that looks for missing bodies.
+ *
+ * Ten-millisecond ticks are too coarse on their own -- a driver that polls a
+ * deadline would see time frozen for a whole tick -- so CCOUNT provides the
+ * sub-tick part. The (tick, ccount) pair is re-latched whenever the tick moves,
+ * which makes it self-correcting: no drift accumulates and no wrap of the
+ * 32-bit cycle counter can be missed, because the tick is the authority and
+ * CCOUNT only ever interpolates INSIDE one tick.
+ *
+ * Monotonic across a tick boundary: sub is clamped below the tick length, so
+ * t*10000+sub can never reach (t+1)*10000. */
+#define OSI_US_PER_TICK   (OSI_TICK_CYCLES / (OSI_CPU_HZ / 1000000u))
+#define OSI_CYCLES_PER_US (OSI_CPU_HZ / 1000000u)
+
+int64_t osi_impl_time_us(void);
+int64_t osi_impl_time_us(void)
+{
+    static uint32_t s_tick, s_cc;
+    static int      s_have;
+    uint32_t cc;
+    __asm__ volatile ("rsr.ccount %0" : "=r"(cc));
+
+    uint32_t crit = crit_enter();
+    uint32_t t = timer_ticks();
+    if (!s_have || t != s_tick) {
+        s_tick = t;
+        s_cc = cc;
+        s_have = 1;
+    }
+    uint32_t sub = (cc - s_cc) / OSI_CYCLES_PER_US;
+    crit_exit(crit);
+
+    if (sub >= OSI_US_PER_TICK) { sub = OSI_US_PER_TICK - 1u; }
+    return (int64_t)((uint64_t)t * OSI_US_PER_TICK + sub);
 }

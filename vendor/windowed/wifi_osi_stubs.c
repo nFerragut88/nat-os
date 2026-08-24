@@ -202,6 +202,8 @@ extern uint32_t w2c_call1(uint32_t fn, uint32_t a);
 extern uint32_t w2c_call2(uint32_t fn, uint32_t a, uint32_t b);
 extern void osi_impl_sem_create(void);   /* address only -- see w2c_call2 */
 extern void osi_impl_recursive_mutex_create(void);   /* [step 209] address only */
+extern void osi_impl_time_us_lo(void);   /* [step 210] address only */
+extern void osi_impl_time_us_hi(void);
 extern void osi_impl_sem_delete(void);
 extern void osi_impl_sem_take(void);
 extern void osi_impl_sem_give(void);
@@ -473,7 +475,11 @@ static void osi_hit(uint32_t i)
 static bool osi_s_env_is_chip(void)
 {
     osi_hit(1u);
-    return false;
+    /* [step 210] TRUE. ESP-IDF's env_is_chip_wrapper returns false only under
+     * CONFIG_IDF_ENV_FPGA and true on real silicon. This returned false, so
+     * for the whole life of the project the driver was told it was running on
+     * an FPGA emulator -- six times during every init. */
+    return true;
 }
 
 static void osi_s_set_intr(int32_t cpu_no, uint32_t intr_source, uint32_t intr_num, int32_t intr_prio)
@@ -1441,7 +1447,11 @@ static void osi_s_wifi_rtc_disable_iso(void)
 static int64_t osi_s_esp_timer_get_time(void)
 {
     osi_hit(66u);
-    return 0;
+    /* [step 210] Was `return 0` -- see osi_impl_time_us. Two 32-bit halves,
+     * because the widest windowed-to-call0 bridge returns one word. */
+    uint32_t lo = w2c_call1((uint32_t)&osi_impl_time_us_lo, 0u);
+    uint32_t hi = w2c_call1((uint32_t)&osi_impl_time_us_hi, 0u);
+    return (int64_t)(((uint64_t)hi << 32) | lo);
 }
 
 static int osi_s_nvs_set_i8(uint32_t handle, const char* key, int8_t value)
