@@ -13381,6 +13381,84 @@ gates every request-and-wait above the MAC, and it is the last of the four
 "success reported for work never done" entries on the live path.
 
 **A scan has been started. Whether it transmitted is unverified.**
+---
+
+## step 201 — the blocking scan completes, and it is provably passive
+
+```
+scan      returned 0x00000000  after ticks 171
+```
+
+`esp_wifi_scan_start(cfg, block=1)` completes. It had hung on every previous
+attempt.
+
+### 201a. It was not waiting on an event
+
+Two guesses had already been wrong — the event groups in step 200, `_event_post`
+before that. Reading the blob instead of guessing a third time, the blocking
+branch is a **poll loop**:
+
+```asm
+movi   a10, 100
+l32i   a3, a3, 160     ; field 40 = _task_ms_to_tick
+l32i   a7, a3, 156     ; field 39 = _task_delay
+callx8 a3 ; callx8 a7  ; until the scan id changes
+```
+
+It paces itself with **`_task_delay`**, which was empty — the fourth entry this
+investigation has found where the implementation existed in full and the stub
+counted the call and returned. `osi_impl_delay()` has been there all along. With
+it empty the loop never yielded, so the driver task it was waiting for could not
+make progress.
+
+Wired with the same shape as `_semphr_take`, since it blocks from windowed code:
+spill to one frame, drop the blob lock, sleep, take it back.
+
+### 201b. And the scan is provably passive
+
+Step 199 could not claim this. The `wifi_scan_config_t` layout came from a header
+not provably matched to this blob, and if `scan_type` sat at a different offset
+the field would read 0 — `WIFI_SCAN_TYPE_ACTIVE` — and transmit. The duration
+test planned there did not work, because `block=0` returns before the scan runs.
+
+With `block=1` it does work. Changing **only** the passive dwell:
+
+| dwell | measured |
+|---|---|
+| 1500 ms | 171 ticks = 1710 ms |
+| 500 ms | 80 ticks = 800 ms |
+
+A 1000 ms change in the config moved the duration by 910 ms — one for one. **The
+blob is reading the struct at the offsets assumed**, so `scan_type` at +12 is
+read correctly too, and it holds 1.
+
+So the scan is passive on evidence rather than intent. It listens and does not
+transmit — and since every earlier scan used the same config and the same code
+path, those were passive as well.
+
+**"Nothing has been transmitted" is reinstated**, and it is now a measurement
+rather than an assumption. Step 199 retired it for the right reason; this
+restores it for a better one.
+
+Dwell left at 500 ms: still four times longer than an active scan would take, so
+the distinction stays observable, and bring-up is not blocked for two seconds.
+
+### State
+
+```
+boot 11 PASS 0 FAIL
+wintorture  10 real switches, checksum 1632 CORRECT
+blobphy     phyinit rc=0
+wifiinit start
+            init / set_mode STA / start / ps NONE / promisc /
+            channel 1 / blocking passive scan   -- all ESP_OK
+```
+
+Sustained reception is still not established — `L27` sits at 2 — and that remains
+the open question.
+
+**Nothing has been transmitted, and this time it is measured.**
+
 
 
 

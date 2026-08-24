@@ -219,6 +219,7 @@ extern void osi_impl_evt_set(void);
 extern void osi_impl_evt_clear(void);
 extern void osi_impl_evt_wait_args(void);
 extern void osi_impl_evt_wait2(void);
+extern void osi_impl_delay(void);              /* [step 201] */
 extern void osi_impl_random(void);         /* [step 193] */
 extern void osi_impl_get_random(void);
 extern void osi_impl_timer_arm(void);      /* [step 191] */
@@ -1194,6 +1195,26 @@ static void osi_s_task_delete(void *task_handle)
 static void osi_s_task_delay(uint32_t tick)
 {
     osi_hit(39u);
+    /* [step 201] Actually sleep. osi_impl_delay() has existed all along and
+     * this counted the call and returned.
+     *
+     * It is what paces the BLOCKING scan. esp_wifi_scan_start(cfg, 1) does
+     * not wait on an event or a semaphore -- disassembled, it polls:
+     *
+     *     movi   a10, 100
+     *     l32i   a3, a3, 160     ; field 40 = _task_ms_to_tick
+     *     l32i   a7, a3, 156     ; field 39 = _task_delay
+     *     callx8 a3 ; callx8 a7  ; loop until the scan id changes
+     *
+     * With this empty the loop never yields, so the driver task it is
+     * waiting for could not make progress.
+     *
+     * Blocking from windowed code, so the same shape as _semphr_take:
+     * spill to one frame, drop the blob lock, sleep, take it back. */
+    win_spill_all();
+    (void)w2c_call0f((uint32_t)&blob_unlock);
+    (void)w2c_call1((uint32_t)&osi_impl_delay, tick);
+    (void)w2c_call0f((uint32_t)&blob_lock);
 }
 
 static int32_t osi_s_task_ms_to_tick(uint32_t ms)

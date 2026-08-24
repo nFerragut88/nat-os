@@ -203,10 +203,10 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
      * was what it waited on. It hangs identically, so that was not it and
      * _event_post remains the suspect. */
     if (e->wifi_scan_start) {
-        static const uint32_t cfg[8] = { 0u, 0u, 1u, 1u, 0u, 0u, 1500u, 0u };
+        static const uint32_t cfg[8] = { 0u, 0u, 1u, 1u, 0u, 0u, 500u, 0u };
         uart_puts("   scan      passive ch1 ...\n");
         uint32_t t0 = timer_ticks();
-        uint32_t sc = blob_call(e->wifi_scan_start, (uint32_t)cfg, 0u, 0u, 0u);
+        uint32_t sc = blob_call(e->wifi_scan_start, (uint32_t)cfg, 1u, 0u, 0u);
         uart_puts("   scan      returned ");
         uart_put_hex(sc);
         uart_puts("  after ticks ");
