@@ -214,6 +214,11 @@ extern void osi_impl_wifi_clock_enable(void);   /* [step 197] */
 extern void osi_impl_wifi_clock_disable(void);
 extern void osi_impl_wifi_reset_mac(void);
 extern void osi_impl_phy_wakeup_addr(void);     /* [step 198] */
+extern void osi_impl_evt_create(void);         /* [step 200] */
+extern void osi_impl_evt_set(void);
+extern void osi_impl_evt_clear(void);
+extern void osi_impl_evt_wait_args(void);
+extern void osi_impl_evt_wait2(void);
 extern void osi_impl_random(void);         /* [step 193] */
 extern void osi_impl_get_random(void);
 extern void osi_impl_timer_arm(void);      /* [step 191] */
@@ -1095,7 +1100,7 @@ static uint32_t osi_s_queue_msg_waiting(void *queue)
 static void * osi_s_event_group_create(void)
 {
     osi_hit(31u);
-    return 0;
+    return (void *)w2c_call0f((uint32_t)&osi_impl_evt_create);
 }
 
 static void osi_s_event_group_delete(void *event)
@@ -1106,20 +1111,26 @@ static void osi_s_event_group_delete(void *event)
 static uint32_t osi_s_event_group_set_bits(void *event, uint32_t bits)
 {
     osi_hit(33u);
-    return 0;
+    return w2c_call2((uint32_t)&osi_impl_evt_set, (uint32_t)event, bits);
 }
 
 static uint32_t osi_s_event_group_clear_bits(void *event, uint32_t bits)
 {
     osi_hit(34u);
-    return 0;
+    return w2c_call2((uint32_t)&osi_impl_evt_clear, (uint32_t)event, bits);
 }
 
 static uint32_t osi_s_event_group_wait_bits(void *event, uint32_t bits_to_wait_for, int clear_on_exit, int wait_for_all_bits, uint32_t block_time_tick)
 {
     osi_hit(35u);
     /* Try without blocking. */
-    { uint32_t r = 0u; if (r) { return (uint32_t)r; } }
+    /* [step 200] Actually try, without blocking. This was a placeholder that
+     * assigned zero and tested it. */
+    (void)w2c_call3((uint32_t)&osi_impl_evt_wait_args,
+                    (uint32_t)clear_on_exit, (uint32_t)wait_for_all_bits, 0u);
+    { uint32_t r = w2c_call2((uint32_t)&osi_impl_evt_wait2,
+                             (uint32_t)event, bits_to_wait_for);
+      if (r) { return r; } }
     /* About to block inside windowed code. Spill first so this task is left
      * with exactly ONE live frame -- the state the ordinary context switch
      * already handles -- then unpin and release so another context may run. */
@@ -1138,7 +1149,11 @@ static uint32_t osi_s_event_group_wait_bits(void *event, uint32_t bits_to_wait_f
     win_spill_all();
     blk_sample(1u); uf_sample(2u); of_sample(2u);
     (void)w2c_call0f((uint32_t)&blob_unlock);
-    uint32_t r2 = w2c_call3((uint32_t)&osi_impl_evt_wait, (uint32_t)event, (uint32_t)bits_to_wait_for, (uint32_t)block_time_tick);
+    (void)w2c_call3((uint32_t)&osi_impl_evt_wait_args,
+                    (uint32_t)clear_on_exit, (uint32_t)wait_for_all_bits,
+                    block_time_tick);
+    uint32_t r2 = w2c_call2((uint32_t)&osi_impl_evt_wait2,
+                            (uint32_t)event, bits_to_wait_for);
     blk_sample(2u);
     (void)w2c_call0f((uint32_t)&blob_lock);
     return (uint32_t)r2;

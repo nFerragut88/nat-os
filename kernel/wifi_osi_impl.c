@@ -365,6 +365,30 @@ int32_t osi_impl_get_random(uint8_t *buf, uint32_t len)
  * while nothing is running out of the blob. */
 uint32_t g_phy_wakeup_fn;
 
+/* [step 200] osi_impl_evt_wait takes five arguments and the widest bridge
+ * carries three. The stub was calling it with three, so block_time_tick
+ * landed where clear_on_exit belongs and wait_for_all and ticks were
+ * whatever the registers held.
+ *
+ * Rather than add a w2c_call5 to window.S -- the file step 194 showed is
+ * sensitive to its own size -- the three flag arguments are handed over
+ * first and the wait then needs only two. No packing, so nothing is lost:
+ * ticks may legitimately be 0xFFFFFFFF. */
+static uint32_t g_evt_clear, g_evt_all, g_evt_ticks;
+
+void osi_impl_evt_wait_args(uint32_t clear, uint32_t all, uint32_t ticks);
+void osi_impl_evt_wait_args(uint32_t clear, uint32_t all, uint32_t ticks)
+{
+    g_evt_clear = clear; g_evt_all = all; g_evt_ticks = ticks;
+}
+
+uint32_t osi_impl_evt_wait2(void *h, uint32_t bits);
+uint32_t osi_impl_evt_wait2(void *h, uint32_t bits)
+{
+    return osi_impl_evt_wait(h, bits, (int)g_evt_clear, (int)g_evt_all,
+                             g_evt_ticks);
+}
+
 uint32_t osi_impl_phy_wakeup_addr(void);
 uint32_t osi_impl_phy_wakeup_addr(void) { return g_phy_wakeup_fn; }
 

@@ -198,8 +198,10 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
      * block = 0, NOT 1. A blocking scan waits for WIFI_EVENT_SCAN_DONE, and
      * _event_post is still a stub returning 0 -- so nothing is ever posted and
      * the wait cannot end. Measured: with block=1 the call never returned and
-     * the shell task stayed inside it. That is UM-NATOS-042 section 9.5's
-     * "event callbacks never fire", reached. */
+     * the shell task stayed inside it. Retried after step 200 wired the event
+     * groups to their implementation, on the theory that a NULL event group
+     * was what it waited on. It hangs identically, so that was not it and
+     * _event_post remains the suspect. */
     if (e->wifi_scan_start) {
         static const uint32_t cfg[8] = { 0u, 0u, 1u, 1u, 0u, 0u, 1500u, 0u };
         uart_puts("   scan      passive ch1 ...\n");

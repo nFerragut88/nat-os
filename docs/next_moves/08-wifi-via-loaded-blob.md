@@ -13318,6 +13318,70 @@ wifiinit start
    is activity, not a receiver.
 
 **A scan has been started. Whether it transmitted is unverified.**
+---
+
+## step 200 — the event groups were never connected
+
+The timer trap, a third time. `osi_impl_evt_create`, `_delete`, `_set`, `_clear`
+and `_wait` have existed in full the whole time, and every stub was hardcoded:
+
+```c
+_event_group_create      return 0;      /* a NULL event group          */
+_event_group_set_bits    return 0;      /* nothing ever signalled      */
+_event_group_clear_bits  return 0;
+_event_group_wait_bits   { uint32_t r = 0u; if (r) { return r; } }
+```
+
+That last is worth reading twice. The "try without blocking" fast path assigned
+zero to a local and tested it. It never called anything.
+
+### 200a. And a real argument bug underneath
+
+`osi_impl_evt_wait` takes **five** arguments — `(h, bits, clear_on_exit,
+wait_for_all, ticks)` — and the widest windowed-to-call0 bridge carries three.
+The stub called it with three, so `block_time_tick` landed where
+`clear_on_exit` belongs, and `wait_for_all` and `ticks` were whatever the
+registers happened to hold.
+
+Rather than add a `w2c_call5` to `window.S` — the file step 194 showed is
+sensitive to its own size, where removing three *dead stores* broke init — the
+three flag arguments are handed over first through `osi_impl_evt_wait_args()`
+and the wait then needs only two. No packing, so nothing is lost: `ticks` may
+legitimately be `0xFFFFFFFF`.
+
+### 200b. It did not unblock the blocking scan
+
+`esp_wifi_scan_start(cfg, 1)` still never returns, and still leaves the shell
+task inside it, identically to before.
+
+The theory was that the driver waited on an event group that could never be
+signalled. **It did not.** `_event_post` — still a stub returning 0 — remains the
+suspect. That is recorded in the comment at the call site so the next person does
+not retry it.
+
+Kept anyway, and not as consolation. A NULL event group handed to a driver that
+will call `set_bits` and `wait_bits` on it is a live defect whatever the scan
+does, and the five-into-three call was corrupting two arguments on every use.
+
+### State
+
+```
+boot 11 PASS 0 FAIL
+wintorture  10 real switches, checksum 1632 CORRECT
+blobphy     phyinit rc=0
+wifiinit start
+            init / set_mode STA / start / ps NONE / promisc /
+            channel 1 / scan   -- all ESP_OK
+```
+
+### Next
+
+`_event_post`. It is now the only remaining candidate for the blocking scan, it
+gates every request-and-wait above the MAC, and it is the last of the four
+"success reported for work never done" entries on the live path.
+
+**A scan has been started. Whether it transmitted is unverified.**
+
 
 
 
