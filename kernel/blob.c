@@ -141,6 +141,26 @@ int blob_init(const struct blob_entry *e)
         return -1;
     }
 
+    /* [step 192] Once per boot, for the same reason phyinit_run_at() is.
+     *
+     * This function ZEROES the blob's .bss. phyinit_run_at() then fills a
+     * good deal of it -- calibration data, and the pointers
+     * register_chipv7_phy leaves behind -- and guards itself so it can never
+     * rebuild them:  if (g_phy_attempted) { return -1; }
+     *
+     * So a second blob_init() wipes PHY state that nothing will restore.
+     * Measured: `blobphy` then `wifiinit start` in one boot ran blob_init
+     * TWICE and phyinit once, and esp_wifi_start faulted inside
+     * set_chanfreq_nomac with a null dereference at offset 0x6c. Alone,
+     * either command is fine.
+     *
+     * The two guards disagreed and the destructive one was the one missing.
+     * Step 191 blamed this on phyinit running twice. It does not -- the
+     * `phyinit rc=1` on the second call is the guard refusing. */
+    if (g_ready) {
+        return 0;
+    }
+
     const uint32_t irom_lo = BLOB_IROM_ADDR;
     const uint32_t irom_hi = BLOB_IROM_ADDR + BLOB_IROM_SIZE;
     const uint32_t dram_lo = BLOB_DRAM_ADDR;

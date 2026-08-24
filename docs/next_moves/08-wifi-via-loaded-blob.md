@@ -12642,6 +12642,89 @@ repeating it — not by changing anything downstream.
    to be attempted casually.
 
 **Nothing has been on air.**
+---
+
+## step 192 — the two guards disagreed
+
+The last failing case is fixed, and step 191's explanation of it was wrong.
+
+### 192a. Not double phyinit
+
+Step 191 concluded that `blobphy` followed by `wifiinit start` failed because
+both run `phyinit`, calling `register_chipv7_phy` twice. That is not what
+happens, and the evidence was already in the output:
+
+```
+phyinit   rc=0        <- blobphy
+phyinit   rc=1        <- wifiinit, refused
+```
+
+`phyinit_run_at()` has guarded itself since long before this work:
+
+```c
+if (g_phy_attempted) { return -1; }
+```
+
+with a comment recording that a second call faults inside the blob and that
+ESP-IDF calls it exactly once. The guard worked. The second phyinit never ran.
+
+The reasoning was "both commands call phyinit, so it runs twice" — geometry from
+a call graph, without reading the function. The same mistake §4.7 of the book
+names, three steps after it was quoted.
+
+### 192b. What actually happens
+
+`blob_init()` **zeroes the blob's `.bss`**, and it was not guarded. So:
+
+1. `blobphy` — `blob_init()` zeroes `.bss`; `phyinit_run_at()` fills a good deal
+   of it with calibration data and the pointers `register_chipv7_phy` leaves
+   behind.
+2. `wifiinit start` — `blob_init()` runs **again** and wipes all of it. phyinit
+   is guarded, so nothing rebuilds it. `esp_wifi_start` then dereferences what
+   was erased.
+
+```
+exccause 28  LoadProhibited  epc 0x4035c61d (set_chanfreq_nomac)  excvaddr 0x6c
+```
+
+The two guards disagreed, and **the destructive function was the one without
+one**. `blob_init()` now returns 0 immediately when `g_ready`.
+
+Consequence worth stating: reloading a newly flashed blob image now needs a
+board reset. That is the correct trade — the alternative is a function that
+silently erases live state whenever it is called twice.
+
+### 192c. The suite, in one boot
+
+```
+boot        11 PASS 0 FAIL
+wintorture  switches during the call: 10  (preemption really happened)
+            checksum 1632 expected 1632  CORRECT
+blobphy     phyinit rc=0
+wifiinit start
+            phyinit rc=1        (guarded, correctly)
+            init      returned 0x00000000  (ESP_OK)
+            start     returned 0x00000000  (ESP_OK)
+            [intr] src=0 line=27 prio=1 routed=1 nofn=0 fired: none
+                   timers=15 refused=0
+```
+
+Every command passes in a single boot for the first time in this investigation.
+
+`fired: none`. The MAC is routed to a line that can be serviced and has not
+fired. No mode is set, nothing has been received, and nothing transmitted.
+
+### Next
+
+1. `_get_random` still reports success without filling the caller's buffer --
+   the defect `_read_mac` had, unfixed since step 186 named it.
+2. A mode and a scan. That is the first action that would put anything on air.
+3. The instrumentation debt, which has grown again this session: the step-188
+   brackets and stack dumps have served their purpose, and `a0/sp out` and
+   `saved frame @` are superseded by `fault regs` and actively mislead.
+
+**Nothing has been on air.**
+
 
 
 
