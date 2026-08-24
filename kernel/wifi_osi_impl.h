@@ -42,6 +42,7 @@ void    *osi_impl_calloc(uint32_t count, uint32_t size);
 uint32_t osi_impl_free_heap(void);
 
 uint32_t osi_impl_random(void);
+int32_t  osi_impl_get_random(uint8_t *buf, uint32_t len);  /* [step 193] */
 uint32_t osi_impl_ms_to_tick(uint32_t ms);
 void     osi_impl_delay(uint32_t ticks);
 int32_t  osi_impl_current_task(void);

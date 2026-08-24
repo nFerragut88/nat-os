@@ -12724,6 +12724,67 @@ fired. No mode is set, nothing has been received, and nothing transmitted.
    `saved frame @` are superseded by `fault regs` and actively mislead.
 
 **Nothing has been on air.**
+---
+
+## step 193 — the random number generator
+
+`_rand`, `_random` and `_get_random` all answered 0, and `_get_random` did it
+while leaving the caller's buffer untouched. Same shape as `_read_mac` before
+step 186: success reported for work never done, which is worse than failing
+because the caller cannot find out. It is called during `esp_wifi_start`.
+
+**And `osi_impl_random()` already existed**, as an xorshift32, with a comment
+that set the condition for replacing it:
+
+> The ESP32 has a hardware RNG, but it is only properly random while the radio
+> is running — which is the thing being brought up. This is deterministic on
+> purpose rather than by accident, and **should be replaced once the PHY is
+> live**.
+
+Step 190 called `_phy_enable`. The condition is met, so the function now reads
+`WDEV_RND_REG` — Espressif's own constant from
+`soc/esp32/include/soc/wdev_reg.h`, not a derived one. `g_rng` is kept and still
+stirred, so the xorshift is one line away if the hardware read ever proves
+unavailable.
+
+`osi_impl_get_random()` is new: it fills the caller's buffer a word at a time,
+as `esp_fill_random` does, and returns `-1` rather than success on a null
+pointer.
+
+**Entropy, stated rather than assumed.** ESP-IDF documents this register as a
+true random number generator only while the RF subsystem is running, and a much
+weaker one otherwise. The driver's calls arrive after `esp_wifi_start`, which is
+the good side of that — but nothing here enforces it, and these entries must not
+be treated as a cryptographic source on that basis alone.
+
+Verified that the register decodes and is not stuck, across boots:
+
+```
+rng=0x592ce85b,0x30971b55
+rng=0xab345ca1,0xfa7c58e9
+rng=0x485b8340,0x7dd1ecfd
+```
+
+That is a decode test, not a randomness test, and is not offered as one.
+
+### The third duplicate
+
+This is the third thing written this session that already existed — the ETS
+timers in step 191, `osi_impl_random` here, and a duplicate ETS emulation
+thrown away in between. Each time the existing code was found only after the
+compiler refused a redefinition.
+
+The rule that would have caught all three is the same one §4.7 of the book gives
+for address maps, applied to our own tree: **grep before writing**. It is cheaper
+than the build that catches it.
+
+```
+boot 11 PASS 0 FAIL   wintorture 10 real switches, checksum CORRECT
+blobphy rc=0          wifiinit start : init ESP_OK, start ESP_OK
+```
+
+**Nothing has been on air.**
+
 
 
 

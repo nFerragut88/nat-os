@@ -276,6 +276,8 @@ extern void osi_impl_free_heap(void);      /* [step 182] */
 extern void osi_impl_queue_waiting(void); /* [step 182] */
 extern void osi_impl_thread_sem_get(void); /* [step 182] */
 extern void osi_impl_read_mac(void);       /* [step 186] */
+extern void osi_impl_random(void);         /* [step 193] */
+extern void osi_impl_get_random(void);
 extern void osi_impl_timer_arm(void);      /* [step 191] */
 extern void osi_impl_timer_arm_us(void);
 extern void osi_impl_timer_disarm(void);
@@ -1312,7 +1314,7 @@ static uint32_t osi_s_get_free_heap_size(void)
 static uint32_t osi_s_rand(void)
 {
     osi_hit(47u);
-    return 0;
+    return w2c_call0f((uint32_t)&osi_impl_random);
 }
 
 static void osi_s_dport_access_stall_other_cpu_start_wrap(void)
@@ -1523,7 +1525,7 @@ static int osi_s_nvs_erase_key(uint32_t handle, const char* key)
 static int osi_s_get_random(uint8_t *buf, size_t len)
 {
     osi_hit(79u);
-    return 0;
+    return (int)w2c_call2((uint32_t)&osi_impl_get_random, (uint32_t)buf, (uint32_t)len);
 }
 
 static int osi_s_get_time(void *t)
@@ -1535,7 +1537,7 @@ static int osi_s_get_time(void *t)
 static unsigned long osi_s_random(void)
 {
     osi_hit(81u);
-    return 0;
+    return (unsigned long)w2c_call0f((uint32_t)&osi_impl_random);
 }
 
 static void osi_s_log_write(unsigned int level, const char* tag, const char* format, ...)

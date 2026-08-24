@@ -166,6 +166,16 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
             uart_put_dec(osi_impl_timers_used());
             uart_puts(" refused=");
             uart_put_dec(g_timer_short);
+            {
+                /* [step 193] Two words from the hardware RNG. Proves the
+                 * register decodes and is not stuck; it is not a test of
+                 * randomness and must not be read as one. */
+                extern uint32_t osi_impl_random(void);
+                uart_puts("  rng=");
+                uart_put_hex(osi_impl_random());
+                uart_puts(",");
+                uart_put_hex(osi_impl_random());
+            }
         }
         uart_puts("\n");
     }

@@ -280,6 +280,53 @@ void osi_impl_mac_report(void)
     uart_puts(line);
 }
 
+/* [step 193] The hardware random number generator.
+ *
+ * _rand, _random and _get_random all answered 0, and _get_random did it while
+ * leaving the caller's buffer untouched -- the same shape as _read_mac before
+ * step 186: success reported for work never done, which is worse than failing
+ * because the caller has no way to find out. It is called during
+ * esp_wifi_start.
+ *
+ * WDEV_RND_REG is Espressif's own constant, from
+ * soc/esp32/include/soc/wdev_reg.h, not a derived one. ESP32 decodes its
+ * peripherals at both 0x3FF4xxxx and 0x6000xxxx and the SDK uses the latter for
+ * this register; the offset 0x35144 is the same either way.
+ *
+ * ENTROPY, stated rather than assumed. ESP-IDF documents that this is a true
+ * random number generator only while the RF subsystem is running, and a much
+ * weaker one otherwise. The WiFi driver's calls arrive after esp_wifi_start,
+ * so they are on the good side of that -- but nothing here enforces it, and
+ * these entries must not be treated as a cryptographic source on that basis
+ * alone. Named so the next person does not have to rediscover it.
+ *
+ * Read one word per 32 bits, as esp_fill_random does. */
+#define WDEV_RND_REG  0x60035144u
+
+int32_t osi_impl_get_random(uint8_t *buf, uint32_t len);
+int32_t osi_impl_get_random(uint8_t *buf, uint32_t len)
+{
+    if (!buf) {
+        return -1;                          /* ESP_ERR_INVALID_ARG */
+    }
+    while (len >= 4u) {
+        uint32_t w = *(volatile uint32_t *)WDEV_RND_REG;
+        buf[0] = (uint8_t)w;
+        buf[1] = (uint8_t)(w >> 8);
+        buf[2] = (uint8_t)(w >> 16);
+        buf[3] = (uint8_t)(w >> 24);
+        buf += 4;
+        len -= 4u;
+    }
+    if (len) {
+        uint32_t w = *(volatile uint32_t *)WDEV_RND_REG;
+        for (uint32_t i = 0; i < len; i++) {
+            buf[i] = (uint8_t)(w >> (8u * i));
+        }
+    }
+    return 0;                               /* ESP_OK, and it means it */
+}
+
 void *osi_impl_thread_sem_get(void);
 void *osi_impl_thread_sem_get(void)
 {
@@ -1025,20 +1072,25 @@ uint32_t osi_impl_free_heap(void) { return heap_free_bytes(); }
 
 /* ---- misc --------------------------------------------------------------- */
 
-/* xorshift32.
+/* [step 193] The hardware RNG, as this function asked to be.
  *
- * The ESP32 has a hardware RNG, but it is only properly random while the radio
- * is running — which is the thing being brought up. This is deterministic on
- * purpose rather than by accident, and should be replaced once the PHY is live
- * if anything security-relevant ever depends on it. */
+ * It was an xorshift32, and its own comment set the condition for replacing
+ * it: "should be replaced once the PHY is live". Step 190 called _phy_enable,
+ * so it is.
+ *
+ * ENTROPY, stated rather than assumed. ESP-IDF documents this register as a
+ * true random number generator only while the RF subsystem is running, and a
+ * much weaker one otherwise. The driver calls arrive after esp_wifi_start,
+ * which is the good side of that -- but nothing here enforces it, and these
+ * entries must not be treated as a cryptographic source on that basis alone.
+ *
+ * g_rng is kept and still stirred, so the xorshift can be restored by
+ * reverting one line if the hardware read ever proves unavailable. */
 uint32_t osi_impl_random(void)
 {
-    uint32_t x = g_rng;
-    x ^= x << 13;
-    x ^= x >> 17;
-    x ^= x << 5;
-    g_rng = x;
-    return x;
+    uint32_t hw = *(volatile uint32_t *)WDEV_RND_REG;
+    g_rng ^= hw;
+    return hw;
 }
 
 uint32_t osi_impl_ms_to_tick(uint32_t ms) { return (ms / 10u) ? (ms / 10u) : 1u; }
