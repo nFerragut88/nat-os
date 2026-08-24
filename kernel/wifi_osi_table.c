@@ -150,5 +150,15 @@ const char *wifi_osi_name(uint32_t i)
         "_coex_schm_flexible_period_get",
         "_magic"
     };
+    /* [step 195] Trace ids 117 and 118 are outside the struct indexing.
+     * Step 185 appended them for the two phy_common_clock entries because
+     * nat-os had already given 54 and 55 to _phy_update_country_info and
+     * _read_mac, so the two new stubs could not take their IDF field
+     * numbers without renumbering the whole trace. NM[117] is "_magic",
+     * which is not a function and is never recorded by osi_hit(), so 117
+     * as a TRACE id only ever means the stub. Without this the dump printed
+     * _phy_common_clock_enable as "_magic". */
+    if (i == 117u) { return "_phy_common_clock_enable"; }
+    if (i == 118u) { return "_phy_common_clock_disable"; }
     return (i < OSI_N) ? NM[i] : "?";
 }

@@ -12873,6 +12873,114 @@ Still outstanding: the trace prints `_phy_common_clock_enable` as `_magic`,
 because step 185 gave it a trace id outside the 1..116 the name table knows.
 
 **Nothing has been on air.**
+---
+
+## step 195 — the layout sensitivity stops being a curiosity
+
+Two small things landed. The third stopped, and the reason it stopped is the
+result worth keeping.
+
+### 195a. The trace prints the right names again
+
+`osi_hit` ids 117 and 118 are outside the struct's 0..117 indexing — step 185
+appended them for the two `phy_common_clock` stubs because nat-os had already
+given 54 and 55 to `_phy_update_country_info` and `_read_mac`. The name table
+ends at `_magic` (117), so the dump printed `_phy_common_clock_enable` as
+`_magic`. `wifi_osi_name()` now special-cases the two ids rather than resizing
+`OSI_N`, which also feeds the null-slot guard's word count.
+
+### 195b. The blob's entry table now carries set_mode and get_mode
+
+`esp_wifi_set_mode`, `esp_wifi_get_mode`, `esp_wifi_scan_start`,
+`esp_wifi_connect`, `esp_wifi_set_config` and `esp_wifi_set_channel` are all
+exported by the blob. Only the two mode entries were added: setting a mode does
+not transmit, and scan and connect do, so they stay out until that is a decision
+rather than a side effect.
+
+The fields are appended and **the version stays 4**. Appending is backward
+compatible — a kernel whose struct is shorter simply never reads them — and the
+version is what makes a stale image a clean rejection rather than a wild call.
+It will be bumped when a kernel actually declares them.
+
+### 195c. What stopped: the kernel could not grow to use them
+
+`wifi_bringup()` was extended to call `esp_wifi_set_mode(WIFI_MODE_STA)` between
+init and start, reached by `wifiinit sta`. `shell.c` did not grow — the existing
+`wifi_start_enable(str_eq(arg,"start"))` became `wifi_start_enable(arg)` and the
+parsing moved to the kernel. About twenty-five lines were added to
+`wifi_init_cfg.c`.
+
+The board then **watchdog-reset inside `phyinit`**:
+
+```
+[phy] &tasks[5]sp 0x3ffb01a0  _phy_stack ...
+rst:0x7 (TG0WDT_SYS_RESET)
+```
+
+`blobphy` alone reproduces it. `phyinit` runs long before any mode logic, so the
+new code is not being executed when it hangs.
+
+**Bisected, because two things had changed at once.** The first attempt reverted
+both sides and proved nothing; the second held the kernel fixed and moved only
+the blob:
+
+| blob | kernel | phyinit |
+|---|---|---|
+| v4, no new fields | unchanged | `rc=0` |
+| **v4, both new fields** | **unchanged** | **`rc=0`** |
+| v5, both new fields | v5, +25 lines | **watchdog reset** |
+| v4, both new fields | unchanged | `rc=0` (restored) |
+
+The blob is innocent. Both images are the same size, 606,404 bytes, so nothing
+extra was pulled from the archives and `.text` did not move. **The kernel-side
+growth is what broke it**, and what it broke is a routine that the added code
+never touches.
+
+### 195d. Three of these now, and this one blocks work
+
+| | change | effect |
+|---|---|---|
+| UM-NATOS-042 §9.2 | nine lines of `uart_puts` added to `shell.c` | hung `blob_map` |
+| step 194 | three dead stores **removed** from `w2c_call0f` | init returns `ESP_ERR_NO_MEM` |
+| step 195 | twenty-five lines added to `wifi_init_cfg.c` | `phyinit` watchdog-hangs |
+
+Growth and shrinkage, three different files, two of them IRAM-resident rather
+than the flash-mapped `shell.c` the original note blamed. The common factor is
+that the kernel image moved, and something that is not supposed to care about
+that cared.
+
+Up to now this was a documented oddity with a workaround: do not add to
+`shell.c`. It is no longer that. It has cost a step-194 cleanup, and it has now
+refused an ordinary twenty-five-line feature that is correct by inspection. Any
+further work on the driver is one careless edit away from the same wall.
+
+Reverted, and the state is the step-194 baseline with §195a and §195b kept:
+
+```
+boot 11 PASS 0 FAIL
+wintorture  10 real switches, checksum 1632 CORRECT
+blobphy     phyinit rc=0
+wifiinit start
+            init  returned 0x00000000  (ESP_OK)
+            start returned 0x00000000  (ESP_OK)
+            [intr] src=0 line=27 prio=1 routed=1 nofn=0 fired: none
+                   timers=15 refused=0
+```
+
+### Next
+
+**Understand the layout sensitivity.** Not work around it a fourth time. It is
+now the thing standing between a driver that initialises and starts, and a driver
+that does anything. Everything else on the list — a mode, a scan, the `w2c_*`
+save-area overlap — is behind it.
+
+The three known instances give a starting point that earlier ones did not: two
+are in IRAM, one in flash-mapped text; one is a removal, two are additions; and
+one of them (step 194) is bisected to three specific instructions, which is as
+small a reproducer as this is likely to get.
+
+**Nothing has been on air.**
+
 
 
 

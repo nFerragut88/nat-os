@@ -35,6 +35,8 @@ extern int register_chipv7_phy(const void *init_data, void *cal_data, int mode);
 extern int  wifi_osi_funcs_register(const void *funcs);
 extern int  esp_wifi_init_internal(const void *cfg);
 extern int  esp_wifi_start(void);
+extern int  esp_wifi_set_mode(int mode);   /* [step 195] */
+extern int  esp_wifi_get_mode(int *mode);
 
 struct blob_entry {
     uint32_t magic;          /* 'N','8','0','2' */
@@ -62,6 +64,11 @@ struct blob_entry {
     int (*osi_register)(const void *funcs);
     int (*wifi_init)(const void *cfg);
     int (*wifi_start)(void);
+    /* [step 195] Present, but the version stays 4 and the kernel struct does
+     * NOT declare them -- see docs/next_moves/08, step 195. Appending is
+     * backward compatible: an older kernel simply never reads them. */
+    int (*wifi_set_mode)(int mode);
+    int (*wifi_get_mode)(int *mode);
 };
 
 /* `used` because nothing in this translation unit references it and
@@ -89,4 +96,6 @@ const struct blob_entry blob_entry = {
     .osi_register  = wifi_osi_funcs_register,
     .wifi_init     = esp_wifi_init_internal,
     .wifi_start    = esp_wifi_start,
+    .wifi_set_mode = esp_wifi_set_mode,
+    .wifi_get_mode = esp_wifi_get_mode,
 };
