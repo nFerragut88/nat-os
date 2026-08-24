@@ -204,6 +204,7 @@ extern void osi_impl_sem_create(void);   /* address only -- see w2c_call2 */
 extern void osi_impl_recursive_mutex_create(void);   /* [step 209] address only */
 extern void osi_impl_time_us_lo(void);   /* [step 210] address only */
 extern void osi_impl_time_us_hi(void);
+extern void osi_impl_event_post(void);   /* [step 211] address only */
 extern void osi_impl_sem_delete(void);
 extern void osi_impl_sem_take(void);
 extern void osi_impl_sem_give(void);
@@ -717,11 +718,44 @@ static void osi_s_mutex_delete(void *mutex)
     (void)w2c_call1((uint32_t)&osi_impl_sem_delete, (uint32_t)mutex);
 }
 
+/* [step 211] Who holds the lock that is never released.
+ *
+ * The pool has shown "#2=0/1 heldByTask5" before every transmit since step 209:
+ * something locks g_wifi_global_lock during bring-up and never unlocks it.
+ * Recursion made that survivable for the holding task, which is why transmit
+ * works -- but any OTHER task calling a WiFi API blocks on it forever.
+ *
+ * A count cannot name the culprit and neither can a task id. The RETURN ADDRESS
+ * can: this is windowed code called directly by the blob, so
+ * __builtin_return_address(0) is the blob's own call site. Each successful lock
+ * pushes its site, each unlock pops one, and whatever is left on the stack at
+ * the end of bring-up is the acquisition that leaked. Same technique that named
+ * the WPA callback entries at step 205. */
+uint32_t g_mtx_ra[8];
+uint32_t g_mtx_h[8];
+uint32_t g_mtx_sp;
+uint32_t g_mtx_over;
+
+static void mtx_push(uint32_t h, uint32_t ra)
+{
+    if (g_mtx_sp < 8u) {
+        g_mtx_h[g_mtx_sp] = h;
+        g_mtx_ra[g_mtx_sp] = ra;
+        g_mtx_sp++;
+    } else {
+        g_mtx_over++;
+    }
+}
+
 static int32_t osi_s_mutex_lock(void *mutex)
 {
     osi_hit(21u);
     /* Try without blocking. */
-    { uint32_t r = w2c_call2((uint32_t)&osi_impl_sem_take, (uint32_t)mutex, 0u); if (r) { return (int32_t)r; } }
+    { uint32_t r = w2c_call2((uint32_t)&osi_impl_sem_take, (uint32_t)mutex, 0u);
+      if (r) {
+          mtx_push((uint32_t)mutex, (uint32_t)__builtin_return_address(0));
+          return (int32_t)r;
+      } }
     /* About to block inside windowed code. Spill first so this task is left
      * with exactly ONE live frame -- the state the ordinary context switch
      * already handles -- then unpin and release so another context may run. */
@@ -743,12 +777,25 @@ static int32_t osi_s_mutex_lock(void *mutex)
     uint32_t r2 = w2c_call2((uint32_t)&osi_impl_sem_take, (uint32_t)mutex, 0xFFFFFFFFu);
     blk_sample(2u);
     (void)w2c_call0f((uint32_t)&blob_lock);
+    if (r2) { mtx_push((uint32_t)mutex, (uint32_t)__builtin_return_address(0)); }
     return (int32_t)r2;
 }
 
 static int32_t osi_s_mutex_unlock(void *mutex)
 {
     osi_hit(22u);
+    /* Pop the matching handle, not blindly the top: the driver holds more than
+     * one mutex and they do not have to nest. */
+    for (uint32_t i = g_mtx_sp; i-- > 0u; ) {
+        if (g_mtx_h[i] == (uint32_t)mutex) {
+            for (uint32_t k = i + 1u; k < g_mtx_sp; k++) {
+                g_mtx_h[k - 1u] = g_mtx_h[k];
+                g_mtx_ra[k - 1u] = g_mtx_ra[k];
+            }
+            g_mtx_sp--;
+            break;
+        }
+    }
     return (int32_t)w2c_call1((uint32_t)&osi_impl_sem_give, (uint32_t)mutex);
 }
 
@@ -1289,7 +1336,16 @@ static void osi_s_free(void *p)
 static int32_t osi_s_event_post(const char* event_base, int32_t event_id, void* event_data, size_t event_data_size, uint32_t ticks_to_wait)
 {
     osi_hit(45u);
-    return 0;
+    /* [step 211] Was `return 0` -- ESP_OK with nothing delivered. Three of the
+     * five arguments carry the information; size and ticks_to_wait describe a
+     * copy and a wait that nat-os does not perform, so they are dropped rather
+     * than smuggled through a wider bridge. w2c_call3 is the widest that
+     * exists and window.S is not growing another (step 194). */
+    (void)event_data_size; (void)ticks_to_wait;
+    return (int32_t)w2c_call3((uint32_t)&osi_impl_event_post,
+                              (uint32_t)event_base,
+                              (uint32_t)event_id,
+                              (uint32_t)event_data);
 }
 
 static uint32_t osi_s_get_free_heap_size(void)

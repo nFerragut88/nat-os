@@ -1507,6 +1507,9 @@ void wifi_scan_sweep(uint32_t scan_fn, uint32_t num_fn, uint32_t recs_fn)
         }
     }
     uart_puts("\n");
+    /* [step 211] Again here: SCAN_DONE is posted by the scans, which run after
+     * the transmit, so the report before tx could never have contained one. */
+    wifi_event_report();
 }
 
 /* ---- TRANSMIT -- next_moves/08 step 209 ---------------------------------
@@ -1599,6 +1602,7 @@ void wifi_tx_beacons(uint32_t tx_fn, uint32_t chan_fn)
     }
 
     wifi_sem_dump("before tx");
+    wifi_event_report();
     uint32_t len = tx_build_beacon(mac);
     uart_puts("   tx        beacon ");
     uart_put_dec(len);
@@ -1669,14 +1673,39 @@ void wifi_sem_dump(const char *when)
         uart_put_dec(g_sem[i].count);
         uart_puts("/");
         uart_put_dec(g_sem[i].max);
-        if (g_sem[i].count == 0u && g_sem_owner[i]) {
+        /* [step 211] Recursive means it is a MUTEX. Without this the dump
+         * cannot tell a mutex somebody is sitting on from a signalling
+         * semaphore resting at zero, which is its correct state. */
+        uart_puts(g_sem[i].recursive ? "R" : "s");
+        /* [step 211] "held" ONLY for a recursive mutex. A signalling semaphore
+         * resting at zero is not held by anyone, and labelling it that way is
+         * what made step 209 report a leaked g_wifi_global_lock that does not
+         * exist -- see UM-NATOS-048 rev 1.1. A diagnostic that overstates its
+         * own certainty costs more than no diagnostic. */
+        if (g_sem[i].recursive && g_sem[i].depth && g_sem_owner[i]) {
             uart_puts(" heldByTask");
             uart_put_dec(g_sem_owner[i] - 1u);
+            uart_puts(" d");
+            uart_put_dec(g_sem[i].depth);
         }
         if (g_sem[i].waiters) {
             uart_puts(" w");
             uart_put_hex(g_sem[i].waiters);
         }
+    }
+    /* [step 211] Anything still on the acquisition stack leaked. The address is
+     * the blob's own call site, so it names the function that took it. */
+    {
+        extern uint32_t g_mtx_ra[8], g_mtx_h[8], g_mtx_sp, g_mtx_over;
+        uart_puts("  held:");
+        if (!g_mtx_sp) { uart_puts(" none"); }
+        for (uint32_t i = 0u; i < g_mtx_sp && i < 8u; i++) {
+            uart_puts(" h");
+            uart_put_hex(g_mtx_h[i]);
+            uart_puts("@");
+            uart_put_hex((g_mtx_ra[i] & 0x3FFFFFFFu) | 0x40000000u);
+        }
+        if (g_mtx_over) { uart_puts(" +ovf"); }
     }
     uart_puts("\n");
 }
@@ -1720,4 +1749,70 @@ int64_t osi_impl_time_us(void)
 
     if (sub >= OSI_US_PER_TICK) { sub = OSI_US_PER_TICK - 1u; }
     return (int64_t)((uint64_t)t * OSI_US_PER_TICK + sub);
+}
+
+/* [step 211] _event_post, implemented.
+ *
+ * It returned 0 -- ESP_OK -- and delivered nothing, so the driver believed
+ * every event it raised had been handled. That is harmless to the driver's own
+ * state machine, which does not read its events back, and it is why scanning
+ * and transmitting work without it. What it costs is US: SCAN_DONE, STA_START,
+ * STA_CONNECTED and above all STA_DISCONNECTED-with-a-reason-code are the only
+ * narration the driver offers, and association cannot be debugged blind.
+ *
+ * nat-os has no esp_event loop and does not need one. Events are recorded and
+ * reported; nothing subscribes, because nothing in this kernel wants a
+ * callback. The value is the record.
+ *
+ * event_base arrives as NULL, and that is not a defect here. WIFI_EVENT is a
+ * `const char *` defined by the open-source esp_event component, which is not
+ * in the blob -- the same absence that left esp_supplicant_init uncallable at
+ * step 205. The blob references a symbol nothing defines and passes zero. The
+ * ID is the information anyway, and it is unambiguous: measured, one id=2
+ * (STA_START) after esp_wifi_start, then exactly one id=1 (SCAN_DONE) per scan,
+ * 39 scans and 39 events. The pointer is still printed defensively and range-
+ * checked before being followed, in case a build ever does resolve it. */
+#define OSI_EVT_LOG 16u
+
+static struct { uint32_t base, id, data; } g_evt_log[OSI_EVT_LOG];
+static uint32_t g_evt_n;
+
+int32_t osi_impl_event_post(uint32_t base, uint32_t id, uint32_t data);
+int32_t osi_impl_event_post(uint32_t base, uint32_t id, uint32_t data)
+{
+    uint32_t crit = crit_enter();
+    if (g_evt_n < OSI_EVT_LOG) {
+        g_evt_log[g_evt_n].base = base;
+        g_evt_log[g_evt_n].id   = id;
+        g_evt_log[g_evt_n].data = data;
+    }
+    g_evt_n++;
+    crit_exit(crit);
+    return 0;                       /* ESP_OK: it really has been handled now */
+}
+
+void wifi_event_report(void);
+void wifi_event_report(void)
+{
+    uart_puts("   [evt] posted ");
+    uart_put_dec(g_evt_n);
+    uint32_t n = g_evt_n < OSI_EVT_LOG ? g_evt_n : OSI_EVT_LOG;
+    for (uint32_t i = 0u; i < n; i++) {
+        uart_puts("  ");
+        const char *b = (const char *)g_evt_log[i].base;
+        /* Only follow the pointer if it lands in mapped rodata or DRAM. */
+        if (g_evt_log[i].base >= 0x3F400000u && g_evt_log[i].base < 0x40000000u) {
+            for (uint32_t k = 0u; k < 14u && b[k]; k++) {
+                uart_putc((b[k] >= 32 && b[k] < 127) ? b[k] : '?');
+            }
+        } else {
+            /* Print the pointer, not a shrug. "?base" said the check failed
+             * and not what it rejected, which is useless for fixing it. */
+            uart_puts("base=");
+            uart_put_hex(g_evt_log[i].base);
+        }
+        uart_puts(":");
+        uart_put_dec(g_evt_log[i].id);
+    }
+    uart_puts("\n");
 }

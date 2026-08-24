@@ -1,7 +1,7 @@
 # UM-NATOS-048 — The Radio Hears, and Speaks
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.0 · 2026-08-24 · Status: **nat-os receives real 802.11 beacons and transmits frames that an independent device displays. Both directions of the radio work.**
+Revision 1.1 · 2026-08-24 · Status: **nat-os receives real 802.11 beacons and transmits frames that an independent device displays. Both directions of the radio work.**
 
 ---
 
@@ -35,6 +35,13 @@ The layout sensitivity that UM-NATOS-047 called "the thing blocking work" did
 three consecutive builds and was innocent.
 
 This report covers `next_moves/08` steps 197–209. UM-NATOS-047 covers 193–196.
+
+> **Revision 1.1** retracts a claim made in 1.0: there is no leaked
+> `g_wifi_global_lock`. §12.0 gives the measurement that disproved it and why
+> the original reading was wrong. It also records `_event_post`, done at step
+> 211, and two adapter entries corrected at step 210 — `_env_is_chip`, which
+> had been telling the driver it was running on an FPGA, and
+> `_esp_timer_get_time`, which returned zero for every timestamp.
 
 ---
 
@@ -363,7 +370,8 @@ established.
   the frame is decodable; nat-os cannot hear itself.
 - **Transmit power and rate are whatever the driver chose.** Neither was set,
   measured, or checked against the PHY init data's TX-power table.
-- **`g_wifi_global_lock` is still leaked.** See §10.
+- **`g_wifi_global_lock` is *not* leaked.** Revision 1.0 said it was. See
+  §12.0 — the claim was wrong and is retracted.
 
 ---
 
@@ -466,16 +474,50 @@ no network stack at all, and none of this report changes that.
 
 ---
 
+## 12.0 Retraction — the lock that was never leaked
+
+**Revision 1.0 of this report named a leaked `g_wifi_global_lock` as the
+highest-priority open defect. There is no such leak.**
+
+Step 211 instrumented `_mutex_lock` and `_mutex_unlock` to record the blob's own
+return address for every acquisition and pop it on release. The acquisition
+stack came back **empty** — the two are exactly balanced — while the pool still
+showed a semaphore at zero.
+
+Printing whether each semaphore is *recursive* settled it:
+
+```
+#0=1/1R   #1=1/1R   #2=0/1s
+```
+
+Both recursive mutexes are **free**. `#2` is a plain signalling semaphore —
+`osi_impl_thread_sem_get` creates them with an initial count of **0** — so zero
+is its correct resting state and nobody holds it.
+
+Two things produced the error, and both were mine. Reading "count 0" as "held"
+conflates a mutex with a semaphore. And the diagnostic printed `heldByTask5` for
+*any* semaphore at zero, which turned that conflation into an authoritative-
+looking line of output that was then believed. **A diagnostic that overstates
+its certainty costs more than no diagnostic**, and this one propagated into a
+published report. It now prints `held` only for a recursive mutex with a nonzero
+depth, and reports that depth.
+
+What remains true from §8: `_recursive_mutex_create` really did return a binary
+semaphore, `esp_wifi_80211_tx` really did deadlock re-entering it, and fixing it
+is what made transmit work. The defect and the fix are unaffected. Only the
+speculation about *why* the semaphore was at zero was wrong.
+
+---
+
 ## 12. What remains
 
-1. **The leaked `g_wifi_global_lock`.** It is held by the shell task across the
-   whole of bring-up — something locked it and never unlocked. Recursion makes
-   that harmless *for that task*, which is why transmit now works, but **any
-   other task calling a Wi-Fi API will block on it forever.** The deadlock is
-   fixed; the leak that set it up is not. This is the highest-priority item in
-   this list.
-2. **`_event_post`** is still a stub returning `ESP_OK` without delivering
-   anything. The driver has posted events into it. Association will need it.
+1. ~~**The leaked `g_wifi_global_lock`.**~~ **RETRACTED — see §12.0.**
+2. ~~**`_event_post`**~~ **— done at step 211.** It records every event the
+   driver raises and reports them. Measured: one `id=2` (`STA_START`) after
+   `esp_wifi_start`, then exactly one `id=1` (`SCAN_DONE`) per scan — 39 scans,
+   39 events. `event_base` arrives NULL because `WIFI_EVENT` is defined by the
+   open-source `esp_event` component and is not in the blob; the ID carries the
+   information.
 3. **The `wifi_ap_record_t` stride**, if more than one scan result is ever
    wanted. §6.1.
 4. **The layout sensitivity**, still unexplained. UM-NATOS-047 §5.3 stands. This

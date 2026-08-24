@@ -7,6 +7,7 @@
 void    *osi_impl_sem_create(uint32_t max, uint32_t init);
 void    *osi_impl_recursive_mutex_create(void);   /* [step 209] */
 int64_t  osi_impl_time_us(void);                 /* [step 210] */
+int32_t  osi_impl_event_post(uint32_t base, uint32_t id, uint32_t data); /* [211] */
 uint32_t osi_impl_time_us_lo(void);
 uint32_t osi_impl_time_us_hi(void);
 void     osi_impl_sem_delete(void *h);
