@@ -1404,13 +1404,21 @@ uint32_t wpa_cb_table_fill(uint32_t sta_connect)
          *   int / void         : 0
          *
          * The header is on this machine. Reading it beat guessing twice. */
-        static const uint32_t true_slots = (1u<<0)|(1u<<1)|(1u<<8)|(1u<<9)
-                                         | (1u<<10)|(1u<<12);
-        for (uint32_t i = 0u; i < 32u; i++) {
-            if (true_slots & (1u << i)) {
-                g_wpa_table[i] = (uint32_t)&wpa_cb_true_stub;
+        /* [step 247] The per-entry return values moved INTO the trampolines
+         * in vendor/windowed/wifi_glue.c, one per slot, so each call can
+         * record which slot it was. The values are unchanged -- 1 for
+         * slots 0, 1, 8, 9, 10, 12 and 0 for the rest -- and the table above
+         * is now their documentation rather than their implementation.
+         *
+         * Only ADDRESSES cross, and they cross as DATA. Slots 32..127 keep
+         * the shared stub. */
+        {
+            extern uint32_t g_wpa_slot_fn[32];
+            for (uint32_t i = 0u; i < 32u; i++) {
+                g_wpa_table[i] = g_wpa_slot_fn[i];
             }
         }
+        (void)wpa_cb_true_stub;
         g_sta_connect_fn = sta_connect;
         {   /* [step 236] and the appie entry, for the RSN IE. */
             extern uint32_t g_appie_fn;
@@ -1459,6 +1467,40 @@ void wpa_cb_report(void)
         uart_puts(" cbreason=");
         if (g_wpa_disc_reason == 0xFFFFFFFFu) { uart_puts("none"); }
         else { uart_put_dec(g_wpa_disc_reason); }
+        uart_puts("\n");
+    }
+    /* [step 247] The twelve return addresses become slot numbers.
+     *
+     * Names from struct wpa_funcs, ESP-IDF 5.1.4, which step 246 confirmed
+     * against this blob's own layout: the pointer-returning slots it names
+     * are the ones step 220 derived from crashes. */
+    {
+        static const char *const nm[25] = {
+            "sta_init", "sta_deinit", "sta_connect", "sta_connected_cb",
+            "sta_disconnected_cb", "sta_rx_eapol", "sta_in_4way", "ap_init",
+            "ap_deinit", "ap_join", "ap_remove", "ap_get_wpa_ie",
+            "ap_rx_eapol", "ap_get_peer_spp", "config_parse_string",
+            "parse_wpa_ie", "config_bss", "michael_mic_failure",
+            "wpa3_build_sae", "wpa3_parse_sae", "wpa3_hostap_auth",
+            "sta_rx_mgmt", "config_done", "owe_build_dhie",
+            "owe_process_assoc"
+        };
+        extern uint32_t g_wpa_slot_mask;
+        extern uint8_t  g_wpa_slot_seq[24];
+        uint32_t k = g_wpa_calls < 24u ? g_wpa_calls : 24u;
+        uart_puts("  wpa seq  ");
+        for (uint32_t i = 0u; i < k; i++) {
+            uart_put_dec(g_wpa_slot_seq[i]);
+            uart_puts(" ");
+        }
+        uart_puts("\n  wpa named");
+        for (uint32_t i = 0u; i < 32u; i++) {
+            if (!(g_wpa_slot_mask & (1u << i))) { continue; }
+            uart_puts("  ");
+            uart_put_dec(i);
+            uart_puts("=");
+            uart_puts(i < 25u ? nm[i] : "?");
+        }
         uart_puts("\n");
     }
     uart_puts("  wpa hits ");

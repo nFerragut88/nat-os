@@ -255,6 +255,72 @@ void wpa_sta_disconnected_cb_impl(unsigned char reason)
     g_wpa_disc_reason = (uint32_t)reason;
 }
 
+/* ---- every slot, named -- next_moves/08 step 247 ------------------------
+ *
+ * Step 246 measured that the station never associates, and left twelve
+ * wpa_cb hits recorded as RETURN ADDRESSES: which blob call site, never which
+ * supplicant entry. One stub served all 128 slots, so it could not know its
+ * own index.
+ *
+ * Now each of the first 32 slots has its own trampoline, which records its
+ * index and its caller and then returns exactly what the shared pair returned
+ * before -- 1 for the six bool entries that must be true, 0 (NULL, and false)
+ * for everything else. Same values, same ABI, one more fact per call.
+ *
+ * The addresses cross to the call0 side as DATA, in g_wpa_slot_fn below. A
+ * call0 caller reaching in to ask for them would be the exact violation that
+ * cost three identical IllegalInstructions at step 219.
+ *
+ * Slots 32..127 keep the shared stub: nothing has ever called one, and 96
+ * more trampolines to prove it is not worth the text. */
+uint32_t g_wpa_slot_mask;      /* bit i: slot i was called at least once */
+uint8_t  g_wpa_slot_seq[24];   /* the first 24 slots, IN CALL ORDER */
+
+static int wpa_cb_slot(uint32_t slot, int ret, uint32_t ra)
+{
+    g_wpa_slot_mask |= (1u << slot);
+    if (g_wpa_calls < 24u) { g_wpa_slot_seq[g_wpa_calls] = (uint8_t)slot; }
+    if (g_wpa_calls < 12u) { g_wpa_ra[g_wpa_calls] = ra; }
+    g_wpa_calls++;
+    return ret;
+}
+
+/* r is the return value, and it is per entry for the reason step 220 paid for
+ * twice: 1 everywhere crashed against a WPA3 access point, 0 everywhere hung
+ * before set_mode. */
+#define WPA_SLOT(n, r)                                                        \
+    static int wpa_cb_s##n(void);                                             \
+    static int wpa_cb_s##n(void)                                              \
+    {                                                                         \
+        return wpa_cb_slot(n, r, (uint32_t)__builtin_return_address(0));      \
+    }
+
+WPA_SLOT( 0, 1) WPA_SLOT( 1, 1) WPA_SLOT( 2, 0) WPA_SLOT( 3, 0)
+WPA_SLOT( 4, 0) WPA_SLOT( 5, 0) WPA_SLOT( 6, 0) WPA_SLOT( 7, 0)
+WPA_SLOT( 8, 1) WPA_SLOT( 9, 1) WPA_SLOT(10, 1) WPA_SLOT(11, 0)
+WPA_SLOT(12, 1) WPA_SLOT(13, 0) WPA_SLOT(14, 0) WPA_SLOT(15, 0)
+WPA_SLOT(16, 0) WPA_SLOT(17, 0) WPA_SLOT(18, 0) WPA_SLOT(19, 0)
+WPA_SLOT(20, 0) WPA_SLOT(21, 0) WPA_SLOT(22, 0) WPA_SLOT(23, 0)
+WPA_SLOT(24, 0) WPA_SLOT(25, 0) WPA_SLOT(26, 0) WPA_SLOT(27, 0)
+WPA_SLOT(28, 0) WPA_SLOT(29, 0) WPA_SLOT(30, 0) WPA_SLOT(31, 0)
+
+/* Addresses only, as DATA. .data rather than .rodata is deliberate: this array
+ * is read by the call0 side, and step 236 measured that flash-mapped rodata
+ * does not tolerate every access width. */
+uint32_t g_wpa_slot_fn[32] = {
+    (uint32_t)&wpa_cb_s0,  (uint32_t)&wpa_cb_s1,  (uint32_t)&wpa_cb_s2,
+    (uint32_t)&wpa_cb_s3,  (uint32_t)&wpa_cb_s4,  (uint32_t)&wpa_cb_s5,
+    (uint32_t)&wpa_cb_s6,  (uint32_t)&wpa_cb_s7,  (uint32_t)&wpa_cb_s8,
+    (uint32_t)&wpa_cb_s9,  (uint32_t)&wpa_cb_s10, (uint32_t)&wpa_cb_s11,
+    (uint32_t)&wpa_cb_s12, (uint32_t)&wpa_cb_s13, (uint32_t)&wpa_cb_s14,
+    (uint32_t)&wpa_cb_s15, (uint32_t)&wpa_cb_s16, (uint32_t)&wpa_cb_s17,
+    (uint32_t)&wpa_cb_s18, (uint32_t)&wpa_cb_s19, (uint32_t)&wpa_cb_s20,
+    (uint32_t)&wpa_cb_s21, (uint32_t)&wpa_cb_s22, (uint32_t)&wpa_cb_s23,
+    (uint32_t)&wpa_cb_s24, (uint32_t)&wpa_cb_s25, (uint32_t)&wpa_cb_s26,
+    (uint32_t)&wpa_cb_s27, (uint32_t)&wpa_cb_s28, (uint32_t)&wpa_cb_s29,
+    (uint32_t)&wpa_cb_s30, (uint32_t)&wpa_cb_s31
+};
+
 /* The TABLE and the code that fills and reports it are CALL0 and live in
  * kernel/wifi_osi_impl.c. Only this stub is windowed, because only this stub is
  * called by the blob (callx8). Calling wpa_cb_table_fill() from wifi_bringup()
