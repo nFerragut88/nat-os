@@ -1340,6 +1340,33 @@ extern uint32_t g_wpa_calls, g_wpa_ra[12];
 uint32_t g_wpa_table[128];
 
 uint32_t g_appie_pending;
+
+/* [step 241] The handshake needs the passphrase and SSID to derive the PMK.
+ * Same gitignored header the connect already uses; accessors so only these two
+ * lines ever see the macros. */
+#if defined(__has_include)
+#  if __has_include("wifi_secrets.h")
+#    include "wifi_secrets.h"
+#  endif
+#endif
+const char *wifi_sta_ssid(void);
+const char *wifi_sta_ssid(void)
+{
+#ifdef WIFI_STA_SSID
+    return WIFI_STA_SSID;
+#else
+    return 0;
+#endif
+}
+const char *wifi_sta_pass(void);
+const char *wifi_sta_pass(void)
+{
+#ifdef WIFI_STA_PASS
+    return WIFI_STA_PASS;
+#else
+    return 0;
+#endif
+}
 uint32_t wpa_cb_table_fill(uint32_t sta_connect);
 uint32_t wpa_cb_table_fill(uint32_t sta_connect)
 {
@@ -1390,6 +1417,15 @@ uint32_t wpa_cb_table_fill(uint32_t sta_connect)
             g_appie_fn = g_appie_pending;
         }
         g_wpa_table[2] = (uint32_t)&wpa_sta_connect_impl;
+        {   /* [step 241] slot 5 is wpa_sta_rx_eapol -- the handshake itself --
+             * and slot 6 is wpa_sta_in_4way_handshake. Both were recording
+             * stubs; slot 6 answered a constant 0, which was correct only
+             * because no handshake could ever be in flight. */
+            extern int wpa_sta_rx_eapol_impl(unsigned char *, unsigned char *, unsigned int);
+            extern int wpa_sta_in_4way_impl(void);
+            g_wpa_table[5] = (uint32_t)&wpa_sta_rx_eapol_impl;
+            g_wpa_table[6] = (uint32_t)&wpa_sta_in_4way_impl;
+        }
     }
     g_wpa_calls = 0u;
     return (uint32_t)g_wpa_table;

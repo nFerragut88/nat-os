@@ -155,6 +155,21 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
 
     extern uint32_t g_appie_pending;
         g_appie_pending = e->set_appie;
+        {   /* [step 241] Addresses only, as ever -- the windowed side calls
+             * them, this side just knows where they are. */
+            extern uint32_t g_hs_e_tx, g_hs_e_setkey, g_hs_e_ptkdone;
+            extern uint32_t g_hs_e_authdone, g_hs_e_getmac;
+            extern const char *g_hs_ssid, *g_hs_pass;
+            g_hs_e_tx       = e->internal_tx;
+            g_hs_e_setkey   = e->set_sta_key;
+            g_hs_e_ptkdone  = e->ptk_init_done;
+            g_hs_e_authdone = e->auth_done;
+            g_hs_e_getmac   = e->get_macaddr;
+            extern const char *wifi_sta_ssid(void);
+            extern const char *wifi_sta_pass(void);
+            g_hs_ssid = wifi_sta_ssid();
+            g_hs_pass = wifi_sta_pass();
+        }
         uint32_t wr = blob_call(e->wifi_register_wpa_cb,
                                 wpa_cb_table_fill(e->sta_connect_internal),
                                 0u, 0u, 0u);

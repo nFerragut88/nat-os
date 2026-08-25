@@ -32,6 +32,7 @@ extern void     netif_wifi_tick(void);
 extern uint32_t netif_wifi_report(void);
 extern void     netif_wifi_stats(void);
 extern void     tcpsrv_report(void);
+extern void     wpa_hs_report(void);
 extern void     netif_wifi_start(uint32_t tx_fn, const uint8_t *mac);
 #include <stdint.h>
 
@@ -379,6 +380,7 @@ void net_poll_for(uint32_t ticks)
                 uart_puts("s  ");
                 netif_wifi_stats();
                 tcpsrv_report();
+                wpa_hs_report();
                 uart_puts("\n");
                 task_sleep(2u);
                 continue;

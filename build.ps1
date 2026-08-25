@@ -159,6 +159,9 @@ if ($wpasrc) {
     Write-Host "== compiling WPA crypto ==" -ForegroundColor Cyan
     $wpflags = @("-mabi=windowed", "-mlongcalls", "-ffreestanding", "-fno-builtin",
                  "-fno-stack-protector", "-Os", "-std=c11",
+                 # See the note on $wflags: without this the inline os_memcpy
+                 # becomes a call to call0 memcpy from windowed code.
+                 "-fno-tree-loop-distribute-patterns",
                  "-I", "$root\kernel", "-I", "$root\vendor\wpa\include",
                  "-Wno-unused-parameter", "-Wno-sign-compare",
                  "-Wno-type-limits", "-Wno-implicit-fallthrough",
@@ -204,6 +207,20 @@ if ($winsrc) {
     # pulled in here would be an ABI crossing with no bridge.
     $wflags = @("-mabi=windowed", "-mlongcalls", "-ffreestanding", "-fno-builtin",
                 "-fno-stack-protector", "-Os", "-Wall", "-Wextra", "-std=c11",
+                # [step 241] -fno-tree-loop-distribute-patterns, and it is
+                # load-bearing here for a SECOND reason beyond kstring.c's.
+                #
+                # GCC rewrites a hand-written byte-copy loop into a call to
+                # memcpy. In kstring.c that is infinite recursion. In WINDOWED
+                # code it is an ABI violation: memcpy is call0, and a windowed
+                # caller reaches it with call8, which leaves the return address
+                # in a8 where a call0 callee returns through a0.
+                #
+                # Measured: the inline os_memcpy in vendor/wpa/include/includes.h
+                # -- written inline precisely to avoid that crossing -- was
+                # turned back into a call to it, and faulted inside memcpy
+                # storing to 0x40000000.
+                "-fno-tree-loop-distribute-patterns",
                 "-I", "$root\kernel",
                 # [step 240] the WPA crypto headers: the handshake and the
                 # self-test are windowed and call it directly.

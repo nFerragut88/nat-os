@@ -69,6 +69,17 @@ extern void esp_wifi_internal_free_rx_buffer(void *eb);
  * installs the RSN IE through this in wpa_config_assoc_ie(). */
 extern int  esp_wifi_set_appie_internal(int type, void *ie, unsigned short len,
                                         int add_wpa);
+/* [step 241] The four-way handshake needs these. set_sta_key takes NINE
+ * arguments, which is why the handshake is windowed: the call0 bridges carry
+ * four, and a windowed caller can simply call it. */
+extern int  esp_wifi_set_sta_key_internal(int alg, unsigned char *addr,
+                                          int key_idx, int set_tx,
+                                          unsigned char *seq, unsigned int seq_len,
+                                          unsigned char *key, unsigned int key_len,
+                                          int key_flag);
+extern int  esp_wifi_wpa_ptk_init_done_internal(unsigned char *mac);
+extern int  esp_wifi_auth_done_internal(void);
+extern int  esp_wifi_get_macaddr_internal(unsigned char ifx, unsigned char *mac);
 
 struct blob_entry {
     uint32_t magic;          /* 'N','8','0','2' */
@@ -125,6 +136,12 @@ struct blob_entry {
     void (*free_rx_buffer)(void *eb);
     /* [step 236] version 16. */
     int (*set_appie)(int type, void *ie, unsigned short len, int add_wpa);
+    /* [step 241] version 17 -- the handshake. */
+    int (*set_sta_key)(int, unsigned char *, int, int, unsigned char *,
+                       unsigned int, unsigned char *, unsigned int, int);
+    int (*ptk_init_done)(unsigned char *mac);
+    int (*auth_done)(void);
+    int (*get_macaddr)(unsigned char ifx, unsigned char *mac);
 };
 
 /* `used` because nothing in this translation unit references it and
@@ -133,7 +150,7 @@ struct blob_entry {
 __attribute__((section(".blob_entry"), used))
 const struct blob_entry blob_entry = {
     .magic       = 0x3230384Eu,          /* "N802" little-endian */
-    .version     = 16u,
+    .version     = 17u,
     .image_size  = (uint32_t)&_blob_image_size,
     .text_end    = (uint32_t)&_blob_text_end,
 
@@ -170,4 +187,8 @@ const struct blob_entry blob_entry = {
     .internal_tx          = esp_wifi_internal_tx,
     .free_rx_buffer       = esp_wifi_internal_free_rx_buffer,
     .set_appie            = esp_wifi_set_appie_internal,
+    .set_sta_key          = esp_wifi_set_sta_key_internal,
+    .ptk_init_done        = esp_wifi_wpa_ptk_init_done_internal,
+    .auth_done            = esp_wifi_auth_done_internal,
+    .get_macaddr          = esp_wifi_get_macaddr_internal,
 };

@@ -44,3 +44,34 @@ void wpa_selftest_report(void)
     uart_put_dec(g_wpat_fail);
     uart_puts(g_wpat_fail ? " FAILED\n" : " failed\n");
 }
+
+/* [step 242] The handshake's own counters, printed from call0. The windowed
+ * side cannot print; these say which message arrived and where it stopped. */
+extern uint32_t g_hs_have_pmk, g_hs_state, g_hs_msg1, g_hs_msg3, g_hs_done;
+extern uint32_t g_hs_mic_bad, g_hs_unwrap_bad, g_hs_tx_err, g_hs_last_keyinfo;
+extern uint32_t g_hs_in4way_calls;
+
+void wpa_hs_report(void);
+void wpa_hs_report(void)
+{
+    uart_puts("  4way pmk=");
+    uart_put_dec(g_hs_have_pmk);
+    uart_puts(" st=");
+    uart_put_dec(g_hs_state);
+    uart_puts(" m1=");
+    uart_put_dec(g_hs_msg1);
+    uart_puts(" m3=");
+    uart_put_dec(g_hs_msg3);
+    uart_puts(" done=");
+    uart_put_dec(g_hs_done);
+    uart_puts(" micbad=");
+    uart_put_dec(g_hs_mic_bad);
+    uart_puts(" unwrap=");
+    uart_put_dec(g_hs_unwrap_bad);
+    uart_puts(" txerr=");
+    uart_put_dec(g_hs_tx_err);
+    uart_puts(" ki=");
+    uart_put_hex(g_hs_last_keyinfo);
+    uart_puts(" poll=");
+    uart_put_dec(g_hs_in4way_calls);
+}

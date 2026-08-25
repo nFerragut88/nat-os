@@ -253,6 +253,7 @@ uint32_t g_sta_connect_calls;
 uint32_t g_sta_connect_rc = 0xFFFFFFFFu;
 
 void wpa_install_rsn_ie(void);   /* defined below */
+void wpa_hs_arm(void *bssid);
 extern uint32_t g_appie_fn;
 int wpa_sta_connect_impl(void *bssid);
 int wpa_sta_connect_impl(void *bssid)
@@ -266,6 +267,16 @@ int wpa_sta_connect_impl(void *bssid)
      * the order ESP-IDF uses: wpa_config_bss() installs it, then
      * esp_wifi_sta_connect_internal() runs. */
     wpa_install_rsn_ie();
+
+    /* [step 241] Derive the PMK and arm the handshake, once, here -- this is
+     * windowed code and the crypto is windowed, so PBKDF2 is a direct call.
+     *
+     * PBKDF2 at 4096 iterations is NOT free: step 240 measured three of them
+     * taking most of a minute. One is done, and only when the passphrase or
+     * SSID has changed, because recomputing it per association would add tens
+     * of seconds to every connect. */
+    wpa_hs_arm(bssid);
+
     int rc = ((sta_conn_fn)g_sta_connect_fn)(bssid);
     g_sta_connect_rc = (uint32_t)rc;
     return rc;
@@ -390,4 +401,57 @@ void wpa_install_rsn_ie(void)
      * IDF passes for this call site. */
     g_appie_rc = (uint32_t)((appie_fn)g_appie_fn)(4, g_rsn_ie,
                                                   (unsigned short)sizeof g_rsn_ie, 1);
+}
+
+
+/* ---- arming the handshake -- next_moves/08 step 241 ---------------------- */
+
+#include "includes.h"   /* u8/size_t: sha1.h expects the utils layer */
+#include "sha1.h"
+
+extern void wpa_hs_set_pmk(const unsigned char *pmk);
+extern void wpa_hs_set_addrs(const unsigned char *ap, const unsigned char *own);
+extern uint32_t g_hs_tx_fn, g_hs_setkey_fn, g_hs_ptkdone_fn, g_hs_authdone_fn;
+
+/* Filled by the kernel from the entry table before the connect. */
+uint32_t g_hs_e_tx, g_hs_e_setkey, g_hs_e_ptkdone, g_hs_e_authdone, g_hs_e_getmac;
+const char *g_hs_ssid;
+const char *g_hs_pass;
+
+static unsigned char g_hs_pmk[32];
+static uint32_t g_hs_pmk_ready;
+
+void wpa_hs_arm(void *bssid);
+void wpa_hs_arm(void *bssid)
+{
+    typedef int (*getmac_fn_t)(unsigned char, unsigned char *);
+    /* [step 241] NOT an aggregate initializer. GCC emits a call to memcpy for
+     * `own[6] = {0,...}` -- a language-level copy, not a builtin, so
+     * -fno-builtin does not stop it -- and memcpy is CALL0 while this file is
+     * windowed. Measured: call8 memcpy, faulting at 0x40000000.
+     *
+     * The general hazard, which applies to every windowed file in this tree:
+     * aggregate initializers and struct assignments can emit calls to call0
+     * string functions that no source line mentions. */
+    unsigned char own[6];
+    own[0] = 0; own[1] = 0; own[2] = 0;
+    own[3] = 0; own[4] = 0; own[5] = 0;
+
+    g_hs_tx_fn       = g_hs_e_tx;
+    g_hs_setkey_fn   = g_hs_e_setkey;
+    g_hs_ptkdone_fn  = g_hs_e_ptkdone;
+    g_hs_authdone_fn = g_hs_e_authdone;
+
+    if (g_hs_e_getmac) { (void)((getmac_fn_t)g_hs_e_getmac)(0, own); }
+
+    if (!g_hs_pmk_ready && g_hs_ssid && g_hs_pass) {
+        unsigned int sl = 0u;
+        while (g_hs_ssid[sl]) { sl++; }
+        if (pbkdf2_sha1(g_hs_pass, (const unsigned char *)g_hs_ssid, sl,
+                        4096, g_hs_pmk, 32) == 0) {
+            g_hs_pmk_ready = 1u;
+        }
+    }
+    if (g_hs_pmk_ready) { wpa_hs_set_pmk(g_hs_pmk); }
+    wpa_hs_set_addrs((const unsigned char *)bssid, own);
 }

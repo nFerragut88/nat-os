@@ -23,7 +23,7 @@
 #include "flash.h"   /* BLOB_* reservations; this API is defined in terms of them */
 
 #define BLOB_MAGIC   0x3230384Eu     /* "N802" */
-#define BLOB_VERSION 16u
+#define BLOB_VERSION 17u
 
 /* Mirrors vendor/net80211/blob_entry.c. If one changes, the other must. The
  * magic and version exist so a stale image in flash is REJECTED rather than
@@ -73,6 +73,11 @@ struct blob_entry {
     uint32_t free_rx_buffer;     /* esp_wifi_internal_free_rx_buffer(eb)   */
     /* [step 236] version 16. */
     uint32_t set_appie;          /* esp_wifi_set_appie_internal(t,ie,l,a)  */
+    /* [step 241] version 17 -- the four-way handshake. */
+    uint32_t set_sta_key;        /* esp_wifi_set_sta_key_internal, 9 args  */
+    uint32_t ptk_init_done;      /* esp_wifi_wpa_ptk_init_done_internal    */
+    uint32_t auth_done;          /* esp_wifi_auth_done_internal            */
+    uint32_t get_macaddr;        /* esp_wifi_get_macaddr_internal(ifx,mac) */
 };
 
 /* Programs the MMU and returns the table, or 0 if the region does not hold a
