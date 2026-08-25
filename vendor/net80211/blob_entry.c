@@ -80,6 +80,11 @@ extern int  esp_wifi_set_sta_key_internal(int alg, unsigned char *addr,
 extern int  esp_wifi_wpa_ptk_init_done_internal(unsigned char *mac);
 extern int  esp_wifi_auth_done_internal(void);
 extern int  esp_wifi_get_macaddr_internal(unsigned char ifx, unsigned char *mac);
+/* [step 244] What the DRIVER thinks it is connecting to. If the profile says
+ * open while the RSN IE says WPA2, that alone explains an association that
+ * completes and then times out with no EAPOL delivered. */
+extern int  esp_wifi_sta_get_prof_authmode_internal(void);
+extern int  esp_wifi_sta_prof_is_rsn_internal(void);
 
 struct blob_entry {
     uint32_t magic;          /* 'N','8','0','2' */
@@ -142,6 +147,9 @@ struct blob_entry {
     int (*ptk_init_done)(unsigned char *mac);
     int (*auth_done)(void);
     int (*get_macaddr)(unsigned char ifx, unsigned char *mac);
+    /* [step 244] version 18 -- diagnostics, not capability. */
+    int (*prof_authmode)(void);
+    int (*prof_is_rsn)(void);
 };
 
 /* `used` because nothing in this translation unit references it and
@@ -150,7 +158,7 @@ struct blob_entry {
 __attribute__((section(".blob_entry"), used))
 const struct blob_entry blob_entry = {
     .magic       = 0x3230384Eu,          /* "N802" little-endian */
-    .version     = 17u,
+    .version     = 18u,
     .image_size  = (uint32_t)&_blob_image_size,
     .text_end    = (uint32_t)&_blob_text_end,
 
@@ -191,4 +199,6 @@ const struct blob_entry blob_entry = {
     .ptk_init_done        = esp_wifi_wpa_ptk_init_done_internal,
     .auth_done            = esp_wifi_auth_done_internal,
     .get_macaddr          = esp_wifi_get_macaddr_internal,
+    .prof_authmode        = esp_wifi_sta_get_prof_authmode_internal,
+    .prof_is_rsn          = esp_wifi_sta_prof_is_rsn_internal,
 };

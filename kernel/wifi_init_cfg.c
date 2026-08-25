@@ -297,6 +297,18 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
 
     wifi_try_connect(e->wifi_set_config, e->wifi_connect);
 
+    /* [step 244] What does the driver think it just connected to? A profile
+     * that says OPEN while the RSN IE on the air says WPA2 would explain an
+     * association that completes and then times out with no EAPOL: the driver
+     * would have no reason to route a handshake it does not expect. */
+    if (e->prof_authmode) {
+        uart_puts("   prof      authmode ");
+        uart_put_dec(blob_call(e->prof_authmode, 0u, 0u, 0u, 0u));
+        uart_puts("  is_rsn ");
+        uart_put_dec(e->prof_is_rsn ? blob_call(e->prof_is_rsn, 0u,0u,0u,0u) : 9u);
+        uart_puts("   (authmode 0 = OPEN, 3 = WPA2_PSK)\n");
+    }
+
     /* [step 222] The data path, after the association. */
     wifi_rx_start(e->reg_rxcb, e->free_rx_buffer, e->wifi_promiscuous,
                   e->internal_tx);

@@ -23,7 +23,7 @@
 #include "flash.h"   /* BLOB_* reservations; this API is defined in terms of them */
 
 #define BLOB_MAGIC   0x3230384Eu     /* "N802" */
-#define BLOB_VERSION 17u
+#define BLOB_VERSION 18u
 
 /* Mirrors vendor/net80211/blob_entry.c. If one changes, the other must. The
  * magic and version exist so a stale image in flash is REJECTED rather than
@@ -78,6 +78,9 @@ struct blob_entry {
     uint32_t ptk_init_done;      /* esp_wifi_wpa_ptk_init_done_internal    */
     uint32_t auth_done;          /* esp_wifi_auth_done_internal            */
     uint32_t get_macaddr;        /* esp_wifi_get_macaddr_internal(ifx,mac) */
+    /* [step 244] version 18 -- what the driver believes about the network. */
+    uint32_t prof_authmode;      /* esp_wifi_sta_get_prof_authmode_internal */
+    uint32_t prof_is_rsn;        /* esp_wifi_sta_prof_is_rsn_internal       */
 };
 
 /* Programs the MMU and returns the table, or 0 if the region does not hold a

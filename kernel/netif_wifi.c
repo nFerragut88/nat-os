@@ -40,6 +40,7 @@ static uint32_t     g_tx_fn;
 static uint32_t     g_up;
 
 uint32_t g_lwip_tx, g_lwip_tx_err, g_lwip_rx, g_lwip_rx_drop;
+uint32_t g_lwip_eapol;   /* [step 245] EAPOL frames seen at the netif */
 
 /* ---- transmit ----------------------------------------------------------
  *
@@ -100,6 +101,18 @@ void netif_wifi_input(const uint8_t *frame, uint32_t len);
 void netif_wifi_input(const uint8_t *frame, uint32_t len)
 {
     if (!g_up || !len) { return; }
+
+    /* [step 245] Is EAPOL arriving HERE instead of at the supplicant?
+     *
+     * The driver hands every data frame to the callback registered with
+     * esp_wifi_internal_reg_rxcb, and lwIP drops ethertype 0x888E as unknown.
+     * If the four-way handshake's message one is being delivered to the netif,
+     * that alone explains m1=0: the frame arrives, and the one component that
+     * would recognise it never sees it. Counted before anything else touches
+     * the frame. */
+    if (len >= 14u && frame[12] == 0x88u && frame[13] == 0x8Eu) {
+        g_lwip_eapol++;
+    }
 
     struct pbuf *p = pbuf_alloc(PBUF_RAW, (uint16_t)len, PBUF_POOL);
     if (!p) {
@@ -193,5 +206,7 @@ void netif_wifi_stats(void)
     uart_put_dec(g_lwip_tx);
     uart_puts(" err ");
     uart_put_dec(g_lwip_tx_err);
+    uart_puts("  eapol@netif ");
+    uart_put_dec(g_lwip_eapol);
     uart_puts("\n");
 }
