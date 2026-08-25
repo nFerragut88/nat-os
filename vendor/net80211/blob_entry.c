@@ -65,6 +65,10 @@ extern int  esp_wifi_sta_connect_internal(void *bssid);
 extern int  esp_wifi_internal_reg_rxcb(int ifx, void *fn);
 extern int  esp_wifi_internal_tx(int ifx, void *buf, unsigned short len);
 extern void esp_wifi_internal_free_rx_buffer(void *eb);
+/* [step 236] The association information element. ESP-IDF's supplicant
+ * installs the RSN IE through this in wpa_config_assoc_ie(). */
+extern int  esp_wifi_set_appie_internal(int type, void *ie, unsigned short len,
+                                        int add_wpa);
 
 struct blob_entry {
     uint32_t magic;          /* 'N','8','0','2' */
@@ -119,6 +123,8 @@ struct blob_entry {
     int (*reg_rxcb)(int ifx, void *fn);
     int (*internal_tx)(int ifx, void *buf, unsigned short len);
     void (*free_rx_buffer)(void *eb);
+    /* [step 236] version 16. */
+    int (*set_appie)(int type, void *ie, unsigned short len, int add_wpa);
 };
 
 /* `used` because nothing in this translation unit references it and
@@ -127,7 +133,7 @@ struct blob_entry {
 __attribute__((section(".blob_entry"), used))
 const struct blob_entry blob_entry = {
     .magic       = 0x3230384Eu,          /* "N802" little-endian */
-    .version     = 15u,
+    .version     = 16u,
     .image_size  = (uint32_t)&_blob_image_size,
     .text_end    = (uint32_t)&_blob_text_end,
 
@@ -163,4 +169,5 @@ const struct blob_entry blob_entry = {
     .reg_rxcb             = esp_wifi_internal_reg_rxcb,
     .internal_tx          = esp_wifi_internal_tx,
     .free_rx_buffer       = esp_wifi_internal_free_rx_buffer,
+    .set_appie            = esp_wifi_set_appie_internal,
 };

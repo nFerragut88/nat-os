@@ -1339,6 +1339,7 @@ extern uint32_t g_wpa_calls, g_wpa_ra[12];
 
 uint32_t g_wpa_table[128];
 
+uint32_t g_appie_pending;
 uint32_t wpa_cb_table_fill(uint32_t sta_connect);
 uint32_t wpa_cb_table_fill(uint32_t sta_connect)
 {
@@ -1384,6 +1385,10 @@ uint32_t wpa_cb_table_fill(uint32_t sta_connect)
             }
         }
         g_sta_connect_fn = sta_connect;
+        {   /* [step 236] and the appie entry, for the RSN IE. */
+            extern uint32_t g_appie_fn;
+            g_appie_fn = g_appie_pending;
+        }
         g_wpa_table[2] = (uint32_t)&wpa_sta_connect_impl;
     }
     g_wpa_calls = 0u;
@@ -1937,7 +1942,14 @@ void wifi_event_report(void)
                  * the ACCESS POINT; 200+ are Espressif's own. The distinction
                  * matters: reason 2 means the AP dropped us, not that the
                  * driver failed. */
-                uart_puts(rr == 2u   ? " AUTH_EXPIRE(AP dropped us)"
+                /* [step 237] The handshake range. 15 and 39 are what a
+                 * station that ASSOCIATES and then cannot answer EAPOL looks
+                 * like -- the distinction from 203 is the whole result. */
+                uart_puts(rr == 15u  ? " 4WAY_HANDSHAKE_TIMEOUT"
+                        : rr == 16u  ? " GROUP_KEY_UPDATE_TIMEOUT"
+                        : rr == 17u  ? " IE_IN_4WAY_DIFFERS"
+                        : rr == 39u  ? " TIMEOUT(associated, no handshake)"
+                        : rr == 2u   ? " AUTH_EXPIRE(AP dropped us)"
                         : rr == 3u   ? " AUTH_LEAVE"
                         : rr == 4u   ? " ASSOC_EXPIRE"
                         : rr == 8u   ? " ASSOC_LEAVE"

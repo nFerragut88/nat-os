@@ -252,6 +252,8 @@ uint32_t g_sta_connect_fn;     /* set from the entry table at bring-up */
 uint32_t g_sta_connect_calls;
 uint32_t g_sta_connect_rc = 0xFFFFFFFFu;
 
+void wpa_install_rsn_ie(void);   /* defined below */
+extern uint32_t g_appie_fn;
 int wpa_sta_connect_impl(void *bssid);
 int wpa_sta_connect_impl(void *bssid)
 {
@@ -260,6 +262,10 @@ int wpa_sta_connect_impl(void *bssid)
     if (!g_sta_connect_fn) {
         return 1;                       /* nothing to call; behave as before */
     }
+    /* [step 236] Declare the RSN IE before the association is driven, which is
+     * the order ESP-IDF uses: wpa_config_bss() installs it, then
+     * esp_wifi_sta_connect_internal() runs. */
+    wpa_install_rsn_ie();
     int rc = ((sta_conn_fn)g_sta_connect_fn)(bssid);
     g_sta_connect_rc = (uint32_t)rc;
     return rc;
@@ -319,4 +325,69 @@ int nat_rx_cb(void *buffer, unsigned short len, void *eb)
 
     if (eb && g_rx_free_fn) { ((free_fn)g_rx_free_fn)(eb); }
     return 0;                                   /* ESP_OK */
+}
+
+/* ---- the RSN information element -- next_moves/08 step 236 --------------
+ *
+ * Step 219 measured WPA2 failing at reason 203, ASSOC_FAIL: the access point
+ * rejects an association request that carries no RSN information element. That
+ * IE is what ESP-IDF's wpa_config_bss() builds and wpa_config_assoc_ie()
+ * installs with esp_wifi_set_appie_internal(WIFI_APPIE_RSN, ...).
+ *
+ * And for WPA2-PSK with CCMP it is a CONSTANT. No PMK, no PBKDF2, no crypto of
+ * any kind -- it is a declaration of what this station intends to negotiate,
+ * not proof that it can:
+ *
+ *   30 14                element 48 (RSN), length 20
+ *   01 00                version 1
+ *   00 0F AC 04          group cipher            CCMP
+ *   01 00  00 0F AC 04   one pairwise cipher     CCMP
+ *   01 00  00 0F AC 02   one AKM                 PSK
+ *   00 00                RSN capabilities
+ *
+ * So this is a bounded experiment rather than a supplicant. If the association
+ * now SUCCEEDS and fails later at the four-way handshake, step 219's reading
+ * was right and what remains is exactly the crypto. If it still fails at 203,
+ * the reading was wrong and the IE was never the obstacle.
+ *
+ * A full port is a much larger job: esp_wpa_main.c alone drags in utils/eloop,
+ * several ESP-IDF headers and the whole ap/hostapd side even for a station,
+ * across thirty-odd files plus a crypto layer. Worth knowing the answer to
+ * this question before committing to that. */
+
+/* [step 237] NOT const, and 4-byte aligned. As `static const uint8_t[22]` this
+ * landed in .rodata, which on the ESP32 is FLASH mapped through the data cache
+ * at 0x3F4xxxxx -- and handing that pointer to the blob produced
+ *
+ *     exccause 3 LoadStoreError   epc 0x40310458   excvaddr 0x3f40b334
+ *
+ * a fault inside the driver reading our own IE. Flash-mapped DROM does not
+ * tolerate the access widths and alignments that RAM does, and a 22-byte array
+ * has no alignment guarantee at all.
+ *
+ * Dropping const puts it in .data -- RAM -- and the alignment attribute makes
+ * the width question moot. The general rule, which this project has now paid
+ * for once: a buffer handed to the blob must live in RAM. */
+static uint8_t g_rsn_ie[22] __attribute__((aligned(4))) = {
+    0x30, 0x14,
+    0x01, 0x00,
+    0x00, 0x0F, 0xAC, 0x04,
+    0x01, 0x00, 0x00, 0x0F, 0xAC, 0x04,
+    0x01, 0x00, 0x00, 0x0F, 0xAC, 0x02,
+    0x00, 0x00
+};
+
+uint32_t g_appie_fn;
+uint32_t g_appie_rc = 0xFFFFFFFFu;
+
+void wpa_install_rsn_ie(void);
+
+void wpa_install_rsn_ie(void)
+{
+    typedef int (*appie_fn)(int, const void *, unsigned short, int);
+    if (!g_appie_fn) { return; }
+    /* WIFI_APPIE_RSN is 4, from esp_wifi_driver.h. The trailing 1 is what
+     * IDF passes for this call site. */
+    g_appie_rc = (uint32_t)((appie_fn)g_appie_fn)(4, g_rsn_ie,
+                                                  (unsigned short)sizeof g_rsn_ie, 1);
 }
