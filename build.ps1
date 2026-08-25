@@ -76,6 +76,7 @@ $cflags = @(
     # lwIP: its own headers, plus vendor/lwip/include/arch/cc.h. lwipopts.h
     # lives in kernel/ and is found by the -I above.
     "-I", "$root\vendor\lwip\include",
+    "-I", "$root\vendor\wpa\include",
     "-DBOARD_$($Board.ToUpper())"
 )
 if ($WiFi) { $cflags += "-DBOARD_WIFI_OVERRIDE=1" }
@@ -134,6 +135,32 @@ foreach ($src in (Get-ChildItem "$root\kernel" -Include *.c,*.S -Recurse)) {
 # -Wno-* because lwIP is warning-clean under ITS build, not under -Wall -Wextra
 # with this vintage of GCC. Silencing them for vendored code keeps nat-os's own
 # warnings visible, which is the only reason warnings are useful here.
+# WPA crypto, vendored in vendor/wpa: SHA-1, HMAC-SHA1, PBKDF2, the SHA-1 PRF,
+# AES and AES key unwrap -- the primitives WPA2-PSK needs. Compiled call0 like
+# the kernel.
+#
+# These are NOT hand-written, deliberately: hand-rolled SHA-1 and AES is where
+# subtle, silent, security-relevant bugs live. The four-way handshake state
+# machine IS hand-written, because porting ESP-IDF's rsn_supp would mean 5,660
+# lines handling five protocols where nat-os needs one, plus utils/eloop and
+# wpabuf. Both halves of that split were measured before choosing.
+#
+# Same -Wno-* reasoning as lwIP: vendored code's warnings would drown nat-os's.
+$wpasrc = Get-ChildItem "$root\vendor\wpa\src\*.c" -ErrorAction SilentlyContinue
+if ($wpasrc) {
+    Write-Host "== compiling WPA crypto ==" -ForegroundColor Cyan
+    $wpflags = $cflags + @("-Wno-unused-parameter", "-Wno-sign-compare",
+                           "-Wno-type-limits", "-Wno-implicit-fallthrough",
+                           "-Wno-unused-but-set-variable", "-Wno-char-subscripts")
+    foreach ($src in $wpasrc) {
+        $obj = Join-Path $build ("wpa_" + $src.Name + ".o")
+        & $gcc @wpflags -c $src.FullName -o $obj
+        if ($LASTEXITCODE -ne 0) { throw "wpa crypto compile failed: $($src.Name)" }
+        $objs += $obj
+    }
+    Write-Host ("  {0} WPA crypto objects" -f $wpasrc.Count)
+}
+
 $lwipsrc = Get-ChildItem "$root\vendor\lwip\src\*.c" -ErrorAction SilentlyContinue
 if ($lwipsrc) {
     Write-Host "== compiling lwIP ==" -ForegroundColor Cyan

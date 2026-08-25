@@ -142,7 +142,12 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
     extern uint32_t wpa_cb_table_fill(uint32_t sta_connect);
     extern void wpa_cb_report(void);
     if (e->wifi_register_wpa_cb) {
-        extern uint32_t g_appie_pending;
+        /* [step 239] Prove the crypto before the radio is asked to rely on it.
+     * Runs once, costs a few milliseconds, and turns "the handshake fails" from
+     * a question about six things into a question about one. */
+    { extern uint32_t wpa_selftest(void); (void)wpa_selftest(); }
+
+    extern uint32_t g_appie_pending;
         g_appie_pending = e->set_appie;
         uint32_t wr = blob_call(e->wifi_register_wpa_cb,
                                 wpa_cb_table_fill(e->sta_connect_internal),

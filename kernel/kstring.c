@@ -184,3 +184,14 @@ int atoi(const char *s)
     while (*s >= '0' && *s <= '9') { v = v * 10 + (*s - '0'); s++; }
     return v * sign;
 }
+
+/* [step 238] For the vendored WPA crypto: os_zalloc, and the memcmp its
+ * headers declare. */
+void *wpa_zalloc(unsigned int n);
+void *wpa_zalloc(unsigned int n)
+{
+    extern void *heap_alloc(unsigned int n);
+    void *p = heap_alloc(n);
+    if (p) { memset(p, 0, n); }
+    return p;
+}
