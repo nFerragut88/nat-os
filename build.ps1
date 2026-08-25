@@ -73,6 +73,9 @@ $cflags = @(
     "-fno-tree-loop-distribute-patterns",
     "-Os", "-Wall", "-Wextra", "-std=c11",
     "-I", "$root\kernel",
+    # lwIP: its own headers, plus vendor/lwip/include/arch/cc.h. lwipopts.h
+    # lives in kernel/ and is found by the -I above.
+    "-I", "$root\vendor\lwip\include",
     "-DBOARD_$($Board.ToUpper())"
 )
 if ($WiFi) { $cflags += "-DBOARD_WIFI_OVERRIDE=1" }
@@ -119,6 +122,31 @@ foreach ($src in (Get-ChildItem "$root\kernel" -Include *.c,*.S -Recurse)) {
     & $gcc @cflags -c $src.FullName -o $obj
     if ($LASTEXITCODE -ne 0) { throw "compile failed: $($src.Name)" }
     $objs += $obj
+}
+
+# lwIP, vendored in vendor/lwip. Compiled call0 exactly like the kernel -- it is
+# ordinary C with no ABI opinion, and it runs on nat-os tasks, not the blob's.
+#
+# NOT under kernel/, deliberately: that directory is globbed recursively, and
+# twenty-three files of somebody else's code sitting inside it would blur the
+# line between what this project wrote and what it merely uses.
+#
+# -Wno-* because lwIP is warning-clean under ITS build, not under -Wall -Wextra
+# with this vintage of GCC. Silencing them for vendored code keeps nat-os's own
+# warnings visible, which is the only reason warnings are useful here.
+$lwipsrc = Get-ChildItem "$root\vendor\lwip\src\*.c" -ErrorAction SilentlyContinue
+if ($lwipsrc) {
+    Write-Host "== compiling lwIP ==" -ForegroundColor Cyan
+    $lwflags = $cflags + @("-Wno-unused-parameter", "-Wno-sign-compare",
+                           "-Wno-address", "-Wno-type-limits",
+                           "-Wno-implicit-fallthrough", "-Wno-array-bounds")
+    foreach ($src in $lwipsrc) {
+        $obj = Join-Path $build ("lwip_" + $src.Name + ".o")
+        & $gcc @lwflags -c $src.FullName -o $obj
+        if ($LASTEXITCODE -ne 0) { throw "lwip compile failed: $($src.Name)" }
+        $objs += $obj
+    }
+    Write-Host ("  {0} lwIP objects" -f $lwipsrc.Count)
 }
 
 # Objects built for the WINDOWED ABI, linked alongside the call0 kernel.

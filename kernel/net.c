@@ -26,6 +26,12 @@
 #include "blobcall.h"
 #include "critical.h"
 #include "timer.h"
+
+extern void     netif_wifi_input(const uint8_t *frame, uint32_t len);
+extern void     netif_wifi_tick(void);
+extern uint32_t netif_wifi_report(void);
+extern void     netif_wifi_stats(void);
+extern void     netif_wifi_start(uint32_t tx_fn, const uint8_t *mac);
 #include <stdint.h>
 
 /* [step 231] 512, was 160 -- and 160 is why DHCP never completed.
@@ -58,6 +64,20 @@ static uint8_t  g_ip[4];        /* all zero until DHCP says otherwise */
 static uint8_t  g_srv[4];
 static uint32_t g_have_ip;
 static uint32_t g_tx_fn;
+
+/* [step 233] Which stack owns received frames.
+ *
+ * lwIP and the hand-written ARP/ICMP in this file would BOTH answer the same
+ * ARP request if both saw it, and two replies for one address from one MAC is
+ * a way to confuse a peer's cache rather than a redundancy. So each frame goes
+ * to exactly one of them.
+ *
+ * lwIP by default -- it is the real stack, it has TCP and UDP, and its DHCP
+ * client is code somebody else has already debugged. The hand-written path
+ * stays because it is what proved the data path works at all, and because a
+ * fallback that has been seen to work is worth keeping while the new thing is
+ * being trusted. */
+uint32_t g_use_lwip = 1u;
 
 /* Counters -- the report is the result. */
 uint32_t g_net_arp_req, g_net_arp_rep, g_net_icmp_req, g_net_icmp_rep;
@@ -300,6 +320,12 @@ void net_set_tx(uint32_t tx_fn, const uint8_t *mac)
      * .200 is chosen to sit well clear of a hotspot's DHCP pool, which hands
      * out low addresses first. DHCP still runs, and an ACK still overrides
      * this -- the static value is a floor, not a lock. */
+    if (g_use_lwip) {
+        /* [step 233] lwIP owns addressing now: its DHCP client assigns one,
+         * and a hardcoded address here would fight it. */
+        netif_wifi_start(tx_fn, mac);
+        return;
+    }
     if (!g_have_ip) {
         g_ip[0] = 10u; g_ip[1] = 224u; g_ip[2] = 203u; g_ip[3] = 200u;
         g_have_ip = 1u;
@@ -320,13 +346,40 @@ void net_poll_for(uint32_t ticks)
     uint32_t last = 0u;
     while ((timer_ticks() - t0) < ticks) {
         while (g_tail != g_head) {
-            net_handle(g_q[g_tail], g_qlen[g_tail]);
+            if (g_use_lwip) {
+                /* The ring holds a volatile copy; lwIP wants a plain pointer.
+                 * The cast is safe because the producer has already finished
+                 * with this slot -- g_tail only advances past frames the
+                 * enqueue side committed. */
+                netif_wifi_input((const uint8_t *)g_q[g_tail], g_qlen[g_tail]);
+            } else {
+                net_handle(g_q[g_tail], g_qlen[g_tail]);
+            }
             g_tail = (g_tail + 1u) % NET_SLOTS;
+        }
+        /* lwIP's timers drive DHCP retries, ARP expiry and every TCP
+         * retransmission. Skipping this does not slow the stack down; it stops
+         * it recovering from anything. */
+        if (g_use_lwip) {
+            netif_wifi_tick();
+            (void)netif_wifi_report();
         }
         /* A silent minute is indistinguishable from a hang. Say something. */
         uint32_t el = timer_ticks() - t0;
         if (el - last >= 1000u) {
             last = el;
+            /* [step 234] In lwIP mode the counters below belong to the
+             * hand-written path and stay at zero, which reads as "nothing is
+             * happening" when in fact everything is. Report whoever is
+             * actually handling the frames. */
+            if (g_use_lwip) {
+                uart_puts("   lwip      +");
+                uart_put_dec(el / 100u);
+                uart_puts("s  ");
+                netif_wifi_stats();
+                task_sleep(2u);
+                continue;
+            }
             uart_puts("   net       +");
             uart_put_dec(el / 100u);
             uart_puts("s frames ");
@@ -371,4 +424,5 @@ void net_report(void)
     uart_puts("->");
     uart_put_dec(g_net_icmp_rep);
     uart_puts(g_have_ip ? "  [have IP]\n" : "  [no IP]\n");
+    if (g_use_lwip) { netif_wifi_stats(); }
 }
