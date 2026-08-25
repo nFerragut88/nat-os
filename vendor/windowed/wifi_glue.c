@@ -444,14 +444,37 @@ void wpa_hs_arm(void *bssid)
 
     if (g_hs_e_getmac) { (void)((getmac_fn_t)g_hs_e_getmac)(0, own); }
 
-    if (!g_hs_pmk_ready && g_hs_ssid && g_hs_pass) {
-        unsigned int sl = 0u;
-        while (g_hs_ssid[sl]) { sl++; }
-        if (pbkdf2_sha1(g_hs_pass, (const unsigned char *)g_hs_ssid, sl,
-                        4096, g_hs_pmk, 32) == 0) {
-            g_hs_pmk_ready = 1u;
-        }
-    }
+    /* [step 243] The PMK is NOT derived here. It used to be, and that was the
+     * bug: wpa_sta_connect is called BY THE DRIVER from cnx_connect_next_ap,
+     * and PBKDF2 at 4096 iterations measured ~18 seconds on this part. Eighteen
+     * seconds inside the driver's connect callback means the association is
+     * long dead before the access point would send message one -- which is
+     * exactly what was observed: no CONNECTED, no DISCONNECTED, no EAPOL, and a
+     * handshake that never ran.
+     *
+     * Step 240 measured that cost and wrote down that it "should not be
+     * recomputed per association". It was then put in the per-association path
+     * anyway. Measuring a thing does not help if the measurement is not used.
+     *
+     * wpa_hs_derive_pmk() now runs once at bring-up, before any connect. */
     if (g_hs_pmk_ready) { wpa_hs_set_pmk(g_hs_pmk); }
     wpa_hs_set_addrs((const unsigned char *)bssid, own);
+}
+
+/* [step 243] Derive the PMK once, at bring-up, off the driver's connect path.
+ * Windowed because the crypto is; reached from call0 through blob_call with no
+ * arguments, the same way the self-test is. */
+int wpa_hs_derive_pmk(void);
+int wpa_hs_derive_pmk(void)
+{
+    if (g_hs_pmk_ready) { return 0; }
+    if (!g_hs_ssid || !g_hs_pass) { return -1; }
+    unsigned int sl = 0u;
+    while (g_hs_ssid[sl]) { sl++; }
+    if (pbkdf2_sha1(g_hs_pass, (const unsigned char *)g_hs_ssid, sl,
+                    4096, g_hs_pmk, 32) != 0) {
+        return -1;
+    }
+    g_hs_pmk_ready = 1u;
+    return 0;
 }

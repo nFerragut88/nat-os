@@ -169,6 +169,15 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
             extern const char *wifi_sta_pass(void);
             g_hs_ssid = wifi_sta_ssid();
             g_hs_pass = wifi_sta_pass();
+            /* [step 243] Derive the PMK NOW, not inside the driver's connect
+             * callback. ~18 s of PBKDF2 there kills the association. */
+            { extern int wpa_hs_derive_pmk(void);
+              uart_puts("   wpa       deriving PMK (PBKDF2, 4096 rounds)...\n");
+              uint32_t t0 = timer_ticks();
+              (void)blob_call((uint32_t)&wpa_hs_derive_pmk, 0u, 0u, 0u, 0u);
+              uart_puts("   wpa       PMK ready after ");
+              uart_put_dec((timer_ticks() - t0) / 100u);
+              uart_puts(" s\n"); }
         }
         uint32_t wr = blob_call(e->wifi_register_wpa_cb,
                                 wpa_cb_table_fill(e->sta_connect_internal),
