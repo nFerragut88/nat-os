@@ -251,13 +251,19 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
     wifi_tx_beacons(e->wifi_80211_tx, e->wifi_set_channel);
 
     /* [step 217] Then try to associate. One call; see wifi_osi_impl.c. */
+    /* [step 227] SCAN BEFORE CONNECTING. The sweep used to run last, so a run
+     * whose connect failed with NO_AP_FOUND produced no scan evidence at all
+     * and could not distinguish "the network is gone" from "the driver did not
+     * look properly". Evidence first, then the action it informs. */
+    wifi_scan_sweep(e->wifi_scan_start, e->wifi_scan_ap_num,
+                    e->wifi_scan_ap_recs);
+
     wifi_try_connect(e->wifi_set_config, e->wifi_connect);
 
     /* [step 222] The data path, after the association. */
     wifi_rx_start(e->reg_rxcb, e->free_rx_buffer, e->wifi_promiscuous,
                   e->internal_tx);
-    wifi_scan_sweep(e->wifi_scan_start, e->wifi_scan_ap_num,
-                    e->wifi_scan_ap_recs);
+
 
     /* [step 209] TRANSMIT. One call; the frame and the loop are in
      * wifi_osi_impl.c. This is the line that ends "nothing has been

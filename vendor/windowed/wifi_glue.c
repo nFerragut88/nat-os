@@ -289,6 +289,7 @@ int wpa_sta_connect_impl(void *bssid)
 uint32_t g_rx_frames;              /* total data frames seen */
 uint32_t g_rx_bytes;
 uint32_t g_rx_free_fn;             /* esp_wifi_internal_free_rx_buffer */
+extern void net_rx_enqueue(void);   /* call0; address only */
 #define RX_KEEP 6u
 #define RX_SNAP 80u
 uint32_t g_rx_len[RX_KEEP];
@@ -307,6 +308,14 @@ int nat_rx_cb(void *buffer, unsigned short len, void *eb)
     }
     g_rx_frames++;
     g_rx_bytes += len;
+
+    /* [step 226] Hand it to the call0 side, which owns the parsing. The
+     * crossing is w2c_call2 because this is windowed code and net_rx_enqueue
+     * is not -- the boundary this project enforces by directory, and the one
+     * step 205 lost three builds to ignoring. */
+    if (p && len) {
+        (void)w2c_call2((uint32_t)&net_rx_enqueue, (uint32_t)p, (uint32_t)len);
+    }
 
     if (eb && g_rx_free_fn) { ((free_fn)g_rx_free_fn)(eb); }
     return 0;                                   /* ESP_OK */

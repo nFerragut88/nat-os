@@ -1518,7 +1518,7 @@ void wifi_ap_report(uint32_t fn, uint32_t count)
  * channel-major on purpose: consecutive scans of one channel would share
  * whatever transient state a single scan leaves behind, and the question is
  * about the radio, not about back-to-back calls. */
-#define SWEEP_PASSES 3u
+#define SWEEP_PASSES 1u   /* [step 227] one pass: evidence, not a survey */
 #define SWEEP_DWELL  400u
 
 void wifi_scan_sweep(uint32_t scan_fn, uint32_t num_fn, uint32_t recs_fn);
@@ -2116,11 +2116,20 @@ void wifi_rx_start(uint32_t reg_fn, uint32_t free_fn, uint32_t promisc_fn,
     /* [step 224] Provoke a reply before listening. Silence on its own could
      * not distinguish a quiet hotspot from a broken receive path. */
     wifi_dhcp_discover(g_internal_tx_fn);
-    uart_puts("   rx        listening 15 s on the AP channel\n");
-    for (uint32_t k = 0u; k < 15u; k++) {
-        task_sleep(100u);
+    /* [step 226] Hand net.c the transmit entry and our MAC, then poll. The
+     * poll both drives DHCP to completion and answers ARP and ICMP, so the
+     * window has to be long enough for somebody to actually type `ping`. */
+    {
+        extern void net_set_tx(uint32_t tx_fn, const unsigned char *mac);
+        extern void net_poll_for(uint32_t ticks);
+        extern void net_report(void);
+        uint8_t m[6];
+        if (osi_impl_read_mac(m, 0u) == 0) { net_set_tx(tx_fn, m); }
+        uart_puts("   net       polling 120 s - DHCP, ARP, ICMP\n");
+        net_poll_for(12000u);  /* [step 227] 120 s -- a human has to type ping */
+        wifi_rx_report();
+        net_report();
     }
-    wifi_rx_report();
 }
 
 void wifi_rx_report(void);
