@@ -69,24 +69,79 @@ static inline void *wpa_hide_aliasing(void *p) { return p; }
 #define FALSE 0
 #endif
 
-/* nat-os spells these without the prefix. kernel/kstring.c provides the first
- * three; heap.h the last two. */
-void  *memcpy(void *d, const void *s, size_t n);
-void  *memset(void *d, int c, size_t n);
-size_t strlen(const char *s);
-void  *heap_alloc(uint32_t n);
-void   heap_free(void *p);
+/* ---- the os_* layer, WINDOWED-SAFE -------------------------------------
+ *
+ * These were macros forwarding to kernel/kstring.c -- memcpy, memset, strlen.
+ * That was fine while the crypto compiled call0. It stopped being fine at step
+ * 240, when the crypto moved to the windowed ABI so the handshake could reach
+ * nine-argument blob functions without a bridge: windowed code calling call0
+ * directly is the violation this project enforces by directory, and it showed
+ * up as
+ *
+ *     IllegalInstruction   epc 0x8009de28   a0 0x8009de28
+ *
+ * a windowed return address leaking into PC, because call8 leaves the return
+ * address in a8 and a call0 callee returns through a0.
+ *
+ * So the byte functions are INLINE -- no call, no boundary, no bridge. They
+ * are small and the crypto's buffers are small; the alternative is a w2c
+ * bridge on every memcpy in SHA-1's inner loop.
+ *
+ * The two that genuinely need the kernel heap DO cross, through w2c_call1,
+ * which carries exactly the one argument each of them takes. */
 
-#define os_memcpy(d, s, n)  memcpy((d), (s), (n))
-#define os_memset(d, c, n)  memset((d), (c), (n))
-#define os_memcmp(a, b, n)  memcmp((a), (b), (n))
-#define os_strlen(s)        strlen((s))
-#define os_malloc(n)        heap_alloc((uint32_t)(n))
-#define os_free(p)          heap_free((p))
-#define os_zalloc(n)        wpa_zalloc((size_t)(n))
+static inline void *os_memcpy(void *d, const void *s, size_t n)
+{
+    unsigned char *a = (unsigned char *)d;
+    const unsigned char *b = (const unsigned char *)s;
+    while (n--) { *a++ = *b++; }
+    return d;
+}
 
-int memcmp(const void *a, const void *b, size_t n);
-void *wpa_zalloc(size_t n);
+static inline void *os_memset(void *d, int c, size_t n)
+{
+    unsigned char *a = (unsigned char *)d;
+    while (n--) { *a++ = (unsigned char)c; }
+    return d;
+}
+
+static inline int os_memcmp(const void *x, const void *y, size_t n)
+{
+    const unsigned char *a = (const unsigned char *)x;
+    const unsigned char *b = (const unsigned char *)y;
+    while (n--) { if (*a != *b) { return (int)*a - (int)*b; } a++; b++; }
+    return 0;
+}
+
+static inline size_t os_strlen(const char *s)
+{
+    const char *p = s;
+    while (*p) { p++; }
+    return (size_t)(p - s);
+}
+
+/* The kernel heap is call0. w2c_call1 is the windowed-to-call0 bridge and
+ * takes one argument, which is exactly what each of these needs. */
+unsigned int w2c_call1(unsigned int fn, unsigned int a);
+void *heap_alloc(unsigned int n);
+void  heap_free(void *p);
+
+static inline void *os_malloc(size_t n)
+{
+    return (void *)w2c_call1((unsigned int)&heap_alloc, (unsigned int)n);
+}
+
+static inline void os_free(void *p)
+{
+    if (p) { (void)w2c_call1((unsigned int)&heap_free, (unsigned int)p); }
+}
+
+static inline void *os_zalloc(size_t n)
+{
+    void *p = os_malloc(n);
+    if (p) { os_memset(p, 0, n); }
+    return p;
+}
 
 /* Overwrite a key buffer so it does not linger in RAM. Marked volatile-through
  * so the compiler may not optimise the store away, which is the entire point

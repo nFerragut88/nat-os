@@ -145,7 +145,13 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
         /* [step 239] Prove the crypto before the radio is asked to rely on it.
      * Runs once, costs a few milliseconds, and turns "the handshake fails" from
      * a question about six things into a question about one. */
-    { extern uint32_t wpa_selftest(void); (void)wpa_selftest(); }
+    { /* windowed now (it calls the crypto), so it crosses through blob_call --
+       * the same mechanism every other windowed target uses. Zero arguments,
+       * so nothing about the four-argument limit bites here. */
+      extern int wpa_selftest(void);
+      extern void wpa_selftest_report(void);
+      (void)blob_call((uint32_t)&wpa_selftest, 0u, 0u, 0u, 0u);
+      wpa_selftest_report(); }
 
     extern uint32_t g_appie_pending;
         g_appie_pending = e->set_appie;

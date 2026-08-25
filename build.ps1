@@ -135,9 +135,17 @@ foreach ($src in (Get-ChildItem "$root\kernel" -Include *.c,*.S -Recurse)) {
 # -Wno-* because lwIP is warning-clean under ITS build, not under -Wall -Wextra
 # with this vintage of GCC. Silencing them for vendored code keeps nat-os's own
 # warnings visible, which is the only reason warnings are useful here.
-# WPA crypto, vendored in vendor/wpa: SHA-1, HMAC-SHA1, PBKDF2, the SHA-1 PRF,
-# AES and AES key unwrap -- the primitives WPA2-PSK needs. Compiled call0 like
-# the kernel.
+# WPA crypto, vendored in vendor/wpa. Compiled WINDOWED, not call0.
+#
+# [step 240] It was call0 and had to move. The four-way handshake calls
+# esp_wifi_set_sta_key_internal, which takes NINE arguments, and the
+# call0-to-windowed bridges carry four. So the handshake must be windowed to
+# reach the blob at all -- and windowed code reaching call0 crypto would need
+# w2c bridges that carry three, against pbkdf2_sha1's six and sha1_prf's seven.
+#
+# Compiling the crypto windowed removes every bridge from the path: handshake,
+# crypto and blob all speak one ABI and call each other directly. The crypto is
+# ordinary C with no ABI opinion, so this costs nothing.
 #
 # These are NOT hand-written, deliberately: hand-rolled SHA-1 and AES is where
 # subtle, silent, security-relevant bugs live. The four-way handshake state
@@ -149,9 +157,12 @@ foreach ($src in (Get-ChildItem "$root\kernel" -Include *.c,*.S -Recurse)) {
 $wpasrc = Get-ChildItem "$root\vendor\wpa\src\*.c" -ErrorAction SilentlyContinue
 if ($wpasrc) {
     Write-Host "== compiling WPA crypto ==" -ForegroundColor Cyan
-    $wpflags = $cflags + @("-Wno-unused-parameter", "-Wno-sign-compare",
-                           "-Wno-type-limits", "-Wno-implicit-fallthrough",
-                           "-Wno-unused-but-set-variable", "-Wno-char-subscripts")
+    $wpflags = @("-mabi=windowed", "-mlongcalls", "-ffreestanding", "-fno-builtin",
+                 "-fno-stack-protector", "-Os", "-std=c11",
+                 "-I", "$root\kernel", "-I", "$root\vendor\wpa\include",
+                 "-Wno-unused-parameter", "-Wno-sign-compare",
+                 "-Wno-type-limits", "-Wno-implicit-fallthrough",
+                 "-Wno-unused-but-set-variable", "-Wno-char-subscripts")
     foreach ($src in $wpasrc) {
         $obj = Join-Path $build ("wpa_" + $src.Name + ".o")
         & $gcc @wpflags -c $src.FullName -o $obj
@@ -193,7 +204,10 @@ if ($winsrc) {
     # pulled in here would be an ABI crossing with no bridge.
     $wflags = @("-mabi=windowed", "-mlongcalls", "-ffreestanding", "-fno-builtin",
                 "-fno-stack-protector", "-Os", "-Wall", "-Wextra", "-std=c11",
-                "-I", "$root\kernel")
+                "-I", "$root\kernel",
+                # [step 240] the WPA crypto headers: the handshake and the
+                # self-test are windowed and call it directly.
+                "-I", "$root\vendor\wpa\include")
     foreach ($src in $winsrc) {
         $obj = Join-Path $build ($src.BaseName + ".o")
         Write-Host ("  {0}  [windowed]" -f $src.Name)
