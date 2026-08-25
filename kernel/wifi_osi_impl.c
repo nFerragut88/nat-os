@@ -1896,6 +1896,26 @@ void wifi_event_report(void)
          * scan record: ssid_len at +32 must equal the length of the SSID we
          * asked for. If it does not, the offset is not trusted and no reason
          * is printed. */
+        /* [step 221] id 4 is WIFI_EVENT_STA_CONNECTED. Its payload is
+         * ssid[32], ssid_len, bssid[6], channel, authmode, aid -- so channel
+         * sits at +39 and authmode at +40. Checked the same way everything
+         * else has been: ssid_len at +32 must equal the SSID we asked to
+         * join, and the channel must be one a scan actually found it on. */
+        if (g_evt_log[i].id == 4u && g_evt_log[i].data) {
+            uint32_t n = g_evt_log[i].d[32];
+            uart_puts("(len");
+            uart_put_dec(n);
+            if (n == g_assoc_ssid_len) {
+                uart_puts(" ch");
+                uart_put_dec(g_evt_log[i].d[39]);
+                uart_puts(" auth");
+                uart_put_dec(g_evt_log[i].d[40]);
+                uart_puts(" CONNECTED");
+            } else {
+                uart_puts(" layout?");
+            }
+            uart_puts(")");
+        }
         if (g_evt_log[i].id == 5u && g_evt_log[i].data) {
             uint32_t n = g_evt_log[i].d[32];
             uart_puts("(len");
@@ -1912,7 +1932,15 @@ void wifi_event_report(void)
                 /* [step 219] Named, because a bare number sends the next
                  * reader to a header and the distinction between 201 and 203
                  * is the whole result. wifi_err_reason_t. */
-                uart_puts(rr == 200u ? " BEACON_TIMEOUT"
+                /* Codes under 200 are the 802.11 standard reasons sent by
+                 * the ACCESS POINT; 200+ are Espressif's own. The distinction
+                 * matters: reason 2 means the AP dropped us, not that the
+                 * driver failed. */
+                uart_puts(rr == 2u   ? " AUTH_EXPIRE(AP dropped us)"
+                        : rr == 3u   ? " AUTH_LEAVE"
+                        : rr == 4u   ? " ASSOC_EXPIRE"
+                        : rr == 8u   ? " ASSOC_LEAVE"
+                        : rr == 200u ? " BEACON_TIMEOUT"
                         : rr == 201u ? " NO_AP_FOUND"
                         : rr == 202u ? " AUTH_FAIL"
                         : rr == 203u ? " ASSOC_FAIL"
