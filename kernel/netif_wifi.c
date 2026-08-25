@@ -140,6 +140,13 @@ void netif_wifi_start(uint32_t tx_fn, const uint8_t *mac)
     netif_set_link_up(&g_netif);
     g_up = 1u;
 
+    /* [step 235] The listener goes up with the interface, before DHCP has an
+     * address. lwIP binds to IP_ADDR_ANY, so a later DHCP bind does not need
+     * it restarted -- and starting it here means the port is open the instant
+     * the address exists rather than a poll interval later. */
+    extern void tcpsrv_start(void);
+    tcpsrv_start();
+
     uart_puts("   lwip      netif up, mtu 1500, starting DHCP\n");
     if (dhcp_start(&g_netif) != ERR_OK) {
         uart_puts("   lwip      dhcp_start FAILED\n");
