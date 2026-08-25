@@ -1579,6 +1579,7 @@ void wifi_scan_sweep(uint32_t scan_fn, uint32_t num_fn, uint32_t recs_fn)
     /* [step 211] Again here: SCAN_DONE is posted by the scans, which run after
      * the transmit, so the report before tx could never have contained one. */
     wifi_event_report();
+    wifi_rx_report();      /* [step 222] and what the data path caught */
 }
 
 /* ---- TRANSMIT -- next_moves/08 step 209 ---------------------------------
@@ -2045,7 +2046,11 @@ void wifi_try_connect(uint32_t cfg_fn, uint32_t conn_fn)
      * SUPPLICANT's work, which this project has only recording stubs for. If it
      * stalls there the driver times out rather than failing fast, so a short
      * wait sees nothing at all and proves nothing at all. */
-    for (uint32_t k = 0u; k < 30u; k++) {
+    /* [step 223] Ten, was thirty. Measured: the connect result arrives within
+     * a few seconds -- both CONNECTED and the AP's deauth -- so twenty of
+     * those seconds were spent waiting for an event that had already been
+     * posted, and they pushed the RX dwell past the capture window. */
+    for (uint32_t k = 0u; k < 10u; k++) {
         task_sleep(100u);
     }
     wifi_event_report();
@@ -2053,4 +2058,232 @@ void wifi_try_connect(uint32_t cfg_fn, uint32_t conn_fn)
      * attempted, the entries it needed are named here rather than guessed. */
     wpa_cb_report();
     uart_puts("\n");
+}
+
+/* [step 222] Register the RX data path and report what arrives.
+ *
+ * Called after the association succeeds, because a station that is not
+ * associated receives no data frames and registering earlier would prove
+ * nothing either way. */
+void wifi_dhcp_discover(uint32_t tx_fn);
+uint32_t g_internal_tx_fn;
+void wifi_rx_report(void);
+void wifi_rx_start(uint32_t reg_fn, uint32_t free_fn, uint32_t promisc_fn,
+                   uint32_t tx_fn);
+void wifi_rx_start(uint32_t reg_fn, uint32_t free_fn, uint32_t promisc_fn,
+                   uint32_t tx_fn)
+{
+    /* [step 223] PROMISCUOUS OFF FIRST.
+     *
+     * Step 197 turned it on to get the MAC raising interrupts at all, back
+     * when the receiver was deaf, and nothing has turned it off since. But
+     * promiscuous mode routes received frames to the PROMISCUOUS callback --
+     * which nat-os has never registered -- and not to the station data path
+     * that esp_wifi_internal_reg_rxcb feeds. A station that is associated and
+     * listening on the right channel and still sees zero data frames is the
+     * symptom that suggests it. */
+    if (promisc_fn) {
+        uint32_t pr = blob_call(promisc_fn, 0u, 0u, 0u, 0u);
+        uart_puts("   rx        promiscuous off rc ");
+        uart_put_hex(pr);
+        uart_puts("\n");
+    }
+    extern int nat_rx_cb(void *buffer, unsigned short len, void *eb);
+    extern uint32_t g_rx_free_fn;
+
+    if (!reg_fn) {
+        uart_puts("   rx        : blob entry has no reg_rxcb\n");
+        return;
+    }
+    g_rx_free_fn = free_fn;
+    g_internal_tx_fn = tx_fn;
+    uint32_t rc = blob_call(reg_fn, 0u /* WIFI_IF_STA */, (uint32_t)&nat_rx_cb,
+                            0u, 0u);
+    uart_puts("   rx        reg_rxcb rc ");
+    uart_put_hex(rc);
+    uart_puts(free_fn ? "  (free wired)\n" : "  (NO FREE -- will leak)\n");
+    if (rc != 0u) { return; }
+
+    /* [step 222] DWELL ON THE AP'S CHANNEL. The first attempt registered the
+     * callback and then immediately ran the thirteen-channel sweep, which
+     * takes the radio off the access point for sixteen seconds -- so it
+     * reported "frames 0" and that number meant nothing at all. A receiver
+     * that is somewhere else is not evidence of a quiet network.
+     *
+     * Fifteen seconds of sitting still. An idle network still carries
+     * broadcast traffic -- ARP, DHCP, mDNS -- and broadcasts are delivered to
+     * every associated station. */
+    /* [step 224] Provoke a reply before listening. Silence on its own could
+     * not distinguish a quiet hotspot from a broken receive path. */
+    wifi_dhcp_discover(g_internal_tx_fn);
+    uart_puts("   rx        listening 15 s on the AP channel\n");
+    for (uint32_t k = 0u; k < 15u; k++) {
+        task_sleep(100u);
+    }
+    wifi_rx_report();
+}
+
+void wifi_rx_report(void);
+void wifi_rx_report(void)
+{
+    extern uint32_t g_rx_frames, g_rx_bytes, g_rx_len[6];
+    extern uint8_t g_rx_snap[6][80];
+    static const char hx[] = "0123456789abcdef";
+
+    uart_puts("   rx        frames ");
+    uart_put_dec(g_rx_frames);
+    uart_puts(" bytes ");
+    uart_put_dec(g_rx_bytes);
+    uart_puts("\n");
+
+    uint32_t n = g_rx_frames < 6u ? g_rx_frames : 6u;
+    for (uint32_t f = 0u; f < n; f++) {
+        const uint8_t *p = g_rx_snap[f];
+        uint32_t et = ((uint32_t)p[12] << 8) | p[13];
+        uart_puts("     len ");
+        uart_put_dec(g_rx_len[f]);
+        uart_puts("  dst ");
+        for (uint32_t i = 0u; i < 6u; i++) {
+            uart_putc(hx[(p[i] >> 4) & 15]); uart_putc(hx[p[i] & 15]);
+        }
+        uart_puts(" src ");
+        for (uint32_t i = 6u; i < 12u; i++) {
+            uart_putc(hx[(p[i] >> 4) & 15]); uart_putc(hx[p[i] & 15]);
+        }
+        uart_puts(" type ");
+        uart_put_hex(et);
+        /* The two that matter for a ping, named so the next reader does not
+         * have to look them up. */
+        uart_puts(et == 0x0806u ? " ARP"
+                : et == 0x0800u ? " IPv4"
+                : et == 0x86DDu ? " IPv6"
+                : "");
+        /* [step 225] If it is a DHCP reply, say what it offered us. UDP source
+         * port 67 is the marker; yiaddr -- "your address" -- sits at BOOTP+16,
+         * which is Ethernet 14 + IP 20 + UDP 8 + 16 = 58.
+         *
+         * Checked, not assumed, in the way everything else here has been: the
+         * IP protocol byte must say UDP and the source port must be the DHCP
+         * server port before any of those offsets are believed. */
+        if (et == 0x0800u && p[23] == 17u) {
+            uint32_t sp = ((uint32_t)p[34] << 8) | p[35];
+            if (sp == 67u) {
+                uart_puts("     DHCP reply, offered ");
+                for (uint32_t i = 58u; i < 62u; i++) {
+                    uart_put_dec(p[i]);
+                    if (i != 61u) { uart_putc('.'); }
+                }
+                /* The SERVER is the IP header's SOURCE at +26. Bytes 30..33
+                 * are the DESTINATION, which for a broadcast reply is always
+                 * 255.255.255.255 -- a value that looks like data and is not. */
+                uart_puts("  from ");
+                for (uint32_t i = 26u; i < 30u; i++) {
+                    uart_put_dec(p[i]);
+                    if (i != 29u) { uart_putc('.'); }
+                }
+                uart_puts("\n");
+            }
+        }
+        uart_puts("\n");
+    }
+}
+
+/* ---- DHCP DISCOVER -- next_moves/08 step 224 ----------------------------
+ *
+ * The first IP packet nat-os has ever built, and it exists to answer a
+ * question that watching could not: fifteen seconds associated and on-channel
+ * produced ZERO data frames, and that is consistent with two very different
+ * worlds -- a hotspot with no other clients and therefore no broadcast traffic,
+ * or an RX path that is not actually wired. Silence cannot tell them apart.
+ *
+ * A DHCP DISCOVER can. It is a broadcast the server is obliged to answer, so a
+ * reply proves the transmit path, the receive path AND hands over the subnet
+ * in one exchange. No reply, with the transmit reporting success, points at
+ * the receive side.
+ *
+ * Built by hand because there is no stack: Ethernet II, IPv4, UDP, then the
+ * BOOTP/DHCP body. The IPv4 header checksum is computed; the UDP checksum is
+ * left zero, which IPv4 explicitly permits and every DHCP server accepts.
+ */
+
+static uint8_t  g_dhcp[300];
+static uint32_t g_dhcp_len;
+
+static void be16(uint8_t *p, uint32_t v) { p[0] = (uint8_t)(v >> 8); p[1] = (uint8_t)v; }
+
+static uint32_t ip_checksum(const uint8_t *p, uint32_t len)
+{
+    uint32_t sum = 0u;
+    for (uint32_t i = 0u; i + 1u < len; i += 2u) {
+        sum += ((uint32_t)p[i] << 8) | p[i + 1u];
+    }
+    while (sum >> 16) { sum = (sum & 0xFFFFu) + (sum >> 16); }
+    return (~sum) & 0xFFFFu;
+}
+
+static uint32_t dhcp_build(const uint8_t *mac, uint32_t xid)
+{
+    for (uint32_t i = 0u; i < sizeof g_dhcp; i++) { g_dhcp[i] = 0u; }
+    uint8_t *e = g_dhcp;
+
+    /* Ethernet II: broadcast, from us, IPv4. */
+    for (uint32_t i = 0u; i < 6u; i++) { e[i] = 0xFFu; }
+    for (uint32_t i = 0u; i < 6u; i++) { e[6u + i] = mac[i]; }
+    be16(&e[12], 0x0800u);
+
+    uint8_t *ip = e + 14;
+    uint8_t *ud = ip + 20;
+    uint8_t *bp = ud + 8;
+
+    /* BOOTP/DHCP. op=BOOTREQUEST, htype=ethernet, hlen=6. */
+    bp[0] = 1u; bp[1] = 1u; bp[2] = 6u; bp[3] = 0u;
+    bp[4] = (uint8_t)(xid >> 24); bp[5] = (uint8_t)(xid >> 16);
+    bp[6] = (uint8_t)(xid >> 8);  bp[7] = (uint8_t)xid;
+    be16(&bp[10], 0x8000u);              /* BROADCAST: we have no address yet,
+                                          * so a unicast reply could not reach
+                                          * us -- this is not optional here. */
+    for (uint32_t i = 0u; i < 6u; i++) { bp[28u + i] = mac[i]; }
+    bp[236] = 99u; bp[237] = 130u; bp[238] = 83u; bp[239] = 99u;  /* magic */
+    bp[240] = 53u; bp[241] = 1u; bp[242] = 1u;      /* option 53: DISCOVER */
+    bp[243] = 55u; bp[244] = 3u;                    /* option 55: ask for   */
+    bp[245] = 1u; bp[246] = 3u; bp[247] = 6u;       /* mask, router, DNS    */
+    bp[248] = 255u;                                 /* end                  */
+    uint32_t bootp_len = 249u;
+
+    uint32_t udp_len = 8u + bootp_len;
+    be16(&ud[0], 68u);                   /* client port */
+    be16(&ud[2], 67u);                   /* server port */
+    be16(&ud[4], udp_len);
+    be16(&ud[6], 0u);                    /* checksum optional over IPv4 */
+
+    uint32_t ip_len = 20u + udp_len;
+    ip[0] = 0x45u; ip[1] = 0u;
+    be16(&ip[2], ip_len);
+    be16(&ip[4], 0u); be16(&ip[6], 0u);
+    ip[8] = 64u; ip[9] = 17u;            /* TTL 64, UDP */
+    be16(&ip[10], 0u);
+    for (uint32_t i = 0u; i < 4u; i++) { ip[12u + i] = 0u; }       /* 0.0.0.0 */
+    for (uint32_t i = 0u; i < 4u; i++) { ip[16u + i] = 0xFFu; }    /* 255.x   */
+    be16(&ip[10], ip_checksum(ip, 20u));
+
+    return 14u + ip_len;
+}
+
+void wifi_dhcp_discover(uint32_t tx_fn);
+void wifi_dhcp_discover(uint32_t tx_fn)
+{
+    uint8_t mac[6];
+    if (!tx_fn) { uart_puts("   dhcp      : no internal_tx entry\n"); return; }
+    if (osi_impl_read_mac(mac, 0u) != 0) { uart_puts("   dhcp      : no MAC\n"); return; }
+
+    g_dhcp_len = dhcp_build(mac, 0x6E61744Fu /* 'natO' -- recognisable in a capture */);
+
+    uart_puts("   dhcp      DISCOVER ");
+    uart_put_dec(g_dhcp_len);
+    uart_puts(" B  ");
+    uint32_t rc = blob_call(tx_fn, 0u /* WIFI_IF_STA */, (uint32_t)g_dhcp,
+                            g_dhcp_len, 0u);
+    uart_puts("tx rc ");
+    uart_put_hex(rc);
+    uart_puts(rc == 0u ? "  sent\n" : "  REFUSED\n");
 }

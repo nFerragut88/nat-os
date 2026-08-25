@@ -59,6 +59,12 @@ extern int  esp_wifi_disconnect(void);
  * ESP-IDF wpa_sta_connect() ends in exactly this call; for an open network
  * it is very nearly the whole function. */
 extern int  esp_wifi_sta_connect_internal(void *bssid);
+/* [step 222] The DATA PATH. reg_rxcb hands us every received data frame as
+ * an Ethernet II frame; internal_tx sends one; free_rx_buffer returns the
+ * driver's buffer, and NOT calling it leaks until the pool is empty. */
+extern int  esp_wifi_internal_reg_rxcb(int ifx, void *fn);
+extern int  esp_wifi_internal_tx(int ifx, void *buf, unsigned short len);
+extern void esp_wifi_internal_free_rx_buffer(void *eb);
 
 struct blob_entry {
     uint32_t magic;          /* 'N','8','0','2' */
@@ -109,6 +115,10 @@ struct blob_entry {
     int (*wifi_disconnect)(void);
     /* [step 219] version 14. */
     int (*sta_connect_internal)(void *bssid);
+    /* [step 222] version 15. */
+    int (*reg_rxcb)(int ifx, void *fn);
+    int (*internal_tx)(int ifx, void *buf, unsigned short len);
+    void (*free_rx_buffer)(void *eb);
 };
 
 /* `used` because nothing in this translation unit references it and
@@ -117,7 +127,7 @@ struct blob_entry {
 __attribute__((section(".blob_entry"), used))
 const struct blob_entry blob_entry = {
     .magic       = 0x3230384Eu,          /* "N802" little-endian */
-    .version     = 14u,
+    .version     = 15u,
     .image_size  = (uint32_t)&_blob_image_size,
     .text_end    = (uint32_t)&_blob_text_end,
 
@@ -150,4 +160,7 @@ const struct blob_entry blob_entry = {
     .wifi_connect         = esp_wifi_connect,
     .wifi_disconnect      = esp_wifi_disconnect,
     .sta_connect_internal = esp_wifi_sta_connect_internal,
+    .reg_rxcb             = esp_wifi_internal_reg_rxcb,
+    .internal_tx          = esp_wifi_internal_tx,
+    .free_rx_buffer       = esp_wifi_internal_free_rx_buffer,
 };

@@ -137,6 +137,8 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
     extern void wifi_scan_sweep(uint32_t s, uint32_t nfn, uint32_t rfn);
     extern void wifi_tx_beacons(uint32_t tx, uint32_t chan);
     extern void wifi_try_connect(uint32_t cfg, uint32_t conn);
+    extern void wifi_rx_start(uint32_t reg, uint32_t freefn, uint32_t pr,
+                              uint32_t tx);
     extern uint32_t wpa_cb_table_fill(uint32_t sta_connect);
     extern void wpa_cb_report(void);
     if (e->wifi_register_wpa_cb) {
@@ -250,6 +252,10 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
 
     /* [step 217] Then try to associate. One call; see wifi_osi_impl.c. */
     wifi_try_connect(e->wifi_set_config, e->wifi_connect);
+
+    /* [step 222] The data path, after the association. */
+    wifi_rx_start(e->reg_rxcb, e->free_rx_buffer, e->wifi_promiscuous,
+                  e->internal_tx);
     wifi_scan_sweep(e->wifi_scan_start, e->wifi_scan_ap_num,
                     e->wifi_scan_ap_recs);
 

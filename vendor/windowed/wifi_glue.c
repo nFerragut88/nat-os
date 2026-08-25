@@ -264,3 +264,50 @@ int wpa_sta_connect_impl(void *bssid)
     g_sta_connect_rc = (uint32_t)rc;
     return rc;
 }
+
+/* ---- the RX data path -- next_moves/08 step 222 -------------------------
+ *
+ * esp_wifi_internal_reg_rxcb registers a callback the driver invokes for every
+ * received DATA frame, already converted from 802.11 to Ethernet II: six bytes
+ * destination, six source, two ethertype, then the payload. Management frames
+ * do not come this way -- those are the driver's own business, which is why
+ * scanning has worked all along without any of this.
+ *
+ * WINDOWED, because the driver calls it with callx8 from its own task, the
+ * same reason wpa_sta_connect_impl is.
+ *
+ * IT MUST FREE THE BUFFER. esp_wifi_internal_free_rx_buffer returns the
+ * driver's eb to its pool; not calling it leaks until the pool empties and
+ * reception stops -- a failure that would look like the radio going deaf
+ * rather than like a missing free. So the free happens first, before anything
+ * else can go wrong, and the copy is taken before that.
+ *
+ * Deliberately does NOT parse. This step establishes that data frames arrive
+ * at all and shows what they are; ARP and IP come after that is in evidence.
+ */
+
+uint32_t g_rx_frames;              /* total data frames seen */
+uint32_t g_rx_bytes;
+uint32_t g_rx_free_fn;             /* esp_wifi_internal_free_rx_buffer */
+#define RX_KEEP 6u
+#define RX_SNAP 80u
+uint32_t g_rx_len[RX_KEEP];
+uint8_t  g_rx_snap[RX_KEEP][RX_SNAP];
+
+int nat_rx_cb(void *buffer, unsigned short len, void *eb);
+int nat_rx_cb(void *buffer, unsigned short len, void *eb)
+{
+    typedef void (*free_fn)(void *);
+    const uint8_t *p = (const uint8_t *)buffer;
+
+    if (g_rx_frames < RX_KEEP && p) {
+        uint32_t n = len < RX_SNAP ? len : RX_SNAP;
+        g_rx_len[g_rx_frames] = len;
+        for (uint32_t i = 0u; i < n; i++) { g_rx_snap[g_rx_frames][i] = p[i]; }
+    }
+    g_rx_frames++;
+    g_rx_bytes += len;
+
+    if (eb && g_rx_free_fn) { ((free_fn)g_rx_free_fn)(eb); }
+    return 0;                                   /* ESP_OK */
+}
