@@ -28,13 +28,29 @@
 #include "timer.h"
 #include <stdint.h>
 
-#define NET_SLOTS 8u
-#define NET_MAX   160u          /* a ping from Windows is 74 B, from Linux 98 */
+/* [step 231] 512, was 160 -- and 160 is why DHCP never completed.
+ *
+ * The ring was sized for a ping (74 B from Windows, 98 from Linux) and never
+ * checked against the OTHER protocol in this file. DHCP options begin at
+ * 14 + 20 + 8 + 240 = 282 bytes into the frame, and the OFFER measured 352, so
+ * every reply was truncated BEFORE its options. dhcp_opt then scanned a region
+ * that did not exist -- `while (i + 1 < len)` with i = 282 and len = 160 never
+ * runs -- returned "no message type", and net_handle discarded a frame that
+ * had arrived perfectly intact.
+ *
+ * It presented as dhcp 0/0: not "the OFFER was rejected" but "no OFFER was
+ * ever seen", which sent the search towards the transmit path twice.
+ *
+ * 512 covers a DHCP message with options; slots drop from 8 to 6 to keep the
+ * cost near 3 KB of .bss. */
+#define NET_SLOTS 6u
+#define NET_MAX   512u
 
 static volatile uint8_t  g_q[NET_SLOTS][NET_MAX];
 static volatile uint16_t g_qlen[NET_SLOTS];
 static volatile uint32_t g_head, g_tail;
 uint32_t g_net_dropped;         /* ring full: counted, never silent */
+uint32_t g_net_truncated;       /* frame longer than NET_MAX: same rule */
 
 /* Our identity. */
 static uint8_t  g_mac[6];
@@ -86,6 +102,10 @@ void net_rx_enqueue(const uint8_t *f, uint32_t len)
         crit_exit(crit);
         return;
     }
+    /* [step 231] Truncation is now COUNTED. A silently shortened frame is how
+     * the DHCP bug hid: the parse failed for a reason that never appeared in
+     * any output. */
+    if (len > NET_MAX) { g_net_truncated++; }
     uint32_t n = len < NET_MAX ? len : NET_MAX;
     for (uint32_t i = 0u; i < n; i++) { g_q[g_head][i] = f[i]; }
     g_qlen[g_head] = (uint16_t)n;
@@ -323,6 +343,8 @@ void net_poll_for(uint32_t ticks)
             uart_put_dec(g_net_dhcp_ack);
             uart_puts(" drop ");
             uart_put_dec(g_net_dropped);
+            uart_puts("/");
+            uart_put_dec(g_net_truncated);
             uart_puts(g_have_ip ? " [IP]\n" : " [no IP]\n");
         }
         task_sleep(2u);
