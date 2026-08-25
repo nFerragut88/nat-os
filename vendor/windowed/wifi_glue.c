@@ -210,6 +210,51 @@ int wpa_cb_stub(void)
     return (int)g_wpa_ret;
 }
 
+/* ---- slots 3 and 4, named -- next_moves/08 step 246 ---------------------
+ *
+ * WHAT IS BEING MEASURED: whether the driver ever tells the supplicant that
+ * the station associated.
+ *
+ * Steps 237-245 all rest on one reading: reason 39 means "ASSOCIATED, and
+ * then no handshake". That reading was never measured -- it was inferred from
+ * 203 becoming 39, which is rule 11's exact trap. And reason 39 is
+ * WIFI_REASON_TIMEOUT, NOT WIFI_REASON_HANDSHAKE_TIMEOUT (204), which is the
+ * code ESP-IDF's driver reports for a station that associates and then cannot
+ * complete EAPOL. If the association really completed, 204 is the code that
+ * should have appeared.
+ *
+ * struct wpa_funcs slot 3 is wpa_sta_connected_cb(bssid) and slot 4 is
+ * wpa_sta_disconnected_cb(reason). Both have been recording stubs sharing one
+ * body, so a call to either was indistinguishable from a call to any other
+ * slot. Named, they answer the question from the DRIVER'S OWN path:
+ *
+ *   conn >= 1   the driver declared the station associated. "Associated, no
+ *               EAPOL" stands, and the packet capture is the right next move.
+ *   conn == 0   it never associated. Reason 39 is an association timeout, the
+ *               access point never had a station to send message one TO, and
+ *               steps 237-245 have been debugging the wrong half.
+ *
+ * The reason also arrives here as an ARGUMENT rather than at a guessed +39
+ * into the event payload, so the two cross-check each other.
+ *
+ * Instrumentation only: both return void in the header, nothing downstream
+ * consumes a value, and no behaviour changes. */
+uint32_t g_wpa_conn_cb, g_wpa_disc_cb, g_wpa_disc_reason = 0xFFFFFFFFu;
+
+void wpa_sta_connected_cb_impl(unsigned char *bssid);
+void wpa_sta_connected_cb_impl(unsigned char *bssid)
+{
+    (void)bssid;
+    g_wpa_conn_cb++;
+}
+
+void wpa_sta_disconnected_cb_impl(unsigned char reason);
+void wpa_sta_disconnected_cb_impl(unsigned char reason)
+{
+    g_wpa_disc_cb++;
+    g_wpa_disc_reason = (uint32_t)reason;
+}
+
 /* The TABLE and the code that fills and reports it are CALL0 and live in
  * kernel/wifi_osi_impl.c. Only this stub is windowed, because only this stub is
  * called by the blob (callx8). Calling wpa_cb_table_fill() from wifi_bringup()

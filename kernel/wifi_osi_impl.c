@@ -1426,6 +1426,15 @@ uint32_t wpa_cb_table_fill(uint32_t sta_connect)
             g_wpa_table[5] = (uint32_t)&wpa_sta_rx_eapol_impl;
             g_wpa_table[6] = (uint32_t)&wpa_sta_in_4way_impl;
         }
+        {   /* [step 246] Slots 3 and 4 -- wpa_sta_connected_cb and
+             * wpa_sta_disconnected_cb -- named rather than pooled into the
+             * shared recording stub. Instrumentation: it decides whether the
+             * association of steps 237-245 ever actually happened. */
+            extern void wpa_sta_connected_cb_impl(unsigned char *);
+            extern void wpa_sta_disconnected_cb_impl(unsigned char);
+            g_wpa_table[3] = (uint32_t)&wpa_sta_connected_cb_impl;
+            g_wpa_table[4] = (uint32_t)&wpa_sta_disconnected_cb_impl;
+        }
     }
     g_wpa_calls = 0u;
     return (uint32_t)g_wpa_table;
@@ -1439,6 +1448,19 @@ void wpa_cb_report(void);
 void wpa_cb_report(void)
 {
     uint32_t n = g_wpa_calls;
+    /* [step 246] The driver's own answer to "did it associate". Printed first
+     * because it is the result; the return-address list below it is context. */
+    {
+        extern uint32_t g_wpa_conn_cb, g_wpa_disc_cb, g_wpa_disc_reason;
+        uart_puts("  wpa conn=");
+        uart_put_dec(g_wpa_conn_cb);
+        uart_puts(" disc=");
+        uart_put_dec(g_wpa_disc_cb);
+        uart_puts(" cbreason=");
+        if (g_wpa_disc_reason == 0xFFFFFFFFu) { uart_puts("none"); }
+        else { uart_put_dec(g_wpa_disc_reason); }
+        uart_puts("\n");
+    }
     uart_puts("  wpa hits ");
     uart_put_dec(n);
     if (n > 12u) { n = 12u; }
@@ -1981,10 +2003,19 @@ void wifi_event_report(void)
                 /* [step 237] The handshake range. 15 and 39 are what a
                  * station that ASSOCIATES and then cannot answer EAPOL looks
                  * like -- the distinction from 203 is the whole result. */
+                /* [step 246] ELIMINATED, and the label above it was WRONG.
+                 * 39 is WIFI_REASON_TIMEOUT; the code for "associated, then
+                 * EAPOL never completed" is 204 HANDSHAKE_TIMEOUT (or 15).
+                 * Measured: wpa_sta_connected_cb (slot 3) is NEVER called and
+                 * no id-4 STA_CONNECTED event is ever posted. Two independent
+                 * paths agree the station does not associate at all, so the
+                 * missing EAPOL of steps 241-245 needs no explanation beyond
+                 * this: the access point never had an associated station to
+                 * send message one to. */
                 uart_puts(rr == 15u  ? " 4WAY_HANDSHAKE_TIMEOUT"
                         : rr == 16u  ? " GROUP_KEY_UPDATE_TIMEOUT"
                         : rr == 17u  ? " IE_IN_4WAY_DIFFERS"
-                        : rr == 39u  ? " TIMEOUT(associated, no handshake)"
+                        : rr == 39u  ? " TIMEOUT(NOT associated -- see step 246)"
                         : rr == 2u   ? " AUTH_EXPIRE(AP dropped us)"
                         : rr == 3u   ? " AUTH_LEAVE"
                         : rr == 4u   ? " ASSOC_EXPIRE"
