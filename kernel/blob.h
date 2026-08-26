@@ -23,7 +23,7 @@
 #include "flash.h"   /* BLOB_* reservations; this API is defined in terms of them */
 
 #define BLOB_MAGIC   0x3230384Eu     /* "N802" */
-#define BLOB_VERSION 18u
+#define BLOB_VERSION 19u
 
 /* Mirrors vendor/net80211/blob_entry.c. If one changes, the other must. The
  * magic and version exist so a stale image in flash is REJECTED rather than
@@ -81,6 +81,12 @@ struct blob_entry {
     /* [step 244] version 18 -- what the driver believes about the network. */
     uint32_t prof_authmode;      /* esp_wifi_sta_get_prof_authmode_internal */
     uint32_t prof_is_rsn;        /* esp_wifi_sta_prof_is_rsn_internal       */
+    /* [step 250] version 19 -- the sniffer. Promiscuous mode has been ON
+     * since step 197 with no callback registered, so every frame the radio
+     * decoded outside the data path was thrown away. These two make the air
+     * itself readable, which is what four steps of inference have needed. */
+    uint32_t promisc_rx_cb;      /* esp_wifi_set_promiscuous_rx_cb(fn)      */
+    uint32_t promisc_filter;     /* esp_wifi_set_promiscuous_filter(mask*)  */
 };
 
 /* Programs the MMU and returns the table, or 0 if the region does not hold a

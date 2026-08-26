@@ -1468,6 +1468,62 @@ uint32_t wpa_cb_table_fill(uint32_t sta_connect)
  * the layout sensitivity was measured, and it gets one call instead of a loop.
  * a0 carries the call-size encoding in its top two bits; the blob runs from
  * 0x403xxxxx. */
+/* [step 250] The sniffer's log. Lives here because this is call0 and can
+ * print; the callback is windowed and cannot. Same discipline as the crypto
+ * self-test: results cross as data. */
+void wifi_sniff_report(void);
+void wifi_sniff_report(void)
+{
+    extern uint32_t g_snf_total, g_snf_drop_bcn, g_snf_layout, g_snf_kept;
+    extern uint8_t  g_snf_fc[24], g_snf_ch[24], g_snf_a1[24][3], g_snf_a2[24][3];
+    extern signed char g_snf_rssi[24];
+    static const char hx[] = "0123456789abcdef";
+
+    uart_puts("   sniff     seen ");
+    uart_put_dec(g_snf_total);
+    uart_puts("  beacons/probes ");
+    uart_put_dec(g_snf_drop_bcn);
+    uart_puts("  layout-miss ");
+    uart_put_dec(g_snf_layout);
+    uart_puts("  KEPT ");
+    uart_put_dec(g_snf_kept);
+    if (g_snf_total == 0u) {
+        uart_puts("\n             nothing at all -- the callback never fired\n");
+        return;
+    }
+    uint32_t k = g_snf_kept < 24u ? g_snf_kept : 24u;
+    for (uint32_t i = 0u; i < k; i++) {
+        uint32_t sub = (uint32_t)(g_snf_fc[i] >> 4);
+        uart_puts("\n             ");
+        uart_puts(sub == 11u ? "AUTH      "
+                : sub ==  0u ? "ASSOC_REQ "
+                : sub ==  1u ? "ASSOC_RESP"
+                : sub ==  2u ? "REASSOC_RQ"
+                : sub ==  3u ? "REASSOC_RS"
+                : sub == 10u ? "DISASSOC  "
+                : sub == 12u ? "DEAUTH    "
+                : sub == 13u ? "ACTION    "
+                              : "mgmt?     ");
+        uart_puts(" to ..");
+        for (uint32_t b = 0u; b < 3u; b++) {
+            uart_putc(hx[(g_snf_a1[i][b] >> 4) & 0xFu]);
+            uart_putc(hx[g_snf_a1[i][b] & 0xFu]);
+        }
+        uart_puts("  from ..");
+        for (uint32_t b = 0u; b < 3u; b++) {
+            uart_putc(hx[(g_snf_a2[i][b] >> 4) & 0xFu]);
+            uart_putc(hx[g_snf_a2[i][b] & 0xFu]);
+        }
+        uart_puts(" ch");
+        uart_put_dec(g_snf_ch[i]);
+        uart_puts(" rssi-");
+        uart_put_dec((uint32_t)(-(int)g_snf_rssi[i]));
+    }
+    /* Named so the next reader does not need the MAC table: 503f64 is this
+     * board and 2f57c6 is the access point being joined. */
+    uart_puts("\n             (..503f64 = nat-os,  ..2f57c6 = ivory-billed)\n");
+}
+
 void wpa_cb_report(void);
 void wpa_cb_report(void)
 {

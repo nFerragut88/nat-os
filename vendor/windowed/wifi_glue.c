@@ -321,6 +321,91 @@ uint32_t g_wpa_slot_fn[32] = {
     (uint32_t)&wpa_cb_s30, (uint32_t)&wpa_cb_s31
 };
 
+/* ---- the sniffer -- next_moves/08 step 250 ------------------------------
+ *
+ * Promiscuous mode has been ON since step 197 and NO CALLBACK WAS EVER
+ * REGISTERED, so every frame the radio decoded outside the data path was
+ * decoded and thrown away. Step 245 concluded that telling "the AP never
+ * answers" from "the driver discards it" needed a packet capture on another
+ * machine. It does not. The radio is already listening.
+ *
+ * wifi_promiscuous_pkt_t is rx_ctrl followed by the raw 802.11 frame. On
+ * ESP32 rx_ctrl is SEVEN 32-bit words -- counted from the bitfields in
+ * esp_wifi_types.h, not guessed:
+ *
+ *   0  rssi:8 rate:5 :1 sig_mode:2 :16
+ *   1  mcs:7 cwb:1 :16 smoothing:1 not_sounding:1 :1 aggregation:1 stbc:2
+ *      fec_coding:1 sgi:1
+ *   2  noise_floor:8 ampdu_cnt:8 channel:4 secondary_channel:4 :8
+ *   3  timestamp:32
+ *   4  :32
+ *   5  :31 ant:1
+ *   6  sig_len:12 :12 rx_state:8
+ *
+ * so the frame starts at +28 and sig_len is the low 12 bits of word 6.
+ *
+ * CHECKED, not assumed, in the same spirit as the scan record at step 206:
+ * sig_len must be a plausible frame length and the frame control's protocol
+ * version bits must be zero. A frame failing either is counted as a layout
+ * miss rather than decoded, so a wrong offset announces itself instead of
+ * printing convincing rubbish.
+ *
+ * WHAT IT KEEPS. Beacons and probe responses are the overwhelming majority
+ * of the air and say nothing about our association -- step 249 measured five
+ * of them and nothing else. They are counted and dropped. What is kept is
+ * everything else: authentication, association request and response,
+ * deauthentication, disassociation, action.
+ *
+ * WINDOWED, and it must do almost nothing: this runs in the driver's own
+ * receive path for every frame on the channel. Nine bytes are copied and it
+ * returns. The buffer is the driver's and is NOT freed here -- unlike the
+ * data path's rxcb, the promiscuous callback does not own it. */
+
+#define SNF_MAX 24u
+
+uint32_t g_snf_total, g_snf_drop_bcn, g_snf_layout, g_snf_kept;
+uint8_t  g_snf_fc[SNF_MAX];       /* frame control byte 0: type and subtype */
+uint8_t  g_snf_ch[SNF_MAX];
+signed char g_snf_rssi[SNF_MAX];
+uint8_t  g_snf_a1[SNF_MAX][3];    /* receiver  -- last three bytes */
+uint8_t  g_snf_a2[SNF_MAX][3];    /* sender    -- last three bytes */
+
+void natos_sniff_cb(void *buf, int type);
+void natos_sniff_cb(void *buf, int type)
+{
+    const unsigned char *b = (const unsigned char *)buf;
+    if (!b) { return; }
+    g_snf_total++;
+    if (type != 0) { return; }              /* WIFI_PKT_MGMT only */
+
+    const uint32_t *w = (const uint32_t *)buf;
+    uint32_t siglen = w[6] & 0xFFFu;
+    const unsigned char *f = b + 28;
+
+    /* The two self-checks. A management frame is at least 24 bytes of header
+     * plus a 4-byte FCS, and the protocol version must be 0. */
+    if (siglen < 28u || siglen > 1600u || (f[0] & 0x03u) != 0u) {
+        g_snf_layout++;
+        return;
+    }
+
+    uint32_t sub = (uint32_t)(f[0] >> 4);    /* subtype */
+    if (sub == 8u || sub == 5u || sub == 4u) {
+        g_snf_drop_bcn++;                    /* beacon, probe resp, probe req */
+        return;
+    }
+
+    if (g_snf_kept < SNF_MAX) {
+        uint32_t i = g_snf_kept;
+        g_snf_fc[i]   = f[0];
+        g_snf_ch[i]   = (uint8_t)((w[2] >> 16) & 0xFu);
+        g_snf_rssi[i] = (signed char)(w[0] & 0xFFu);
+        g_snf_a1[i][0] = f[7];  g_snf_a1[i][1] = f[8];  g_snf_a1[i][2] = f[9];
+        g_snf_a2[i][0] = f[13]; g_snf_a2[i][1] = f[14]; g_snf_a2[i][2] = f[15];
+    }
+    g_snf_kept++;
+}
+
 /* ---- wpa_cb slot 21: wpa_sta_rx_mgmt -- next_moves/08 step 249 ----------
  *
  * Seven calls on every failing connect, and until now only a count.

@@ -40,6 +40,11 @@ extern int  esp_wifi_get_mode(int *mode);
 extern int  esp_wifi_set_channel(unsigned char pri, int sec);  /* [step 197] */
 extern int  esp_wifi_scan_start(const void *cfg, int block);
 extern int  esp_wifi_set_promiscuous(int en);   /* [step 197] RX only */
+/* [step 250] The sniffer. rx_cb takes the callback; filter takes a POINTER to
+ * a uint32 mask, not the mask itself -- wifi_promiscuous_filter_t is a struct
+ * of one field. */
+extern int  esp_wifi_set_promiscuous_rx_cb(void *fn);
+extern int  esp_wifi_set_promiscuous_filter(const void *filter);
 extern int  esp_wifi_set_ps(int type);   /* [step 198] RX only */
 extern void phy_wakeup_init(void);   /* [step 198] wake the PHY from sleep */
 extern int  esp_wifi_scan_get_ap_num(unsigned short *n);  /* [step 202] */
@@ -150,6 +155,10 @@ struct blob_entry {
     /* [step 244] version 18 -- diagnostics, not capability. */
     int (*prof_authmode)(void);
     int (*prof_is_rsn)(void);
+    /* [step 250] version 19. APPENDED -- this struct must match
+     * kernel/blob.h field for field, and blob.h appends. */
+    int (*promisc_rx_cb)(void *fn);
+    int (*promisc_filter)(const void *filter);
 };
 
 /* `used` because nothing in this translation unit references it and
@@ -158,7 +167,7 @@ struct blob_entry {
 __attribute__((section(".blob_entry"), used))
 const struct blob_entry blob_entry = {
     .magic       = 0x3230384Eu,          /* "N802" little-endian */
-    .version     = 18u,
+    .version     = 19u,
     .image_size  = (uint32_t)&_blob_image_size,
     .text_end    = (uint32_t)&_blob_text_end,
 
@@ -201,4 +210,6 @@ const struct blob_entry blob_entry = {
     .get_macaddr          = esp_wifi_get_macaddr_internal,
     .prof_authmode        = esp_wifi_sta_get_prof_authmode_internal,
     .prof_is_rsn          = esp_wifi_sta_prof_is_rsn_internal,
+    .promisc_rx_cb        = esp_wifi_set_promiscuous_rx_cb,
+    .promisc_filter       = esp_wifi_set_promiscuous_filter,
 };

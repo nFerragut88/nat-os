@@ -243,6 +243,29 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
         uart_put_hex(pr);
         uart_puts("\n");
     }
+    /* [step 250] Register the promiscuous callback, and ask for management
+     * frames. Promiscuous mode has been on since step 197 with nowhere for
+     * the frames to go; this is the missing half.
+     *
+     * The filter takes a POINTER to a mask, not the mask: the public type
+     * wifi_promiscuous_filter_t is a struct of one uint32. It lives in RAM,
+     * not rodata -- step 236 paid for that rule with a LoadStoreError. */
+    if (e->promisc_rx_cb) {
+        extern void natos_sniff_cb(void *buf, int type);
+        static volatile uint32_t filt = 1u;   /* MASK_MGMT */
+        if (e->promisc_filter) {
+            uint32_t fr = blob_call(e->promisc_filter, (uint32_t)&filt, 0u, 0u, 0u);
+            uart_puts("   sniff     filter rc ");
+            uart_put_hex(fr);
+        } else {
+            uart_puts("   sniff     no filter entry");
+        }
+        uint32_t sr = blob_call(e->promisc_rx_cb, (uint32_t)&natos_sniff_cb,
+                                0u, 0u, 0u);
+        uart_puts("   rx_cb rc ");
+        uart_put_hex(sr);
+        uart_puts("\n");
+    }
     if (e->wifi_set_channel) {
         uint32_t cr = blob_call(e->wifi_set_channel, 1u, 0u, 0u, 0u);
         uart_puts("   channel 1 returned ");
@@ -296,6 +319,11 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
                     e->wifi_scan_ap_recs);
 
     wifi_try_connect(e->wifi_set_config, e->wifi_connect);
+
+    {   /* [step 250] What was actually on the air during the association. */
+        extern void wifi_sniff_report(void);
+        wifi_sniff_report();
+    }
 
     /* [step 244] What does the driver think it just connected to? A profile
      * that says OPEN while the RSN IE on the air says WPA2 would explain an
