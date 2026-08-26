@@ -14890,3 +14890,77 @@ http   step 261's HTTP 200 stands, on the previous build
 5. The cfg readback, rekeying, roaming, PMKSA, WPA3/SAE, the all-channel panic.
 
 **The timers run again. Whether the page is now reliable is not yet measured.**
+
+---
+
+## step 263 — a RATE at last, and the watchdog is the blocker
+
+`(this commit)`
+
+Eight runs of the step-262 build, each taken to a lease and then fetched from
+192.168.1.102:
+
+| | count |
+|---|---|
+| command delivered | 8 / 8 |
+| DHCP lease | **6 / 8** |
+| **TG0WDT_SYS_RESET** | **3 / 8** |
+| HTTP 200 | run 6 — lease, no reset, ARP resolved first |
+
+**Every HTTP failure coincided with either a watchdog reset or a fetch made
+without pinging first.** The one run that had a lease, no reset, and a resolved
+ARP entry served the page.
+
+### 263a. This reprioritises everything
+
+The step-259 watchdog has been carried for four steps as a curiosity — an
+intermittent reset with no mechanism, noted and deferred. It is not a
+curiosity. **It is the thing standing between nat-os and a working server**, and
+at 3 in 8 it will defeat any attempt at persistence long before the design of
+the polling loop does.
+
+The rate is consistent with step 259's own 2 in 4, measured on a different
+build, which is worth something: two independent samples, ~40%, across code
+changes that did not touch it.
+
+### 263b. What a rate buys
+
+Step 259 could not name the mechanism because a single observation cannot
+distinguish a cause from a coincidence — and steps 253, 255 and 260 each drew a
+confident conclusion from one run and each had to be retracted. Eight runs cost
+forty minutes and settle more than the previous four steps of argument did.
+
+**Do not diagnose an intermittent fault from one run.** Written down here
+because it has now been learned four times in this file.
+
+### 263c. The ARP nudge, unexplained
+
+Both successful fetches in this project so far — step 261 and run 6 — were made
+*after* pinging the board. A fetch without it has failed every time, including
+run 2, which had a lease and no reset. Windows should ARP on its own before the
+SYN.
+
+Not chased, and not explained. Recorded so it is not mistaken for noise: it may
+be a slow or dropped first ARP reply, which would be a real defect on the
+station side.
+
+### State
+
+```
+boot   11 PASS 0 FAIL      wpa 4 crypto vectors passed
+assoc + handshake          reliable
+DHCP lease                 6/8
+TG0WDT reset               3/8   <- the blocker
+HTTP 200                   when neither of the above interferes
+```
+
+### Next
+
+1. **The watchdog, properly.** It fires while being fed (step 259), it is not
+   starvation, not stack, not lock contention, and it now has a measured rate on
+   two builds. Next instrument must survive the reset — the store already
+   persists `LAST FAULT` across boots and a watchdog leaves nothing.
+2. The first-ARP question of 263c.
+3. Persistence: service lwIP from a task rather than a shell command's loop.
+
+**The stack works. The board reboots underneath it three times in eight.**
