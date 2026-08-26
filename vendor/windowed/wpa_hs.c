@@ -173,18 +173,42 @@ static void send_eapol(uint32_t key_info, const u8 *nonce, const u8 *kd, uint32_
 
 /* Pull the GTK out of msg3's key data, which arrives AES-key-wrapped under the
  * KEK and holds a sequence of KDEs. The GTK KDE is 00-0F-AC type 1. */
+/* [step 258] WHY extract_gtk failed, because one counter for four causes told
+ * us nothing for a whole step. 1 length, 2 unwrap, 3 no GTK KDE found,
+ * 4 an element runs off the end. */
+uint32_t g_hs_uw_why, g_hs_kdlen;
+uint32_t g_hs_step;
+
 static int extract_gtk(const u8 *kd, uint32_t kdlen, u8 *gtk, uint32_t *gtk_len, uint32_t *keyid)
 {
     static u8 plain[128];
-    if (kdlen < 16u || (kdlen % 8u) != 0u || kdlen - 8u > sizeof plain) { return -1; }
-    if (aes_unwrap(KEK, 16, (int)((kdlen - 8u) / 8u), kd, plain) != 0) { return -1; }
+    g_hs_kdlen = kdlen;
+    if (kdlen < 16u || (kdlen % 8u) != 0u || kdlen - 8u > sizeof plain) {
+        g_hs_uw_why = 1u; return -1;
+    }
+    if (aes_unwrap(KEK, 16, (int)((kdlen - 8u) / 8u), kd, plain) != 0) {
+        g_hs_uw_why = 2u; return -1;
+    }
 
+    /* [step 258] SKIP what is not a GTK KDE; do not stop at it.
+     *
+     * This loop used to break on the first element whose id was not 0xDD. The
+     * key data of a WPA2 message three is the ACCESS POINT'S RSN IE -- element
+     * id 0x30 -- followed by the GTK KDE, so the very first element ended the
+     * walk every time and the group key was never reached. aes_unwrap had
+     * already decrypted it correctly.
+     *
+     * A non-GTK element is not an error, it is an element. Only a malformed
+     * length or a run off the end stops the walk, and 0xDD with length 0 is
+     * the padding that legitimately ends the list. */
     uint32_t n = kdlen - 8u, i = 0u;
-    while (i + 6u <= n) {
+    while (i + 2u <= n) {
         uint32_t t = plain[i], l = plain[i + 1u];
-        if (t != 0xDDu || l < 4u || i + 2u + l > n) { break; }
-        if (plain[i+2] == 0x00u && plain[i+3] == 0x0Fu && plain[i+4] == 0xACu
-            && plain[i+5] == 0x01u && l >= 6u) {
+        if (t == 0u || l == 0u) { break; }        /* padding ends the list */
+        if (i + 2u + l > n) { g_hs_uw_why = 4u; break; }
+        if (t == 0xDDu && l >= 6u
+            && plain[i+2] == 0x00u && plain[i+3] == 0x0Fu && plain[i+4] == 0xACu
+            && plain[i+5] == 0x01u) {
             *keyid = plain[i + 6u] & 0x03u;
             *gtk_len = l - 6u;
             if (*gtk_len > 32u) { *gtk_len = 32u; }
@@ -193,6 +217,7 @@ static int extract_gtk(const u8 *kd, uint32_t kdlen, u8 *gtk, uint32_t *gtk_len,
         }
         i += 2u + l;
     }
+    if (!g_hs_uw_why) { g_hs_uw_why = 3u; }
     return -1;
 }
 
@@ -292,7 +317,14 @@ int wpa_sta_rx_eapol_impl(u8 *src, u8 *buf, u32 len)
         if (!have_gtk) { g_hs_unwrap_bad++; }
     }
 
+    /* [step 258] WHERE the message-three tail stops. m3=1 with done=0 and
+     * st=1 says this call never returns: the driver task is inside our
+     * handler, holding the blob mutex, which is why the next blob_call in
+     * the shell hangs too. One store per stage costs nothing and names the
+     * stage instead of leaving a five-way guess. */
+    g_hs_step = 1u;
     send_eapol(0x0002u | KI_PAIRWISE | KI_MIC | KI_SECURE, 0, 0, 0u);
+    g_hs_step = 2u;
 
     if (g_hs_setkey_fn) {
         /* Explicit, not an initializer -- see the note in wifi_glue.c: an
@@ -303,13 +335,40 @@ int wpa_sta_rx_eapol_impl(u8 *src, u8 *buf, u32 len)
         /* pairwise: CCMP(3), for this AP, index 0, tx, PAIRWISE|TX|RX */
         (void)((setkey_fn_t)g_hs_setkey_fn)(3, g_aa, 0, 1, seq, 6, TK, 16,
                                             (1<<5) | (1<<3) | (1<<2));
+        g_hs_step = 3u;
         if (have_gtk) {
-            (void)((setkey_fn_t)g_hs_setkey_fn)(3, 0, (int)keyid, 0, seq, 6,
+            /* [step 258] g_aa, NOT 0. A NULL address here is what the driver
+             * handed to a ROM copy routine the moment the GTK was finally
+             * found: LoadProhibited, epc 0x4000c28c, excvaddr 0x00000000.
+             *
+             * ESP-IDF's wpa_supplicant_install_gtk passes sm->bssid -- the
+             * access point -- and has the broadcast address commented out
+             * beside it, so this is the value it chose between two, not a
+             * guess between none. */
+            (void)((setkey_fn_t)g_hs_setkey_fn)(3, g_aa, (int)keyid, 0, seq, 6,
                                                 gtk, gtk_len, (1<<4) | (1<<2));
         }
     }
-    if (g_hs_ptkdone_fn)  { (void)((ptkdone_fn_t)g_hs_ptkdone_fn)(g_aa); }
+    g_hs_step = 4u;
+    /* [step 258] ptk_init_done is NOT CALLED, and that is the fix.
+     *
+     * step=4 said the message-three tail stopped here: message four sent,
+     * pairwise key installed, group key installed, and
+     * esp_wifi_wpa_ptk_init_done_internal never returning -- taking the blob
+     * mutex with it, which is why the shell's next blob_call hung too.
+     *
+     * It is an ACCESS POINT function. Its only caller in the whole ESP-IDF
+     * supplicant is src/ap/wpa_auth.c:2003, the authenticator side. A station
+     * completing a four-way handshake calls wpa_neg_complete(), and that is
+     * esp_wifi_auth_done_internal() and nothing else. Calling the hostapd
+     * half from the station half is what stalled.
+     *
+     * The entry stays in the table -- it costs one slot and nat-os will want
+     * it if it ever runs an access point -- but the station path leaves it
+     * alone. */
+    g_hs_step = 5u;
     if (g_hs_authdone_fn) { (void)((authdone_fn_t)g_hs_authdone_fn)(); }
+    g_hs_step = 6u;
 
     g_hs_state = 3u;
     g_hs_done++;
