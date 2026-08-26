@@ -14552,3 +14552,128 @@ wdt    2 resets in 4 completed runs -- mechanism NOT established
 
 **nat-os is a station on a WPA2-PSK network, with an address, and the mechanism
 of one intermittent reset is not yet known.**
+
+---
+
+## step 260 — the web page does NOT load, and step 259's instrumentation was the reason nothing ran
+
+`(this commit)`
+
+```
+wpa    4 passed, 0 failed        PMK ready after 15 s
+       ASSOC_RESP STATUS 0 SUCCESS aid 12      4way done=1
+lwip   DHCP bound -- address 192.168.1.140
+lwip   rx 695 drop 0  tx 10 err 0
+http   conns 0 reqs 0 errs 0
+```
+
+The browser test **fails**. A machine on the same subnet cannot reach the board:
+the page times out, `ping 192.168.1.140` gets nothing, and `arp -a` reports **no
+ARP entry** — this station never answers a request for its own address.
+
+### 260a. First, a retraction. Step 259's cfg readback broke `wifiinit`.
+
+Step 259 added a TIMG0 `WDTCONFIG0` readback to the status line, to catch the
+watchdog being reconfigured by the blob. It reported that across a clean run the
+value never moved.
+
+**Both halves of that are wrong, and the second caused the first.**
+
+    cap27 .. cap30    PMK ready after 15 s, full runs
+    cap31             FIRST run carrying the cfg readback
+                      -> stalls at [blobtask] wifi prio 23/25 -> HIGH
+    every run since   stalls identically
+
+The cfg values step 259 quoted came from the boot-phase status lines of a run
+that had **already stalled**. The claim is withdrawn; it was never a measurement
+of a running system.
+
+Confirmed by A/B on the one call site, nothing else changed:
+
+    cfg readback present   stall at [blobtask], no crypto, no association
+    cfg readback removed   4 passed, PMK 15 s, aid 12, done=1, DHCP bound
+
+WHY a plain read of `0x3FF5F048` wedges the crypto phase is **not known** and is
+not guessed at here. It is now a one-line switch, which is a far better position
+than a mystery. The accessor stays in `watchdog.c`; only the call site is gone.
+
+This is the same shape as step 211's retracted lock leak, and it is worse in one
+way: step 211's phantom defect merely sent a reader to the wrong file, while
+this one silently disabled the subsystem it was installed to measure. **An
+instrument that stops the machine reports nothing about the machine.**
+
+### 260b. The poll window, and a wrong "too late"
+
+The first browser attempt was made after the 120 s window closed, and the board
+recorded **no ARP for its own address** — so nothing had tried, and "the page did
+not load" meant nothing at all. Step 227 sized that window so a human could type
+`ping`; the browser test races the operator in a way `ping` does not, because
+the address cannot be handed over until DHCP has bound and DHCP binds *inside*
+the window. Now 600 s.
+
+That removed timing as a variable and the test still fails, which is what makes
+the failure worth recording.
+
+### 260c. What works, measured
+
+    rx 695 drop 0        sustained encrypted reception, no losses
+    tx 10 err 0          the DHCP exchange, and NOTHING AFTER IT
+
+Reception over CCMP is not marginal: 695 frames across four minutes with zero
+drops. The pairwise key decrypts real traffic continuously, which is a stronger
+statement than step 259's DHCP lease — four datagrams could hide a lot.
+
+`tx` is the whole finding. It reaches 10 during DHCP — so encrypted transmit
+**does** work — and then never moves again. No ARP reply, no ICMP echo, no SYN
++ ACK. **On WPA2 this station receives and does not answer.**
+
+Step 230 answered a ping on an OPEN network, so the ARP and ICMP code is not the
+suspect.
+
+### 260d. And the poll stops servicing lwIP
+
+    net_poll_for(60000u)      600 s requested
+    last lwip report          +241s
+    tick counter after        35526, still climbing
+
+The loop was asked for 60000 ticks and stopped reporting at roughly 24100, while
+the rest of the system kept running — status lines, tasks, telemetry, all
+healthy. The shell task appears to be stuck inside the lwIP servicing path
+(`netif_wifi_input` or `netif_wifi_tick`), which explains why `rx` freezes and
+why nothing is answered after that point.
+
+**This invalidates the timing of both negative tests.** The operator's browse and
+the ping from 192.168.1.102 both landed after +241s, when nothing was draining
+the ring. So the honest statement is narrow:
+
+> Between DHCP binding and +241s the board transmitted nothing beyond the DHCP
+> exchange. After +241s it was not servicing the stack at all, and no test
+> conducted in that period is evidence about the network path.
+
+Whether an ARP arriving *during* the servicing window would have been answered
+is **not yet known**, and that is the next thing to find out.
+
+### State
+
+```
+boot   11 PASS 0 FAIL
+wpa    4 crypto vectors passed, 0 failed
+       ASSOCIATED aid 12, handshake done=1, conn=1
+lwip   DHCP bound -- 192.168.1.140,  rx 695 drop 0,  tx 10
+http   listening on port 80, conns 0 -- NOT REACHED
+```
+
+### Next
+
+1. **Why the poll stops at ~241 s.** Everything downstream is unmeasurable
+   until the stack is being serviced for the whole window. Instrument the loop
+   itself — which call it is inside — rather than inferring from silence.
+2. **Then re-run the browser test inside a known-good servicing window**, and
+   only then is "the page does not load" a fact about the network.
+3. **The cfg readback.** A register read that wedges the crypto phase is a real
+   defect in something, and the A/B is one line.
+4. The intermittent watchdog of step 259 is **untouched** and its diagnosis
+   still stands: not starvation, not stack, not lock contention.
+
+**nat-os holds a WPA2 association and a DHCP lease, receives 695 encrypted
+frames without loss, and answers nothing.**

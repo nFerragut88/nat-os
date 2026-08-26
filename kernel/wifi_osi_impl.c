@@ -2420,8 +2420,15 @@ void wifi_rx_start(uint32_t reg_fn, uint32_t free_fn, uint32_t promisc_fn,
         extern void net_report(void);
         uint8_t m[6];
         if (osi_impl_read_mac(m, 0u) == 0) { net_set_tx(tx_fn, m); }
-        uart_puts("   net       polling 120 s - DHCP, ARP, ICMP\n");
-        net_poll_for(12000u);  /* [step 227] 120 s -- a human has to type ping */
+        uart_puts("   net       polling 600 s - DHCP, ARP, ICMP, HTTP\n");
+        /* [step 260] 600 s, was 120. Step 227 sized this so a human could
+         * type ping. The browser test races the operator in a way ping does
+         * not: the address cannot be handed over until DHCP has bound, and
+         * DHCP binds INSIDE this window. At 120 s the first attempt was simply
+         * too late, and "the page did not load" then means nothing -- the
+         * board recorded no ARP for its own address, so no browser had tried.
+         * Ten minutes removes timing as a variable. */
+        net_poll_for(60000u);
         wifi_rx_report();
         net_report();
     }

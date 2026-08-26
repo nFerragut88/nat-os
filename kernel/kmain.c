@@ -498,10 +498,9 @@ static void task_report(void)
         uart_put_dec(watchdog_feeds());
         uart_putc('/');
         uart_put_dec(watchdog_starved());
-        /* [step 259] cfg should read 0xe01f8000 forever. Anything else means
-         * the TIMG0 watchdog was reconfigured by code that is not this. */
-        uart_puts(" cfg=");
-        uart_put_hex(watchdog_timg0_config());
+        /* [step 260] cfg= readback REMOVED for the A/B. cap31 -- the first
+         * run carrying it -- is the first run in which wifiinit stalls at
+         * [blobtask], and every run since has stalled identically. */
         uart_puts("  states=");
         for (int i = 0; i < 7; i++) {
             uart_put_dec((unsigned int)task_state_of(i));
