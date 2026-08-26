@@ -13538,25 +13538,1017 @@ The question is now narrow and well-posed: **the radio decodes nothing.** Not
 
 **Nothing has been transmitted, and it is measured.**
 
+---
 
+# steps 203–259 — RECOVERED, not contemporaneous
 
+**Read this before trusting the entries below.**
 
+This log stopped being written at step 202 on 2026-08-24. The next commit,
+`4cf3490`, is titled *"step 203-204 of next_moves/08"* — still citing this file
+by name, still numbering against it — but did not write to it, and neither did
+any of the thirty-two commits after it. The file kept being the **numbering
+authority** while ceasing to be the **record**.
 
+Nothing announced the change. What displaced it is visible in the same day's
+commits: `e66a0db`, UM-NATOS-048. The UM reports had taken over the narrative,
+each one covering a range, and once a polished report covered a range, writing
+those steps here as well was duplicated work. Reasonable in the moment; nobody
+wrote down that it had happened, and the gap then ran for fifty-seven steps.
 
+**Steps 203–259 below were reconstructed on 2026-08-26 from the commit messages
+and the UM reports.** They are not what was written at the time, because nothing
+was written at the time. Every measurement quoted is one that appears in a
+commit message, which is where the contemporaneous record actually lives — so
+the numbers are as good as they ever were, but the *ordering of thought* within
+a step is recovered rather than recorded. Where a step's reasoning matters, the
+commit hash is given and it is the primary source.
 
+The entries are also **shorter than steps 1–202**. That is deliberate and not an
+apology: the full account of 203–235 is in UM-NATOS-048, 049 and 050, and of
+236–259 in UM-NATOS-051. Repeating 200 KB of prose that already exists in four
+reports would make this file longer without making it more useful. What is kept
+here is what a working log is *for* — the measurement, the conclusion, and above
+all **what was eliminated, so it is not retried.**
 
+| steps | report | commits |
+|---|---|---|
+| 203–216 | UM-NATOS-048 | `4cf3490` … `b9caecf` |
+| 217–230 | UM-NATOS-049 | `7eef249` … `4fd9262` |
+| 231–235 | UM-NATOS-050 | `2dd142c` … `076c40e` |
+| 236–259 | UM-NATOS-051 | `d599ebf` … `3adb09f` |
 
+---
 
+## steps 203–204 — sweep all thirteen channels, and four candidates
 
+`4cf3490`
 
+```
+ch 1 found 0   ch 2 found 0   ...   ch 10 found 0
+```
 
+Step 202 found zero access points on channel 1 and named three candidates. The
+sweep widens the question: the receiver is deaf **everywhere**, not on one
+channel, so "the AP is on channel 6" is dead.
 
+Four candidates tested, three eliminated by measurement rather than argument:
 
+- **AMPDU.** RX/TX aggregation was enabled in `g_cfg` while the comment three
+  lines above said it should not be. Turned off. Still found 0. **Kept anyway**
+  — the code now matches its own documented intent and the driver carries less
+  state.
+- **Buffers.** The driver allocates RX and management buffers at init and
+  `_wifi_malloc` only started working at step 182, so nothing had ever checked
+  the result. It gets everything it asks for. Eliminated.
+- The remaining two are in the commit.
 
+**Eliminated: aggregation, buffer starvation.** Do not retry either.
 
+---
 
+## step 205 — THE RADIO HEARS
 
+`b9c1b32`
 
+```
+ch 6  rc 0x00000000 found 1
+ch 11 rc 0x00000000 found 1
+```
 
+An access point. Off the air. Decoded by this driver, on this board, after two
+hundred and four steps of finding nothing.
 
+**What was missing was a whole initialisation step**, not a tuning problem.
+Reading the blob rather than guessing at it:
 
+```asm
+l32r  a5, <g_ic>          ; 0x3ffd526c
+l32i  a6, a5, 0x1b4       ; g_ic->wpa_cb
+```
+
+`g_ic->wpa_cb` had been NULL since the driver first initialised. A NULL table
+faults in `cannel_scan_connect_state`, which checks the *function*; an all-zero
+table faults in `wifi_station_start`, which checks the *table*. Neither "leave
+it NULL" nor "hand it zeros" is right, so every slot points at one stub that
+records where it was called **from** — the driver names the entries it needs
+instead of a static scan guessing them.
+
+That technique — record the blob's own return address and let it tell you —
+is used again at steps 211 and 247.
+
+---
+
+## step 206 — an SSID, off the air, by name
+
+`a105734`
+
+```
+ch 6   found 1   ap[0] bssid 44:25:38:xx:xx:xx  ssid [T....]
+ch 11  found 1   ap[0] bssid 7e:26:f6:xx:xx:xx  ssid [i.........]
+```
+
+An SSID is a string transmitted by somebody else's hardware. It can only have
+arrived through the antenna, the PHY, the MAC, the interrupt, the queue and the
+worker — so one of them coming out proves every one of those works.
+
+**Redacted on purpose:** this repository is public and a BSSID is a geolocation,
+resolvable against public wardriving databases. What survives is the OUI, and
+the OUI is the point — `44:25:38` is Technicolor and the SSID it came with is
+the Technicolor default form, so the vendor prefix and the name corroborate each
+other.
+
+Only record **zero** is read. The stride between records is not stated by any
+header this project can check, and reading a second at a guessed offset would be
+the exact error step 199 refused to make with `scan_type`. See step 212.
+
+---
+
+## steps 207–208 — measure the reception instead of worrying about it
+
+`504e3ff`
+
+```
+summary  ch6=1/3 max1  ch11=3/3 max1
+ch 11  ssid [i.........]  rssi -61 dBm
+ch  6  ssid [T....]       rssi -91 dBm
+```
+
+Step 206 called the reception "marginal" on the evidence that one channel found
+an AP at 150 ms and none at 600 ms. That was the right worry and the wrong
+conclusion, and **the difference is one number.**
+
+−61 dBm is a strong, ordinary signal, heard on 3 passes of 3, every run, same
+BSSID. −91 dBm is the noise floor, where *any* receiver is intermittent. The
+receiver is not marginal; one of the two access points is far away.
+
+A worry that a measurement can settle should be settled, not carried.
+
+---
+
+## step 209 — NAT-OS TRANSMITS
+
+`d9babc1`
+
+```
+tx  beacon 70 B, ch 1, ssid [nat-os-transmitting] x500
+tx  accepted 500  refused 0        (62 s, 12.5 ticks/beacon)
+```
+
+**And it was seen.** A phone, several feet away, listed the SSID in its network
+picker — a device this project does not control, running software it did not
+write, displaying a string this code chose. It could only have arrived through
+the antenna.
+
+Every report from step 1 to step 208 ended "nothing has been transmitted", and
+every one was true and measured. That sentence retires here, on external
+evidence rather than on a return code. **`rc` is not evidence** — the phrase
+enters the vocabulary at this step and is quoted for the rest of the log.
+
+---
+
+## step 210 — the adapter table audited; `_env_is_chip` lied
+
+`ffc1424`
+
+UM-NATOS-048 §10 says six adapter entries have had a plausible body and the
+wrong semantics, and that the untested ones should be **assumed** to be the same
+rather than hoped not to be. This acts on that assumption: all 116 stubs scanned
+for bodies that reach no implementation. Sixty-four do not.
+
+Most are harmless — coexistence is dead code without Bluetooth, NVS is off by
+configuration, log entries and DPORT stalls do nothing on one core. Two were
+not, including `_env_is_chip` returning false and a clock reading zero.
+
+---
+
+## step 211 — `_event_post`, and a retraction
+
+`3f2f435`
+
+**The leak that wasn't.** UM-NATOS-048 rev 1.0 named a leaked
+`g_wifi_global_lock` as the highest-priority open defect in the WiFi
+implementation. **There is no such leak**, and the report is corrected to rev
+1.1 with a retraction.
+
+`_mutex_lock` and `_mutex_unlock` were instrumented to record the blob's own
+return address for every acquisition and pop it on release — the technique from
+step 205. The acquisition stack came back **empty**. Exactly balanced.
+
+A report that names a defect which does not exist sends the next person into the
+wrong file. The retraction is the work, not an embarrassment.
+
+---
+
+## step 212 — the record stride is 84, read out of the blob
+
+`11f4b05`
+
+Step 206 read only record zero and said why. Step 211 measured ch11 reporting
+**two** access points for the first time, which promoted the stride from a
+curiosity to an under-report — and made it measurable: ask for both, zero the
+buffer, and look at where the second lands.
+
+**84 bytes**, measured rather than assumed.
+
+---
+
+## step 213 — the unwired entries audited: no live defect
+
+`9e921bd`
+
+The assumption from §10 tested instead of carried. All 116 stubs scanned; 64
+reach no implementation; `osiused` then says which of those the driver actually
+calls. The answer changes the priority list, and **two entries that looked like
+stubs are correct as written.**
+
+---
+
+## steps 214–216 — the layout sensitivity was a wild write
+
+`a5aafd6`, `136bb6e`, `b9caecf`
+
+```
+[blobtask] req en=1 stack=6656 prio=23 fn=0x4036bb64
+init returned 0x00000000    start returned 0x00000000
+```
+
+— with the step-194 probe **removed**. Three dead stores in `window.S` had been
+kept since step 194 because deleting them made `esp_wifi_init_internal` return
+`ESP_ERR_NO_MEM`, reproducibly, from a cold boot. They are deleted here and
+everything works.
+
+**The wild write is found, and it was the probe itself:**
+
+```
+3ffb0d70 B g_win_sp
+3ffb0d74 B g_win_a0     <- AFTER g_win_sp, not before
+```
+
+`window.S` stored through `g_win_a0` at offsets 0 and 4 on the assumption that
+`g_win_sp` — a separate global, declared on the next line in C — followed it.
+The linker put them the other way round. Assembly-backed storage is now declared
+honestly.
+
+**Step 216 lifts a constraint that has stood since step 102.** UM-NATOS-042 §9.2
+said *"do not add uart_puts lines to shell.c"* because of an apparent layout
+band. Tested: +9 lines and +120 lines, both `rc=0`, init and start `ESP_OK`, 20
+beacons, ch6 and ch11 both found. **It does not reproduce.** The constraint was
+the wild write all along, and UM-NATOS-042 recommendation 2 is marked
+superseded.
+
+A rule kept for a hundred steps on evidence that no longer holds is a tax on
+every future change. Retest old constraints when their cause is found.
+
+---
+
+## step 217 — the association path works: reason 201
+
+`7eef249` · entry table v13
+
+```
+assoc  set_config rc 0x00000000
+assoc  connect    rc 0x00000000   ssid [nat-os-no-such-network]
+[evt]  posted 2   id=2  id=5(len22 reason201)
+```
+
+id 2 is `STA_START`, id 5 is `STA_DISCONNECTED`, reason 201 is `NO_AP_FOUND`.
+The driver accepted a station config, began an association, looked for a network
+that cannot exist, and said so. **A deliberately impossible SSID is the control**
+— the correct answer is a specific failure, and getting it proves the path.
+
+---
+
+## step 218 — real credentials, and the association stalls
+
+`fc1f4d3`
+
+```
+assoc  connect rc 0x00000000   ssid [<operator's network>] pass 13 chars
+[evt]  posted 1    id=2
+wpa hits 5
+```
+
+Thirty seconds. `STA_START` and nothing else — no CONNECTED, no DISCONNECTED, no
+reason code. **The driver does not fail; it STOPS.** `cnx_connect_next_ap` loads
+`wpa_cb + 8` and calls it, and offset 8 is `wpa_sta_connect`, which was a
+recording stub returning 1 and doing nothing.
+
+---
+
+## step 219 — `wpa_sta_connect`, and ASSOC_FAIL
+
+`78f2b23` · entry table v14
+
+```
+[evt] id=2  id=5(len12 reason203 ASSOC_FAIL)
+```
+
+**Read from the source, not guessed.** ESP-IDF's `wpa_sta_connect` is
+`wpa_config_profile` → `wpa_config_bss` → `esp_wifi_sta_connect_internal`. The
+first two are the WPA half, which nat-os does not have. The last line is what
+moves the driver, and for an open network it is very nearly the whole function.
+That line, and nothing else, is implemented.
+
+**A prediction is recorded here before it can be tested:** an open network should
+associate; a protected one should not, but should now fail with a reason code
+instead of silence. Confirmed at step 221.
+
+Also fixed: the SSID length self-check was hardcoded to 22 — the length of step
+217's impossible SSID — so a real network of a different length read as
+"layout?" when the layout was fine. **A self-check that only passes for one input
+is not a self-check.**
+
+---
+
+## step 220 — `wpa_cb` return values are per entry
+
+`1d47808`
+
+```
+ivory-billed      WPA2-PSK   reason 203 ASSOC_FAIL
+a phone hotspot   WPA3-SAE   reason 202 AUTH_FAIL
+```
+
+Two networks, two different failure points, one cause. Both are "no supplicant",
+one step apart — and the *difference between them* is a far sharper statement
+than "association fails".
+
+**Both blanket answers were measured wrong.** Returning 1 everywhere crashed
+against the WPA3 hotspot — `LoadProhibited`, `excvaddr 0x00000001`, inside a ROM
+copy routine — because `struct wpa_funcs` contains pointer-returning entries and
+the driver took the 1 as a pointer. Returning 0 everywhere hung before
+`set_mode` and watchdog-reset the board, because the bool entries read false as
+refusal.
+
+`esp_wifi_driver.h` is on the build machine and says which of the 25 entries
+returns what. **Reading the header cost one grep; guessing cost a crash and a
+watchdog reset.**
+
+---
+
+## step 221 — ASSOCIATED
+
+`9a3588d`
+
+```
+assoc  connect rc 0x00000000   ssid [ABCDE] pass none
+[evt]  id=2  id=4(len5 ch1 auth0 CONNECTED)
+```
+
+`WIFI_EVENT_STA_CONNECTED`. nat-os is a station on somebody else's access point
+— scanned for it, authenticated, associated, and stayed associated through
+thirty-nine subsequent scans.
+
+**Step 219's prediction is confirmed.** Predicting first is what turned a lucky
+outcome into a measurement.
+
+---
+
+## steps 222–225 — the data path, and a DHCP OFFER decoded
+
+`d4c9ae6` · entry table v15
+
+```
+dhcp  DISCOVER 291 B  tx rc 0x00000000  sent
+rx    frames 1 bytes 352
+  len 352  dst ffffffffffff  src <AP>  type 0x0800 IPv4
+  DHCP reply, offered 10.224.203.139  from 10.224.203.104
+```
+
+nat-os built an Ethernet II / IPv4 / UDP / DHCP packet by hand and put it on the
+air. The RX callback is **windowed** — the driver calls it with `callx8` — and
+does the least possible: copy into a ring, free the driver's buffer, return.
+
+**It must free the buffer.** Not calling
+`esp_wifi_internal_free_rx_buffer` leaks until the pool empties and reception
+stops — a failure that would look like the radio going deaf rather than like a
+missing free.
+
+**Silence is not a measurement.** The first reading was `frames 0`, and it meant
+nothing: consistent both with a quiet hotspot and with an unwired receive path.
+A DHCP DISCOVER separates them because a server is *obliged* to answer.
+Provocation beat observation, exactly as the beacon did at step 209.
+
+Two wrong turns first: `frames 0` was measured while the thirteen-channel sweep
+was running — a receiver on the wrong channel is not evidence of a quiet network
+— and promiscuous mode was suspected and **disproved, not left hanging.**
+
+---
+
+## steps 226–230 — NAT-OS ANSWERS A PING
+
+`4fd9262`
+
+```
+ping 10.224.203.200  ->  reply
+```
+
+ARP, ICMP echo and the client half of DHCP in `kernel/net.c`, about three
+hundred lines, in a kernel with no network stack and no libc. **Confirmed from
+another machine on the same network** — the verdict comes from a device this
+project does not control, the same standard the beacon met at step 209. A
+counter incremented on this board would prove nothing.
+
+DHCP got an OFFER but never an ACK; step 230 shipped a hardcoded address to work
+around it. See step 231.
+
+---
+
+## step 231 — DHCP completes: the ring truncated the OFFER
+
+`2dd142c`
+
+```
+net  DHCP ACK -- address 10.224.203.139
+net  +60s frames 102 arp 3 icmp 61 dhcp 1/1 drop 0/0 [IP]
+```
+
+**The bug was the ring size, and it was mine.** `NET_MAX` was 160 bytes, chosen
+because a ping is 74 bytes from Windows and 98 from Linux — and never checked
+against the *other* protocol in the same file. DHCP options begin at
+`14 + 20 + 8 + 240 = 282` bytes in; the OFFER measured 352. Every reply was
+truncated before its options, and the option scan then walked a region that did
+not exist.
+
+**How it presented is why it took two passes.** The counter read `dhcp 0/0`: not
+"the OFFER was rejected", which points here, but "no OFFER was ever seen", which
+points at the receive or transmit path.
+
+Truncation is now counted alongside the ring-full drop count. A silently
+shortened frame is the shape this project keeps finding.
+
+---
+
+## steps 232–234 — lwIP runs on nat-os
+
+`d120912`
+
+```
+lwip  DHCP bound -- address 10.224.203.139
+lwip  +40s  rx 75  drop 0  tx 52  err 0
+```
+
+A real TCP/IP stack on a kernel with no libc, over a driver this project
+reverse-engineered the interface to. `NO_SYS=1`, so the port layer reduces to
+`sys_now()` and a netif driver. DHCP negotiated by lwIP's own client, pings
+answered by lwIP's own ICMP, confirmed from another machine.
+
+---
+
+## step 235 — TCP: nat-os serves a web page
+
+`076c40e`
+
+```
+http  listening on port 80
+      http conns 4 reqs 4 errs 0
+```
+
+A browser rendered a page served by this kernel: 802.11 association, Ethernet,
+ARP, IPv4, TCP, HTTP in one transaction — **and TCP had been compiled in since
+step 232 without a single byte ever passing through it.** Compiled is not
+exercised.
+
+---
+
+## steps 236–237 — the RSN IE, and a reading that was wrong for fifteen steps
+
+`d599ebf` · entry table v16
+
+```
+step 219   reason 203 ASSOC_FAIL   association rejected, no RSN IE
+now        reason 39  TIMEOUT
+```
+
+Twenty-two constant bytes. For WPA2-PSK with CCMP the RSN information element is
+a **constant** — a declaration of what the station intends to negotiate, not
+proof that it can. No crypto is involved.
+
+**Step 219's hypothesis is confirmed:** the WPA2 failure was the missing RSN
+element.
+
+**And the reading of `203 → 39` recorded here is WRONG.** It was written as "the
+RSN IE gets WPA2 past association" and then hardcoded into the reason table as
+the string `" TIMEOUT(associated, no handshake)"`, where it stopped looking like
+a hypothesis. Nine steps took it as their premise. See **step 246**, which
+measures it, and **step 252**, which finds the mechanism: 203 was the access
+point *answering*; 39 is the access point no longer able to read the question.
+
+**A flash-versus-RAM fault worth keeping.** The element was first declared
+`static const uint8_t[22]` — `.rodata`, flash-mapped at `0x3F4xxxxx` — and
+handing that pointer to the driver produced `exccause 3 LoadStoreError`,
+`excvaddr 0x3f40b334`. **A buffer handed to the blob must live in RAM.**
+
+---
+
+## steps 238–239 — vendor the crypto, prove it against published vectors
+
+`6378f8c`
+
+```
+wpa  crypto self-test (IEEE 802.11i vectors)
+  PASS pbkdf2 #0    PASS pbkdf2 #1    PASS pbkdf2 #2
+  3 passed, 0 failed
+```
+
+Two routes sized before either was started: port ESP-IDF's `rsn_supp` (5,660
+lines, five protocols where nat-os needs one) or hand-write everything (~1,900
+lines, including hand-rolled SHA-1 and AES — where subtle, silent,
+security-relevant bugs live). **Neither.** Vendor the crypto, hand-write the
+state machine: seven files, 234 KB.
+
+**The deciding argument was testability.** Crypto has published vectors, so it
+can be checked on the bench with no network and no ambiguity. A handshake that
+fails because PBKDF2 is off by one iteration is indistinguishable from a dozen
+other faults and would be debugged over the air, twenty seconds at a time.
+
+That decision pays at step 258.
+
+---
+
+## step 240 — the crypto moves to the windowed ABI
+
+`32749e0`
+
+`esp_wifi_set_sta_key_internal` takes **nine arguments** and the call0-to-windowed
+bridges carry four, so the handshake must be windowed to install a key at all.
+Compiling the crypto windowed removes every bridge from the path.
+
+**Two ABI violations, both mine, both the same rule.** `wpatest.c` became
+windowed and kept calling call0 `uart_puts` — `LoadProhibited`, `excvaddr 0`.
+Then the windowed crypto called `os_memcpy`/`os_memset`, macros onto call0
+`kstring.c` — `IllegalInstruction` with `epc == a0`, a windowed return address
+leaking into PC.
+
+UM-NATOS-048 §9.2 wrote down the tell: **a layout fault MOVES when sizes change;
+an ABI fault does not.** It was written down and it was used.
+
+Also measured here and **ignored three steps later**: PBKDF2 costs most of a
+minute for three derivations, and "should not be recomputed per association".
+See step 243.
+
+---
+
+## steps 241–242 — the handshake, written and NOT YET REACHED
+
+`ecd5d68` · entry table v17
+
+```
+4way pmk=1 st=0 m1=0 m3=0 done=0 micbad=0 txerr=0 poll=0
+```
+
+The handshake exists — msg1 to msg2, MIC verification, GTK unwrap, key
+installation, msg4 — it compiles, it links, and **it has never run.** `m1=0` says
+`wpa_sta_rx_eapol` was never called.
+
+**Committed anyway and labelled as unexecuted**, because the next person needs
+the state to be honest rather than encouraging. Every line below the PMK is
+written from the specification and none of it has met an access point.
+
+A third ABI fault on the way: GCC turned the *inlined* `os_memcpy` back into a
+call to `memcpy`, because an aggregate initializer (`u8 seq[6] = {0,…}`) is a
+language-level copy that `-fno-builtin` does not touch.
+
+`wpa_sta_in_4way_impl` is **bounded** — answering "still in a handshake" forever
+made the driver spin at HIGH priority and watchdog-reset the board. A bounded
+answer turns a hang into a diagnosable timeout.
+
+---
+
+## step 243 — derive the PMK off the driver's connect path
+
+`80a4b23`
+
+```
+wpa   PMK ready after 15 s
+evt   reason39
+```
+
+**PBKDF2 was running inside the driver's connect callback.** `wpa_sta_connect` is
+called by the driver from `cnx_connect_next_ap`, mid-association, and
+`wpa_hs_arm()` was deriving the PMK there. Measured: **15 seconds.** The
+association is long dead before message one would arrive — which is exactly the
+silence step 241 observed.
+
+Step 240 measured that cost and wrote down that it should not be per-association.
+It was then put in the per-association path anyway, three steps later.
+**Measuring a thing does not help if the measurement is not used**, and the note
+that would have prevented this was written by the same hand that ignored it.
+
+---
+
+## steps 244–245 — two hypotheses for the missing EAPOL, both disproved
+
+`0d62924` · entry table v18
+
+```
+prof  authmode 5  is_rsn 1
+lwip  eapol@netif 0
+4way  m1=0
+```
+
+**"The driver thinks this is an open network."** The station config is zeroed
+apart from SSID and password, making `threshold.authmode` `WIFI_AUTH_OPEN`.
+Wrong: `esp_wifi_sta_get_prof_authmode_internal` answers 5 and
+`prof_is_rsn` answers 1. The driver knows exactly what it is connecting to.
+
+**"lwIP is eating the EAPOL."** Counted at the netif before anything else touches
+the frame: zero. No EAPOL reaches lwIP either.
+
+Both were written down before testing, which is what makes eliminating them
+worth a commit. Both diagnostics kept.
+
+The step concludes that distinguishing what remains "needs something outside
+this board — a packet capture on another machine". **Step 250 shows that is
+false:** the radio was already listening.
+
+---
+
+## step 246 — reason 39 never meant "associated"
+
+`375b0ed` · UM-NATOS-051 §6
+
+```
+wpa conn=0  disc=1  cbreason=39
+evt posted 15   :2   :1 x13   :5(reason39)      -- NO :4
+```
+
+Slots 3 and 4 of `struct wpa_funcs` — `wpa_sta_connected_cb` and
+`wpa_sta_disconnected_cb` — named rather than pooled into the shared stub. The
+driver **never** calls the connected callback, and no `STA_CONNECTED` event is
+ever posted.
+
+**The station does not associate.** So the missing EAPOL of steps 241–245 needs
+no explanation beyond that: the access point never had an associated station to
+send message one to. Steps 237–245 were debugging the wrong half.
+
+39 is `WIFI_REASON_TIMEOUT`. The code for "associated, then EAPOL failed" is
+**204 `HANDSHAKE_TIMEOUT`**, or 15, and neither had ever appeared here.
+
+**Eliminated at zero cost:** the theory that the driver gates EAPOL on
+`wpa_sta_in_4way_handshake` (slot 6). `rsn_supp/wpa.c:682` sets
+`WPA_FIRST_HALF_4WAY_HANDSHAKE` *inside* the message-one handler, so real IDF
+answers false before message one too. Reading beat guessing.
+
+---
+
+## step 247 — name every supplicant slot
+
+`00aae4b`
+
+```
+wpa seq    0 15 21 21 21 21 15 21 21 22 15 21
+wpa named  0=sta_init  15=parse_wpa_ie  21=sta_rx_mgmt  22=config_done
+```
+
+One trampoline per slot, 0–31, each recording its own index. Twelve anonymous
+return addresses become slot numbers.
+
+**Slot 15, `wpa_parse_wpa_ie`, is called three times on the failing connect**
+while returning 0 — success — and writing nothing, so the driver reads back
+proto 0, pairwise 0, key_mgmt 0 about a WPA2 network. That is the fifth instance
+of the class this log keeps finding, after `_event_post`, `_task_delay`, the
+event groups and `_queue_send_from_isr`: **an entry that reports success for
+work never done.**
+
+Slot 21 fires seven times — the driver *is* receiving management frames. Whatever
+fails, it is not the RF path.
+
+---
+
+## step 248 — parse the RSN element: correct, and NOT the cause
+
+`5e5740c`
+
+```
+wpa ie   calls=3 ok=3 bad=0 body=20B
+         group=0x8  pair=0x8  akm=0x2  caps=0x0
+wpa conn=0  disc=1  cbreason=39          <- unchanged
+```
+
+The parser reads the access point exactly right — group CCMP, pairwise CCMP, AKM
+PSK. **The association fails identically.** The zeroed struct was not what
+stopped it. **Eliminated.**
+
+Kept anyway, on the reasoning of steps 200 and 202: a live defect is worth
+fixing whether or not it is today's.
+
+**The field conventions are not uniform**, and only the wrapper says so: `proto`
+and `key_mgmt` are supplicant bitmasks; `pairwise_cipher` and `group_cipher` are
+public enum values mapped through `cipher_type_map_supp_to_public`. Guessing one
+convention for all five would have put TKIP (3) where CCMP (4) belongs — a wrong
+answer that looks like a right one.
+
+---
+
+## step 249 — slot 21 is scan traffic, not the association
+
+`7c93d84`
+
+```
+wpa mgmt calls=5 connect=1
+    type 5 PROBE_RESP   from ..2f57c6
+    type 8 BEACON       from ..2f57c6
+```
+
+Every one is a beacon or probe response from the scan sweep, forwarded so the
+supplicant can maintain a BSS table. **None touches the association.** The
+reading that "the AP is talking to us, the failure is later" is retired.
+
+**What it does not establish is the opposite.** IDF routes *authentication*
+frames to this slot only for SAE; for open-system auth the driver handles them
+itself. Absence here is not evidence of absence on air — the tempting sentence
+would have been a conclusion the instrument cannot support.
+
+**A branch closed before it cost a step.** Step 248 planned for the possibility
+that nothing was arriving, putting the failure on the way *out*, and noted that
+this project had never confirmed a transmission. That is **wrong**, and
+UM-NATOS-049 says so: step 230 answered a ping from a separate machine. The
+operator's memory caught it; the docs confirmed it.
+
+---
+
+## step 250 — a sniffer, and the access point DOES answer
+
+`8a15e5b` · entry table v19
+
+```
+sniff  seen 577  beacons/probes 569  layout-miss 0  KEPT 8
+       AUTH  to ..503f64  from ..2f57c6  ch11 rssi-55
+```
+
+Promiscuous mode had been **on since step 197 with no callback registered**, so
+every management frame decoded outside the data path was thrown away. Step 245
+said separating "the AP never answers" from "the driver discards it" needed a
+capture on another machine. **It did not.** The radio was already listening and
+nobody had asked it what it heard.
+
+An authentication frame from the access point, addressed to this board, means
+our request was transmitted, received and answered.
+
+**Deliberately not claimed:** whether that frame is an *acceptance*. A rejection
+is also a frame from the AP addressed to us. See step 251.
+
+`rx_ctrl` is seven 32-bit words on ESP32, counted from the bitfields, and two
+self-checks guard the +28 offset. Across 577 frames, **layout-miss is zero** — the
+offset is measured, not believed.
+
+---
+
+## step 251 — authentication SUCCEEDS
+
+`2325eff`
+
+```
+AUTH  alg0(OPEN)  seq2  STATUS 0 SUCCESS
+```
+
+Open-system, transaction sequence 2 — the authenticator's reply — status 0.
+**The 802.11 exchange completes its first half.** Nothing in the radio, the PHY,
+the MAC, the transmit path or the channel is at fault, and none of that is
+inference any more.
+
+And then nothing: no association response, ever, in 602 frames. The failure is
+located between a completed authentication and an association response that
+never comes — which is the first time in fifteen steps that the reason code and
+the measurement agree about the same event.
+
+**Still not separated:** the sniffer reports *received* frames, so "no
+association response" is consistent with both "never sent" and "sent and
+ignored".
+
+---
+
+## step 252 — the association request IS sent
+
+`1f605ec`
+
+| arm | element | the AP's answer | reason |
+|---|---|---|---|
+| `startnoie` | none | `ASSOC_RESP STATUS 10` | 203 |
+| `start` | AKM PSK | **silence** | 39 |
+
+With the element suppressed the access point **receives our association request
+and answers it.** The frame goes out.
+
+**So the failure is our RSN element, and it is malformed rather than merely
+unacceptable.** A well-formed request the AP dislikes earns a status code; one it
+cannot parse earns silence.
+
+**This retires step 237.** `203 → 39` was recorded as progress. It is the
+opposite: 203 was the access point answering, 39 is the access point no longer
+able to read the question. The IE moved this backwards, and it took fifteen
+steps and a sniffer to see it.
+
+---
+
+## step 253 — the appie buffer: panic, "eliminated" — AND THIS ENTRY IS WRONG
+
+`518eb8d` · **corrected at step 256** · UM-NATOS-051 §8
+
+```
+element at +2, length 44   *** KERNEL PANIC ***
+                           exccause 20 InstFetchProhibited
+                           epc 0x00006898   a0 0x8036cc9c
+```
+
+ESP-IDF's `set_assoc_ie()` hands `esp_wifi_set_appie_internal` a pointer **two
+bytes ahead of the element** with a length that is a capacity. Reproducing that
+shape panicked, and the change was recorded as eliminated.
+
+**It was not eliminated. It was working.** The association completed, the access
+point sent message one, and nat-os's own handshake crashed on it. The crash beat
+the evidence to the console.
+
+`AGENTS.md` rule 12 says: *"when an experiment produces a surprising result,
+investigate the implication rather than immediately reverting it."* This step
+reverted. The rule was written down, was on screen, and was not followed.
+
+**Do not re-derive this from the original entry.** Read step 256.
+
+---
+
+## step 254 — the element's PRESENCE, not its content
+
+`34c63f6`
+
+```
+startnoie     no element         ASSOC_RESP status 10
+start         AKM PSK    (02)    silence
+start8021x    AKM 802.1X (01)    silence
+```
+
+The third arm differs from the second by **a single byte**, asking a WPA2-PSK
+router for 802.1X — which it cannot provide and must refuse. A refusal is a
+frame: status 43, 44, any of them. It refuses nothing.
+
+**Content eliminated.** The access point does not care what is in the element,
+only that there is one. That leaves the insertion.
+
+---
+
+## step 255 — both appie candidates eliminated — AND THIS ENTRY IS ALSO WRONG
+
+`86b0294` · **corrected at step 256**
+
+```
+startassocie  type ASSOC_REQ(1)   silence
+startflag0    flag 1 -> 0         *** PANIC ***  a0 0x8036cc9c
+```
+
+Recorded as: neither candidate is the fix.
+
+**The flag WAS the fix**, and the panic was it working — same error as step 253.
+This entry contains the arithmetic that eventually caught both: `a0` is
+`0x8036cc9c` in **both** panics, and the blob's symbol table resolves it —
+
+```
+4036cb30 T sta_rx_eapol      <-  0x4036cc9c is sta_rx_eapol + 0x16c
+```
+
+An access point sends EAPOL to a station that has **associated**, and to no other
+kind. That was written here as a hypothesis, correctly hedged against a
+register-window signature in the dump, and settled one step later.
+
+---
+
+## step 256 — NAT-OS ASSOCIATES WITH WPA2
+
+`74549b0`
+
+```
+AUTH        STATUS 0 SUCCESS
+ASSOC_RESP  STATUS 0 SUCCESS   aid 12
+DEAUTH      reason 15
+4way  pmk=1  m1=3  ki=0xeeee
+```
+
+The handshake reduced to a counter, and the flag0 arm re-run. **Association
+identifier 12. Message one three times.** Deauthentication with reason 15,
+`4WAY_HANDSHAKE_TIMEOUT`, because passive mode answers nothing — all correct
+behaviour for a station that associated and went quiet.
+
+**The fix:** `esp_wifi_set_appie_internal`'s trailing argument must be **0**, not
+the 1 ESP-IDF's own RSN call site passes. Why IDF passes 1 and works is not
+understood and is not guessed at.
+
+**And the crash of steps 253 and 255 is ours, in one line:**
+
+```c
+g_snonce[i] = (u8)(lwip_rand_u32() >> ((i & 3u) * 8u));
+```
+
+`lwip_rand_u32` is in `kernel/kstring.c`, which is **call0**; `wpa_hs.c` is
+**windowed**. The first thing the message-one path does was an ABI violation.
+
+---
+
+## step 257 — the handshake runs
+
+`82b2e86`
+
+```
+4way  pmk=1 st=1 m1=1 m3=1 done=0 micbad=0 unwrap=1 ki=0x13ca
+```
+
+Every counter is a proof. `m3=1` means the access point sent message three,
+which it does **only** after message two arrives with a MIC it accepts;
+`micbad=0` means message three's own MIC verified. So the PMK, the PTK, the PRF
+and the address and nonce orderings are all right, and the KCK is right twice
+over. Everything step 240 vendored works against real hardware.
+
+`lwip_rand_u32` replaced by a direct `WDEV_RND_REG` read — **the cheapest answer
+to an ABI crossing is not to cross.** Checked that it was the only one.
+
+`unwrap=1`: the group key would not come out.
+
+---
+
+## step 258 — THE FOUR-WAY HANDSHAKE COMPLETES
+
+`3aa83cb`
+
+```
+wpa    4 passed, 0 failed   (3x pbkdf2 + aes_unwrap RFC 3394)
+4way   pmk=1 step=6 m1=1 m3=1 done=1 micbad=0 why=0
+wpa    conn=1 disc=0 cbreason=none
+```
+
+**`conn=1`** — the callback step 246 measured at zero for thirteen steps.
+
+**The primitive was proved before the protocol was blamed.** `aes_unwrap` was the
+obvious suspect and the one function step 240 never checked against a published
+answer. Checked against **RFC 3394 §4.1**: it passes. The crypto was never wrong,
+and without that vector the next days would have gone into `aes-unwrap.c`.
+
+Three bugs, each exposed by the last:
+
+1. **The KDE walk stopped at the first element.** A WPA2 message three's key data
+   is the AP's **RSN IE (`0x30`)** followed by the GTK KDE, so the walk broke on
+   element one and never reached the group key `aes_unwrap` had already
+   decrypted correctly.
+2. **The group key was installed at address NULL** — `LoadProhibited`,
+   `epc 0x4000c28c`, `excvaddr 0`. IDF passes `sm->bssid`.
+3. **`esp_wifi_wpa_ptk_init_done_internal` is an access-point function.** Its only
+   caller in the whole IDF supplicant is `src/ap/wpa_auth.c:2003`. It never
+   returned and took the blob mutex with it — which also explains earlier runs
+   dying at `prof authmode` with no message.
+
+Bug 3 was found by instrumentation, not insight: `m3=1` with `done=0` is a
+five-way guess; one store per stage made it `step=4`, which names the call.
+
+---
+
+## step 259 — the watchdog is NOT starvation, and DHCP binds over WPA2
+
+`3adb09f`
+
+```
+lwip   DHCP bound -- address 192.168.1.140
+wdt    f/s=600/0   cfg=0xe01f8000
+<TG0WDT_SYS_RESET>
+```
+
+**nat-os holds a DHCP lease on a WPA2 network.** The keys work. Step 258's "no
+DHCP" was the wrong instrument — `offer/ack 0/0` is `kernel/net.c`'s hand-rolled
+client, and lwIP is a different stack that had bound an address.
+
+**The watchdog reset is not starvation.** The hang detector now prints which task
+it is about to give up on — it has two seconds of headroom and nothing else is
+running to be starved by the printing. In the run that reset it printed
+**nothing**, and feeds were advancing on schedule. The watchdog fired **while
+being fed correctly**, which retires the step-242 class the boot banner's own
+description implies.
+
+**Also eliminated:** the shell stack (236 of 2048 free appears in runs that never
+handshake and never reset) and lock contention (the rising `contended=` is
+`g_shared_lock`, the wintorture test mutex, nothing to do with the blob).
+
+### State
+
+```
+boot   11 PASS 0 FAIL      wintorture checksum 1632 CORRECT
+wpa    4 crypto vectors passed, 0 failed
+       ASSOCIATED aid 12, handshake done=1, conn=1
+lwip   DHCP bound -- 192.168.1.140
+wdt    2 resets in 4 completed runs -- mechanism NOT established
+```
+
+### Next
+
+1. **The watchdog.** A watchdog that fires while fed is one whose configuration
+   or clock is not what this kernel thinks. TIMG0 is Espressif hardware and the
+   blob is Espressif code. The config readback is sampled per status line and
+   needs **latching on change** — the interesting moment is inside the last
+   three seconds.
+2. **The web page over the encrypted link.** Step 235 proved TCP on an open
+   network; it has never been tried on this one.
+3. **`docs/debug/`** still has nothing on this investigation, which AGENTS.md
+   asks for.
+4. Group-key rekeying, roaming, PMKSA caching, WPA3/SAE — `202 AUTH_FAIL` is
+   still where step 220 left it — and the all-channel scan that has panicked
+   since step 202.
+
+**nat-os is a station on a WPA2-PSK network, with an address, and the mechanism
+of one intermittent reset is not yet known.**
