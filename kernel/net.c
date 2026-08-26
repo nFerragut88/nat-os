@@ -347,7 +347,24 @@ void net_poll_for(uint32_t ticks)
     uint32_t t0 = timer_ticks();
     uint32_t last = 0u;
     while ((timer_ticks() - t0) < ticks) {
-        while (g_tail != g_head) {
+        /* [step 262] BOUNDED. This loop was 'drain until empty', and on a
+         * busy network it never is: frames arrive as fast as they are taken,
+         * so the loop never exits, netif_wifi_tick() below never runs, and
+         * the report never prints.
+         *
+         * That is the whole of step 260's mystery. lwIP kept working, because
+         * input is what drives TCP -- a request that arrives is answered
+         * inline. What stopped was lwIP's TIMERS: ARP expiry, DHCP renewal
+         * and above all TCP RETRANSMISSION. A connection that completes when
+         * nothing is lost and hangs forever when anything is, which is
+         * precisely how the page behaved: sometimes instant, usually a
+         * timeout.
+         *
+         * Sixteen frames is well above the burst the ring holds between
+         * iterations and far below the point where the timers starve. */
+        uint32_t drained = 0u;
+        while (g_tail != g_head && drained < 16u) {
+            drained++;
             if (g_use_lwip) {
                 /* The ring holds a volatile copy; lwIP wants a plain pointer.
                  * The cast is safe because the producer has already finished

@@ -14796,3 +14796,97 @@ http   HTTP 200, 2 connections, 2 requests -- SERVED OVER WPA2
 
 **nat-os is a station on a WPA2-PSK network, holds a DHCP lease, and serves
 HTTP over an encrypted link to a browser it has never met.**
+
+---
+
+## step 262 — the drain loop was starving lwIP's timers
+
+`(this commit)`
+
+```
+before   lwip report lines in an 85 KB capture:  2      (+10s, +20s, silence)
+after    lwip report lines:                     10      (+10s .. +100s)
+```
+
+### 262a. The mechanism, and it inverts step 260 again
+
+`net_poll_for()` drained the receive ring like this:
+
+```c
+while (g_tail != g_head) {
+    netif_wifi_input(...);
+    g_tail = (g_tail + 1u) % NET_SLOTS;
+}
+```
+
+**Unbounded.** On a busy network the ring is never empty — frames arrive as
+fast as they are taken — so the loop never exits. `netif_wifi_tick()` sits
+directly below it and never runs, and neither does the report.
+
+Step 260 read the silence as "the poll stops servicing lwIP at +241s" and step
+261 corrected that to "the reporting stops, the servicing continues". Both were
+half right, and the half that matters is this: **input kept running and the
+TIMERS stopped.**
+
+That distinction is the whole bug. lwIP's input path is what drives TCP for a
+request that arrives — which is why the page ever loaded at all. Its timer path
+is ARP expiry, DHCP renewal and, above all, **TCP retransmission**. A stack that
+receives but never retransmits answers instantly when nothing is lost and hangs
+forever when anything is, which is exactly how the page behaved across five
+attempts: mostly a timeout, occasionally instant.
+
+Bounded to sixteen frames per pass — well above the burst the ring holds between
+iterations, far below the point where the timers starve.
+
+### 262b. Verified, and what is NOT
+
+**Verified.** The reports resume and keep coming: ten of them, +10s through
++100s, where the same capture length previously held two. `netif_wifi_tick()`
+is running, so the timers are firing.
+
+**NOT verified: end-to-end HTTP on this build.** Two runs were spent and
+neither closed the loop:
+
+- one hit the **step-259 intermittent watchdog** (`TG0WDT_SYS_RESET`) during
+  the scan, before the poll was reached;
+- the other associated and completed the handshake (`done=1`, rx 471, drop 0)
+  but **never obtained a DHCP lease**, so there was no address to fetch from and
+  five HTTP attempts failed for want of an IP rather than for want of TCP.
+
+So the fix is established as *correct in mechanism and confirmed in its direct
+effect*, and **unproven end to end**. Saying otherwise would be the error of
+step 260, which is what this step exists to undo.
+
+### 262c. External verification of step 261, recorded
+
+The operator loaded the page in their own browser and confirmed it. Step 261
+rested on a `curl` from this machine; it now also rests on a person and a
+browser this project does not control — the standard the beacon met at step 209
+and the ping at step 230.
+
+### State
+
+```
+boot   11 PASS 0 FAIL
+wpa    4 crypto vectors passed, 0 failed
+       ASSOCIATED, handshake done=1
+lwip   timers RUNNING (10 reports vs 2)
+       this run: no DHCP lease, so no HTTP
+http   step 261's HTTP 200 stands, on the previous build
+```
+
+### Next
+
+1. **Re-run until a lease and a fetch land in the same run**, and get a RATE.
+   Two runs is not a measurement; step 259 needed a rate for the watchdog and
+   this needs one too.
+2. **The DHCP failure in 262b** — new, one occurrence, not yet a pattern.
+3. **The intermittent watchdog** of step 259, still not mechanised, and now
+   demonstrably costing runs.
+4. **Persistence.** The stack lives inside one shell command's loop; when
+   `wifiinit start` returns, nothing services lwIP and the board goes silent.
+   Servicing it from a task is what turns "I caught the page during a run" into
+   "the board is a web server".
+5. The cfg readback, rekeying, roaming, PMKSA, WPA3/SAE, the all-channel panic.
+
+**The timers run again. Whether the page is now reliable is not yet measured.**
