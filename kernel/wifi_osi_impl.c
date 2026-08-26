@@ -1471,6 +1471,16 @@ uint32_t wpa_cb_table_fill(uint32_t sta_connect)
 /* [step 250] The sniffer's log. Lives here because this is call0 and can
  * print; the callback is windowed and cannot. Same discipline as the crypto
  * self-test: results cross as data. */
+/* [step 252] The RSN IE A/B, set from the shell. A GLOBAL, written as data:
+ * the flag lives in the windowed file that uses it and only its value
+ * crosses. */
+void wifi_rsn_ie_enable(int on);
+void wifi_rsn_ie_enable(int on)
+{
+    extern uint32_t g_rsn_ie_enable;
+    g_rsn_ie_enable = on ? 1u : 0u;
+}
+
 void wifi_sniff_report(void);
 void wifi_sniff_report(void)
 {
@@ -1536,7 +1546,7 @@ void wifi_sniff_report(void)
                 uart_put_dec(w2);
                 uart_puts(w2 == 0u ? " SUCCESS" : " REFUSED");
             } else if (sub == 1u || sub == 3u) {
-                uart_puts("  capab 0x");
+                uart_puts("  capab ");
                 uart_put_hex(w0);
                 uart_puts(" STATUS ");
                 uart_put_dec(w1);

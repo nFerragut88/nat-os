@@ -830,10 +830,19 @@ uint32_t g_appie_rc = 0xFFFFFFFFu;
 
 void wpa_install_rsn_ie(void);
 
+/* [step 252] The A/B switch. Written from call0 as DATA -- a call0 caller
+ * reaching into this windowed file would be the step-219 violation. */
+uint32_t g_rsn_ie_enable = 1u;
+
 void wpa_install_rsn_ie(void)
 {
     typedef int (*appie_fn)(int, const void *, unsigned short, int);
     if (!g_appie_fn) { return; }
+    /* [step 252] Suppressed by 'wifiinit startnoie'. Before the RSN IE went
+     * in, this router answered 203 ASSOC_FAIL -- a refusal the access point
+     * has to transmit. After it, silence. Putting the variable back tells us
+     * whether the association request is going out at all. */
+    if (!g_rsn_ie_enable) { g_appie_rc = 0x4E4F4945u;   /* "NOIE" -- suppressed, not failed */ return; }
     /* WIFI_APPIE_RSN is 4, from esp_wifi_driver.h. The trailing 1 is what
      * IDF passes for this call site. */
     g_appie_rc = (uint32_t)((appie_fn)g_appie_fn)(4, g_rsn_ie,

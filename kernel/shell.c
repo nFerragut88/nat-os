@@ -812,7 +812,15 @@ static void execute(char *line)
              * panics -- two contexts in windowed code. Kept reachable because
              * it is the reproducer for the next piece of work. */
             blob_task_enable(str_eq(arg, "task"));
-            wifi_start_enable(str_eq(arg, "start"));
+            /* [step 252] 'startnoie' is 'start' with the RSN IE suppressed:
+             * the A/B that says whether the association request goes out at
+             * all. One variable, and the only one. */
+            {
+                extern void wifi_rsn_ie_enable(int on);
+                int noie = str_eq(arg, "startnoie");
+                wifi_start_enable(str_eq(arg, "start") || noie);
+                wifi_rsn_ie_enable(!noie);
+            }
             if (str_eq(arg, "nvs")) { wifi_init_cfg_nvs(1); }
             /* blob_call, not phy_stack_call: the driver has reached
              * _task_create_pinned_to_core, and a task created inside a masked
