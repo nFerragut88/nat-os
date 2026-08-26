@@ -321,6 +321,178 @@ uint32_t g_wpa_slot_fn[32] = {
     (uint32_t)&wpa_cb_s30, (uint32_t)&wpa_cb_s31
 };
 
+/* ---- wpa_cb slot 15: wpa_parse_wpa_ie -- next_moves/08 step 248 ---------
+ *
+ * Step 247 measured this entry being called THREE TIMES on the failing
+ * connect, once per attempt, while it was a recording stub that returned 0 --
+ * success -- and wrote nothing. The driver read back a zeroed wifi_wpa_ie_t:
+ * proto 0, pairwise 0, group 0, key_mgmt 0. "This access point offers no
+ * security at all", three times, about a WPA2 network.
+ *
+ * The driver hands us the access point's RSN information element, taken from
+ * its beacon, and a struct to fill in. This fills it.
+ *
+ * Layout from wifi_wpa_ie_t in esp_wifi_driver.h, and the field CONVENTIONS
+ * from wpa_parse_wpa_ie_wrapper() in esp_wpa_main.c, which is the function
+ * this replaces. They are not the same convention for every field, and that
+ * is the part worth reading twice:
+ *
+ *   proto            SUPPLICANT bitmask   WPA_PROTO_RSN = BIT(1) = 2
+ *   pairwise_cipher  PUBLIC enum          WIFI_CIPHER_TYPE_CCMP = 4
+ *   group_cipher     PUBLIC enum          mapped, same as pairwise
+ *   key_mgmt         SUPPLICANT bitmask   WPA_KEY_MGMT_PSK = BIT(1) = 2
+ *   capabilities     raw RSN capabilities, straight from the element
+ *
+ * So two of the five are mapped through cipher_type_map_supp_to_public and
+ * two are not. Handing the driver a supplicant bitmask where it expects the
+ * public enum would put TKIP (3) where CCMP (4) belongs.
+ *
+ * WINDOWED: the blob calls it through the table with callx8.
+ *
+ * SCOPE: RSN (WPA2) only, which is this project's scope everywhere else. A
+ * WPA1 vendor element or anything malformed returns -1 rather than a
+ * confident zero -- the whole failure this step exists to undo. */
+
+struct natos_wpa_ie {
+    int proto;
+    int pairwise_cipher;
+    int group_cipher;
+    int key_mgmt;
+    int capabilities;
+    unsigned int num_pmkid;
+    const unsigned char *pmkid;
+    int mgmt_group_cipher;
+    unsigned char rsnxe_capa;
+};
+
+uint32_t g_pie_calls, g_pie_ok, g_pie_bad, g_pie_len;
+uint32_t g_pie_group, g_pie_pair, g_pie_akm, g_pie_caps;
+
+/* 00-0F-AC-xx selectors, to the supplicant's WPA_CIPHER_* bits. */
+static uint32_t rsn_cipher_bit(const unsigned char *p)
+{
+    if (p[0] != 0x00u || p[1] != 0x0Fu || p[2] != 0xACu) { return 0u; }
+    switch (p[3]) {
+    case 0u:  return 0u;         /* "use the group cipher" */
+    case 1u:  return 1u << 7;    /* WEP40         */
+    case 2u:  return 1u << 1;    /* TKIP          */
+    case 4u:  return 1u << 3;    /* CCMP          */
+    case 5u:  return 1u << 8;    /* WEP104        */
+    case 6u:  return 1u << 5;    /* AES-128-CMAC  */
+    default:  return 0u;
+    }
+}
+
+/* cipher_type_map_supp_to_public, from wpa.c, for the cases an RSN element
+ * can actually produce. */
+static int cipher_to_public(uint32_t m)
+{
+    if (m == (1u << 3))              { return 4; }   /* CCMP        */
+    if (m == (1u << 1))              { return 3; }   /* TKIP        */
+    if (m == ((1u << 3)|(1u << 1)))  { return 5; }   /* TKIP+CCMP   */
+    if (m == (1u << 5))              { return 6; }   /* AES-CMAC128 */
+    if (m == (1u << 7))              { return 1; }   /* WEP40       */
+    if (m == (1u << 8))              { return 2; }   /* WEP104      */
+    if (m == 0u)                     { return 0; }   /* NONE        */
+    return 12;                                       /* UNKNOWN     */
+}
+
+static uint32_t rsn_akm_bit(const unsigned char *p)
+{
+    if (p[0] != 0x00u || p[1] != 0x0Fu || p[2] != 0xACu) { return 0u; }
+    switch (p[3]) {
+    case 1u:  return 1u << 0;    /* IEEE8021X        */
+    case 2u:  return 1u << 1;    /* PSK  <- WPA2-PSK */
+    case 5u:  return 1u << 7;    /* IEEE8021X_SHA256 */
+    case 6u:  return 1u << 8;    /* PSK_SHA256       */
+    case 8u:  return 1u << 10;   /* SAE              */
+    default:  return 0u;
+    }
+}
+
+static uint32_t le16(const unsigned char *p)
+{
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8);
+}
+
+int wpa_parse_wpa_ie_impl(const unsigned char *ie, unsigned int len,
+                          struct natos_wpa_ie *d);
+int wpa_parse_wpa_ie_impl(const unsigned char *ie, unsigned int len,
+                          struct natos_wpa_ie *d)
+{
+    g_pie_calls++;
+    if (!ie || !d || len < 2u) { g_pie_bad++; return -1; }
+
+    /* Field by field, NOT a struct assignment or an aggregate: either can
+     * emit a call to call0 memcpy from this windowed file, which is the
+     * hazard wpa_hs_arm() paid for at step 241. */
+    d->proto = 0; d->pairwise_cipher = 0; d->group_cipher = 0;
+    d->key_mgmt = 0; d->capabilities = 0; d->num_pmkid = 0u;
+    d->pmkid = 0; d->mgmt_group_cipher = 0; d->rsnxe_capa = 0u;
+
+    /* The driver may hand over the whole element or just its body. Sniffed
+     * rather than assumed: an RSN body begins with version 1 as 01 00, so a
+     * leading 48 can only be the element id. */
+    const unsigned char *p = ie;
+    unsigned int n = len;
+    if (p[0] == 48u) {
+        if ((unsigned int)p[1] + 2u > len) { g_pie_bad++; return -1; }
+        n = (unsigned int)p[1];
+        p += 2;
+    }
+    g_pie_len = n;
+
+    if (n < 6u)                     { g_pie_bad++; return -1; }
+    if (le16(p) != 1u)              { g_pie_bad++; return -1; }  /* version */
+
+    unsigned int o = 2u;
+    d->proto = 2;                                   /* WPA_PROTO_RSN */
+
+    uint32_t grp = rsn_cipher_bit(&p[o]);
+    o += 4u;
+    d->group_cipher = cipher_to_public(grp);
+    g_pie_group = grp;
+
+    uint32_t pair = 0u;
+    if (o + 2u <= n) {
+        uint32_t cnt = le16(&p[o]);
+        o += 2u;
+        for (uint32_t i = 0u; i < cnt; i++) {
+            if (o + 4u > n) { g_pie_bad++; return -1; }
+            pair |= rsn_cipher_bit(&p[o]);
+            o += 4u;
+        }
+    }
+    if (pair == 0u) { pair = grp; }     /* an absent list means "use group" */
+    d->pairwise_cipher = cipher_to_public(pair);
+    g_pie_pair = pair;
+
+    uint32_t akm = 0u;
+    if (o + 2u <= n) {
+        uint32_t cnt = le16(&p[o]);
+        o += 2u;
+        for (uint32_t i = 0u; i < cnt; i++) {
+            if (o + 4u > n) { g_pie_bad++; return -1; }
+            akm |= rsn_akm_bit(&p[o]);
+            o += 4u;
+        }
+    }
+    d->key_mgmt = (int)akm;             /* bitmask, NOT mapped */
+    g_pie_akm = akm;
+
+    if (o + 2u <= n) {
+        d->capabilities = (int)le16(&p[o]);
+        g_pie_caps = (uint32_t)d->capabilities;
+    }
+
+    /* The PMKID list and the group management cipher are deliberately not
+     * parsed: this station does no PMKSA caching and no management frame
+     * protection, so num_pmkid stays 0 and pmkid stays NULL -- which is what
+     * the wrapper this replaces leaves them as too. */
+    g_pie_ok++;
+    return 0;
+}
+
 /* The TABLE and the code that fills and reports it are CALL0 and live in
  * kernel/wifi_osi_impl.c. Only this stub is windowed, because only this stub is
  * called by the blob (callx8). Calling wpa_cb_table_fill() from wifi_bringup()

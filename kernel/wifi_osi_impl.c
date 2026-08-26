@@ -1443,6 +1443,14 @@ uint32_t wpa_cb_table_fill(uint32_t sta_connect)
             g_wpa_table[3] = (uint32_t)&wpa_sta_connected_cb_impl;
             g_wpa_table[4] = (uint32_t)&wpa_sta_disconnected_cb_impl;
         }
+        {   /* [step 248] Slot 15 is wpa_parse_wpa_ie. Step 247 measured it
+             * called three times on the failing connect while it answered a
+             * confident zero. It now parses the access point RSN element it
+             * is handed. */
+            extern int wpa_parse_wpa_ie_impl(const unsigned char *,
+                                             unsigned int, void *);
+            g_wpa_table[15] = (uint32_t)&wpa_parse_wpa_ie_impl;
+        }
     }
     g_wpa_calls = 0u;
     return (uint32_t)g_wpa_table;
@@ -1468,6 +1476,29 @@ void wpa_cb_report(void)
         if (g_wpa_disc_reason == 0xFFFFFFFFu) { uart_puts("none"); }
         else { uart_put_dec(g_wpa_disc_reason); }
         uart_puts("\n");
+    }
+    /* [step 248] What slot 15 made of the access point's RSN element.
+     * Printed as the DECODE, not as a rc: "ok 3" only says it was called. */
+    {
+        extern uint32_t g_pie_calls, g_pie_ok, g_pie_bad, g_pie_len;
+        extern uint32_t g_pie_group, g_pie_pair, g_pie_akm, g_pie_caps;
+        uart_puts("  wpa ie   calls=");
+        uart_put_dec(g_pie_calls);
+        uart_puts(" ok=");
+        uart_put_dec(g_pie_ok);
+        uart_puts(" bad=");
+        uart_put_dec(g_pie_bad);
+        uart_puts(" body=");
+        uart_put_dec(g_pie_len);
+        uart_puts("B  group=");
+        uart_put_hex(g_pie_group);
+        uart_puts(" pair=");
+        uart_put_hex(g_pie_pair);
+        uart_puts(" akm=");
+        uart_put_hex(g_pie_akm);
+        uart_puts(" caps=");
+        uart_put_hex(g_pie_caps);
+        uart_puts("   (cipher CCMP=0x8, akm PSK=0x2)\n");
     }
     /* [step 247] The twelve return addresses become slot numbers.
      *
