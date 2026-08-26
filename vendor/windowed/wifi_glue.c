@@ -321,6 +321,58 @@ uint32_t g_wpa_slot_fn[32] = {
     (uint32_t)&wpa_cb_s30, (uint32_t)&wpa_cb_s31
 };
 
+/* ---- wpa_cb slot 21: wpa_sta_rx_mgmt -- next_moves/08 step 249 ----------
+ *
+ * Seven calls on every failing connect, and until now only a count.
+ *
+ *   int wpa_sta_rx_mgmt(u8 type, u8 *frame, size_t len, u8 *sender,
+ *                       int8_t rssi, u8 channel, u64 current_tsf);
+ *
+ * The first argument is the management frame subtype and the fourth is who
+ * sent it. Those two say whether the ACCESS POINT IS ANSWERING:
+ *
+ *   11 auth / 1 assoc resp from the AP's BSSID   it is talking to us, and
+ *                                                the failure is later
+ *   8 beacon / 5 probe resp only                 it is not answering at all
+ *
+ * Six parameters are declared and the u64 TSF is not. The windowed ABI passes
+ * the first six words in a2..a7 and the rest on the caller's stack, and a
+ * callee never pops arguments, so ignoring the tail is safe. Declaring a u64
+ * would split it across a7 and the stack for no gain -- nothing here reads it.
+ *
+ * Return 0, exactly as the recording stub did. This step changes no
+ * behaviour; it only reads what was already crossing.
+ *
+ * WINDOWED: the blob calls it through the table with callx8. */
+uint32_t g_mgmt_calls;
+uint8_t  g_mgmt_type[12];
+uint8_t  g_mgmt_ch[12];
+signed char g_mgmt_rssi[12];
+uint8_t  g_mgmt_src[12][3];     /* last three bytes -- enough to tell APs apart */
+
+int wpa_sta_rx_mgmt_impl(unsigned char type, unsigned char *frame,
+                         unsigned int len, unsigned char *sender,
+                         signed char rssi, unsigned char channel);
+int wpa_sta_rx_mgmt_impl(unsigned char type, unsigned char *frame,
+                         unsigned int len, unsigned char *sender,
+                         signed char rssi, unsigned char channel)
+{
+    (void)frame; (void)len;
+    if (g_mgmt_calls < 12u) {
+        uint32_t i = g_mgmt_calls;
+        g_mgmt_type[i] = type;
+        g_mgmt_ch[i]   = channel;
+        g_mgmt_rssi[i] = rssi;
+        if (sender) {
+            g_mgmt_src[i][0] = sender[3];
+            g_mgmt_src[i][1] = sender[4];
+            g_mgmt_src[i][2] = sender[5];
+        }
+    }
+    g_mgmt_calls++;
+    return 0;
+}
+
 /* ---- wpa_cb slot 15: wpa_parse_wpa_ie -- next_moves/08 step 248 ---------
  *
  * Step 247 measured this entry being called THREE TIMES on the failing

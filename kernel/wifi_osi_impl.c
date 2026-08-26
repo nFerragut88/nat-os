@@ -1451,6 +1451,14 @@ uint32_t wpa_cb_table_fill(uint32_t sta_connect)
                                              unsigned int, void *);
             g_wpa_table[15] = (uint32_t)&wpa_parse_wpa_ie_impl;
         }
+        {   /* [step 249] Slot 21 is wpa_sta_rx_mgmt, called seven times on
+             * every failing connect. Reads its subtype and sender; changes
+             * nothing. */
+            extern int wpa_sta_rx_mgmt_impl(unsigned char, unsigned char *,
+                                            unsigned int, unsigned char *,
+                                            signed char, unsigned char);
+            g_wpa_table[21] = (uint32_t)&wpa_sta_rx_mgmt_impl;
+        }
     }
     g_wpa_calls = 0u;
     return (uint32_t)g_wpa_table;
@@ -1475,6 +1483,41 @@ void wpa_cb_report(void)
         uart_puts(" cbreason=");
         if (g_wpa_disc_reason == 0xFFFFFFFFu) { uart_puts("none"); }
         else { uart_put_dec(g_wpa_disc_reason); }
+        uart_puts("\n");
+    }
+    /* [step 249] What the access point actually sent, by subtype. */
+    {
+        extern uint32_t g_mgmt_calls;
+        extern uint8_t  g_mgmt_type[12], g_mgmt_ch[12], g_mgmt_src[12][3];
+        extern signed char g_mgmt_rssi[12];
+        extern uint32_t g_sta_connect_calls;
+        static const char hx[] = "0123456789abcdef";
+        uint32_t k = g_mgmt_calls < 12u ? g_mgmt_calls : 12u;
+        uart_puts("  wpa mgmt calls=");
+        uart_put_dec(g_mgmt_calls);
+        uart_puts(" connect=");
+        uart_put_dec(g_sta_connect_calls);
+        for (uint32_t i = 0u; i < k; i++) {
+            uart_puts("\n            type ");
+            uart_put_dec(g_mgmt_type[i]);
+            uart_puts(g_mgmt_type[i] == 11u ? " AUTH        "
+                    : g_mgmt_type[i] ==  1u ? " ASSOC_RESP  "
+                    : g_mgmt_type[i] ==  3u ? " REASSOC_RESP"
+                    : g_mgmt_type[i] ==  8u ? " BEACON      "
+                    : g_mgmt_type[i] ==  5u ? " PROBE_RESP  "
+                    : g_mgmt_type[i] == 10u ? " DISASSOC    "
+                    : g_mgmt_type[i] == 12u ? " DEAUTH      "
+                                            : " ?           ");
+            uart_puts(" from ..");
+            for (uint32_t b = 0u; b < 3u; b++) {
+                uart_putc(hx[(g_mgmt_src[i][b] >> 4) & 0xFu]);
+                uart_putc(hx[g_mgmt_src[i][b] & 0xFu]);
+            }
+            uart_puts(" ch");
+            uart_put_dec(g_mgmt_ch[i]);
+            uart_puts(" rssi-");
+            uart_put_dec((uint32_t)(-(int)g_mgmt_rssi[i]));
+        }
         uart_puts("\n");
     }
     /* [step 248] What slot 15 made of the access point's RSN element.
