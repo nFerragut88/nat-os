@@ -369,6 +369,17 @@ uint8_t  g_snf_ch[SNF_MAX];
 signed char g_snf_rssi[SNF_MAX];
 uint8_t  g_snf_a1[SNF_MAX][3];    /* receiver  -- last three bytes */
 uint8_t  g_snf_a2[SNF_MAX][3];    /* sender    -- last three bytes */
+/* [step 251] Six bytes of body, from offset 24 -- the fixed parameters, and
+ * the same six serve every frame this keeps:
+ *
+ *   AUTH        alg[2]  seq[2]  STATUS[2]
+ *   ASSOC_RESP  capab[2]        STATUS[2]  aid[2]
+ *   DEAUTH / DISASSOC           reason[2]
+ *
+ * Status 0 is success. A rejection is a frame from the access point
+ * addressed to us exactly like an acceptance, which is why step 250 could
+ * not tell them apart and refused to guess. */
+uint8_t  g_snf_body[SNF_MAX][6];
 
 void natos_sniff_cb(void *buf, int type);
 void natos_sniff_cb(void *buf, int type)
@@ -402,6 +413,12 @@ void natos_sniff_cb(void *buf, int type)
         g_snf_rssi[i] = (signed char)(w[0] & 0xFFu);
         g_snf_a1[i][0] = f[7];  g_snf_a1[i][1] = f[8];  g_snf_a1[i][2] = f[9];
         g_snf_a2[i][0] = f[13]; g_snf_a2[i][1] = f[14]; g_snf_a2[i][2] = f[15];
+        /* [step 251] siglen carries the FCS, so 30 is the smallest frame that
+         * really has six body bytes. Short ones leave zeroes, which the
+         * report shows as such rather than inventing a status. */
+        for (uint32_t q = 0u; q < 6u; q++) {
+            g_snf_body[i][q] = (siglen >= 30u) ? f[24u + q] : 0u;
+        }
     }
     g_snf_kept++;
 }

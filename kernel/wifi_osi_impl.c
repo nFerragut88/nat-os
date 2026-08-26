@@ -1518,6 +1518,35 @@ void wifi_sniff_report(void)
         uart_put_dec(g_snf_ch[i]);
         uart_puts(" rssi-");
         uart_put_dec((uint32_t)(-(int)g_snf_rssi[i]));
+        /* [step 251] The fixed parameters, decoded by subtype. Little-endian
+         * on the air, so byte 1 is the high half. */
+        {
+            extern uint8_t g_snf_body[24][6];
+            const uint8_t *bd = g_snf_body[i];
+            uint32_t w0 = (uint32_t)bd[0] | ((uint32_t)bd[1] << 8);
+            uint32_t w1 = (uint32_t)bd[2] | ((uint32_t)bd[3] << 8);
+            uint32_t w2 = (uint32_t)bd[4] | ((uint32_t)bd[5] << 8);
+            if (sub == 11u) {
+                uart_puts("  alg");
+                uart_put_dec(w0);
+                uart_puts(w0 == 0u ? "(OPEN)" : w0 == 3u ? "(SAE)" : "(?)");
+                uart_puts(" seq");
+                uart_put_dec(w1);
+                uart_puts(" STATUS ");
+                uart_put_dec(w2);
+                uart_puts(w2 == 0u ? " SUCCESS" : " REFUSED");
+            } else if (sub == 1u || sub == 3u) {
+                uart_puts("  capab 0x");
+                uart_put_hex(w0);
+                uart_puts(" STATUS ");
+                uart_put_dec(w1);
+                uart_puts(w1 == 0u ? " SUCCESS aid " : " REFUSED aid ");
+                uart_put_dec(w2 & 0x3FFFu);
+            } else if (sub == 12u || sub == 10u) {
+                uart_puts("  reason ");
+                uart_put_dec(w0);
+            }
+        }
     }
     /* Named so the next reader does not need the MAC table: 503f64 is this
      * board and 2f57c6 is the access point being joined. */
