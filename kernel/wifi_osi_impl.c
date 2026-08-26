@@ -1481,6 +1481,14 @@ void wifi_rsn_ie_enable(int on)
     g_rsn_ie_enable = on ? 1u : 0u;
 }
 
+/* [step 256] The passive-EAPOL switch, set from the shell. Data, not a call. */
+void wifi_hs_passive(int on);
+void wifi_hs_passive(int on)
+{
+    extern uint32_t g_hs_passive;
+    g_hs_passive = on ? 1u : 0u;
+}
+
 /* [step 255] The appie type and flag, set from the shell. Data, not a call. */
 void wifi_appie_shape(unsigned int type, unsigned int flag);
 void wifi_appie_shape(unsigned int type, unsigned int flag)

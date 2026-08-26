@@ -832,10 +832,15 @@ static void execute(char *line)
                  *   startassocie  type RSN(4) -> ASSOC_REQ(1) */
                 {
                     extern void wifi_appie_shape(unsigned int t, unsigned int f);
-                    int f0 = str_eq(arg, "startflag0");
+                    /* [step 256] 'startflag0safe' is startflag0 with the
+                     * four-way handshake reduced to a counter. */
+                    extern void wifi_hs_passive(int on);
+                    int f0safe = str_eq(arg, "startflag0safe");
+                    int f0 = str_eq(arg, "startflag0") || f0safe;
+                    wifi_hs_passive(f0safe);
                     int aie = str_eq(arg, "startassocie");
                     wifi_start_enable(str_eq(arg, "start") || noie || x8021
-                                      || f0 || aie);
+                                      || f0 || aie || f0safe);
                     wifi_appie_shape(aie ? 1u : 4u, f0 ? 0u : 1u);
                 }
             }

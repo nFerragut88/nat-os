@@ -199,8 +199,27 @@ static int extract_gtk(const u8 *kd, uint32_t kdlen, u8 *gtk, uint32_t *gtk_len,
 /* ---- the entry the driver calls ----------------------------------------- */
 
 int wpa_sta_rx_eapol_impl(u8 *src, u8 *buf, u32 len);
+/* [step 256] PASSIVE MODE. Count the frame and touch nothing else.
+ *
+ * Step 255 found a0 = sta_rx_eapol + 0x16c in two different panics, which
+ * says the driver was delivering EAPOL when they happened -- and an access
+ * point sends message one only to a station that has ASSOCIATED. If that is
+ * real, those arms associate and the crash is in this file, which has never
+ * executed once in its life.
+ *
+ * Passive separates the two: no PTK derivation, no MIC, no transmit, no key
+ * install. If the panic goes with it, the handshake is the fault and the
+ * association is fine. If the panic stays, a0 was lying and step 255 said so
+ * in advance. */
+uint32_t g_hs_passive;
+
 int wpa_sta_rx_eapol_impl(u8 *src, u8 *buf, u32 len)
 {
+    if (g_hs_passive) {
+        g_hs_msg1++;                 /* it ARRIVED, and that is the result */
+        g_hs_last_keyinfo = 0xEEEEu;   /* marker: passive, not decoded */
+        return 0;
+    }
     if (!g_hs_have_pmk || !buf || len < O_KD) { return 0; }
     if (buf[O_TYPE] != 3u) { return 0; }              /* not EAPOL-Key */
 
