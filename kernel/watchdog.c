@@ -25,6 +25,7 @@
 #include "uart.h"
 #include "task.h"
 #include "blobcall.h"
+#include "timer.h"
 
 #define REG(a) (*(volatile unsigned int *)(a))
 
@@ -52,6 +53,57 @@
 #define WDT_STG0_RESET_SYSTEM  (3u << 29)
 #define WDT_SYS_RESET_LEN      (7u << 15)
 #define WDT_CPU_RESET_LEN      (7u << 18)
+
+/* [step 264] A BREADCRUMB THAT SURVIVES THE RESET.
+ *
+ * A watchdog reset is the one failure in this kernel that leaves nothing --
+ * no exception, no register dump, no LAST FAULT record, just a reboot. Step
+ * 263 measured it at 3 runs in 8, so it is the blocker for everything, and
+ * four steps of argument about it have produced no mechanism because every
+ * observation died with the board.
+ *
+ * RTC slow memory does not die with it. TG0WDT_SYS_RESET resets the digital
+ * core; the RTC domain keeps its contents. Three words written per tick cost
+ * nothing and are readable on the next boot.
+ *
+ * The magic is checked so an unprogrammed or power-cycled RTC reads as absent
+ * rather than as garbage -- the same reasoning blob_map() uses for a flash
+ * region that was never written. */
+#define RTC_SLOW_MEM  0x50000000u
+#define BC_MAGIC      0x6E617462u        /* 'natb' */
+
+struct bc { unsigned int magic, seq, task, tick; };
+static volatile struct bc *const g_bc = (volatile struct bc *)RTC_SLOW_MEM;
+
+/* The PREVIOUS boot's final breadcrumb, snapshotted before this boot
+ * overwrites it. */
+static struct bc g_bc_prev;
+static int g_bc_had_prev;
+
+void watchdog_breadcrumb_init(void);
+void watchdog_breadcrumb_init(void)
+{
+    if (g_bc->magic == BC_MAGIC) {
+        g_bc_prev.seq  = g_bc->seq;
+        g_bc_prev.task = g_bc->task;
+        g_bc_prev.tick = g_bc->tick;
+        g_bc_had_prev  = 1;
+    }
+    g_bc->magic = BC_MAGIC;
+    g_bc->seq = 0u;
+    g_bc->task = 0xFFFFFFFFu;
+    g_bc->tick = 0u;
+}
+
+int watchdog_breadcrumb_prev(unsigned int *seq, unsigned int *task,
+                             unsigned int *tick);
+int watchdog_breadcrumb_prev(unsigned int *seq, unsigned int *task,
+                             unsigned int *tick)
+{
+    if (!g_bc_had_prev) { return 0; }
+    *seq = g_bc_prev.seq; *task = g_bc_prev.task; *tick = g_bc_prev.tick;
+    return 1;
+}
 
 static unsigned int g_feeds;
 static unsigned int g_starved;
@@ -121,6 +173,12 @@ void watchdog_feed(void)
 void watchdog_liveness(int switched)
 {
 #if WATCHDOG_ENABLE
+    /* [step 264] Three stores per tick. Whatever the board was running when
+     * the watchdog fired is in RTC memory on the next boot. */
+    g_bc->seq++;
+    g_bc->task = (unsigned int)task_current();
+    g_bc->tick = (unsigned int)timer_ticks();
+
     static unsigned int ticks;
     static unsigned int seen;
 
@@ -138,38 +196,11 @@ void watchdog_liveness(int switched)
              * feed: the watchdog is the only thing that can recover this, and
              * feeding on the way past would defeat the entire mechanism. */
             g_starved++;
-
-            /* [step 259] SAY WHO. A watchdog reset is the one failure in this
-             * kernel that leaves no evidence -- no exception, no register
-             * dump, no LAST FAULT record, just a reboot. Every other failure
-             * has been diagnosable because something got written down.
-             *
-             * There is room to write it down. The window is 1 s and the
-             * watchdog timeout is 3 s, so the first starved window arrives
-             * about two seconds before the reset. Nothing else is running --
-             * that is the definition of the fault -- so printing here starves
-             * nobody, and the bytes are out of the UART long before the reset
-             * lands.
-             *
-             * Prints EVERY starved window, not just the first: three
-             * snapshots showing the same task is a monopoly, three showing
-             * different tasks is something else entirely, and one snapshot
-             * cannot tell those apart. */
-            {
-                /* COMPACT, because watchdog.c runs from the tick handler and
-                 * lives in iram, which is full. Task ids not names: the boot
-                 * banner already prints the id table. pin 9 means none. */
-                int pin = blob_pinned_task();
-                uart_puts("\n  [starved] t");
-                uart_put_dec((unsigned int)task_current());
-                uart_puts(" pin");
-                uart_put_dec((unsigned int)(pin < 0 ? 9 : pin));
-                uart_puts(" st");
-                for (int i = 0; i < TASK_MAX; i++) {
-                    uart_putc((char)('0' + (task_state_of(i) & 7)));
-                }
-                uart_putc(10);
-            }
+            /* [step 264] Step 259 SAY WHO is REMOVED. It answered its
+             * question -- starved stayed 0 across a reset, so this is not
+             * a monopoly -- and the RTC breadcrumb written every tick says
+             * more, earlier, and survives the reset. iram paid for the swap.
+             */
         }
     }
 #else

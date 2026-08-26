@@ -1668,6 +1668,9 @@ void kmain(void)
 
     /* Before anything can take long enough to trip it. The bootloader arms the
      * RTC watchdog and expects the application to take ownership. */
+    /* [step 264] Snapshot the previous boot's breadcrumb BEFORE anything can
+     * overwrite it, and before the report that prints it. */
+    watchdog_breadcrumb_init();
     watchdog_disable_all();
     uart_puts("  rtc wdt      : ");
     uart_puts(watchdog_rtc_config() == 0u ? "disarmed\n" : "STILL ARMED\n");
@@ -1815,6 +1818,20 @@ void kmain(void)
      * does not destroy it. `fault_boot` says which boot it happened on, which
      * is what stops an old fault from reading as a new one. */
     if (store_fault_kind() != STORE_FAULT_NONE) {
+        {   /* [step 264] The previous boot's last breadcrumb, from RTC
+             * memory. A watchdog reset leaves no fault record, so this is the
+             * only thing that says what the board was doing. */
+            unsigned int bseq, btask, btick;
+            if (watchdog_breadcrumb_prev(&bseq, &btask, &btick)) {
+                uart_puts("  LAST TICK    : task ");
+                uart_put_dec(btask);
+                uart_puts(" at tick ");
+                uart_put_dec(btick);
+                uart_puts(" (");
+                uart_put_dec(bseq);
+                uart_puts(" ticks that boot)\n");
+            }
+        }
         uart_puts("  LAST FAULT   : ");
         if (store_fault_kind() == STORE_FAULT_GUARD) {
             /* NA-009. This said "stack guard overwritten, task N".

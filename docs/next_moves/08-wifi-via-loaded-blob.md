@@ -14964,3 +14964,90 @@ HTTP 200                   when neither of the above interferes
 3. Persistence: service lwIP from a task rather than a shell command's loop.
 
 **The stack works. The board reboots underneath it three times in eight.**
+
+---
+
+## step 264 — the watchdog names its task, and it is the DISPLAY
+
+`(this commit)`
+
+```
+forced (shell 'hang'):   LAST TICK : task 4 at tick 1738  (6140 ticks that boot)
+
+real, run 11:            LAST TICK : task 6 at tick 21524 (105207 ticks)
+real, run 12:            LAST TICK : task 6 at tick 19410 (93956 ticks)
+real, run 13:            LAST TICK : task 6 at tick 15706 (74576 ticks)
+
+tasks : report=0 a=1 b=2 vm=3 apps=4 shell=5 disp=6 touch=7
+```
+
+**Three of three real watchdog resets were running the DISPLAY task.**
+
+### 264a. A breadcrumb that survives the reset
+
+A watchdog reset is the one failure in this kernel that leaves nothing — no
+exception, no register dump, no `LAST FAULT`, just a reboot. Four steps of
+argument produced no mechanism because every observation died with the board.
+
+RTC slow memory does not die with it: `TG0WDT_SYS_RESET` resets the digital
+core and the RTC domain keeps its contents. Three words written per tick —
+sequence, current task, tick — are read back and printed on the next boot,
+guarded by a magic so a power-cycled RTC reads as absent rather than as
+garbage.
+
+**Validated before it was trusted.** The shell's `hang` command wedges the
+system deliberately, so the recorder could be proved against a watchdog reset
+on demand rather than hoped at at 3-in-8. It survived, and named a task.
+
+### 264b. Why this is a surprise, and why it is not
+
+Every hypothesis so far pointed at the WiFi side — the blob, the poll loop, the
+crypto, the TIMG0 register. The display task was never a suspect. It is the
+only task that has never been touched by any of this work.
+
+And yet UM-NATOS-029 spent a whole report on the display driver monopolising
+the panel: `dlock hold ms=7965` against ~7,860 ms of uptime, `drawskip`
+climbing into the thousands, `cont=0` because everything else yields rather
+than waits. In the run that reset above, the same counters read
+`dlock blk/hold ms=2434/15371`, `takes=414269`, `cont=34`, `drawskip=1721`.
+
+The novel's Scheduler refused Touch a context switch because *"the Display
+Driver is holding the panel lock, and I do not take a lock off a man who holds
+it."* Step 264 is that sentence with a reset attached.
+
+### 264c. What is established, and what is not
+
+**Established:** the board is executing the display task at the last tick
+before the watchdog fires, three times out of three, on a fault measured at
+3-in-8 across two builds.
+
+**Not established:** that the display task is the *cause*. The breadcrumb
+records which task the tick landed in, and a task that runs often is more
+likely to be caught. `disp` is a HIGH-priority task that draws continuously, so
+a naive prior would already favour it. Three of three is suggestive; it is not
+proof, and step 263's lesson is that this file has repeatedly mistaken one for
+the other.
+
+What would settle it: record the *previous* task as well, and whether the panel
+lock is held, so a monopoly is distinguishable from a coincidence of timing.
+
+### State
+
+```
+boot   11 PASS 0 FAIL      wpa 4 crypto vectors passed
+assoc + handshake          reliable
+watchdog                   3/8 (step 263), 3/4 here, always task 6 = disp
+breadcrumb                 survives the reset, validated against 'hang'
+```
+
+### Next
+
+1. **Widen the breadcrumb**: previous task, panel-lock holder, blob pin. That
+   turns "the tick landed in disp" into "disp was holding X for N ticks".
+2. Whether disabling the display task removes the reset — a blunt A/B, but a
+   decisive one, and cheap.
+3. The first-ARP question of step 263c.
+4. Persistence, once the board stops rebooting underneath it.
+
+**The watchdog has a name for the first time in five steps, and it is not the
+one anybody was looking for.**
