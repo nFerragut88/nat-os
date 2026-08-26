@@ -22,6 +22,9 @@
  */
 
 #include "watchdog.h"
+#include "uart.h"
+#include "task.h"
+#include "blobcall.h"
 
 #define REG(a) (*(volatile unsigned int *)(a))
 
@@ -135,6 +138,38 @@ void watchdog_liveness(int switched)
              * feed: the watchdog is the only thing that can recover this, and
              * feeding on the way past would defeat the entire mechanism. */
             g_starved++;
+
+            /* [step 259] SAY WHO. A watchdog reset is the one failure in this
+             * kernel that leaves no evidence -- no exception, no register
+             * dump, no LAST FAULT record, just a reboot. Every other failure
+             * has been diagnosable because something got written down.
+             *
+             * There is room to write it down. The window is 1 s and the
+             * watchdog timeout is 3 s, so the first starved window arrives
+             * about two seconds before the reset. Nothing else is running --
+             * that is the definition of the fault -- so printing here starves
+             * nobody, and the bytes are out of the UART long before the reset
+             * lands.
+             *
+             * Prints EVERY starved window, not just the first: three
+             * snapshots showing the same task is a monopoly, three showing
+             * different tasks is something else entirely, and one snapshot
+             * cannot tell those apart. */
+            {
+                /* COMPACT, because watchdog.c runs from the tick handler and
+                 * lives in iram, which is full. Task ids not names: the boot
+                 * banner already prints the id table. pin 9 means none. */
+                int pin = blob_pinned_task();
+                uart_puts("\n  [starved] t");
+                uart_put_dec((unsigned int)task_current());
+                uart_puts(" pin");
+                uart_put_dec((unsigned int)(pin < 0 ? 9 : pin));
+                uart_puts(" st");
+                for (int i = 0; i < TASK_MAX; i++) {
+                    uart_putc((char)('0' + (task_state_of(i) & 7)));
+                }
+                uart_putc(10);
+            }
         }
     }
 #else
@@ -144,6 +179,17 @@ void watchdog_liveness(int switched)
 
 unsigned int watchdog_feeds(void)   { return g_feeds; }
 unsigned int watchdog_starved(void) { return g_starved; }
+
+/* [step 259] The TIMG0 watchdog's OWN configuration, read back.
+ *
+ * Feeds were advancing and starved was 0 in the run that reset, so the hang
+ * detector was doing its job and the watchdog fired anyway. That points at
+ * the register rather than the scheduler: TIMG0 is Espressif hardware and the
+ * blob is Espressif code, and nothing stops it reconfiguring a timer group
+ * nat-os also uses. A pure read; if this ever differs from what
+ * watchdog_arm() wrote, somebody else owns the watchdog. */
+unsigned int watchdog_timg0_config(void) { return REG(TIMG0_WDTCONFIG0); }
+unsigned int watchdog_timg0_timeout(void) { return REG(TIMG0_WDTCONFIG2); }
 
 unsigned int watchdog_rtc_config(void)
 {

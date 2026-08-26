@@ -1605,41 +1605,21 @@ void wpa_cb_report(void)
         else { uart_put_dec(g_wpa_disc_reason); }
         uart_puts("\n");
     }
-    /* [step 249] What the access point actually sent, by subtype. */
+    /* [step 249] The per-frame subtype list is GONE, and step 250's sniffer
+     * is why: it reads the same frames off the air with addresses and status
+     * codes, so this was printing a worse version of a better measurement.
+     * The COUNT stays -- it is the cheap check that slot 21 is still wired --
+     * and its iram paid for step 259's starvation report. */
     {
         extern uint32_t g_mgmt_calls;
-        extern uint8_t  g_mgmt_type[12], g_mgmt_ch[12], g_mgmt_src[12][3];
-        extern signed char g_mgmt_rssi[12];
         extern uint32_t g_sta_connect_calls;
-        static const char hx[] = "0123456789abcdef";
-        uint32_t k = g_mgmt_calls < 12u ? g_mgmt_calls : 12u;
         uart_puts("  wpa mgmt calls=");
         uart_put_dec(g_mgmt_calls);
         uart_puts(" connect=");
         uart_put_dec(g_sta_connect_calls);
-        for (uint32_t i = 0u; i < k; i++) {
-            uart_puts("\n            type ");
-            uart_put_dec(g_mgmt_type[i]);
-            uart_puts(g_mgmt_type[i] == 11u ? " AUTH        "
-                    : g_mgmt_type[i] ==  1u ? " ASSOC_RESP  "
-                    : g_mgmt_type[i] ==  3u ? " REASSOC_RESP"
-                    : g_mgmt_type[i] ==  8u ? " BEACON      "
-                    : g_mgmt_type[i] ==  5u ? " PROBE_RESP  "
-                    : g_mgmt_type[i] == 10u ? " DISASSOC    "
-                    : g_mgmt_type[i] == 12u ? " DEAUTH      "
-                                            : " ?           ");
-            uart_puts(" from ..");
-            for (uint32_t b = 0u; b < 3u; b++) {
-                uart_putc(hx[(g_mgmt_src[i][b] >> 4) & 0xFu]);
-                uart_putc(hx[g_mgmt_src[i][b] & 0xFu]);
-            }
-            uart_puts(" ch");
-            uart_put_dec(g_mgmt_ch[i]);
-            uart_puts(" rssi-");
-            uart_put_dec((uint32_t)(-(int)g_mgmt_rssi[i]));
-        }
         uart_puts("\n");
     }
+
     /* [step 248] What slot 15 made of the access point's RSN element.
      * Printed as the DECODE, not as a rc: "ok 3" only says it was called. */
     {

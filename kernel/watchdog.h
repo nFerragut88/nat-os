@@ -10,6 +10,8 @@ void watchdog_disable_all(void);
 
 /* Read back the RTC watchdog config register — non-zero means still armed.
  * Used to confirm the write actually took, rather than assuming it. */
+unsigned int watchdog_timg0_config(void);
+unsigned int watchdog_timg0_timeout(void);
 unsigned int watchdog_rtc_config(void);
 
 /* ---- hang detection ----------------------------------------------------
