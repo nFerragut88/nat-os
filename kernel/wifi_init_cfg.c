@@ -325,6 +325,17 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
         wifi_sniff_report();
     }
 
+    {   /* [step 257] The handshake's own counters, BEFORE the next blob call.
+         * Step 256's association succeeds and the run then stops inside
+         * blob_call(prof_authmode) with nothing printed -- the shape step 242
+         * warned about, where the driver task spins on wpa_sta_in_4way and
+         * starves everything behind the blob mutex. Counters printed before
+         * that call survive it. */
+        extern void wpa_hs_report(void);
+        wpa_hs_report();
+        uart_puts("\n");
+    }
+
     /* [step 244] What does the driver think it just connected to? A profile
      * that says OPEN while the RSN IE on the air says WPA2 would explain an
      * association that completes and then times out with no EAPOL: the driver

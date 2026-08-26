@@ -880,7 +880,12 @@ uint32_t g_rsn_akm_type = 2u;
  *         other set_appie call site in the tree. Nothing names what it means.
  */
 uint32_t g_appie_type = 4u;
-uint32_t g_appie_flag = 1u;
+/* [step 257] ZERO, and this is the fix. Step 256 measured that the trailing
+ * argument to esp_wifi_set_appie_internal must be 0 for the association to
+ * complete: with 1 the access point never answers the association request,
+ * with 0 it answers status 0 and sends EAPOL. ESP-IDF passes 1 at its own RSN
+ * call site; why that works there is NOT understood and is not guessed at. */
+uint32_t g_appie_flag = 0u;
 
 void wpa_install_rsn_ie(void)
 {

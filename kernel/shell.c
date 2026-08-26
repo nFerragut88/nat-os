@@ -827,21 +827,23 @@ static void execute(char *line)
                 wifi_start_enable(str_eq(arg, "start") || noie || x8021);
                 wifi_rsn_ie_enable(!noie);
                 wifi_rsn_akm_set(x8021 ? 1u : 2u);
-                /* [step 255] The last two candidates, one arm each.
-                 *   startflag0    trailing flag 1 -> 0
-                 *   startassocie  type RSN(4) -> ASSOC_REQ(1) */
+                /* [step 257] The flag now DEFAULTS to 0, which is the fix.
+                 * The arms that found it are kept as A/B, renamed to say what
+                 * they mean rather than what they were looking for:
+                 *   startflag1    the old, broken value -- the AP stays silent
+                 *   startassocie  type RSN(4) -> ASSOC_REQ(1)
+                 *   startsafe     the handshake reduced to a counter, which
+                 *                 proves the association without running it */
                 {
                     extern void wifi_appie_shape(unsigned int t, unsigned int f);
-                    /* [step 256] 'startflag0safe' is startflag0 with the
-                     * four-way handshake reduced to a counter. */
                     extern void wifi_hs_passive(int on);
-                    int f0safe = str_eq(arg, "startflag0safe");
-                    int f0 = str_eq(arg, "startflag0") || f0safe;
-                    wifi_hs_passive(f0safe);
-                    int aie = str_eq(arg, "startassocie");
+                    int safe = str_eq(arg, "startsafe");
+                    int f1   = str_eq(arg, "startflag1");
+                    int aie  = str_eq(arg, "startassocie");
+                    wifi_hs_passive(safe);
                     wifi_start_enable(str_eq(arg, "start") || noie || x8021
-                                      || f0 || aie || f0safe);
-                    wifi_appie_shape(aie ? 1u : 4u, f0 ? 0u : 1u);
+                                      || safe || f1 || aie);
+                    wifi_appie_shape(aie ? 1u : 4u, f1 ? 1u : 0u);
                 }
             }
             if (str_eq(arg, "nvs")) { wifi_init_cfg_nvs(1); }

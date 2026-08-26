@@ -196,6 +196,30 @@ static int extract_gtk(const u8 *kd, uint32_t kdlen, u8 *gtk, uint32_t *gtk_len,
     return -1;
 }
 
+/* [step 257] THE HARDWARE RNG, READ DIRECTLY, AND THE CRASH THIS FIXES.
+ *
+ * The SNonce used to come from lwip_rand_u32(), which is defined in
+ * kernel/kstring.c. That file is CALL0 and this one is WINDOWED, so the line
+ * that generated it was a call8 into a call0 function -- the violation this
+ * project enforces by directory. It is the FIRST thing the message-one path
+ * does, which is why steps 253 and 255 both panicked the instant their fix
+ * worked and the access point sent message one.
+ *
+ * lwip_rand_u32 only wraps osi_impl_random, and that is a single register
+ * read. So nothing needs to cross at all: the register is read here. No
+ * bridge, no address, no ABI boundary -- the cheapest possible answer to a
+ * crossing, which is not to cross.
+ *
+ * WDEV_RND_REG is Espressif's own constant, the same one wifi_osi_impl.c
+ * uses, and it is the hardware entropy source. A constant here would make
+ * every SNonce -- and therefore every PTK -- predictable. */
+#define WDEV_RND_REG 0x60035144u
+
+static uint32_t hs_rand_u32(void)
+{
+    return *(volatile uint32_t *)WDEV_RND_REG;
+}
+
 /* ---- the entry the driver calls ----------------------------------------- */
 
 int wpa_sta_rx_eapol_impl(u8 *src, u8 *buf, u32 len);
@@ -235,7 +259,7 @@ int wpa_sta_rx_eapol_impl(u8 *src, u8 *buf, u32 len)
         /* ---- message 1: ANonce, no MIC ---- */
         g_hs_msg1++;
         for (uint32_t i = 0u; i < 32u; i++) {
-            g_snonce[i] = (u8)(lwip_rand_u32() >> ((i & 3u) * 8u));
+            g_snonce[i] = (u8)(hs_rand_u32() >> ((i & 3u) * 8u));
         }
         derive_ptk(&buf[O_NONCE]);
         g_hs_state = 1u;
