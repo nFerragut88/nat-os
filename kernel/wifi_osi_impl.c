@@ -1481,6 +1481,14 @@ void wifi_rsn_ie_enable(int on)
     g_rsn_ie_enable = on ? 1u : 0u;
 }
 
+/* [step 254] The AKM A/B, set from the shell. Data, not a call. */
+void wifi_rsn_akm_set(unsigned int t);
+void wifi_rsn_akm_set(unsigned int t)
+{
+    extern uint32_t g_rsn_akm_type;
+    g_rsn_akm_type = t;
+}
+
 void wifi_sniff_report(void);
 void wifi_sniff_report(void)
 {

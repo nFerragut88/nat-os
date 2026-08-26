@@ -817,9 +817,16 @@ static void execute(char *line)
              * all. One variable, and the only one. */
             {
                 extern void wifi_rsn_ie_enable(int on);
+                extern void wifi_rsn_akm_set(unsigned int t);
                 int noie = str_eq(arg, "startnoie");
-                wifi_start_enable(str_eq(arg, "start") || noie);
+                /* [step 254] 'start8021x' keeps the element well formed and
+                 * changes ONE BYTE of it to an AKM this access point must
+                 * refuse. A status code proves the element is being parsed;
+                 * silence proves it is not. */
+                int x8021 = str_eq(arg, "start8021x");
+                wifi_start_enable(str_eq(arg, "start") || noie || x8021);
                 wifi_rsn_ie_enable(!noie);
+                wifi_rsn_akm_set(x8021 ? 1u : 2u);
             }
             if (str_eq(arg, "nvs")) { wifi_init_cfg_nvs(1); }
             /* blob_call, not phy_stack_call: the driver has reached

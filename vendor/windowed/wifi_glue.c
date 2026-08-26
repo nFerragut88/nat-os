@@ -864,6 +864,13 @@ void wpa_install_rsn_ie(void);
  * reaching into this windowed file would be the step-219 violation. */
 uint32_t g_rsn_ie_enable = 1u;
 
+/* [step 254] The AKM suite TYPE byte, 00-0F-AC-xx, at element offset 19.
+ * 2 is PSK and is what a WPA2-PSK network wants; 1 is 802.1X, which this
+ * access point must REFUSE. The point is the refusal: a well-formed element
+ * the AP dislikes earns a status code, and silence would mean the element is
+ * not being read as an element at all. */
+uint32_t g_rsn_akm_type = 2u;
+
 void wpa_install_rsn_ie(void)
 {
     typedef int (*appie_fn)(int, const void *, unsigned short, int);
@@ -892,6 +899,11 @@ void wpa_install_rsn_ie(void)
      * access point stays silent, but the board stays up, and silence is a
      * measurement while a panic is not. The buffer keeps its headroom so the
      * next attempt can move the pointer without touching the layout. */
+    /* [step 254] Patched in place: the buffer is .data and the element is at
+     * +2, so this is byte 2 + 19 = 21. Everything else -- length, version,
+     * both cipher suites, the counts, the capabilities -- is untouched. */
+    g_rsn_ie[2u + 19u] = (unsigned char)g_rsn_akm_type;
+
     g_appie_rc = (uint32_t)((appie_fn)g_appie_fn)(4, g_rsn_ie + 2,
                                                   (unsigned short)22, 1);
 }
