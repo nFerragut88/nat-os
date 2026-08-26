@@ -816,13 +816,43 @@ int nat_rx_cb(void *buffer, unsigned short len, void *eb)
  * Dropping const puts it in .data -- RAM -- and the alignment attribute makes
  * the width question moot. The general rule, which this project has now paid
  * for once: a buffer handed to the blob must live in RAM. */
-static uint8_t g_rsn_ie[22] __attribute__((aligned(4))) = {
+/* [step 253] TWO BYTES OF HEADROOM, and they are the whole point.
+ *
+ * ESP-IDF does NOT hand esp_wifi_set_appie_internal a pointer to the RSN
+ * element. set_assoc_ie() in rsn_supp/wpa.c:2520 does this:
+ *
+ *     sm->assoc_wpa_ie     = assoc_buf + 2;          <- element lives at +2
+ *     sm->assoc_wpa_ie_len = ASSOC_IE_LEN - 2;
+ *     wpa_config_assoc_ie(sm->proto, assoc_buf, sm->assoc_wpa_ie_len);
+ *                                    ^^^^^^^^^ the START of the buffer
+ *
+ * and only afterwards does wpa_gen_wpa_ie() write the element, at +2. So the
+ * buffer the driver is given has two bytes in front of the element that are
+ * not part of it, and the length is the buffer CAPACITY rather than the
+ * element size -- set_appie is called before the element even exists, so it
+ * cannot be the element size.
+ *
+ * nat-os pointed straight at the element and passed 22. If the driver reads
+ * the element from ptr+2, it saw 01 00 -- the RSN version field -- as an
+ * element id and length. That is a malformed information element, and an
+ * access point that cannot parse an association request DISCARDS IT
+ * SILENTLY, which is exactly the measurement of step 252: authentication
+ * accepted, association request transmitted, no response of any kind.
+ *
+ * ASSOC_IE_LEN is 24 + 2 + PMKID_LEN + RSN_SELECTOR_LEN = 46, and the buffer
+ * is two longer, both from wpa.c. The shape is reproduced rather than
+ * reasoned about. */
+#define NATOS_ASSOC_IE_LEN (24 + 2 + 16 + 4)     /* ESP-IDF ASSOC_IE_LEN = 46 */
+
+static uint8_t g_rsn_ie[NATOS_ASSOC_IE_LEN + 2] __attribute__((aligned(4))) = {
+    0x00, 0x00,                       /* headroom -- NOT part of the element */
     0x30, 0x14,
     0x01, 0x00,
     0x00, 0x0F, 0xAC, 0x04,
     0x01, 0x00, 0x00, 0x0F, 0xAC, 0x04,
     0x01, 0x00, 0x00, 0x0F, 0xAC, 0x02,
     0x00, 0x00
+    /* the rest is zero, and is the headroom wpa_gen_wpa_ie would have used */
 };
 
 uint32_t g_appie_fn;
@@ -845,8 +875,25 @@ void wpa_install_rsn_ie(void)
     if (!g_rsn_ie_enable) { g_appie_rc = 0x4E4F4945u;   /* "NOIE" -- suppressed, not failed */ return; }
     /* WIFI_APPIE_RSN is 4, from esp_wifi_driver.h. The trailing 1 is what
      * IDF passes for this call site. */
-    g_appie_rc = (uint32_t)((appie_fn)g_appie_fn)(4, g_rsn_ie,
-                                                  (unsigned short)sizeof g_rsn_ie, 1);
+    /* [step 253] ELIMINATED -- passing the buffer START and the CAPACITY, the
+     * way set_assoc_ie() does, PANICS THE DRIVER:
+     *
+     *     exccause 20 InstFetchProhibited   epc 0x00006898
+     *     a0 0x8036cc9c  -- returning into the blob
+     *
+     * immediately after connect, inside the association path. A jump to a
+     * garbage address is memory corruption, not a parse failure, so the
+     * driver does more with this buffer than copy it and the two-byte
+     * headroom is not simply headroom. Whatever set_appie means by its
+     * length, it is not 'capacity', and the reading that produced this is
+     * wrong.
+     *
+     * Back to the element and its own length, which is step 237s form: the
+     * access point stays silent, but the board stays up, and silence is a
+     * measurement while a panic is not. The buffer keeps its headroom so the
+     * next attempt can move the pointer without touching the layout. */
+    g_appie_rc = (uint32_t)((appie_fn)g_appie_fn)(4, g_rsn_ie + 2,
+                                                  (unsigned short)22, 1);
 }
 
 
