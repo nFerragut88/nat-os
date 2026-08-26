@@ -14677,3 +14677,122 @@ http   listening on port 80, conns 0 -- NOT REACHED
 
 **nat-os holds a WPA2 association and a DHCP lease, receives 695 encrypted
 frames without loss, and answers nothing.**
+
+---
+
+## step 261 — NAT-OS SERVES A WEB PAGE OVER WPA2
+
+`(this commit)`
+
+```
+$ curl http://192.168.1.140/
+HTTP 200   350 bytes
+
+    nat-os
+    This page was served by a from-scratch operating system over a
+    Wi-Fi driver it reverse-engineered the interface to.
+      uptime: 252 s
+      lwIP rx: 465 (dropped 0)
+      lwIP tx: 23 (errors 0)
+      connections: 2
+      requests: 2
+```
+
+Fetched from 192.168.1.102 — a machine this project does not control, running
+software it did not write. The page reports its own counters, so the instrument
+and the subject are the same object and the reader can check one against the
+other.
+
+**Every layer at once, and this time over CCMP**: 802.11 association, the WPA2
+four-way handshake, an installed pairwise key, Ethernet, ARP, IPv4, TCP, HTTP.
+Step 235 did this on an open network. This is the same stack with the
+encryption underneath it.
+
+### 261a. Step 260's central claim was WRONG
+
+Step 260 concluded, in bold:
+
+> **On WPA2 this station receives and does not answer.**
+
+It answers. The ARP table on the other machine resolves the address to this
+board's own MAC:
+
+```
+192.168.1.140    5c-01-3b-50-3f-64    dynamic
+```
+
+What step 260 measured was real -- `tx` frozen at 10, no ARP entry, no ping --
+but every one of those observations was taken **after the poll stopped
+servicing lwIP at +241s**, which step 260 itself recorded two sections later
+without connecting the two. The section that noted the limit did not correct
+the headline above it.
+
+The correct statement is the narrow one 260 nearly reached: *nothing that
+happens outside the servicing window is evidence about the network path.* Run
+the test inside the window and the answer inverts completely.
+
+### 261b. And a harness discipline, paid for four times
+
+Four conclusions in this stretch were drawn from **byte counts** rather than
+from the milestone the run was supposed to reach:
+
+```
+vfy.txt      12657 bytes -- called "stalled", CONTAINED "PMK ready after 15 s"
+cap_ctrl      8561 bytes -- called "the constant print stalls too"
+ctl, ctl2     8541 bytes -- called "the committed state is broken"
+verify        8541 bytes -- called "the committed state is broken"
+```
+
+Every one of the last four has `rom stubs` count **zero**: the command was never
+delivered, so the capture says nothing whatever about the build. On that basis
+step 260's A/B was briefly declared invalid and the fault "intermittent". It is
+not. Judged by the milestone instead of the file size:
+
+| build | runs reaching `PMK ready` |
+|---|---|
+| before the cfg readback | **4 / 4** |
+| with the cfg readback | **0 / 4** |
+| cfg readback removed | **4 / 4** |
+
+Step 260's A/B stands exactly as committed.
+
+**A capture without the command's first line is not evidence, and file size is
+not a milestone.** The harness now retries until `rom stubs` appears and says so
+in the capture; a run that never delivers is labelled rather than silently
+counted.
+
+### 261c. What is still open, unchanged
+
+The poll still stops servicing lwIP at roughly +241s of a 600 s window while
+the rest of the system runs on healthy. That is now a **performance and
+liveness** bug rather than a correctness one -- everything works inside the
+window -- but it is why the first three browser attempts failed and it will
+bite again.
+
+The single attempt to instrument it (a stage counter published to the status
+line) produced one stalled run. One data point, on a fault that may be
+intermittent, is not a finding; it is recorded here so it is not mistaken for
+one.
+
+### State
+
+```
+boot   11 PASS 0 FAIL
+wpa    4 crypto vectors passed, 0 failed
+       ASSOCIATED aid 12, handshake done=1, conn=1
+lwip   DHCP bound -- 192.168.1.140,  rx 465 drop 0,  tx 23 err 0
+http   HTTP 200, 2 connections, 2 requests -- SERVED OVER WPA2
+```
+
+### Next
+
+1. **Why the poll stops servicing lwIP at ~241 s.** Instrument the loop so it
+   names the call it is inside, and get a RATE before believing any single run.
+2. **The intermittent watchdog** of step 259, still not mechanised.
+3. **The cfg readback.** A status-line register read that reliably prevents the
+   crypto from running is a real defect in something, and the A/B is one line.
+4. Group-key rekeying, roaming, PMKSA caching, WPA3/SAE, and the all-channel
+   scan that has panicked since step 202.
+
+**nat-os is a station on a WPA2-PSK network, holds a DHCP lease, and serves
+HTTP over an encrypted link to a browser it has never met.**
