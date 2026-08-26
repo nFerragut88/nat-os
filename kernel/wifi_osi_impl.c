@@ -1481,6 +1481,15 @@ void wifi_rsn_ie_enable(int on)
     g_rsn_ie_enable = on ? 1u : 0u;
 }
 
+/* [step 255] The appie type and flag, set from the shell. Data, not a call. */
+void wifi_appie_shape(unsigned int type, unsigned int flag);
+void wifi_appie_shape(unsigned int type, unsigned int flag)
+{
+    extern uint32_t g_appie_type, g_appie_flag;
+    g_appie_type = type;
+    g_appie_flag = flag;
+}
+
 /* [step 254] The AKM A/B, set from the shell. Data, not a call. */
 void wifi_rsn_akm_set(unsigned int t);
 void wifi_rsn_akm_set(unsigned int t)

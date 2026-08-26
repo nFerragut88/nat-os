@@ -871,6 +871,17 @@ uint32_t g_rsn_ie_enable = 1u;
  * not being read as an element at all. */
 uint32_t g_rsn_akm_type = 2u;
 
+/* [step 255] The two remaining candidates from step 252, one constant each.
+ *
+ *   type  WIFI_APPIE_RSN is 4 and is what wpa_config_assoc_ie() uses for an
+ *         RSN network. WIFI_APPIE_ASSOC_REQ is 1 and is what esp_set_assoc_ie()
+ *         uses -- a different call, on the same frame, in the same connect.
+ *   flag  the trailing argument, 1 at IDF's RSN call site and 0 at every
+ *         other set_appie call site in the tree. Nothing names what it means.
+ */
+uint32_t g_appie_type = 4u;
+uint32_t g_appie_flag = 1u;
+
 void wpa_install_rsn_ie(void)
 {
     typedef int (*appie_fn)(int, const void *, unsigned short, int);
@@ -904,8 +915,10 @@ void wpa_install_rsn_ie(void)
      * both cipher suites, the counts, the capabilities -- is untouched. */
     g_rsn_ie[2u + 19u] = (unsigned char)g_rsn_akm_type;
 
-    g_appie_rc = (uint32_t)((appie_fn)g_appie_fn)(4, g_rsn_ie + 2,
-                                                  (unsigned short)22, 1);
+    g_appie_rc = (uint32_t)((appie_fn)g_appie_fn)((int)g_appie_type,
+                                                  g_rsn_ie + 2,
+                                                  (unsigned short)22,
+                                                  (int)g_appie_flag);
 }
 
 

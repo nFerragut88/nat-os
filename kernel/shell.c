@@ -827,6 +827,17 @@ static void execute(char *line)
                 wifi_start_enable(str_eq(arg, "start") || noie || x8021);
                 wifi_rsn_ie_enable(!noie);
                 wifi_rsn_akm_set(x8021 ? 1u : 2u);
+                /* [step 255] The last two candidates, one arm each.
+                 *   startflag0    trailing flag 1 -> 0
+                 *   startassocie  type RSN(4) -> ASSOC_REQ(1) */
+                {
+                    extern void wifi_appie_shape(unsigned int t, unsigned int f);
+                    int f0 = str_eq(arg, "startflag0");
+                    int aie = str_eq(arg, "startassocie");
+                    wifi_start_enable(str_eq(arg, "start") || noie || x8021
+                                      || f0 || aie);
+                    wifi_appie_shape(aie ? 1u : 4u, f0 ? 0u : 1u);
+                }
             }
             if (str_eq(arg, "nvs")) { wifi_init_cfg_nvs(1); }
             /* blob_call, not phy_stack_call: the driver has reached
