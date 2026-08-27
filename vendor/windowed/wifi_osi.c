@@ -298,17 +298,48 @@ static void osi_spin_lock_delete(void *lock)
     /* stub */
 }
 
+/* [step 267] IMPLEMENTED. These were empty stubs returning 0.
+ *
+ * wifi_osi_impl.c:1037 has carried this marker since the ISR path was written:
+ * "the blob has its own answer -- it wraps its critical regions in
+ * _wifi_int_disable/_wifi_int_restore, which mask interrupts globally -- and
+ * those are already implemented here. Whether that is sufficient is not yet
+ * measured, and this comment is the marker for it."
+ *
+ * They were not implemented. The blob has been entering every critical region
+ * it has, being told the interrupts are masked, and running with them fully
+ * enabled -- so an ISR firing while the blob task is inside vendor code puts
+ * TWO CONTEXTS IN WINDOWED VENDOR CODE AT ONCE, which is the exact hazard the
+ * marker was left for.
+ *
+ * That is the sixth entry in this project found reporting success for work
+ * never done, after _event_post, _task_delay, the event groups,
+ * _queue_send_from_isr and wpa_parse_wpa_ie.
+ *
+ * LEVEL ONLY on the way back, for the reason phy_exit_critical gives: the rest
+ * of PS is the kernel's execution mode, and restoring a whole saved word can
+ * put WOE back as it was at capture time rather than as it must be now. */
+uint32_t g_wint_enters, g_wint_exits, g_wint_depth, g_wint_maxdepth;
+
 static uint32_t osi_wifi_int_disable(void *wifi_int_mux)
 {
     (void)wifi_int_mux;
-    return 0;
+    uint32_t ps;
+    __asm__ volatile ("rsil %0, 3" : "=a"(ps));
+    g_wint_enters++;
+    if (++g_wint_depth > g_wint_maxdepth) { g_wint_maxdepth = g_wint_depth; }
+    return ps;
 }
 
 static void osi_wifi_int_restore(void *wifi_int_mux, uint32_t tmp)
 {
     (void)wifi_int_mux;
-    (void)tmp;
-    /* stub */
+    if (g_wint_depth) { g_wint_depth--; }
+    g_wint_exits++;
+    uint32_t ps;
+    __asm__ volatile ("rsr.ps %0" : "=a"(ps));
+    ps = (ps & ~0xFu) | (tmp & 0xFu);
+    __asm__ volatile ("wsr.ps %0; rsync" :: "a"(ps));
 }
 
 static void osi_task_yield_from_isr(void)

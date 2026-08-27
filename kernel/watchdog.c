@@ -80,7 +80,11 @@
  *
  * lock is who holds the panel mutex, which is the thing UM-NATOS-029 measured
  * the display holding for essentially all of uptime. */
-struct bc { unsigned int magic, seq, task, tick, hist, lock; };
+/* [step 267] crit is the blob's critical-section depth. Until this step the
+ * blob's _wifi_int_disable was a stub, so it had none; now it does, and a
+ * reset with a NON-ZERO depth says the blob entered a critical region and the
+ * board died inside it. */
+struct bc { unsigned int magic, seq, task, tick, hist, lock, crit; };
 static volatile struct bc *const g_bc = (volatile struct bc *)RTC_SLOW_MEM;
 
 /* The PREVIOUS boot's final breadcrumb, snapshotted before this boot
@@ -97,6 +101,7 @@ void watchdog_breadcrumb_init(void)
         g_bc_prev.tick = g_bc->tick;
         g_bc_prev.hist = g_bc->hist;
         g_bc_prev.lock = g_bc->lock;
+        g_bc_prev.crit = g_bc->crit;
         g_bc_had_prev  = 1;
     }
     g_bc->magic = BC_MAGIC;
@@ -105,6 +110,7 @@ void watchdog_breadcrumb_init(void)
     g_bc->tick = 0u;
     g_bc->hist = 0u;
     g_bc->lock = 0xFFFFFFFFu;
+    g_bc->crit = 0u;
 }
 
 int watchdog_breadcrumb_prev(unsigned int *seq, unsigned int *task,
@@ -121,6 +127,8 @@ unsigned int watchdog_breadcrumb_hist(void);
 unsigned int watchdog_breadcrumb_hist(void) { return g_bc_prev.hist; }
 unsigned int watchdog_breadcrumb_lock(void);
 unsigned int watchdog_breadcrumb_lock(void) { return g_bc_prev.lock; }
+unsigned int watchdog_breadcrumb_crit(void);
+unsigned int watchdog_breadcrumb_crit(void) { return g_bc_prev.crit; }
 
 static unsigned int g_feeds;
 static unsigned int g_starved;
@@ -200,6 +208,10 @@ void watchdog_liveness(int switched)
         g_bc->tick = (unsigned int)timer_ticks();
         g_bc->hist = (g_bc->hist << 4) | (me & 0xFu);
         g_bc->lock = (unsigned int)display_lock_owner();
+        {
+            extern unsigned int g_wint_depth;
+            g_bc->crit = g_wint_depth;
+        }
     }
 
     static unsigned int ticks;

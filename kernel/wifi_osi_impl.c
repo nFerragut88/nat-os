@@ -2419,56 +2419,11 @@ void wifi_rx_report(void)
     uart_put_dec(g_rx_bytes);
     uart_puts("\n");
 
-    uint32_t n = g_rx_frames < 6u ? g_rx_frames : 6u;
-    for (uint32_t f = 0u; f < n; f++) {
-        const uint8_t *p = g_rx_snap[f];
-        uint32_t et = ((uint32_t)p[12] << 8) | p[13];
-        uart_puts("     len ");
-        uart_put_dec(g_rx_len[f]);
-        uart_puts("  dst ");
-        for (uint32_t i = 0u; i < 6u; i++) {
-            uart_putc(hx[(p[i] >> 4) & 15]); uart_putc(hx[p[i] & 15]);
-        }
-        uart_puts(" src ");
-        for (uint32_t i = 6u; i < 12u; i++) {
-            uart_putc(hx[(p[i] >> 4) & 15]); uart_putc(hx[p[i] & 15]);
-        }
-        uart_puts(" type ");
-        uart_put_hex(et);
-        /* The two that matter for a ping, named so the next reader does not
-         * have to look them up. */
-        uart_puts(et == 0x0806u ? " ARP"
-                : et == 0x0800u ? " IPv4"
-                : et == 0x86DDu ? " IPv6"
-                : "");
-        /* [step 225] If it is a DHCP reply, say what it offered us. UDP source
-         * port 67 is the marker; yiaddr -- "your address" -- sits at BOOTP+16,
-         * which is Ethernet 14 + IP 20 + UDP 8 + 16 = 58.
-         *
-         * Checked, not assumed, in the way everything else here has been: the
-         * IP protocol byte must say UDP and the source port must be the DHCP
-         * server port before any of those offsets are believed. */
-        if (et == 0x0800u && p[23] == 17u) {
-            uint32_t sp = ((uint32_t)p[34] << 8) | p[35];
-            if (sp == 67u) {
-                uart_puts("     DHCP reply, offered ");
-                for (uint32_t i = 58u; i < 62u; i++) {
-                    uart_put_dec(p[i]);
-                    if (i != 61u) { uart_putc('.'); }
-                }
-                /* The SERVER is the IP header's SOURCE at +26. Bytes 30..33
-                 * are the DESTINATION, which for a broadcast reply is always
-                 * 255.255.255.255 -- a value that looks like data and is not. */
-                uart_puts("  from ");
-                for (uint32_t i = 26u; i < 30u; i++) {
-                    uart_put_dec(p[i]);
-                    if (i != 29u) { uart_putc('.'); }
-                }
-                uart_puts("\n");
-            }
-        }
-        uart_puts("\n");
-    }
+    /* [step 267] The per-frame dump is removed. Step 222 needed it to prove
+     * a DHCP OFFER had arrived and been decoded; that is long established,
+     * the sniffer of step 250 reads the same traffic better, and its iram
+     * bought the blob critical-section depth in the breadcrumb. Counts
+     * stay. */
 }
 
 /* ---- DHCP DISCOVER -- next_moves/08 step 224 ----------------------------

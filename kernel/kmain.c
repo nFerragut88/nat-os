@@ -1833,6 +1833,8 @@ void kmain(void)
                     unsigned int lk = watchdog_breadcrumb_lock();
                     if (lk == 0xFFFFFFFFu) { uart_puts("-"); }
                     else { uart_put_dec(lk); }
+                    uart_puts(" crit");
+                    uart_put_dec(watchdog_breadcrumb_crit());
                     uart_puts(" hist ");
                     for (int k = 7; k >= 0; k--) {
                         uart_putc((char)('0' + ((h >> (k * 4)) & 0xFu)));

@@ -15214,3 +15214,97 @@ breadcrumb   task + tick + 8-deep history + panel-lock holder, survives reset
 **Not the display. The scheduler stops while nothing holds anything, and the
 only component that can do that is the one whose source this project does not
 have.**
+
+---
+
+## step 267 — the blob's critical sections were never implemented
+
+`(this commit)`
+
+```c
+static uint32_t osi_wifi_int_disable(void *wifi_int_mux)
+{
+    (void)wifi_int_mux;
+    return 0;                    /* stub */
+}
+```
+
+`wifi_osi_impl.c:1037` has carried this marker since the ISR path was written:
+
+> *"The blob has its own answer — it wraps its critical regions in
+> `_wifi_int_disable`/`_wifi_int_restore`, which mask interrupts globally — and
+> those are already implemented here. Whether that is sufficient is not yet
+> measured, and this comment is the marker for it."*
+
+**They were not implemented.** Both were empty stubs. The blob has been
+entering every critical region it has, being told interrupts are masked, and
+running with them fully enabled — so an ISR firing while the blob task is
+inside vendor code puts **two contexts in windowed vendor code at once**, which
+is the exact hazard the marker was left for.
+
+That is the **sixth** entry found reporting success for work never done, after
+`_event_post`, `_task_delay`, the event groups, `_queue_send_from_isr` and
+`wpa_parse_wpa_ie`. The marker was right to exist and wrong about the facts.
+
+Implemented with `rsil 3` and a level-only restore, for the reason
+`phy_exit_critical` gives: the rest of PS is the kernel's execution mode, and
+restoring a whole saved word can put WOE back as it was at capture time rather
+than as it must be now.
+
+### 267a. It is NOT shown to be the watchdog
+
+```
+baseline (step 263)          3 / 8
+critical sections real       1 / 6
+```
+
+**Not distinguishable at these numbers.** 1 in 6 against 3 in 8 is consistent
+with a real improvement and with none, and six runs cannot separate them — the
+same non-result step 266 recorded for the display, written down rather than
+rounded up.
+
+And the one reset argues against the hypothesis directly:
+
+```
+LAST TICK : task 3 at tick 9175  lock6  crit0  hist 66666613
+```
+
+**`crit0`** — the blob was not inside a critical region when the board died.
+If unprotected critical sections were the mechanism, this is where a non-zero
+depth would have appeared, and it did not.
+
+So: a real defect, correctly fixed, on the sixth instance of a pattern this
+project keeps finding — and not the answer to the question that found it.
+
+### 267b. What the reset now looks like
+
+`lock6` again, and `hist 66666613` — six of the last eight scheduler entries
+are the display, ending in vm. Step 266 established disp is not *necessary*
+(it resets with the display frozen too), so its recurrence here is the same
+prior: a HIGH-priority task that runs constantly is the one most often caught.
+
+This reset also came early — tick 9175, before any lease — where the others
+came after minutes of traffic. That is a difference worth noting and not yet
+worth a theory.
+
+### State
+
+```
+watchdog        3/8 baseline, 1/4 display frozen, 1/6 critical sections real
+                -- none of these is distinguishable from the others
+eliminated      starvation, shell stack, lock contention, the display task,
+                and now the blob's unprotected critical regions
+breadcrumb      task + tick + history + panel lock + blob critical depth
+```
+
+### Next
+
+1. **The interrupt level of the interrupted code.** The breadcrumb records the
+   tick's own context; what is wanted is `EPS3` — the PS of whatever the tick
+   interrupted — so a task running at a raised level shows up before the
+   freeze. The panic dump already reads EPS3, so the machinery exists.
+2. Persistence, still waiting on this.
+3. The first-ARP question, the cfg readback, and the `hist` hex rendering.
+
+**Six instruments, five eliminations, and the board still reboots. What is left
+is the interrupt level, and after that, the blob.**
