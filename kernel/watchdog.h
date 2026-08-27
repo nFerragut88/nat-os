@@ -11,6 +11,8 @@ void watchdog_disable_all(void);
 /* Read back the RTC watchdog config register — non-zero means still armed.
  * Used to confirm the write actually took, rather than assuming it. */
 void watchdog_breadcrumb_init(void);
+unsigned int watchdog_breadcrumb_hist(void);
+unsigned int watchdog_breadcrumb_lock(void);
 int  watchdog_breadcrumb_prev(unsigned int *seq, unsigned int *task,
                               unsigned int *tick);
 unsigned int watchdog_timg0_config(void);

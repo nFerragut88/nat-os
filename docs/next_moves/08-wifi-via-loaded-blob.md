@@ -15051,3 +15051,82 @@ breadcrumb                 survives the reset, validated against 'hang'
 
 **The watchdog has a name for the first time in five steps, and it is not the
 one anybody was looking for.**
+
+---
+
+## step 265 — the display holds the panel lock, and monopolises
+
+`(this commit)`
+
+```
+run 22:  LAST TICK : task 6 at tick 24040  lock6  hist 6:234566
+run 23:  LAST TICK : task 6 at tick 25680  lock6  hist 66666666
+```
+
+Two more real watchdog resets, with the breadcrumb widened to carry the eight
+most recent task ids and the panel-lock holder.
+
+**`lock6` in both: the display task is HOLDING THE PANEL MUTEX when the
+watchdog fires.** And run 23's history is eight consecutive ticks of task 6 —
+every scheduler invocation the board managed before it died was the display
+task.
+
+That is what step 264 said it could not distinguish. A coincidence of timing
+gives a mixed history; `66666666` is a monopoly.
+
+Run 22 is the mixture — 6, 10, 2, 3, 4, 5, 6, 6 — so the monopoly is not
+present every time, but the LOCK is: both resets have disp holding it.
+
+### 265a. The mechanism this implies, stated as a hypothesis
+
+The breadcrumb is written from `watchdog_liveness`, which the scheduler calls.
+If the scheduler stops being entered, the breadcrumb stops updating and its
+last value is whatever was current when the ticks stopped. `hist 66666666`
+therefore reads: *the last eight scheduler entries were all disp, and then
+there were no more.*
+
+So: **the display task takes the panel lock, enters something long, and the
+scheduler stops running for longer than the three-second timeout.** Not
+starvation in the sense step 259 tested for — `watchdog_liveness` never
+reported a starved window, because it was not being called at all.
+
+That also explains why five steps of WiFi hypotheses found nothing. The WiFi
+work did not cause this; it made it *visible*, by giving the board something
+to do for four minutes at a stretch.
+
+### 265b. Not established
+
+That the display is the cause rather than the victim. A task holding a mutex
+when the world stops is equally consistent with it *waiting* on something the
+blob holds — and the blob runs at nat-os priority HIGH with its own critical
+sections, which is exactly the class of thing that stops a scheduler.
+
+Two resets is also two. Step 263's lesson stands.
+
+### 265c. A rendering bug in this step's own instrument
+
+`hist` packs four bits per task and prints `'0' + nibble`, so task 10 renders
+as `:`. Tasks 8, 9 and 10 exist — they are the blob's. Harmless here because
+the reading is unambiguous, and noted so the next reader does not think the
+board printed a colon.
+
+### State
+
+```
+watchdog        3/8 (step 263); 3/3 then 2/2 naming task 6
+breadcrumb      task + tick + 8-deep history + panel-lock holder
+at the reset    disp is current, disp holds the lock, sometimes 8/8 ticks
+```
+
+### Next
+
+1. **The blunt A/B: run with the display task disabled.** If the resets stop,
+   disp is the cause; if they continue, disp was the victim and the search
+   moves to what it was waiting on. One switch, and it is decisive in a way no
+   amount of further instrumentation is.
+2. If disp is the cause: what does it do under the lock that takes seconds?
+   UM-NATOS-029 measured `dlock hold ms` at essentially all of uptime.
+3. Fix the `hist` nibble rendering to hex.
+
+**The watchdog fires while the display task holds the panel lock. Whether it is
+the cause or the victim is one experiment away.**

@@ -916,6 +916,10 @@ int display_init(void)
  * holding it across many primitives is measured the same as one that does
  * not — the raycaster is exactly such a caller. */
 void display_lock(void)   { draw_lock(); }
+/* [step 265] Who holds the panel lock, for the watchdog breadcrumb. -1 if
+ * nobody. Read from the tick handler, so it must not lock anything itself. */
+int display_lock_owner(void);
+int display_lock_owner(void) { return mutex_owner(&g_lock); }
 void display_unlock(void) { draw_unlock(); }
 
 /* ---- panic mode --------------------------------------------------------

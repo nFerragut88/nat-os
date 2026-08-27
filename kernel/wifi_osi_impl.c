@@ -1643,40 +1643,12 @@ void wpa_cb_report(void)
         uart_put_hex(g_pie_caps);
         uart_puts("   (cipher CCMP=0x8, akm PSK=0x2)\n");
     }
-    /* [step 247] The twelve return addresses become slot numbers.
-     *
-     * Names from struct wpa_funcs, ESP-IDF 5.1.4, which step 246 confirmed
-     * against this blob's own layout: the pointer-returning slots it names
-     * are the ones step 220 derived from crashes. */
-    {
-        static const char *const nm[25] = {
-            "sta_init", "sta_deinit", "sta_connect", "sta_connected_cb",
-            "sta_disconnected_cb", "sta_rx_eapol", "sta_in_4way", "ap_init",
-            "ap_deinit", "ap_join", "ap_remove", "ap_get_wpa_ie",
-            "ap_rx_eapol", "ap_get_peer_spp", "config_parse_string",
-            "parse_wpa_ie", "config_bss", "michael_mic_failure",
-            "wpa3_build_sae", "wpa3_parse_sae", "wpa3_hostap_auth",
-            "sta_rx_mgmt", "config_done", "owe_build_dhie",
-            "owe_process_assoc"
-        };
-        extern uint32_t g_wpa_slot_mask;
-        extern uint8_t  g_wpa_slot_seq[24];
-        uint32_t k = g_wpa_calls < 24u ? g_wpa_calls : 24u;
-        uart_puts("  wpa seq  ");
-        for (uint32_t i = 0u; i < k; i++) {
-            uart_put_dec(g_wpa_slot_seq[i]);
-            uart_puts(" ");
-        }
-        uart_puts("\n  wpa named");
-        for (uint32_t i = 0u; i < 32u; i++) {
-            if (!(g_wpa_slot_mask & (1u << i))) { continue; }
-            uart_puts("  ");
-            uart_put_dec(i);
-            uart_puts("=");
-            uart_puts(i < 25u ? nm[i] : "?");
-        }
-        uart_puts("\n");
-    }
+    /* [step 265] The step-247 slot NAME table and its 32-slot loop are
+     * removed. They did their job: the slots are identified and the ones that
+     * matter -- 2, 3, 4, 5, 6, 15, 21 -- are implemented, so the report was
+     * printing a list that no longer changes. iram bought the watchdog
+     * breadcrumb history with it. The raw hit addresses below still say
+     * whether anything unexpected is being called. */
     uart_puts("  wpa hits ");
     uart_put_dec(n);
     if (n > 12u) { n = 12u; }

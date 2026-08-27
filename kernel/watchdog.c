@@ -72,7 +72,15 @@
 #define RTC_SLOW_MEM  0x50000000u
 #define BC_MAGIC      0x6E617462u        /* 'natb' */
 
-struct bc { unsigned int magic, seq, task, tick; };
+/* [step 265] hist packs the EIGHT most recent task ids, four bits each, most
+ * recent in the low nibble. Step 264 showed the tick landing in disp three
+ * times of three, and could not tell a monopoly from a coincidence of timing:
+ * a HIGH-priority task that draws continuously is what a naive prior already
+ * predicts. Eight in a row all reading 6 is a monopoly. A mixture is not.
+ *
+ * lock is who holds the panel mutex, which is the thing UM-NATOS-029 measured
+ * the display holding for essentially all of uptime. */
+struct bc { unsigned int magic, seq, task, tick, hist, lock; };
 static volatile struct bc *const g_bc = (volatile struct bc *)RTC_SLOW_MEM;
 
 /* The PREVIOUS boot's final breadcrumb, snapshotted before this boot
@@ -87,12 +95,16 @@ void watchdog_breadcrumb_init(void)
         g_bc_prev.seq  = g_bc->seq;
         g_bc_prev.task = g_bc->task;
         g_bc_prev.tick = g_bc->tick;
+        g_bc_prev.hist = g_bc->hist;
+        g_bc_prev.lock = g_bc->lock;
         g_bc_had_prev  = 1;
     }
     g_bc->magic = BC_MAGIC;
     g_bc->seq = 0u;
     g_bc->task = 0xFFFFFFFFu;
     g_bc->tick = 0u;
+    g_bc->hist = 0u;
+    g_bc->lock = 0xFFFFFFFFu;
 }
 
 int watchdog_breadcrumb_prev(unsigned int *seq, unsigned int *task,
@@ -104,6 +116,11 @@ int watchdog_breadcrumb_prev(unsigned int *seq, unsigned int *task,
     *seq = g_bc_prev.seq; *task = g_bc_prev.task; *tick = g_bc_prev.tick;
     return 1;
 }
+
+unsigned int watchdog_breadcrumb_hist(void);
+unsigned int watchdog_breadcrumb_hist(void) { return g_bc_prev.hist; }
+unsigned int watchdog_breadcrumb_lock(void);
+unsigned int watchdog_breadcrumb_lock(void) { return g_bc_prev.lock; }
 
 static unsigned int g_feeds;
 static unsigned int g_starved;
@@ -175,9 +192,15 @@ void watchdog_liveness(int switched)
 #if WATCHDOG_ENABLE
     /* [step 264] Three stores per tick. Whatever the board was running when
      * the watchdog fired is in RTC memory on the next boot. */
-    g_bc->seq++;
-    g_bc->task = (unsigned int)task_current();
-    g_bc->tick = (unsigned int)timer_ticks();
+    {
+        extern int display_lock_owner(void);
+        unsigned int me = (unsigned int)task_current();
+        g_bc->seq++;
+        g_bc->task = me;
+        g_bc->tick = (unsigned int)timer_ticks();
+        g_bc->hist = (g_bc->hist << 4) | (me & 0xFu);
+        g_bc->lock = (unsigned int)display_lock_owner();
+    }
 
     static unsigned int ticks;
     static unsigned int seen;

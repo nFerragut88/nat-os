@@ -1827,9 +1827,18 @@ void kmain(void)
                 uart_put_dec(btask);
                 uart_puts(" at tick ");
                 uart_put_dec(btick);
-                uart_puts(" (");
-                uart_put_dec(bseq);
-                uart_puts(" ticks that boot)\n");
+                uart_puts(" lock");
+                {   /* [step 265] eight most recent tasks, oldest first. */
+                    unsigned int h = watchdog_breadcrumb_hist();
+                    unsigned int lk = watchdog_breadcrumb_lock();
+                    if (lk == 0xFFFFFFFFu) { uart_puts("-"); }
+                    else { uart_put_dec(lk); }
+                    uart_puts(" hist ");
+                    for (int k = 7; k >= 0; k--) {
+                        uart_putc((char)('0' + ((h >> (k * 4)) & 0xFu)));
+                    }
+                }
+                uart_puts("\n");
             }
         }
         uart_puts("  LAST FAULT   : ");
