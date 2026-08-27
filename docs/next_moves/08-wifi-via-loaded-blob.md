@@ -15705,3 +15705,101 @@ if `CCOMPARE1` is in the past, set it to `CCOUNT + interval`. Both
 already read PS to do it.
 
 **Eight steps, seven eliminations, and the answer was a signed comparison.**
+
+---
+
+## step 273 — NAT-OS IS A WORKING SERVER
+
+`(this commit)`
+
+```
+net   handover -- the stack stays up now
++0s +60s +120s +180s +240s :  HTTP 200, every one
+
+    uptime: 589 s
+    lwIP rx: 1329 (dropped 0)
+    lwIP tx: 37 (errors 0)
+    connections: 6
+    requests: 6
+
+resets in the whole capture: 0
+```
+
+**Nearly ten minutes, no reboot, six requests served.** Before this the board
+rebooted roughly every ninety seconds.
+
+### 273a. The fix is three lines, and the bug was in a guard
+
+Step 272 found the mechanism: `CCOMPARE1` left in the past — measured at
+−86,569,830 and −64,463,462 cycles — so the one-shot never matches again until
+`CCOUNT` wraps, 53.7 s away, and the 3 s watchdog wins.
+
+`task_yield()` writes the comparator on **every voluntary switch**, and it had
+a guard:
+
+```c
+uint32_t soon = xt_ccount() + 64u;
+if ((int32_t)(soon - xt_get_ccompare1()) < 0) { xt_set_ccompare1(soon); }
+```
+
+*Only ever earlier, never later* — correct, and paid for with a full debugging
+session when writing it unconditionally froze the kernel.
+
+**But it cannot tell EARLIER from STALE.** With the comparator 64 million
+cycles behind, `soon - ccompare1` is large and *positive*, the guard reads that
+as "already earlier", and every yield sails straight past the one write that
+would restart the clock. The system had a rescue path running constantly and
+declining to use it.
+
+So the stale case is handled before the guard sees it:
+
+```c
+(void)timer_rescue();          /* <- added */
+uint32_t soon = xt_ccount() + 64u;
+if ((int32_t)(soon - xt_get_ccompare1()) < 0) { xt_set_ccompare1(soon); }
+```
+
+`timer_rescue()` re-arms only if the deadline has already passed. It is also
+called from `osi_wifi_int_restore()`, the blob's critical-section exit, which is
+one of the windows that eats the match.
+
+### 273b. Why it is a STATIC INLINE
+
+`osi_wifi_int_restore()` is **windowed**. A windowed `call8` into a call0
+function is the violation this project has paid for five times, so the rescue
+lives in `timer.h` as a static inline and its state is exported for it.
+Verified in the disassembly: that function contains **no call of any kind**.
+
+Deliberately **not** wired into `phy_exit_critical()`, which also lowers the
+level: `phy_host.c` is compiled into the pre-linked blob as well as the kernel,
+and an inline there would reference kernel globals the blob cannot resolve.
+
+### 273c. Why every earlier hypothesis missed it
+
+Seven were eliminated correctly and none was it, because the fault leaves no
+trace in the place everyone looked. The tick dies *while interrupts are masked*;
+by the time anything observes, they are unmasked again and the level reads 0.
+`lvl 00000000` at every reset was a true measurement of the wrong instant.
+
+It took carrying `CCOMPARE1 - CCOUNT` through the reset — and reading it as
+**signed** — for the answer to be a single number.
+
+### State
+
+```
+nat-os     associates with WPA2-PSK, completes the four-way handshake,
+           holds a DHCP lease, and serves HTTP over CCMP
+uptime     589 s and counting, 0 resets
+network    serviced by a task; survives the command that started it
+```
+
+### Next
+
+1. **Confirm the rate is actually zero**, not merely lower. One 10-minute run
+   is one run; the fault was ~1 in 3 and this file has been wrong about small
+   samples five times.
+2. The first-ARP question of step 263c; the `hist` hex rendering.
+3. Group-key rekeying, roaming, PMKSA caching, WPA3/SAE, the all-channel scan.
+
+**A from-scratch operating system, on a reverse-engineered radio, over an
+encrypted link, serving a page and staying up to do it.**

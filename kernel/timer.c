@@ -20,8 +20,8 @@ static volatile uint32_t g_ticks;
 static volatile uint32_t g_last_delta;   /* cycles between the last two ticks */
 static volatile uint32_t g_late;         /* re-arms that had already elapsed */
 
-static uint32_t g_interval;              /* cycles between ticks */
-static uint32_t g_next;                  /* CCOUNT value of the next tick */
+uint32_t g_timer_interval;              /* cycles between ticks */
+uint32_t g_timer_next;                  /* CCOUNT value of the next tick */
 
 /* Called from _handler_level3 in vectors.S. Must not be static — assembly
  * references it by name. Keep it short: interrupts at level 3 and below are
@@ -54,14 +54,14 @@ void timer_isr(void)
      * to the real deadline the yield displaced -- the yield still got its
      * context switch, because _handler_level3 calls the scheduler regardless of
      * what this function decides. */
-    if ((int32_t)(now - g_next) < 0) {
-        xt_set_ccompare1(g_next);
+    if ((int32_t)(now - g_timer_next) < 0) {
+        xt_set_ccompare1(g_timer_next);
         return;
     }
 
-    g_last_delta = now - (g_next - g_interval);
+    g_last_delta = now - (g_timer_next - g_timer_interval);
 
-    g_next += g_interval;
+    g_timer_next += g_timer_interval;
 
     /* If the handler was delayed past the next deadline, skipping ahead avoids
      * a storm of immediate re-entries trying to catch up. Counted, because a
@@ -76,7 +76,7 @@ void timer_isr(void)
      * function to come from an assumption about who calls it.
      *
      * The history is worth keeping. task_yield() pulls CCOMPARE1 back to
-     * ccount+64 without telling this file, so g_next still held the original
+     * ccount+64 without telling this file, so g_timer_next still held the original
      * deadline; the handler then fired 64 cycles later and added a WHOLE
      * interval to a deadline that was already a whole interval away — every
      * yield pushing the tick further into the future.
@@ -91,25 +91,33 @@ void timer_isr(void)
      * were silently running long, timeouts were silently loose, and the frame
      * rate this session spent so long measuring was taken against a clock that
      * intermittently stalled. */
-    int32_t ahead = (int32_t)(g_next - xt_ccount());
-    if (ahead <= 0 || ahead > (int32_t)g_interval) {
-        g_next = xt_ccount() + g_interval;
+    int32_t ahead = (int32_t)(g_timer_next - xt_ccount());
+    if (ahead <= 0 || ahead > (int32_t)g_timer_interval) {
+        g_timer_next = xt_ccount() + g_timer_interval;
         g_late++;
     }
 
-    xt_set_ccompare1(g_next);   /* re-arm and acknowledge */
+    xt_set_ccompare1(g_timer_next);   /* re-arm and acknowledge */
     g_ticks++;
 }
 
+/* [step 273] The rescue itself is a STATIC INLINE in timer.h, not a function
+ * here. Its caller is osi_wifi_int_restore() in vendor/windowed/, and a
+ * windowed call8 into a call0 function is the violation this project has paid
+ * for five times. An inline crosses nothing. The state it needs is exported
+ * above for that reason. */
+unsigned int g_timer_rescues;
+unsigned int timer_rescue_count(void) { return g_timer_rescues; }
+
 void timer_start(uint32_t interval_cycles)
 {
-    g_interval = interval_cycles;
+    g_timer_interval = interval_cycles;
     g_ticks = 0;
     g_late = 0;
     g_last_delta = 0;
 
-    g_next = xt_ccount() + interval_cycles;
-    xt_set_ccompare1(g_next);
+    g_timer_next = xt_ccount() + interval_cycles;
+    xt_set_ccompare1(g_timer_next);
 
     xt_enable_interrupt(XT_TIMER1_INTERRUPT);
     xt_set_intlevel(0);          /* admit all levels; nothing is masked now */

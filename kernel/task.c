@@ -1814,6 +1814,21 @@ void task_yield(void)
      * read, which is what the idle loops that call this hardest will pay. */
     spill_before_parking();
 
+    /* [step 273] RESCUE FIRST, and the guard below is why it is needed here.
+     *
+     * That guard moves the deadline ONLY EARLIER, which is right and was paid
+     * for with a full debugging session. But it cannot tell EARLIER from
+     * STALE. If the comparator has been left in the past -- step 272 measured
+     * it 86 million cycles behind CCOUNT after a masked window ate the match --
+     * then soon - ccompare1 is large and POSITIVE, the guard reads that as
+     * 'already earlier', and every yield sails straight past the one write
+     * that would restart the clock.
+     *
+     * So the stale case is handled before the guard sees it. This is the place
+     * because every voluntary switch funnels through here, and a yield is the
+     * only thing that still runs when the tick is dead. */
+    (void)timer_rescue();
+
     uint32_t soon = xt_ccount() + 64u;
     if ((int32_t)(soon - xt_get_ccompare1()) < 0) {
         xt_set_ccompare1(soon);

@@ -49,6 +49,7 @@
  * what happens when that is got wrong, in both directions.
  */
 
+#include "timer.h"
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdarg.h>
@@ -340,6 +341,9 @@ static void osi_wifi_int_restore(void *wifi_int_mux, uint32_t tmp)
     __asm__ volatile ("rsr.ps %0" : "=a"(ps));
     ps = (ps & ~0xFu) | (tmp & 0xFu);
     __asm__ volatile ("wsr.ps %0; rsync" :: "a"(ps));
+    /* [step 273] see phy_exit_critical: the match may have been eaten while
+     * the level was raised, and this is the first moment anything runs again. */
+    (void)timer_rescue();
 }
 
 static void osi_task_yield_from_isr(void)
