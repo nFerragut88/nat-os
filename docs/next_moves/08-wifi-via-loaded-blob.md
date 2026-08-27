@@ -15130,3 +15130,87 @@ at the reset    disp is current, disp holds the lock, sometimes 8/8 ticks
 
 **The watchdog fires while the display task holds the panel lock. Whether it is
 the cause or the victim is one experiment away.**
+
+---
+
+## step 266 — the display is NOT the cause: the A/B says so
+
+`(this commit)`
+
+```
+baseline (step 263)          watchdog 3 / 8
+display frozen (dfreeze)     watchdog 1 / 4
+
+the one frozen-arm reset:
+    LAST TICK : task 6 at tick 7265  lock4294967294  hist 12346796
+```
+
+`dfreeze` sets `g_display_frozen` and nothing repaints. Four runs with it on.
+
+**The watchdog still fires.** And the reset that happened is qualitatively
+different from every un-frozen one:
+
+| | un-frozen (steps 264-265) | frozen (this step) |
+|---|---|---|
+| last task | 6 | 6 |
+| panel lock | **held by 6** | **4294967294 = (unsigned)-2, nobody** |
+| history | `66666666` and `6:234566` | `12346796` — mixed |
+
+So the lock-holding and the eight-in-a-row were **symptoms of drawing**, not the
+mechanism. Stop the drawing and the board still resets, with the lock free and
+seven different tasks in the last eight scheduler entries.
+
+**Step 265's hypothesis is disproved.** "The display task takes the panel lock,
+enters something long, and the scheduler stops" cannot be the mechanism, because
+the scheduler stops when it is holding nothing.
+
+### 266a. What the rate does and does not say
+
+1 in 4 against 3 in 8 is **not a distinguishable reduction** at these numbers.
+It is consistent with no effect, and it is consistent with a modest one. Four
+runs cannot separate those, and this file has been burned enough times by
+treating a small sample as an answer that it is worth writing the non-result
+down rather than rounding it into a story.
+
+What IS established is qualitative and does not depend on the rate: a reset
+occurred with the display frozen, the lock free, and a mixed history. That is
+enough to eliminate disp as *necessary*.
+
+### 266b. Where that leaves it
+
+The display was the most-caught task because it is HIGH priority and runs
+constantly — exactly the naive prior step 264 warned about, now confirmed as
+the explanation for its prominence rather than as a mechanism.
+
+What survives across every reset, frozen or not:
+
+- the tick stops entirely (the breadcrumb freezes; `watchdog_liveness` never
+  reports a starved window, because it is not being called);
+- it happens only once WiFi is running for minutes at a stretch;
+- `wdt f/s` shows feeds advancing normally right up to the end.
+
+A scheduler that stops being entered while the CPU is alive is an interrupts-off
+condition. The blob takes critical sections, runs at nat-os priority HIGH, and
+is the one component whose internals this project cannot read.
+
+### State
+
+```
+watchdog     3/8 baseline, 1/4 with the display frozen -- not distinguishable
+eliminated   starvation (259), shell stack (259), lock contention (259),
+             the display task (266)
+breadcrumb   task + tick + 8-deep history + panel-lock holder, survives reset
+```
+
+### Next
+
+1. **Record the interrupt level and PS in the breadcrumb.** If the tick stops
+   because interrupts are masked, the last breadcrumb before the stop is
+   written with the level that did it. That is three more words and it tests
+   the only hypothesis left standing.
+2. Fix the `hist` nibble rendering to hex.
+3. Persistence, which still waits on this.
+
+**Not the display. The scheduler stops while nothing holds anything, and the
+only component that can do that is the one whose source this project does not
+have.**
