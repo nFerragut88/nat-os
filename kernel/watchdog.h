@@ -15,6 +15,8 @@ unsigned int watchdog_breadcrumb_hist(void);
 unsigned int watchdog_breadcrumb_lock(void);
 unsigned int watchdog_breadcrumb_crit(void);
 unsigned int watchdog_breadcrumb_lvls(void);
+unsigned int watchdog_breadcrumb_cfg0(void);
+unsigned int watchdog_breadcrumb_cfg2(void);
 int  watchdog_breadcrumb_prev(unsigned int *seq, unsigned int *task,
                               unsigned int *tick);
 unsigned int watchdog_timg0_config(void);

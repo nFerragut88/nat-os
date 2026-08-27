@@ -15389,3 +15389,60 @@ breadcrumb   task, tick, task history, panel lock, blob crit depth,
 
 **Six eliminations. The tick stops while interrupts are on, nothing is held,
 and the feeds are healthy — which points at the watchdog's own configuration.**
+
+---
+
+## step 269 — the watchdog's own registers are untouched
+
+`(this commit)`
+
+```
+run 1:  task 6 at tick 20499  lvl 00000000  cfg 0xe01f8000/6000  crit0
+run 2:  task 6 at tick 10701  lvl 00000000  cfg 0xe01f8000/6000  crit0
+```
+
+`WDTCONFIG0` and `WDTCONFIG2` sampled in the feed path -- where the protect key
+is already lifted and the block already being written, so no new access pattern
+is introduced -- and carried through the reset.
+
+**Both read exactly the armed values**: `0xe01f8000`, and 6000 = 3000 ms x 2.
+Nobody reconfigured the watchdog. Step 268's leading candidate is eliminated.
+
+### 269a. And an incidental result about step 259
+
+`crypto=1` in both runs. Reading `TIMG0_WDTCONFIG0` **from the feed path does
+not break the crypto**, where reading it from the status line reliably did --
+0 of 4 against 4 of 4 (UM-NATOS-052 §3).
+
+So the step-259 anomaly is not "reading this register is harmful". It is
+something about that call site: its position, its size, or the layout shift it
+caused. That is a much smaller and less alarming mystery than the one recorded
+in UM-NATOS-052, and it is narrowed here rather than solved.
+
+### 269b. Which leaves the tick itself
+
+The tick does not come from TIMG0. `timer.c` uses **CCOMPARE1**, the core's own
+cycle comparator, interrupt 15 at level 3 -- chosen because it needs no clock
+gating, no pin muxing and no interrupt-matrix routing.
+
+It is **one-shot**: it must be re-armed inside the handler. And `timer.c`
+already carries the scar from this exact failure:
+
+> *"CCOMPARE1 ended up 14,630,119 cycles — 18 tick periods, 183 ms — ahead of
+> ccount, and the tick simply stopped for that long... Nothing else showed a
+> symptom, which is the uncomfortable part."*
+
+A guard was added: if the new deadline is not within one interval of now, it is
+reset to `ccount + interval` and `g_late` counts it. **So the mechanism is
+known, was fixed once, and has a counter — which nothing has looked at during
+any of these seven steps.**
+
+If the comparator is armed far ahead of the counter, the tick stops for the
+difference, interrupts stay enabled the whole time, nothing is held, the
+watchdog config is untouched, and it fires three seconds later. That is every
+observation in steps 264-269 at once.
+
+### Next
+
+Record `CCOMPARE1`, `CCOUNT` and `g_late` in the breadcrumb. If the comparator
+is far ahead of the counter at the last tick before a reset, this is finished.

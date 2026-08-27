@@ -1841,6 +1841,10 @@ void kmain(void)
                             uart_putc((char)('0' + ((v >> (q * 4)) & 0xFu)));
                         }
                     }
+                    uart_puts(" cfg");
+                    uart_put_hex(watchdog_breadcrumb_cfg0());
+                    uart_puts("/");
+                    uart_put_dec(watchdog_breadcrumb_cfg2());
                     uart_puts(" crit");
                     uart_put_dec(watchdog_breadcrumb_crit());
                     uart_puts(" hist ");

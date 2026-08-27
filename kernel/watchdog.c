@@ -87,7 +87,13 @@
 /* [step 268] eps is the PS of the code the tick interrupted; lvlhist packs
  * the interrupt LEVEL of the last eight, four bits each. If the tick stops
  * because something masked interrupts, the levels climb before it does. */
-struct bc { unsigned int magic, seq, task, tick, hist, lock, crit, eps, lvlhist; };
+/* [step 269] cfg0/cfg2 are TIMG0's own watchdog registers, sampled where the
+ * feed already writes them so no new access pattern is introduced -- step 259
+ * showed this register is somehow sensitive to being read from the status
+ * line. armed values are 0xe01f8000 and 6000 (3000 ms x 2). Anything else at
+ * a reset means somebody else owns the watchdog. */
+struct bc { unsigned int magic, seq, task, tick, hist, lock, crit, eps, lvlhist,
+                         cfg0, cfg2; };
 static volatile struct bc *const g_bc = (volatile struct bc *)RTC_SLOW_MEM;
 
 /* The PREVIOUS boot's final breadcrumb, snapshotted before this boot
@@ -107,6 +113,8 @@ void watchdog_breadcrumb_init(void)
         g_bc_prev.crit = g_bc->crit;
         g_bc_prev.eps = g_bc->eps;
         g_bc_prev.lvlhist = g_bc->lvlhist;
+        g_bc_prev.cfg0 = g_bc->cfg0;
+        g_bc_prev.cfg2 = g_bc->cfg2;
         g_bc_had_prev  = 1;
     }
     g_bc->magic = BC_MAGIC;
@@ -118,6 +126,8 @@ void watchdog_breadcrumb_init(void)
     g_bc->crit = 0u;
     g_bc->eps = 0u;
     g_bc->lvlhist = 0u;
+    g_bc->cfg0 = 0u;
+    g_bc->cfg2 = 0u;
 }
 
 int watchdog_breadcrumb_prev(unsigned int *seq, unsigned int *task,
@@ -138,6 +148,10 @@ unsigned int watchdog_breadcrumb_crit(void);
 unsigned int watchdog_breadcrumb_crit(void) { return g_bc_prev.crit; }
 unsigned int watchdog_breadcrumb_lvls(void);
 unsigned int watchdog_breadcrumb_lvls(void) { return g_bc_prev.lvlhist; }
+unsigned int watchdog_breadcrumb_cfg0(void);
+unsigned int watchdog_breadcrumb_cfg0(void) { return g_bc_prev.cfg0; }
+unsigned int watchdog_breadcrumb_cfg2(void);
+unsigned int watchdog_breadcrumb_cfg2(void) { return g_bc_prev.cfg2; }
 
 static unsigned int g_feeds;
 static unsigned int g_starved;
@@ -191,6 +205,10 @@ void watchdog_feed(void)
 #if WATCHDOG_ENABLE
     REG(TIMG0_WDTWPROTECT) = WDT_WKEY;
     REG(TIMG0_WDTFEED)     = 1u;
+    /* [step 269] Sampled with the protect key already lifted and the block
+     * already being touched, once per feed rather than once per tick. */
+    g_bc->cfg0 = REG(TIMG0_WDTCONFIG0);
+    g_bc->cfg2 = REG(TIMG0_WDTCONFIG2);
     REG(TIMG0_WDTWPROTECT) = 0;
     g_feeds++;
 #endif
