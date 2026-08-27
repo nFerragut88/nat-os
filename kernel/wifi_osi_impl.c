@@ -1526,66 +1526,12 @@ void wifi_sniff_report(void)
         uart_puts("\n             nothing at all -- the callback never fired\n");
         return;
     }
-    uint32_t k = g_snf_kept < 24u ? g_snf_kept : 24u;
-    for (uint32_t i = 0u; i < k; i++) {
-        uint32_t sub = (uint32_t)(g_snf_fc[i] >> 4);
-        uart_puts("\n             ");
-        uart_puts(sub == 11u ? "AUTH      "
-                : sub ==  0u ? "ASSOC_REQ "
-                : sub ==  1u ? "ASSOC_RESP"
-                : sub ==  2u ? "REASSOC_RQ"
-                : sub ==  3u ? "REASSOC_RS"
-                : sub == 10u ? "DISASSOC  "
-                : sub == 12u ? "DEAUTH    "
-                : sub == 13u ? "ACTION    "
-                              : "mgmt?     ");
-        uart_puts(" to ..");
-        for (uint32_t b = 0u; b < 3u; b++) {
-            uart_putc(hx[(g_snf_a1[i][b] >> 4) & 0xFu]);
-            uart_putc(hx[g_snf_a1[i][b] & 0xFu]);
-        }
-        uart_puts("  from ..");
-        for (uint32_t b = 0u; b < 3u; b++) {
-            uart_putc(hx[(g_snf_a2[i][b] >> 4) & 0xFu]);
-            uart_putc(hx[g_snf_a2[i][b] & 0xFu]);
-        }
-        uart_puts(" ch");
-        uart_put_dec(g_snf_ch[i]);
-        uart_puts(" rssi-");
-        uart_put_dec((uint32_t)(-(int)g_snf_rssi[i]));
-        /* [step 251] The fixed parameters, decoded by subtype. Little-endian
-         * on the air, so byte 1 is the high half. */
-        {
-            extern uint8_t g_snf_body[24][6];
-            const uint8_t *bd = g_snf_body[i];
-            uint32_t w0 = (uint32_t)bd[0] | ((uint32_t)bd[1] << 8);
-            uint32_t w1 = (uint32_t)bd[2] | ((uint32_t)bd[3] << 8);
-            uint32_t w2 = (uint32_t)bd[4] | ((uint32_t)bd[5] << 8);
-            if (sub == 11u) {
-                uart_puts("  alg");
-                uart_put_dec(w0);
-                uart_puts(w0 == 0u ? "(OPEN)" : w0 == 3u ? "(SAE)" : "(?)");
-                uart_puts(" seq");
-                uart_put_dec(w1);
-                uart_puts(" STATUS ");
-                uart_put_dec(w2);
-                uart_puts(w2 == 0u ? " SUCCESS" : " REFUSED");
-            } else if (sub == 1u || sub == 3u) {
-                uart_puts("  capab ");
-                uart_put_hex(w0);
-                uart_puts(" STATUS ");
-                uart_put_dec(w1);
-                uart_puts(w1 == 0u ? " SUCCESS aid " : " REFUSED aid ");
-                uart_put_dec(w2 & 0x3FFFu);
-            } else if (sub == 12u || sub == 10u) {
-                uart_puts("  reason ");
-                uart_put_dec(w0);
-            }
-        }
-    }
-    /* Named so the next reader does not need the MAC table: 503f64 is this
-     * board and 2f57c6 is the access point being joined. */
-    uart_puts("\n             (..503f64 = nat-os,  ..2f57c6 = ivory-billed)\n");
+    /* [step 271] The per-frame decode is removed. It did decisive work --
+     * steps 250-252 read AUTH status 0 and ASSOC_RESP status 0 off the air and
+     * located the fault in the RSN element -- and that is finished. The counts
+     * stay, so the sniffer is still visibly wired, and its iram bought the net
+     * task that keeps the stack up after the command returns. */
+    uart_puts("\n");
 }
 
 void wpa_cb_report(void);
@@ -2392,7 +2338,7 @@ void wifi_rx_start(uint32_t reg_fn, uint32_t free_fn, uint32_t promisc_fn,
         extern void net_report(void);
         uint8_t m[6];
         if (osi_impl_read_mac(m, 0u) == 0) { net_set_tx(tx_fn, m); }
-        uart_puts("   net       polling 600 s - DHCP, ARP, ICMP, HTTP\n");
+        uart_puts("   net       polling 60 s, then the net task takes over\n");
         /* [step 260] 600 s, was 120. Step 227 sized this so a human could
          * type ping. The browser test races the operator in a way ping does
          * not: the address cannot be handed over until DHCP has bound, and
@@ -2400,7 +2346,12 @@ void wifi_rx_start(uint32_t reg_fn, uint32_t free_fn, uint32_t promisc_fn,
          * too late, and "the page did not load" then means nothing -- the
          * board recorded no ARP for its own address, so no browser had tried.
          * Ten minutes removes timing as a variable. */
-        net_poll_for(60000u);
+        /* [step 271] 60 s, was 600. The long window existed because the poll
+         * WAS the network: when it ended the stack went silent. The net task
+         * now services lwIP for as long as the board is up, so this is only
+         * the bring-up window -- long enough to reach a DHCP lease and report
+         * it, and no longer a race against the operator. */
+        net_poll_for(6000u);
         wifi_rx_report();
         net_report();
     }

@@ -335,6 +335,44 @@ void net_set_tx(uint32_t tx_fn, const uint8_t *mac)
     }
 }
 
+/* [step 271] One pass of servicing, factored out of net_poll_for so a task can
+ * do the same work after the command that started it has returned.
+ *
+ * PERSISTENCE. Until now the whole stack lived inside one shell command's poll
+ * loop: when 'wifiinit start' returned, nothing drained the ring or ran lwIP's
+ * timers and the board went silent. The page was only reachable if you caught
+ * it during a run, which is what made every browser test a race. */
+void net_service_once(void);
+void net_service_once(void)
+{
+    uint32_t drained = 0u;
+    while (g_tail != g_head && drained < 16u) {
+        drained++;
+        if (g_use_lwip) {
+            netif_wifi_input((const uint8_t *)g_q[g_tail], g_qlen[g_tail]);
+        } else {
+            net_handle(g_q[g_tail], g_qlen[g_tail]);
+        }
+        g_tail = (g_tail + 1u) % NET_SLOTS;
+    }
+    if (g_use_lwip) {
+        netif_wifi_tick();
+        (void)netif_wifi_report();
+    }
+}
+
+/* [step 271] Set while net_poll_for owns the ring, and once the handover has
+ * happened. The task services only when the loop is not, so the two never
+ * touch g_tail at the same time -- the ring is single-consumer by design. */
+volatile int g_net_polling;
+volatile int g_net_handover;
+
+void net_service_task_step(void);
+void net_service_task_step(void)
+{
+    if (g_net_handover && !g_net_polling) { net_service_once(); }
+}
+
 void net_poll_for(uint32_t ticks);
 void net_poll_for(uint32_t ticks)
 {
@@ -346,6 +384,7 @@ void net_poll_for(uint32_t ticks)
      * step 209: assert the duration, then be surprised by it. */
     uint32_t t0 = timer_ticks();
     uint32_t last = 0u;
+    g_net_polling = 1;          /* [step 271] the loop owns the ring */
     while ((timer_ticks() - t0) < ticks) {
         /* [step 262] BOUNDED. This loop was 'drain until empty', and on a
          * busy network it never is: frames arrive as fast as they are taken,
@@ -424,6 +463,12 @@ void net_poll_for(uint32_t ticks)
         }
         task_sleep(2u);
     }
+    /* [step 271] Hand the ring to the net task, which keeps lwIP serviced
+     * for as long as the board is up rather than for as long as this command
+     * runs. */
+    g_net_polling = 0;
+    g_net_handover = 1;
+    uart_puts("   net       handover -- the stack stays up now\n");
 }
 
 void net_report(void);

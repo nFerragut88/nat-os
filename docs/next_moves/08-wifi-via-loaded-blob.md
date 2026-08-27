@@ -15518,3 +15518,94 @@ armed        ahead (CCOMPARE1 - CCOUNT) and late, waiting for a reset
 
 **Seven eliminations, no mechanism, and an instrument waiting for the fault to
 appear again.**
+
+---
+
+## step 271 — the stack is a service, not a subroutine
+
+`(this commit)`
+
+```
+net   handover -- the stack stays up now
+                                     <- 'wifiinit start' has RETURNED
+fetch 1: HTTP 200
+fetch 2: HTTP 200
+fetch 3: HTTP 200
++30s after handover: HTTP 200
++60s after handover: HTTP 200
++90s after handover: FAIL   (the board had rebooted)
+```
+
+**The page survives the command that started it.** Until now the whole network
+lived inside `net_poll_for()` — one shell command's loop — so when `wifiinit
+start` returned, nothing drained the ring or ran lwIP's timers and the board
+went silent. Every browser test was a race against that window, which is what
+made three of them fail for reasons that had nothing to do with the network.
+
+### 271a. The shape
+
+`net_service_once()` is the loop body, factored out. A **net task** calls it
+forever; `net_poll_for()` calls it as before. They never both own the ring:
+
+```c
+volatile int g_net_polling;    /* set while net_poll_for owns it   */
+volatile int g_net_handover;   /* set when the loop hands it over  */
+
+void net_service_task_step(void)
+{
+    if (g_net_handover && !g_net_polling) { net_service_once(); }
+}
+```
+
+The ring is single-consumer by design and stays that way.
+
+The poll is now **60 s, was 600** — it is only the bring-up window, long enough
+to reach a lease and report it. The long window existed because the poll *was*
+the network.
+
+`TASK_MAX` goes 12 to 13. kmain creates nine and the blob takes two more, which
+left exactly one free slot — and taking it would have cost the blob its second.
+One slot is 2 KB of DRAM against ~47 KB spare.
+
+### 271b. And the task ids have shifted
+
+```
+before:  report=0 a=1 b=2 vm=3 apps=4 shell=5 disp=6 touch=7
+now:     report=0 a=1 b=2 vm=3 apps=4 shell=5 net=6 disp=7 touch=8
+```
+
+**Every breadcrumb reading in steps 264-270 said "task 6" meaning the display.
+From this build on, task 6 is the net task.** Anyone re-reading those steps
+against a current board will otherwise reach the opposite conclusion from the
+same number.
+
+### 271c. What killed it at +90s
+
+The board had rebooted: the tick counter restarted and climbed again, with no
+boot banner inside the sampling window. That is the watchdog, and step 263
+predicted this exact outcome — *"at 3 in 8 it will defeat any attempt at
+persistence long before the design of the polling loop does."*
+
+So persistence is implemented, works, and is **capped by the reset**. The page
+now stays up for as long as the board does, and the board lasts about a minute
+and a half.
+
+### State
+
+```
+network      serviced by a task; survives the command that started it
+page         HTTP 200 repeatedly after handover, out to +60s
+watchdog     unchanged, ~1 in 3, and now the only thing bounding uptime
+eliminated   starvation, shell stack, lock contention, the display task,
+             blob critical regions, interrupt masking, watchdog config
+armed        ahead (CCOMPARE1 - CCOUNT) and late, still unread
+```
+
+### Next
+
+1. **The reset, still.** It is now unambiguously the last thing between this
+   board and a working server, and the instrument for it is already in place
+   waiting for one to happen.
+2. The first-ARP question; the `hist` hex rendering.
+
+**nat-os is a web server that stays up until it reboots.**

@@ -27,7 +27,10 @@
  * The headroom is for the desktop and whatever follows it. The cost is
  * TASK_STACK_WORDS * 4 bytes of DRAM per slot, which the measured margins in
  * UM-NATOS-019 §3.1 say is affordable. */
-#define TASK_MAX          12
+/* [step 271] 13, was 12. kmain creates nine and the blob takes two more, which
+ * left exactly one free slot -- and taking it for the net task would have cost
+ * the blob its second. One more slot is 2 KB of DRAM against ~47 KB spare. */
+#define TASK_MAX          13
 #define TASK_STACK_WORDS  512          /* 2 KB per task */
 #define TASK_NAME_MAX     12
 

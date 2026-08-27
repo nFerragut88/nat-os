@@ -1276,6 +1276,16 @@ static void draw_num(uint32_t x, uint32_t y, uint32_t v, uint16_t fg)
     display_text(x, y, out, fg, COLOR_BLACK, 1);
 }
 
+/* [step 271] see the note at its creation. */
+static void task_net(void)
+{
+    extern void net_service_task_step(void);
+    for (;;) {
+        net_service_task_step();
+        task_sleep(2u);
+    }
+}
+
 static void task_display(void)
 {
     /* Nothing static any more: the backdrop is repainted every frame and
@@ -1939,6 +1949,11 @@ void kmain(void)
     /* Created last and registered as idle, so it is outside the round robin and
      * chosen only when every other task is blocked. Without it, a moment where
      * all tasks are waiting has nothing to switch to. */
+    /* [step 271] The net task. Services lwIP for as long as the board is up,
+     * rather than for as long as the shell command that started it runs. It
+     * does nothing until net_poll_for hands the ring over, so the two never
+     * drain it at once. */
+    (void)must_create("net", task_net);
     id_disp   = must_create("display", task_display);
     id_touch  = must_create("touch", task_touch);
     id_idle   = must_create("idle", task_idle);
