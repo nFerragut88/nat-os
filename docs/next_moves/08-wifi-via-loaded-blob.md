@@ -15931,3 +15931,79 @@ open       the step-259 call-site anomaly
 ```
 
 **Two down. The one that is left is the oldest and the strangest.**
+
+---
+
+## step 276 — the step-259 anomaly was the comparator too
+
+`(this commit)`
+
+```
+step 259, before the fix:   cfg= readback in the status line   crypto 0 / 4
+step 276, after the fix:    the SAME readback, restored        crypto 4 / 4
+                                                               leases 4 / 4
+                                                               resets 0 / 4
+```
+
+The oldest unexplained result in this file is explained, and it was not about
+the register.
+
+### 276a. What it looked like, and what it was
+
+Step 259 added a `TIMG0_WDTCONFIG0` readback to the periodic status line. Every
+run after it stalled at `[blobtask] wifi prio 23/25 -> HIGH` and never reached
+the crypto — 0 of 4, against 4 of 4 without it. Step 269a then found that the
+*same register read from the feed path* was harmless, which narrowed it to the
+call site and left it there, twice narrowed and never explained.
+
+UM-NATOS-052 §3 drew the strongest available conclusion at the time: *"an
+instrument that stops the machine reports nothing about the machine."* That was
+right about the effect and wrong about the cause.
+
+**It was the comparator.** A longer status line is more time in the report task
+per pass, which is more opportunity for a masked window to fall across the cycle
+`CCOUNT` equals `CCOMPARE1`. The match is lost, the tick dies for 53 seconds,
+and the board silently stops — during the crypto, because the crypto is the
+longest thing it does, sixty seconds of PBKDF2 with the report task running
+alongside it.
+
+Restore the exact readback on top of step 273's rescue and it is harmless: four
+runs, four crypto completions, four leases, no resets.
+
+### 276b. Three symptoms, one bug
+
+That makes three separate things in this log that were the same fault wearing
+different costumes:
+
+| step | looked like | was |
+|---|---|---|
+| 259 | a register that breaks the crypto when read | a lost tick during a long task |
+| 263c | a slow or dropped first ARP reply | lwIP's timers not running (262) |
+| 264-272 | starvation, the display, masking, watchdog config | a comparator left in the past |
+
+Each was investigated as its own defect and each produced correct, useful
+eliminations. **None of them was wrong; all of them were downstream.**
+
+### 276c. Stated as inference, not proof
+
+This is an A/B across a fix rather than a direct observation of the mechanism.
+The readback was harmful before step 273 and is harmless after it, on 4 runs
+each way, and the proposed chain — longer line, longer task, wider masked
+window, lost match — is consistent with everything measured in steps 272-274.
+It is not the same standard as catching `ahead` negative in the act.
+
+The readback is **kept**. It is a real instrument on a real register, it is now
+harmless, and removing it would leave the file with a warning about a call site
+that no longer misbehaves.
+
+### State
+
+```
+nat-os     serves HTTP over WPA2 continuously
+closed     the reset (273/274), the first-ARP question (275),
+           the hist rendering (275), the step-259 anomaly (276)
+open       group-key rekeying, roaming, PMKSA caching, WPA3/SAE,
+           and the all-channel scan that has panicked since step 202
+```
+
+**Every small thing on the list is closed, and three of them were the same bug.**

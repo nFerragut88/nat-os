@@ -494,6 +494,16 @@ static void task_report(void)
         uart_put_dec(g_last_x);
         uart_putc(',');
         uart_put_dec(g_last_y);
+        /* [step 276] The step-259 readback, put back DELIBERATELY. It is the
+         * oldest unexplained result in this file: adding it here stopped the
+         * crypto in 4 of 4 runs, while the same register read from the feed
+         * path is harmless. The hypothesis is that it was never about the
+         * register at all -- a longer status line means more time in the
+         * report task, more chance of a masked window eating the CCOMPARE
+         * match, and a board that silently stops. If step 273's rescue fixed
+         * it, this line is now harmless. */
+        uart_puts(" cfg=");
+        uart_put_hex(watchdog_timg0_config());
         uart_puts(" wdt f/s=");
         uart_put_dec(watchdog_feeds());
         uart_putc('/');
