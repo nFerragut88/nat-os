@@ -1132,6 +1132,12 @@ static const intr_handler_fn g_blob_tramp[32] = {
 /* _set_isr(n, f, arg). Recorded rather than installed: the blob may call this
  * before or after _set_intr, and the trampoline reads the record when it
  * fires, so either order works. */
+/* [step 272] Times the blob asked to disable or re-route the scheduler tick.
+ * INTR_LINE_TIMER1 is intr.h's own name for it -- internal CCOMPARE1, line 15
+ * -- so the guard is written against the kernel's constant rather than a
+ * number repeated here. */
+uint32_t g_blob_tick_guard;
+
 static uint32_t blob_line_map(uint32_t num);   /* [step 196] defined below */
 void osi_impl_set_isr(int32_t n, void *f, void *arg);
 
@@ -1188,6 +1194,9 @@ void osi_impl_set_intr(uint32_t source, uint32_t num, uint32_t prio)
         return;
     }
     num = blob_line_map(num);
+    /* [step 272] And it does not get to route its handler onto the tick
+     * either, which would replace the scheduler's trampoline. */
+    if (num == INTR_LINE_TIMER1) { g_blob_tick_guard++; return; }
     /* [step 191] Record WHAT was routed. nat-os installs only a level-3
      * handler, and ESP-IDF's convention puts the WiFi MAC on CPU interrupt 0,
      * which is priority 1 -- so the line the blob asks for decides whether
@@ -1211,11 +1220,29 @@ void osi_impl_ints_on(uint32_t mask)
     }
 }
 
+/* [step 272] THE TICK'S LINE IS NOT THE BLOB'S TO TOUCH.
+ *
+ * timer.c drives the scheduler from CCOMPARE1, which raises internal interrupt
+ * 15 at level 3. blob_line_map() remaps only the WiFi MAC line and passes
+ * everything else through unchanged, so a mask from the blob with bit 15 set
+ * reaches xt_disable_interrupt(15) and stops the tick.
+ *
+ * That is exactly the fault step 271 left open. The breadcrumb at a reset
+ * reads: comparator armed 789738 cycles ahead -- one interval, correct --
+ * interrupt level 0, nothing held, watchdog config untouched, and the tick
+ * never arrives. A correctly armed one-shot whose interrupt does not come is a
+ * masked or disabled line, and this is the only path by which the blob can
+ * disable one.
+ *
+ * Guarded rather than trusted, and COUNTED: if the count is ever non-zero the
+ * blob really does ask, and the guard is both the evidence and the fix. */
 void osi_impl_ints_off(uint32_t mask)
 {
     for (uint32_t line = 0u; line < 32u; line++) {
         if (mask & (1u << line)) {
-            xt_disable_interrupt(blob_line_map(line));
+            uint32_t l = blob_line_map(line);
+            if (l == INTR_LINE_TIMER1) { g_blob_tick_guard++; continue; }
+            xt_disable_interrupt(l);
         }
     }
 }

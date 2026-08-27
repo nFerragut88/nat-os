@@ -15609,3 +15609,99 @@ armed        ahead (CCOMPARE1 - CCOUNT) and late, still unread
 2. The first-ARP question; the `hist` hex rendering.
 
 **nat-os is a web server that stays up until it reboots.**
+
+---
+
+## step 272 — the mechanism: the comparator is left in the past
+
+`(this commit)`
+
+```
+tickguard 0
+LAST TICK : task 7 at tick 12623  lock7  lvl 00000000
+            ahead 4208397466  late 2  cfg 0xe01f8000/6000  crit0
+```
+
+`ahead` is `CCOMPARE1 - CCOUNT` stored unsigned. Read as **signed 32-bit**:
+
+```
+4208397466 - 4294967296 = -86,569,830 cycles
+                        = -1.082 SECONDS at 80 MHz
+```
+
+**The comparator was armed 1.08 seconds in the past.**
+
+A one-shot comparator whose match has already gone by does not fire again until
+`CCOUNT` wraps the entire 32-bit range — **53.7 seconds** at 80 MHz. The
+watchdog fires at three. That is every observation of steps 264-271 in one
+number: the tick stops, interrupts stay enabled, nothing is held, the watchdog
+config is untouched, and the board reboots.
+
+The earlier catch read `ahead 789738` — 9.87 ms, one interval, correct — so
+this is not the normal state. It is a specific event.
+
+### 272a. Why `timer_isr`'s guard did not catch it
+
+`timer.c` already guards against exactly this:
+
+```c
+int32_t ahead = (int32_t)(g_next - xt_ccount());
+if (ahead <= 0 || ahead > (int32_t)g_interval) {
+    g_next = xt_ccount() + g_interval;
+    g_late++;
+}
+```
+
+`late 2` — it fired twice all run and neither was this. **The guard lives inside
+the handler**, and the handler is what is not running. A check that can only run
+when the fault is absent cannot catch the fault. This project has a name for
+that shape: UM-NATOS-051 §10.1, the instrument sharing a dependency with the
+thing it measures.
+
+### 272b. How a match gets missed
+
+On Xtensa, `CCOMPARE` asserts its interrupt on the cycle `CCOUNT` **equals** it.
+If interrupts are masked for that cycle, the match passes and is gone — the
+interrupt is not latched for later.
+
+So any region that masks interrupts at level 3 or above across the moment the
+counter passes the comparator loses the tick, and loses it for 53 seconds. Two
+such regions exist and both are on the WiFi path:
+
+- `phy_enter_critical()` — `rsil 3`, and it predates all of this
+- `osi_wifi_int_disable()` — `rsil 3`, added at step 267
+
+Which explains the shape of the whole investigation. The tick is lost while
+interrupts are masked; by the time anything can observe, they are unmasked
+again and level reads 0 — **which is exactly what `lvl 00000000` has been
+saying at every reset**, and why step 268 eliminated interrupt masking. The
+measurement was right and the inference from it was wrong: it shows the level
+*after* the damage, not during.
+
+### 272c. And a guard that stays
+
+`tickguard 0`: the blob never asks to disable or re-route `INTR_LINE_TIMER1`.
+That candidate is eliminated. The guard is kept anyway — `blob_line_map()`
+passes every line but the MAC through unchanged, so a mask with bit 15 set
+would reach `xt_disable_interrupt(15)` and stop the scheduler, and nothing else
+prevents it.
+
+### State
+
+```
+mechanism    FOUND: the one-shot comparator is left in the past, so the
+             tick stops for up to 53 s and the 3 s watchdog fires
+eliminated   starvation, shell stack, lock contention, the display task,
+             blob critical depth, watchdog reconfiguration, blob tick
+             disable -- all correctly, and none of them was it
+```
+
+### Next
+
+**The fix has to run where the tick cannot.** Re-arming belongs at the point
+interrupts are *lowered*, not inside the handler: on leaving a critical region,
+if `CCOMPARE1` is in the past, set it to `CCOUNT + interval`. Both
+`phy_exit_critical()` and `osi_wifi_int_restore()` lower the level and both
+already read PS to do it.
+
+**Eight steps, seven eliminations, and the answer was a signed comparison.**

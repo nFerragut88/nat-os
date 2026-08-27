@@ -340,6 +340,12 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
      * that says OPEN while the RSN IE on the air says WPA2 would explain an
      * association that completes and then times out with no EAPOL: the driver
      * would have no reason to route a handshake it does not expect. */
+    {   /* [step 272] Did the blob ask to disable the tick? */
+        extern uint32_t g_blob_tick_guard;
+        uart_puts("   tickguard ");
+        uart_put_dec(g_blob_tick_guard);
+        uart_puts("  (blob attempts on the scheduler tick line)\n");
+    }
     if (e->prof_authmode) {
         uart_puts("   prof      authmode ");
         uart_put_dec(blob_call(e->prof_authmode, 0u, 0u, 0u, 0u));
