@@ -1831,6 +1831,11 @@ void kmain(void)
         {   /* [step 264] The previous boot's last breadcrumb, from RTC
              * memory. A watchdog reset leaves no fault record, so this is the
              * only thing that says what the board was doing. */
+            /* [step 275] HEX, not '0' + nibble. Tasks 8, 9 and 10 exist -- they
+             * are the blob's -- and 10 rendered as ':', which reads as
+             * punctuation rather than as a task. Steps 265 and 272 both printed
+             * histories containing it. */
+            static const char hx4[] = "0123456789abcdef";
             unsigned int bseq, btask, btick;
             if (watchdog_breadcrumb_prev(&bseq, &btask, &btick)) {
                 uart_puts("  LAST TICK    : task ");
@@ -1848,7 +1853,7 @@ void kmain(void)
                          * interrupted contexts, oldest first. */
                         unsigned int v = watchdog_breadcrumb_lvls();
                         for (int q = 7; q >= 0; q--) {
-                            uart_putc((char)('0' + ((v >> (q * 4)) & 0xFu)));
+                            uart_putc(hx4[(v >> (q * 4)) & 0xFu]);
                         }
                     }
                     uart_puts(" ahead");
@@ -1863,7 +1868,7 @@ void kmain(void)
                     uart_put_dec(watchdog_breadcrumb_crit());
                     uart_puts(" hist ");
                     for (int k = 7; k >= 0; k--) {
-                        uart_putc((char)('0' + ((h >> (k * 4)) & 0xFu)));
+                        uart_putc(hx4[(h >> (k * 4)) & 0xFu]);
                     }
                 }
                 uart_puts("\n");

@@ -15865,3 +15865,69 @@ watchdog   0 in 10 against a ~1 in 3 baseline; rescue confirmed firing
 4. Group-key rekeying, roaming, PMKSA caching, WPA3/SAE, the all-channel scan.
 
 **The reset is fixed, the fix is proved to run, and the server stays up.**
+
+---
+
+## step 275 — two of the small ones closed
+
+`(this commit)`
+
+### 275a. The first-ARP question is closed, and it was a symptom
+
+Step 263c recorded that both successful fetches in this project had been made
+*after* pinging the board, and that a fetch without it had failed every time —
+including a run with a lease and no reset. It was flagged as possibly a slow or
+dropped first ARP reply, which would have been a real station-side defect.
+
+**It no longer reproduces.**
+
+```
+fetch, no ping first:   HTTP 200 in 448 ms
+```
+
+Repeatedly, promptly, with no ICMP anywhere near it. So there is no ARP defect
+to chase: the board answers.
+
+What it was is now obvious in hindsight. Every observation behind step 263c was
+taken **before step 262 bounded the drain loop** — when `netif_wifi_tick()` was
+never running, so lwIP had no timers: no ARP expiry, no retransmission. A first
+SYN whose ARP resolution needed a retry had nothing to retry it, and a ping
+happened to prime the cache by a path that did not depend on lwIP's timers at
+all.
+
+**A symptom of the timer starvation, wearing the costume of a protocol bug.**
+Recorded as such rather than deleted, because the observation was real and the
+inference from it was the reasonable one at the time.
+
+### 275b. The history renders as hex
+
+`hist` packed four bits per task and printed `'0' + nibble`, so task 10 came out
+as `:`. Tasks 8, 9 and 10 exist — they are the blob's — and steps 265 and 272
+both printed histories containing one:
+
+```
+step 265:  hist 6:234566
+step 272:  hist :578:378
+```
+
+Now a table lookup, so 10 reads `a`. A forced watchdog prints `hist 78781234` —
+all digits, which does not exercise the fixed path, and the proof is the table
+rather than the run: `hx4[10]` is `'a'` and no `:` can be emitted.
+
+### 275c. Still open
+
+The step-259 anomaly: reading `TIMG0_WDTCONFIG0` from the **status line**
+reliably stops the crypto (0 of 4 against 4 of 4), while reading the same
+register from the **feed path** does not (step 269a). Not the register — the
+call site, its position, or the layout shift it caused. Narrowed twice and not
+yet explained.
+
+### State
+
+```
+nat-os     serves HTTP over WPA2 continuously, 0 resets in 10 runs
+closed     the first-ARP question (a symptom of 262), the hist rendering
+open       the step-259 call-site anomaly
+```
+
+**Two down. The one that is left is the oldest and the strangest.**
