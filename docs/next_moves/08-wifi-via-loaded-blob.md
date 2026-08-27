@@ -15308,3 +15308,84 @@ breadcrumb      task + tick + history + panel lock + blob critical depth
 
 **Six instruments, five eliminations, and the board still reboots. What is left
 is the interrupt level, and after that, the blob.**
+
+---
+
+## step 268 — nothing was masking interrupts
+
+`(this commit)`
+
+```
+run 1:  task 7 at tick 8016  lock6  lvl 00000000  crit0  hist 67966167
+run 2:  task 6 at tick 8089  lock6  lvl 00000000  crit0  hist 67967666
+```
+
+The breadcrumb now carries `EPS3` — the PS of whatever each tick interrupted —
+and packs the interrupt LEVEL of the last eight into a nibble history. The
+saved EPS3 was already being read in `task.c:937` for the EXCM and WOE watches,
+so publishing it cost one store.
+
+**`lvl 00000000` in both.** Every one of the last eight interrupted contexts
+was running at interrupt level zero. Nothing masked interrupts before the tick
+stopped.
+
+### 268a. The last standing hypothesis is dead
+
+UM-NATOS-052 §9 concluded: *"a scheduler that stops being entered while the CPU
+is alive is an interrupts-off condition. The blob takes critical sections, runs
+at nat-os priority HIGH, and is the one component whose internals this project
+cannot read."*
+
+It is not an interrupts-off condition. The measurement that would have shown it
+shows the opposite, twice, and step 267 already had `crit0` saying the blob was
+not inside a critical region either.
+
+Eliminated so far, each by measurement: starvation, the shell stack, lock
+contention, the display task, the blob's unprotected critical regions, and now
+interrupt masking.
+
+### 268b. What that leaves, and it is a better question
+
+If nothing masked interrupts and the code was at level 0, then the tick was
+free to fire. So either it fired and the scheduler did not reach
+`watchdog_liveness`, or **the timer stopped**, or **the watchdog was
+reconfigured**.
+
+The third is newly interesting, because this project already has a strange
+result about that register: step 259's readback of `TIMG0_WDTCONFIG0` from the
+status line reliably prevents the crypto from running — 0 of 4 runs against 4
+of 4 without it (UM-NATOS-052 §3). A register whose mere reading changes
+behaviour is a register somebody else is using.
+
+TIMG0 is a timer group. nat-os uses it for the hang detector. ESP-IDF's WiFi
+stack uses timers of its own, and nat-os implements the blob's `_timer_*`
+adapter entries. **Contention over TIMG0 would explain both the unexplained
+readback and a watchdog that fires while being fed on schedule** — if the
+timeout is shortened underneath us, a feed every second is simply too slow.
+
+### 268c. How to test it without the readback
+
+Not from the status line, which is where the step-259 anomaly lives. From the
+breadcrumb, written in the tick handler: record `WDTCONFIG0` and `WDTCONFIG2`
+every tick, and read them back after the reset. If either differs from what
+`watchdog_arm()` wrote, somebody else owns the watchdog.
+
+### State
+
+```
+watchdog     3/8 baseline, 1/4 display frozen, 1/6 critical sections real
+             -- none distinguishable from the others
+eliminated   starvation, shell stack, lock contention, the display task,
+             blob critical regions, interrupt masking
+breadcrumb   task, tick, task history, panel lock, blob crit depth,
+             interrupted PS, interrupt-level history
+```
+
+### Next
+
+1. **TIMG0's own registers in the breadcrumb**, per 268c.
+2. Persistence, still waiting.
+3. The first-ARP question, the `hist` hex rendering.
+
+**Six eliminations. The tick stops while interrupts are on, nothing is held,
+and the feeds are healthy — which points at the watchdog's own configuration.**

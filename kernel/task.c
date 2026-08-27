@@ -54,6 +54,9 @@ static uint32_t g_stacks[TASK_MAX][TASK_STACK_WORDS];
 
 /* Scratch for _handler_level3's window-state restore: the frame pointer has to
  * live somewhere base-independent while WINDOWBASE is written. See vectors.S. */
+/* [step 268] The PS of the code the most recent scheduler entry interrupted. */
+volatile uint32_t g_last_eps3;
+
 volatile uint32_t g_switch_sp;
 
 /* First task whose saved sp fell outside its own stack. See task_schedule(). */
@@ -935,6 +938,13 @@ uint32_t task_schedule(uint32_t current_sp)
         {
             extern volatile uint32_t g_rout_seq;
             uint32_t eps = ((const uint32_t *)current_sp)[TASK_FRAME_IDX_EPS3];
+            /* [step 268] The PS of whatever this tick INTERRUPTED, published
+             * for the watchdog breadcrumb. The breadcrumb records the tick's
+             * own context, which is always the handler's; what is wanted is
+             * the level the interrupted code ran at, because a scheduler that
+             * stops being entered while the CPU is alive is an interrupts-off
+             * condition and this is where it would show. */
+            g_last_eps3 = eps;
             if (eps & 0x10u) {
                 g_excm_count++;
                 g_excm_task = g_current;

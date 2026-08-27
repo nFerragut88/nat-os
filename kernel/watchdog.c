@@ -84,7 +84,10 @@
  * blob's _wifi_int_disable was a stub, so it had none; now it does, and a
  * reset with a NON-ZERO depth says the blob entered a critical region and the
  * board died inside it. */
-struct bc { unsigned int magic, seq, task, tick, hist, lock, crit; };
+/* [step 268] eps is the PS of the code the tick interrupted; lvlhist packs
+ * the interrupt LEVEL of the last eight, four bits each. If the tick stops
+ * because something masked interrupts, the levels climb before it does. */
+struct bc { unsigned int magic, seq, task, tick, hist, lock, crit, eps, lvlhist; };
 static volatile struct bc *const g_bc = (volatile struct bc *)RTC_SLOW_MEM;
 
 /* The PREVIOUS boot's final breadcrumb, snapshotted before this boot
@@ -102,6 +105,8 @@ void watchdog_breadcrumb_init(void)
         g_bc_prev.hist = g_bc->hist;
         g_bc_prev.lock = g_bc->lock;
         g_bc_prev.crit = g_bc->crit;
+        g_bc_prev.eps = g_bc->eps;
+        g_bc_prev.lvlhist = g_bc->lvlhist;
         g_bc_had_prev  = 1;
     }
     g_bc->magic = BC_MAGIC;
@@ -111,6 +116,8 @@ void watchdog_breadcrumb_init(void)
     g_bc->hist = 0u;
     g_bc->lock = 0xFFFFFFFFu;
     g_bc->crit = 0u;
+    g_bc->eps = 0u;
+    g_bc->lvlhist = 0u;
 }
 
 int watchdog_breadcrumb_prev(unsigned int *seq, unsigned int *task,
@@ -129,6 +136,8 @@ unsigned int watchdog_breadcrumb_lock(void);
 unsigned int watchdog_breadcrumb_lock(void) { return g_bc_prev.lock; }
 unsigned int watchdog_breadcrumb_crit(void);
 unsigned int watchdog_breadcrumb_crit(void) { return g_bc_prev.crit; }
+unsigned int watchdog_breadcrumb_lvls(void);
+unsigned int watchdog_breadcrumb_lvls(void) { return g_bc_prev.lvlhist; }
 
 static unsigned int g_feeds;
 static unsigned int g_starved;
@@ -210,7 +219,11 @@ void watchdog_liveness(int switched)
         g_bc->lock = (unsigned int)display_lock_owner();
         {
             extern unsigned int g_wint_depth;
+            extern volatile unsigned int g_last_eps3;
+            unsigned int e = g_last_eps3;
             g_bc->crit = g_wint_depth;
+            g_bc->eps = e;
+            g_bc->lvlhist = (g_bc->lvlhist << 4) | (e & 0xFu);
         }
     }
 

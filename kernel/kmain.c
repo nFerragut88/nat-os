@@ -1833,6 +1833,14 @@ void kmain(void)
                     unsigned int lk = watchdog_breadcrumb_lock();
                     if (lk == 0xFFFFFFFFu) { uart_puts("-"); }
                     else { uart_put_dec(lk); }
+                    uart_puts(" lvl ");
+                    {   /* [step 268] interrupt level of the last eight
+                         * interrupted contexts, oldest first. */
+                        unsigned int v = watchdog_breadcrumb_lvls();
+                        for (int q = 7; q >= 0; q--) {
+                            uart_putc((char)('0' + ((v >> (q * 4)) & 0xFu)));
+                        }
+                    }
                     uart_puts(" crit");
                     uart_put_dec(watchdog_breadcrumb_crit());
                     uart_puts(" hist ");
