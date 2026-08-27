@@ -26,6 +26,7 @@
 #include "task.h"
 #include "blobcall.h"
 #include "timer.h"
+#include "xtensa.h"
 
 #define REG(a) (*(volatile unsigned int *)(a))
 
@@ -92,8 +93,12 @@
  * showed this register is somehow sensitive to being read from the status
  * line. armed values are 0xe01f8000 and 6000 (3000 ms x 2). Anything else at
  * a reset means somebody else owns the watchdog. */
+/* [step 270] ahead is CCOMPARE1 minus CCOUNT at the last tick, signed, and
+ * late is timer.c's count of re-arms that had already elapsed. The tick is a
+ * ONE-SHOT comparator; if it is ever armed far ahead of the counter the tick
+ * stops for the difference, with interrupts enabled and nothing held. */
 struct bc { unsigned int magic, seq, task, tick, hist, lock, crit, eps, lvlhist,
-                         cfg0, cfg2; };
+                         cfg0, cfg2, ahead, late; };
 static volatile struct bc *const g_bc = (volatile struct bc *)RTC_SLOW_MEM;
 
 /* The PREVIOUS boot's final breadcrumb, snapshotted before this boot
@@ -115,6 +120,8 @@ void watchdog_breadcrumb_init(void)
         g_bc_prev.lvlhist = g_bc->lvlhist;
         g_bc_prev.cfg0 = g_bc->cfg0;
         g_bc_prev.cfg2 = g_bc->cfg2;
+        g_bc_prev.ahead = g_bc->ahead;
+        g_bc_prev.late = g_bc->late;
         g_bc_had_prev  = 1;
     }
     g_bc->magic = BC_MAGIC;
@@ -128,6 +135,8 @@ void watchdog_breadcrumb_init(void)
     g_bc->lvlhist = 0u;
     g_bc->cfg0 = 0u;
     g_bc->cfg2 = 0u;
+    g_bc->ahead = 0u;
+    g_bc->late = 0u;
 }
 
 int watchdog_breadcrumb_prev(unsigned int *seq, unsigned int *task,
@@ -152,6 +161,10 @@ unsigned int watchdog_breadcrumb_cfg0(void);
 unsigned int watchdog_breadcrumb_cfg0(void) { return g_bc_prev.cfg0; }
 unsigned int watchdog_breadcrumb_cfg2(void);
 unsigned int watchdog_breadcrumb_cfg2(void) { return g_bc_prev.cfg2; }
+unsigned int watchdog_breadcrumb_ahead(void);
+unsigned int watchdog_breadcrumb_ahead(void) { return g_bc_prev.ahead; }
+unsigned int watchdog_breadcrumb_late(void);
+unsigned int watchdog_breadcrumb_late(void) { return g_bc_prev.late; }
 
 static unsigned int g_feeds;
 static unsigned int g_starved;
@@ -242,6 +255,12 @@ void watchdog_liveness(int switched)
             g_bc->crit = g_wint_depth;
             g_bc->eps = e;
             g_bc->lvlhist = (g_bc->lvlhist << 4) | (e & 0xFu);
+            {
+                unsigned int cc = xt_ccount();
+                unsigned int cmp = xt_get_ccompare1();
+                g_bc->ahead = cmp - cc;      /* wraps correctly as unsigned */
+                g_bc->late  = timer_late_count();
+            }
         }
     }
 

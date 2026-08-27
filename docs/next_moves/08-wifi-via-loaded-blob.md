@@ -15446,3 +15446,75 @@ observation in steps 264-269 at once.
 
 Record `CCOMPARE1`, `CCOUNT` and `g_late` in the breadcrumb. If the comparator
 is far ahead of the counter at the last tick before a reset, this is finished.
+
+---
+
+## step 270 — the comparator instrument, armed and not yet fired
+
+`(this commit)`
+
+The breadcrumb now carries `ahead` — `CCOMPARE1 - CCOUNT` at the last tick,
+which is how far into the future the one-shot comparator was armed — and
+`late`, `timer.c`'s cumulative count of re-arms that had already elapsed.
+
+Both are read in the liveness path, where the scheduler is already running.
+
+**Six runs, no reset.** So `ahead` and `late` have no reading yet, and step
+269's hypothesis is neither confirmed nor denied.
+
+### 270a. The rate, which is now the confusing part
+
+| build | resets |
+|---|---|
+| step 263 baseline | 3 / 8 |
+| display frozen (266) | 1 / 4 |
+| critical sections real (267) | 1 / 6 |
+| level history (268) | **2 / 2** |
+| watchdog registers (269) | **2 / 2** |
+| comparator instrument (270) | **0 / 6** |
+
+Read as a sequence that looks like a signal, and it is not one. 2/2 twice in a
+row and then 0/6 is exactly what a ~35% coin does often enough to mislead
+anyone reading it a build at a time — which is what this file has been doing.
+
+P(0 in 6) at 37.5% is about 6%: mildly surprising, not evidence. And each of
+the 2/2 builds is unremarkable on its own. **No build has been shown to change
+the rate**, including the two that fixed real defects.
+
+The honest summary of six steps of instrumentation is: the fault is intermittent
+at roughly a third, it has not moved, and every hypothesis about *why* has been
+eliminated rather than confirmed.
+
+### 270b. Why the breadcrumb only survives some resets
+
+Worth writing down because it explains an absence. The test harness resets the
+board by pulsing RTS, which drives **CHIP_PU** — a chip-enable reset that clears
+the RTC domain along with everything else. Only `TG0WDT_SYS_RESET` leaves RTC
+memory intact.
+
+So a `LAST TICK` line appears **only after a watchdog reset**, never after a
+harness reset. That is the desired behaviour and it is not a bug, but it means
+a run of clean runs produces no breadcrumb output at all, which reads like a
+broken instrument until you know why.
+
+### State
+
+```
+watchdog     ~1 in 3 across 28 runs and six builds; unmoved
+eliminated   starvation, shell stack, lock contention, the display task,
+             blob critical regions, interrupt masking, watchdog
+             reconfiguration
+armed        ahead (CCOMPARE1 - CCOUNT) and late, waiting for a reset
+```
+
+### Next
+
+1. **Catch a reset with `ahead` and `late` populated.** It is one run away
+   whenever the fault chooses to appear.
+2. If `ahead` is large, step 269's mechanism is confirmed and the fix is in
+   `timer.c`'s re-arm guard. If it is small, the tick was armed correctly and
+   the interrupt did not arrive — a different and worse problem.
+3. Persistence, the first-ARP question, the `hist` hex rendering.
+
+**Seven eliminations, no mechanism, and an instrument waiting for the fault to
+appear again.**
