@@ -344,7 +344,14 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
         extern uint32_t g_blob_tick_guard;
         uart_puts("   tickguard ");
         uart_put_dec(g_blob_tick_guard);
-        uart_puts("  (blob attempts on the scheduler tick line)\n");
+        uart_puts("  tickrescue ");
+        {   /* [step 274] Did the step-273 rescue actually FIRE? A fix that is
+             * never reached is indistinguishable from the fault not appearing,
+             * and eight clean runs prove nothing without this number. */
+            extern unsigned int timer_rescue_count(void);
+            uart_put_dec(timer_rescue_count());
+        }
+        uart_puts("\n");
     }
     if (e->prof_authmode) {
         uart_puts("   prof      authmode ");

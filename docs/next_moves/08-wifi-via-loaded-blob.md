@@ -15803,3 +15803,65 @@ network    serviced by a task; survives the command that started it
 
 **A from-scratch operating system, on a reverse-engineered radio, over an
 encrypted link, serving a page and staying up to do it.**
+
+---
+
+## step 274 — the fix confirmed, and the rescue proved to fire
+
+`(this commit)`
+
+```
+ten trials, resets per trial:  0 0 0 0 0 0 0 0 0 0
+every trial: handover reached, DHCP lease held
+
+trial 9:  tickguard 0  tickrescue 1
+trial 10: tickguard 0  tickrescue 0
+```
+
+**Ten runs, zero resets.** The fault ran at roughly one in three across 28 runs
+and six builds (steps 263-270), so ten clean runs is about 1.7% likely by
+chance. That is an answer rather than a hope, which is what step 273 said it
+still needed.
+
+### 274a. And the fix is REACHED, which matters more than the streak
+
+`tickrescue 1` on trial 9. **The rescue fires.**
+
+Without that number ten clean runs would prove nothing: a fix that is never
+reached is indistinguishable from a fault that did not appear, and this file
+has mistaken one for the other before. The counter separates them —
+`timer_rescue()` found the comparator already past its deadline, re-armed it,
+and the board carried on where it would previously have rebooted.
+
+Trial 10 reads `tickrescue 0` and also did not reset: the fault simply did not
+occur that run. Both readings are consistent with a fault at roughly a third
+and a rescue that catches it.
+
+**A caveat on the count.** It is printed during `wifiinit`, before the poll and
+the handover, so it only covers bring-up. Rescues during the long serving
+period are not in this number, and the true firing rate is therefore at least
+what is shown and probably higher.
+
+### 274b. `tickguard 0`, still
+
+The blob has never once asked to disable or re-route `INTR_LINE_TIMER1` across
+every run since step 272. That candidate stays eliminated, and the guard stays
+in place — `blob_line_map()` passes every line but the MAC through unchanged, so
+nothing else prevents it.
+
+### State
+
+```
+nat-os    associates with WPA2-PSK, completes the four-way handshake,
+          holds a DHCP lease, serves HTTP over CCMP, and stays up
+watchdog   0 in 10 against a ~1 in 3 baseline; rescue confirmed firing
+```
+
+### Next
+
+1. The first-ARP question of step 263c.
+2. The step-259 anomaly, now narrowed to the call site rather than the register.
+3. The `hist` nibble rendering, which prints task 10 as `:`.
+4. Group-key rekeying, roaming, PMKSA caching, WPA3/SAE, the all-channel scan.
+
+**The reset is fixed, the fix is proved to run, and the server stays up.**
