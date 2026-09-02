@@ -8,6 +8,8 @@
 #include "timer.h"
 #include "audio.h"
 #include "wifi_secrets.h"
+#include "keyboard.h"
+#include "wificred.h"
 
 /* The bound DHCP address, or 0. Declared here rather than in each block that
  * wants it: draw_status() reads it twice, in different scopes. */
@@ -24,13 +26,18 @@ extern uint32_t netif_wifi_ip(void);
 #define ROW_H     20u
 #define LIST_Y    (HDR_H + 2u)
 #define STAT_H    34u
-#define STAT_Y    (DESK_H - STAT_H)
+/* [step 285] SPEC_Y, not DESK_H. The view took the application band when it
+ * grew a keyboard, and having taken it, the list may as well use it: eleven
+ * rows instead of eight, on a screen where the whole point is choosing from a
+ * list. */
+#define VIEW_H    SPEC_Y
+#define STAT_Y    (VIEW_H - STAT_H)
 #define LIST_H    (STAT_Y - LIST_Y)
 #define MAX_ROWS  (LIST_H / ROW_H)
 #define MAX_APS   12u
 
 _Static_assert(MAX_ROWS >= 5u, "a network list under five rows is not a list");
-_Static_assert(STAT_Y + STAT_H == DESK_H, "status bar must meet the region end");
+_Static_assert(STAT_Y + STAT_H == VIEW_H, "status bar must meet the region end");
 
 #define BG       COLOR_BLACK
 #define FG       COLOR_WHITE
@@ -74,9 +81,14 @@ static int       g_want_join = -1;
  * project has found a status line claiming an outcome for work that never ran;
  * the difference here is that the reader was a person, not a log. */
 enum { ST_IDLE = 0, ST_NORADIO, ST_STARTING, ST_NOSTART,
-       ST_SCANNING, ST_DERIVING, ST_JOINING, ST_JOINED, ST_FAILED };
+       ST_SCANNING, ST_DERIVING, ST_JOINING, ST_JOINED, ST_FAILED,
+       ST_ASKPASS };  /* [step 285] typing a passphrase for g_ask */
 static int      g_state;
 static char     g_joined[33];
+
+/* The row a passphrase is being typed for, and the passphrase once it is. */
+static int      g_ask = -1;
+static char     g_pass[WIFICRED_PASS_MAX];
 
 /* ---- helpers -------------------------------------------------------------- */
 
@@ -198,7 +210,7 @@ static void draw_status(void)
 
 static void draw_all(void)
 {
-    display_fill_rect(0, 0, DISP_W, DESK_H, BG);
+    display_fill_rect(0, 0, DISP_W, VIEW_H, BG);
     display_fill_rect(0, 0, DISP_W, HDR_H, COLOR_BLUE);
     put(6u, 8u, "wifi", FG, COLOR_BLUE);
 
@@ -223,6 +235,36 @@ static void draw_all(void)
         draw_row(i);
     }
     draw_status();
+}
+
+/* The passphrase screen: which network, what has been typed, and the keyboard.
+ *
+ * The passphrase is shown in the clear rather than masked. On a device held in
+ * one hand there is no shoulder to look over that is not already looking at the
+ * screen, and multi-tap entry without seeing the result is close to impossible
+ * -- the whole cycling mechanism depends on watching the letter change. Masking
+ * would trade a real usability cost for a theoretical secrecy gain on a device
+ * that stores the same string in plaintext flash anyway (wificred.h). */
+static void draw_ask(void)
+{
+    display_fill_rect(0, 0, DISP_W, KB_TOP, BG);
+    display_fill_rect(0, 0, DISP_W, HDR_H, COLOR_BLUE);
+    put(6u, 8u, "password", FG, COLOR_BLUE);
+    display_fill_rect(DISP_W - 22u, 0, 22u, HDR_H, COLOR_RED);
+    put(DISP_W - 14u, 8u, "x", FG, COLOR_RED);
+
+    if (g_ask >= 0 && (uint32_t)g_ask < g_count) {
+        put(4u, HDR_H + 8u, g_aps[g_ask].ssid, DIM, BG);
+    }
+
+    /* The field, drawn as a field: an empty line and a typed line look
+     * different, which is what tells you the keyboard is connected to
+     * something. */
+    display_fill_rect(4u, HDR_H + 26u, DISP_W - 8u, 14u, 0x2104u);
+    const char *t = keyboard_text();
+    put(6u, HDR_H + 29u, t[0] ? t : "type it, then join", t[0] ? FG : DIM, 0x2104u);
+
+    keyboard_draw();
 }
 
 /* ---- the radio ------------------------------------------------------------ */
@@ -377,7 +419,7 @@ static void start_radio(void)
  * look like a hang for the whole of it. */
 static void join(uint32_t i)
 {
-    extern void wifi_join_ssid(const char *ssid);
+    extern void wifi_join_ssid_pass(const char *ssid, const char *pass);
     extern int  wifi_joined(void);
 
     if (i >= g_count) { return; }
@@ -385,7 +427,7 @@ static void join(uint32_t i)
 
     g_state = ST_DERIVING;      /* the display task is already painting this */
 
-    wifi_join_ssid(g_aps[i].ssid);
+    wifi_join_ssid_pass(g_aps[i].ssid, g_pass[0] ? g_pass : 0);
 
     if (wifi_joined()) {
         uint32_t k = 0u;
@@ -450,6 +492,7 @@ void wifiapp_open(void)
      * this view is entered both before and after the radio exists, and "tap a
      * network to join" on a board with no radio is the same kind of lie the
      * status enum was just split to stop telling. */
+    g_ask = -1;
     if (!blob_ready())      { g_state = ST_NORADIO; }
     else if (wifi_joined()) { g_state = ST_JOINED;  }
     else                    { g_state = ST_IDLE;    }
@@ -489,6 +532,14 @@ void wifiapp_frame(void)
      * sweep and a blob-entering request coexist and no set of flags to keep in
      * agreement. Step 281 added a condition here and step 284 had to add two
      * more to it, which is the sign that the condition was the wrong shape. */
+    if (g_state == ST_ASKPASS) {
+        if (keyboard_tick()) { g_dirty = 1; }
+        if (!g_dirty) { return; }
+        g_dirty = 0;
+        draw_ask();
+        return;
+    }
+
     if (g_scan_ch) { scan_step(); }
     if (!g_dirty)  { return; }
     g_dirty = 0;
@@ -500,6 +551,36 @@ void wifiapp_touch(uint32_t x, uint32_t y, int down)
     if (!down) { g_was_down = 0; return; }
     if (g_was_down) { return; }         /* one press, one action */
     g_was_down = 1;
+
+    /* [step 285] The passphrase screen owns the glass while it is up. Note the
+     * keyboard clicks for itself, so audio_click() below must not also fire --
+     * two clicks per key reads as a double press on an interface whose whole
+     * problem is telling one press from two. */
+    if (g_state == ST_ASKPASS) {
+        int r = keyboard_touch(x, y);
+        if (r == KB_EDIT) { g_dirty = 1; return; }
+        if (r != KB_SUBMIT) { return; }
+
+        /* Save first, then join. A passphrase that turns out to be wrong is
+         * still the one the user meant to type, and losing it to a failed join
+         * means typing it again on a multi-tap keyboard to find out why. */
+        uint32_t k = 0u;
+        const char *t = keyboard_text();
+        for (; k + 1u < WIFICRED_PASS_MAX && t[k]; k++) { g_pass[k] = t[k]; }
+        g_pass[k] = 0;
+
+        if (g_ask >= 0 && (uint32_t)g_ask < g_count && g_pass[0]) {
+            (void)wificred_put(g_aps[g_ask].ssid, g_pass);
+            g_scan_ch   = 0u;
+            g_want_join = g_ask;
+            g_state     = ST_DERIVING;
+        } else {
+            g_state = ST_IDLE;          /* nothing typed: back to the list */
+        }
+        g_ask   = -1;
+        g_dirty = 1;
+        return;
+    }
 
     audio_click();
 
@@ -533,10 +614,19 @@ void wifiapp_touch(uint32_t x, uint32_t y, int down)
      * to start by brushing the glass. */
     if (g_sel == (int)i) {
         if (g_state == ST_STARTING || g_state == ST_DERIVING) { return; }
-        g_scan_ch   = 0u;           /* the sweep stops HERE, before the request */
-        g_want_join = (int)i;       /* the net task picks this up */
-        g_state     = ST_DERIVING;
-        g_dirty     = 1;
+        g_scan_ch = 0u;             /* the sweep stops HERE, before the request */
+
+        /* [step 285] A network typed once is not typed again. */
+        g_pass[0] = 0;
+        if (wificred_get(g_aps[i].ssid, g_pass, sizeof g_pass)) {
+            g_want_join = (int)i;   /* the net task picks this up */
+            g_state     = ST_DERIVING;
+        } else {
+            g_ask   = (int)i;
+            g_state = ST_ASKPASS;
+            keyboard_reset("join");
+        }
+        g_dirty = 1;
     } else {
         g_sel   = (int)i;
         g_dirty = 1;

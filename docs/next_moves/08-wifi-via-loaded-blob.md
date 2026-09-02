@@ -16505,3 +16505,85 @@ open       whether a sweep works at all once associated -- the radio is parked
            whether DHCP binds (283)
            the white screen (281c), the USB link
 ```
+
+---
+
+## step 285 — type the passphrase, and keep it
+
+`(this commit)`
+
+Asked for directly: enter the password for a network, and have the device
+remember it. Step 284c had recorded the missing piece; this is it.
+
+### 285a. The keyboard, factored on the terms its own comment set
+
+`term.c`, above its copy of the multi-tap logic:
+
+> *"This is a SECOND copy of the note pad's cycling logic... factoring it out
+> means changing a working app to serve a new one, which is a worse trade
+> tonight than two copies with a comment. **If a third consumer appears, factor
+> it then.**"*
+
+A third consumer appeared. `kernel/keyboard.c` is that factoring, written to
+match both existing copies exactly — same tables, same phone-keypad order, same
+800 ms settle — so migrating them to it is a deletion rather than a change in
+how either app feels.
+
+**term.c and notes.c are NOT migrated yet, and that is a debt, not a decision.**
+Moving two working apps onto a module that has never run would risk three apps
+on one untested change. They follow once this one has been used in anger. Until
+then there are three copies, which is worse than two, and it is written here so
+it is owed rather than forgotten.
+
+### 285b. Where a credential lives, and why not in store.c
+
+`store.c` rejects a record whose version does not match, so adding fields to
+`store_t` **discards every existing record — including the touch calibration.**
+Making someone recalibrate the screen to gain a saved password is a bad trade
+and an avoidable one.
+
+`flash.h` reserves 0x200000 for the record and 0x201000 for the message sector,
+and the blob starts at 0x220000. The 120 KB between is unused. `wificred.c`
+takes one sector of it at 0x202000, with its own magic, version and checksum, so
+the two records migrate and fail independently.
+
+Eight slots. A ninth drops the oldest rather than refusing: someone typing a
+password wants it to work now, and an error they cannot act on without a way to
+browse and delete slots is not a better answer.
+
+**It is not secure, and the header says so rather than implying otherwise.** The
+passphrase sits in plaintext flash, readable by anyone who can read the chip.
+That is the same guarantee as the compiled-in `WIFI_STA_PASS` it replaces, which
+sits in plaintext in the binary — nothing is lost and nothing is gained.
+Encrypting it needs a key, and there is nowhere on this part to keep one that an
+attacker with the flash cannot also read. eFuse blocks and flash encryption are
+the real answer and are separate work.
+
+### 285c. What it does now
+
+- Selecting a network with a saved passphrase **joins straight away**.
+- Selecting one without asks for it, on a keyboard reaching the rainbow bar.
+- The passphrase is **saved before the join is attempted**. One that turns out
+  to be wrong is still the one the user meant to type, and losing it to a failed
+  join means retyping it on multi-tap to find out why.
+- `wifi_join_ssid_pass()` points `g_hs_pass` at storage that outlives the
+  caller. A typed passphrase wins; with none typed the compiled-in one still
+  applies, so nothing that worked before stops working.
+- Shown in the clear, not masked. Multi-tap without seeing the result is close
+  to impossible — the cycling depends on watching the letter change — and
+  masking would buy theoretical secrecy on a device that stores the string in
+  plaintext anyway.
+
+### 285d. And the list got taller
+
+Taking the application band for the keyboard means the view owns everything
+above the rainbow bar, so the list uses it: **eleven rows instead of eight**, on
+a screen whose whole purpose is choosing from a list.
+
+### State
+
+```
+wifi app   scan, pick, type a passphrase, join, and it is remembered
+owed       migrate term.c and notes.c onto keyboard.c (285a)
+open       whether a sweep works while associated; DHCP (283); 281c; the USB link
+```

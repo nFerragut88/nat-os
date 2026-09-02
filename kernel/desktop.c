@@ -351,7 +351,7 @@ void desktop_chrome(void)
     /* [step 277] The shell AND the note pad now occupy this band with their
      * keyboards. Chrome is drawn LAST every frame, so without this it would
      * paint its close buttons over the bottom row of keys. */
-    if (desktop_term() || desktop_notes()) { return; }
+    if (desktop_term() || desktop_notes() || desktop_wifi()) { return; }
 
     /* The strips are BELOW a full-width view, and that is load-bearing.
      *
@@ -485,7 +485,7 @@ int desktop_chrome_touch(uint32_t x, uint32_t y)
      * in the band both keyboards now cover. kmain offers this function the
      * press BEFORE term_touch() and notes_touch(), so leaving them live would
      * make a key in the bottom row close a program instead of typing. */
-    if (desktop_term() || desktop_notes()) { return 0; }
+    if (desktop_term() || desktop_notes() || desktop_wifi()) { return 0; }
 
     if (x < CLOSE_X) {
         return 0;               /* the name is a label, not a button */
@@ -559,9 +559,12 @@ static void open_selected(void)
     }
 
     if (ic->action == DESK_ACTION_WIFI) {
-        /* [step 278] Stays inside DESK_H -- no keyboard, so the application
-         * band is left to the programs that draw in it. */
+        /* [step 285] Claims the band, as the shell and note pad do. Step 278
+         * left it inside DESK_H because the view had no keyboard; it has one
+         * now, for the passphrase, and a keyboard that reaches the rainbow bar
+         * cannot share the strips with anything. */
         g_mode = MODE_WIFI;
+        app_views_suspend(1);
         wifiapp_open();
         return;
     }

@@ -2285,6 +2285,26 @@ void wifi_event_report(void)
  */
 static char g_join_ssid[33];
 
+/* [step 285] The passphrase the user typed, if they typed one. g_hs_pass is a
+ * const char * held by the supplicant across the whole handshake, so it must
+ * point at storage that outlives the caller -- a stack buffer here would be
+ * read long after it went away. */
+static char g_join_pass[64];
+static int  g_join_pass_set;
+
+void wifi_join_ssid_pass(const char *ssid, const char *pass);
+void wifi_join_ssid_pass(const char *ssid, const char *pass)
+{
+    g_join_pass_set = 0;
+    if (pass && pass[0]) {
+        uint32_t i = 0u;
+        for (; i < 62u && pass[i]; i++) { g_join_pass[i] = pass[i]; }
+        g_join_pass[i]  = 0;
+        g_join_pass_set = 1;
+    }
+    wifi_join_ssid(ssid);
+}
+
 void wifi_join_ssid(const char *ssid);
 void wifi_join_ssid(const char *ssid)
 {
@@ -2300,7 +2320,12 @@ void wifi_join_ssid(const char *ssid)
         extern const char *g_hs_ssid;
         extern uint32_t g_hs_pmk_ready_reset(void);
         extern int wpa_hs_derive_pmk(void);
+        extern const char *g_hs_pass;
         g_hs_ssid = g_join_ssid;
+        /* A typed passphrase wins over the compiled-in one. When none has been
+         * typed the old behaviour stands, so the board still joins the network
+         * it was built for with no credential saved. */
+        if (g_join_pass_set) { g_hs_pass = g_join_pass; }
         (void)g_hs_pmk_ready_reset();
         (void)blob_call((uint32_t)&wpa_hs_derive_pmk, 0u, 0u, 0u, 0u);
     }
@@ -2311,7 +2336,7 @@ void wifi_join_ssid(const char *ssid)
     {
         static uint8_t conf[256];
         extern const char *wifi_sta_pass(void);
-        const char *pw = wifi_sta_pass();
+        const char *pw = g_join_pass_set ? g_join_pass : wifi_sta_pass();
         for (uint32_t i = 0u; i < sizeof conf; i++) { conf[i] = 0u; }
         for (uint32_t i = 0u; i < n; i++) { conf[i] = (uint8_t)g_join_ssid[i]; }
         if (pw) {
