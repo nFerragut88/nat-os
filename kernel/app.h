@@ -83,6 +83,11 @@ void app_kill(int id);
  * halt or fault during it are reported and terminated here. */
 void app_tick(uint32_t quantum);
 
+/* [step 277] Suspend or restore every application viewport. The shell's
+ * keyboard covers the band they draw in; this stops the draw, not the
+ * program. */
+void        app_views_suspend(int on);
+
 int         app_state(int id);
 const char *app_state_name(int id);
 const char *app_name(int id);

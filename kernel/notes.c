@@ -9,15 +9,20 @@
 
 /* ---- layout --------------------------------------------------------------
  *
- * The region is DESK_H tall and shared with the launcher, so everything here is
- * derived from it rather than written as absolute rows. The keyboard takes the
- * bottom four rows and the text area whatever is left.
+ * The region is shared with the launcher, so everything here is derived rather
+ * than written as absolute rows. [step 277] The keyboard now runs from its own
+ * top down to SPEC_Y -- the rainbow bar -- rather than to DESK_H, so it covers
+ * the application band; the text area takes whatever is left above it.
  *
  * Keys are 80 x 26, a third of the panel wide. See the keypad note below for
  * why they are that size. */
 #define KEY_ROWS   4u
-#define KEY_H      26u
-#define KB_Y       (DESK_H - KEY_ROWS * KEY_H)      /* 168 - 104 = 64 */
+/* [step 277] 42, was 26, matching the shell. The keyboard reaches the rainbow
+ * bar rather than stopping at DESK_H, taking the 64 px that used to hold the
+ * application strips -- see term.c for the same change and app_views_suspend()
+ * for what happens to the programs that drew there. */
+#define KEY_H      42u
+#define KB_Y       (SPEC_Y - KEY_ROWS * KEY_H)      /* 288 - 168 = 120 */
 
 #define TEXT_X     3u
 #define LINE_H     9u
@@ -190,7 +195,7 @@ static void draw_key(uint32_t r, uint32_t c, int live)
 
 static void draw_keyboard(void)
 {
-    display_fill_rect(0, KB_Y, DISP_W, DESK_H - KB_Y, LCD_FG);
+    display_fill_rect(0, KB_Y, DISP_W, SPEC_Y - KB_Y, LCD_FG);
     for (uint32_t r = 0; r < KEY_ROWS; r++) {
         for (uint32_t c = 0; c < KEY_COLS; c++) {
             draw_key(r, c, 0);
@@ -347,7 +352,9 @@ void notes_touch(uint32_t x, uint32_t y, int down)
         return;
     }
 
-    if (y < KB_Y || y >= DESK_H || x >= DISP_W) {
+    /* [step 277] SPEC_Y, not DESK_H -- the same bound that made the shell's
+     * bottom two rows unresponsive when only the drawing was extended. */
+    if (y < KB_Y || y >= SPEC_Y || x >= DISP_W) {
         return;
     }
     uint32_t r = (y - KB_Y) / KEY_H;

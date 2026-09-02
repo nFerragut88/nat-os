@@ -56,7 +56,9 @@ typedef struct {
 #define DESK_ACTION_3D     1    /* hand the region to the raycaster */
 #define DESK_ACTION_NOTES  2    /* hand the region to the note pad    */
 #define DESK_ACTION_TERM   3    /* hand the region to the shell       */
+#define DESK_ACTION_WIFI   4    /* hand the region to the wifi view   */
 
+int desktop_wifi(void);
 void desktop_init(void);
 
 /* Draws one frame. Called from the display task in place of raycast_frame()

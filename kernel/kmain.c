@@ -27,6 +27,7 @@
 #include "desktop.h"
 #include "notes.h"
 #include "term.h"
+#include "wifiapp.h"
 #include "audio.h"
 #include "messages.h"
 #include "calib.h"
@@ -1168,8 +1169,8 @@ static void m6_critical_test(void)
  * so every row reads the same 480 bytes. That costs 15,360 bytes over SPI — about
  * 4 ms at the DMA rate — instead of composing 7,680 pixels individually.
  */
-#define SPEC_H     32u
-#define SPEC_Y     (DISP_H - SPEC_H)
+/* [step 277] SPEC_H and SPEC_Y moved to display.h -- term.c needs them now.
+ * The asserts below stay here, where the strip is actually drawn. */
 
 /* The colour strip must sit below every application strip. Checked here rather
  * than assumed: the strip geometry lives in app.h and this constant does not,
@@ -1340,6 +1341,8 @@ static void task_display(void)
             notes_frame();
         } else if (desktop_term()) {
             term_frame();
+        } else if (desktop_wifi()) {
+            wifiapp_frame();
         } else {
             raycast_frame();
         }
@@ -1512,6 +1515,8 @@ static void task_touch(void)
             notes_touch(t.x, t.y, down);
         } else if (desktop_term()) {
             term_touch(t.x, t.y, down);
+        } else if (desktop_wifi()) {
+            wifiapp_touch(t.x, t.y, down);
         } else {
             desktop_touch(t.x, t.y, down);
         }

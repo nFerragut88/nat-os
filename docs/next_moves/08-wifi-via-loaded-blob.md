@@ -16007,3 +16007,146 @@ open       group-key rekeying, roaming, PMKSA caching, WPA3/SAE,
 ```
 
 **Every small thing on the list is closed, and three of them were the same bug.**
+
+---
+
+## step 277 — the keyboard reaches the rainbow bar
+
+`(this commit)`
+
+Not a wifi step. Recorded here because this log is the project's history and
+skipping the interface work would make the wifi app that follows arrive without
+the ground it stands on.
+
+### 277a. The shell keyboard grows into the gap
+
+The keyboard was `KEY_H 26` and stopped short of the spectrum strip along the
+bottom, leaving a band of dead screen. Rows are 42 px now, and the geometry is
+stated rather than trusted:
+
+```c
+#define KB_Y  (SPEC_Y - KEY_ROWS * KEY_H)
+_Static_assert(KB_Y + KEY_ROWS * KEY_H == SPEC_Y, "");
+```
+
+`SPEC_Y` moved from `kmain.c` to `display.h` so both the keyboard and the strip
+compute from the same number instead of agreeing by coincidence.
+
+### 277b. And the bottom row stopped responding
+
+Reported immediately: the bottom buttons did nothing. The **hit test still read
+`y >= DESK_H`**, the old boundary — so the two grown rows drew in a region the
+touch handler thought belonged to the desktop. Drawing and hitting had been the
+same expression by accident and were now two, and only one had been changed.
+
+Fixed in both `term.c` and `notes.c`, and the note pad's keyboard was brought to
+the same size in the same change: a keyboard that is one size in one app and
+another size in the next is a bug that only looks like a preference.
+
+### 277c. A near miss worth writing down
+
+The first attempt at suppressing desktop chrome inside these views returned
+early from `desktop_chrome_touch()` — which would also have killed the top-right
+exit button, **trapping the user in the shell with no way back**. Caught before
+flashing, by reading what else that function owned. The guard now sits below the
+exit test, and the reason is in the comment so it is not undone later.
+
+---
+
+## step 278 — squares becomes a wifi app
+
+`(this commit)`
+
+The launcher's `squares` was a VM program. The wifi view cannot be one: reaching
+the radio means calling the vendor blob, and a bytecode application has no path
+to it **by design**. So this is a native view, routed like the shell and the
+note pad.
+
+`kernel/wifiapp.c`, `kernel/wifiapp.h`, `MODE_WIFI`, `DESK_ACTION_WIFI`, and a
+`wifi_scan_channel()` in `wifi_osi_impl.c` that returns scan results **as data**
+— one channel per call, so the sweep can be painted as a list filling in rather
+than a five-second freeze.
+
+Two supporting pieces:
+
+- `wifi_join_ssid()` re-derives the PMK for a new SSID. `g_hs_pmk_ready` exists
+  so the 15-second PBKDF2 runs once; a different network needs a different key,
+  so `g_hs_pmk_ready_reset()` was added to say so explicitly.
+- The view sits in **irom**. `linker.ld` gained `wifiapp.c.o`, and `notes.c.o`
+  and `term.c.o` went with it — iram had 128 KB and the ISR trampolines in
+  `wifi_osi_impl.c` need to stay in it.
+
+### 278a. And it did not work
+
+Reported as "I don't see it doing anything", then as "it just says join failed".
+Both were true and neither was the launcher. See step 279.
+
+---
+
+## step 279 — a status line that claimed a join that never happened
+
+`(this commit)`
+
+### 279a. What the user saw
+
+`join failed`, on a freshly booted board, from an app that had never attempted
+a join.
+
+### 279b. What it was
+
+Two defects, and the first one hid the second.
+
+**`ST_FAILED` carried three meanings.** `scan_step()` set it when
+`!blob_ready()` — the radio was never brought up — and `draw_status()` rendered
+every one of them as `"join failed"`. So a radio that does not exist reported
+itself as a join that was refused, which points the reader at the passphrase,
+the access point, the handshake: everywhere except the actual cause.
+
+This is the **sixth** time this project has found a status claiming an outcome
+for work that never ran, after `_event_post`, `_task_delay`, the event groups,
+`_queue_send_from_isr` and the blob's critical sections (UM-NATOS-053 §4). The
+difference is the reader. The other five lied to a log; this one lied to a
+person, who then reported the lie back as the symptom.
+
+Split into `ST_NORADIO`, `ST_STARTING` and `ST_NOSTART`, each saying what it is.
+
+**And the app could not start the radio at all.** It could scan and it could
+join — both of which need a radio that *something else* had already brought up.
+So it worked on a board where the shell had been used first and was inert on a
+board that had just booted. **An app that only works after you have used a
+different app is not an app**, and that is the whole of why the first version
+appeared to do nothing.
+
+`start_radio()` does what `wifiinit start` does: `blob_map` → `blob_init` →
+`phyinit_run_at` → the five settled flags → `wifi_bringup`. The flag values are
+**copied from the shell, not re-derived** — they are the answers to steps
+252–257 and this view must not become a second opinion about them.
+
+One button, whose label follows the radio: `start` when it is down, `scan` when
+it is up. Two buttons would mean one of them is always the wrong thing to press.
+
+### 279c. A hazard flagged and withdrawn
+
+I recorded, while writing 278, that `scan_step()` calling `blob_map()` from a
+flash-resident view was the step-198 fault — reprogramming the flash MMU with
+the cache off, from code executing out of the mapping being rewritten.
+
+**It is not.** `blob.c` says so in as many words:
+
+> *"Safe to run with the cache off because everything reachable from here —
+> this file, uart.c, critical.h — is IRAM-resident. The cache is back on before
+> returning to shell.c, which is not."*
+
+`blob_map()` rewrites the **blob's** window at 0x40300000, not the kernel's, and
+`shell.c` has called it from irom since step 190. Step 198 was read as a general
+rule when it was a statement about one particular mapping. Recorded rather than
+quietly dropped, because a hazard raised and then withdrawn is exactly the kind
+of thing that gets re-raised in six months by someone reading the first half.
+
+### State
+
+```
+wifi app   starts the radio, sweeps 13 channels, joins on a double tap
+status     five distinct states; none of them claims work that did not run
+open       measure it on a cold-booted board -- NOT YET CONFIRMED
+```

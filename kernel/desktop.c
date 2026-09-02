@@ -1,6 +1,7 @@
 /* nat-os — touch-driven launcher. See desktop.h for what this is and is not. */
 
 #include "desktop.h"
+#include "wifiapp.h"
 #include "display.h"
 #include "raycast.h"
 #include "notes.h"
@@ -130,7 +131,7 @@ static void draw_glyph(const uint8_t *g, uint32_t x, uint32_t y, uint16_t fg)
 
 static const desk_icon_t ICONS[COLS * ROWS] = {
     { "shell",    0,          COLOR_CYAN,    DESK_ACTION_TERM },
-    { "squares",  "squares",  COLOR_GREEN,   DESK_ACTION_NONE },
+    { "wifi",     0,          COLOR_GREEN,   DESK_ACTION_WIFI },
     { "draw",     "draw",     COLOR_YELLOW,  DESK_ACTION_NONE },
     { "paint",    "paint",    COLOR_MAGENTA, DESK_ACTION_NONE },
     { "notes",    0,          COLOR_WHITE,   DESK_ACTION_NOTES },
@@ -146,6 +147,7 @@ static const desk_icon_t ICONS[COLS * ROWS] = {
 #define MODE_3D       1
 #define MODE_NOTES    2
 #define MODE_TERM     3
+#define MODE_WIFI     4
 static int      g_mode = MODE_LAUNCHER;
 #define g_active (g_mode == MODE_LAUNCHER)
 static int      g_sel = 0;              /* cell under the cursor */
@@ -181,6 +183,7 @@ static uint32_t g_msg_tick;
 int      desktop_active(void) { return g_mode == MODE_LAUNCHER; }
 int      desktop_notes(void)  { return g_mode == MODE_NOTES; }
 int      desktop_term(void)   { return g_mode == MODE_TERM; }
+int      desktop_wifi(void)   { return g_mode == MODE_WIFI; }
 
 void desktop_invalidate(void) { g_dirty = 1; }
 
@@ -328,8 +331,28 @@ static void draw_close(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint16_t 
     }
 }
 
+/* [step 277] Hand the application band back after a full-band view.
+ *
+ * Nothing else clears it. desktop_chrome() paints only the chrome COLUMN, and
+ * the rest of the band belongs to the running programs -- which repaint it
+ * when they next draw, and not before. So leaving the shell or the note pad
+ * left their bottom keyboard rows sitting there until a program happened to
+ * cover them, which is the 'remnant in the bottom menu' this fixes.
+ *
+ * Black is the same baseline desktop_chrome() uses for an empty slot. */
+static void band_clear(void)
+{
+    display_fill_rect(0, APP_VIEW_Y0, DISP_W, SPEC_Y - APP_VIEW_Y0,
+                      COLOR_BLACK);
+}
+
 void desktop_chrome(void)
 {
+    /* [step 277] The shell AND the note pad now occupy this band with their
+     * keyboards. Chrome is drawn LAST every frame, so without this it would
+     * paint its close buttons over the bottom row of keys. */
+    if (desktop_term() || desktop_notes()) { return; }
+
     /* The strips are BELOW a full-width view, and that is load-bearing.
      *
      * APP_VIEW_Y0 is 224 and RAY_VIEW_H is 224, so slot 0 begins exactly where
@@ -445,11 +468,24 @@ void desktop_overlay_into(uint16_t *fb, uint32_t w, uint32_t h)
 /* Non-zero if the touch was consumed by a close button. */
 int desktop_chrome_touch(uint32_t x, uint32_t y)
 {
+    /* The top-right button leaves whichever view is open, and it is checked
+     * FIRST -- including for the shell. [step 277] An earlier version of this
+     * change returned early for the terminal above this block and trapped the
+     * user inside it: the keyboard covered the band, the chrome was
+     * suppressed, and the only way out went with it. */
     if (!g_active && x >= DISP_W - 22u && y < 22u) {
         g_mode  = MODE_LAUNCHER;    /* leave whichever view is open */
+        app_views_suspend(0);       /* [step 277] give the band back */
+        band_clear();
         g_dirty  = 1;
         return 1;
     }
+
+    /* [step 277] Below here are the per-application close buttons, which live
+     * in the band both keyboards now cover. kmain offers this function the
+     * press BEFORE term_touch() and notes_touch(), so leaving them live would
+     * make a key in the bottom row close a program instead of typing. */
+    if (desktop_term() || desktop_notes()) { return 0; }
 
     if (x < CLOSE_X) {
         return 0;               /* the name is a label, not a button */
@@ -516,13 +552,23 @@ static void open_selected(void)
 
     if (ic->action == DESK_ACTION_TERM) {
         g_mode    = MODE_TERM;
+        app_views_suspend(1);   /* [step 277] the keyboard owns the band now */
         term_open();
         g_opens++;
         return;
     }
 
+    if (ic->action == DESK_ACTION_WIFI) {
+        /* [step 278] Stays inside DESK_H -- no keyboard, so the application
+         * band is left to the programs that draw in it. */
+        g_mode = MODE_WIFI;
+        wifiapp_open();
+        return;
+    }
+
     if (ic->action == DESK_ACTION_NOTES) {
         g_mode    = MODE_NOTES;
+        app_views_suspend(1);   /* [step 277] the keyboard owns the band now */
         notes_open();
         g_msg_ok  = 1;
         g_msg_sel = -1;
@@ -558,6 +604,8 @@ void desktop_touch(uint32_t x, uint32_t y, int down)
          * be indistinguishable from turning. */
         if (down && x < 36u && y < 18u) {
             g_mode  = MODE_LAUNCHER;
+            app_views_suspend(0);   /* [step 277] give the band back */
+            band_clear();
             g_dirty = 1;
         }
         return;

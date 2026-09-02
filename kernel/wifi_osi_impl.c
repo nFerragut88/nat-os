@@ -29,6 +29,7 @@
 #include "timer.h"
 #include "blobcall.h"
 #include "blob.h"
+#include "wifiapp.h"
 #include "heap.h"
 #include "critical.h"
 
@@ -1745,6 +1746,56 @@ void wifi_ap_report(uint32_t fn, uint32_t count)
 #define SWEEP_PASSES 1u   /* [step 227] one pass: evidence, not a survey */
 #define SWEEP_DWELL  400u
 
+/* [step 278] Scan results AS DATA, for the wifi view.
+ *
+ * wifi_ap_report() prints them, which was right when the only consumer was a
+ * serial console and is not enough for something that has to lay them out.
+ * Same blob calls and the same record layout -- stride 84, ssid at +6, channel
+ * at +39, authmode at +40, rssi (int8) at +44 -- every one of which step 212
+ * measured out of the blob rather than taking from a header.
+ *
+ * ONE CHANNEL PER CALL, so the caller can paint progress across a sweep
+ * instead of freezing for five seconds. */
+uint32_t wifi_scan_channel(uint32_t scan_fn, uint32_t num_fn, uint32_t recs_fn,
+                           uint32_t ch, wifi_ap_t *out, uint32_t max)
+{
+    static uint32_t cfg[8] = { 0u, 0u, 1u, 1u, 0u, 0u, SWEEP_DWELL, 0u };
+    static volatile unsigned short n;
+    static uint8_t rec[512];
+
+    if (!scan_fn || !num_fn || !recs_fn || !out || !max) { return 0u; }
+
+    cfg[2] = ch;
+    if (blob_call(scan_fn, (uint32_t)cfg, 1u, 0u, 0u) != 0u) { return 0u; }
+
+    n = 0xFFFFu;
+    if (blob_call(num_fn, (uint32_t)&n, 0u, 0u, 0u) != 0u) { return 0u; }
+    if (n == 0xFFFFu || n == 0u) { return 0u; }
+
+    unsigned short want = (unsigned short)(n > 6u ? 6u : n);
+    for (uint32_t i = 0u; i < sizeof rec; i++) { rec[i] = 0u; }
+    if (blob_call(recs_fn, (uint32_t)&want, (uint32_t)rec, 0u, 0u) != 0u) {
+        return 0u;
+    }
+
+    uint32_t got = 0u;
+    for (uint32_t r = 0u; r < want && got < max; r++) {
+        const uint8_t *q = &rec[r * 84u];
+        if (q[6] == 0u) { continue; }        /* hidden: no name to show */
+        uint32_t i = 0u;
+        for (; i < 32u && q[6u + i]; i++) {
+            uint8_t c = q[6u + i];
+            out[got].ssid[i] = (c >= 32u && c < 127u) ? (char)c : '?';
+        }
+        out[got].ssid[i] = 0;
+        out[got].ch   = q[39];
+        out[got].auth = q[40];
+        out[got].rssi = (signed char)q[44];
+        got++;
+    }
+    return got;
+}
+
 void wifi_scan_sweep(uint32_t scan_fn, uint32_t num_fn, uint32_t recs_fn);
 void wifi_scan_sweep(uint32_t scan_fn, uint32_t num_fn, uint32_t recs_fn)
 {
@@ -2218,6 +2269,76 @@ void wifi_event_report(void)
  * This DOES transmit. A station looking for an SSID sends probe requests, and
  * if it found the network it would authenticate. Transmit was established at
  * step 209 and this is the same radio doing the same thing. */
+/* [step 278] Join a NAMED network, for the wifi view.
+ *
+ * wifi_try_connect() joins the network compiled into wifi_secrets.h and takes
+ * its name from there. This takes the name from the caller and keeps the
+ * passphrase, which is the scope the view was built to: the stored password,
+ * against whichever network you point it at.
+ *
+ * BLOCKING, and it is the PMK that blocks. PBKDF2 at 4096 iterations measures
+ * ~15 s on this part, and the key is derived from the passphrase AND the SSID
+ * together -- so a different network is a different key and there is no way to
+ * skip it. Step 243 moved this off the driver's connect callback because
+ * fifteen seconds there kills the association; it must stay off it here too,
+ * which is why the derivation happens before esp_wifi_connect and not during.
+ */
+static char g_join_ssid[33];
+
+void wifi_join_ssid(const char *ssid);
+void wifi_join_ssid(const char *ssid)
+{
+    const struct blob_entry *e = blob_map();
+    if (!e || !blob_ready() || !ssid || !ssid[0]) { return; }
+
+    uint32_t n = 0u;
+    for (; n < 32u && ssid[n]; n++) { g_join_ssid[n] = ssid[n]; }
+    g_join_ssid[n] = 0;
+
+    {   /* Re-derive: a new SSID means a new key, and g_hs_pmk_ready guards
+         * against doing it twice for the same one. */
+        extern const char *g_hs_ssid;
+        extern uint32_t g_hs_pmk_ready_reset(void);
+        extern int wpa_hs_derive_pmk(void);
+        g_hs_ssid = g_join_ssid;
+        (void)g_hs_pmk_ready_reset();
+        (void)blob_call((uint32_t)&wpa_hs_derive_pmk, 0u, 0u, 0u, 0u);
+    }
+
+    /* The station config: SSID at +0 and password at +32, the two fields step
+     * 218 established are stable across every wifi_config_t this blob has
+     * seen. Everything else stays zero. */
+    {
+        static uint8_t conf[256];
+        extern const char *wifi_sta_pass(void);
+        const char *pw = wifi_sta_pass();
+        for (uint32_t i = 0u; i < sizeof conf; i++) { conf[i] = 0u; }
+        for (uint32_t i = 0u; i < n; i++) { conf[i] = (uint8_t)g_join_ssid[i]; }
+        if (pw) {
+            for (uint32_t i = 0u; i < 63u && pw[i]; i++) {
+                conf[32u + i] = (uint8_t)pw[i];
+            }
+        }
+        g_assoc_ssid_len = n;
+        if (blob_call(e->wifi_set_config, 0u, (uint32_t)conf, 0u, 0u) != 0u) {
+            return;
+        }
+    }
+
+    (void)blob_call(e->wifi_connect, 0u, 0u, 0u, 0u);
+}
+
+/* Non-zero once the driver has told the supplicant the station is up. This is
+ * wpa_sta_connected_cb, which step 246 named and measured at ZERO for thirteen
+ * steps -- it is the one signal that means associated AND keyed, rather than
+ * merely not yet failed. */
+int wifi_joined(void);
+int wifi_joined(void)
+{
+    extern uint32_t g_wpa_conn_cb;
+    return g_wpa_conn_cb != 0u;
+}
+
 void wifi_try_connect(uint32_t cfg_fn, uint32_t conn_fn);
 void wifi_try_connect(uint32_t cfg_fn, uint32_t conn_fn)
 {

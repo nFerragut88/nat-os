@@ -188,6 +188,24 @@ SECTIONS
      * DRAM by .dram.rodata below. */
     *kmain.c.o(.literal .literal.* .text .text.*)
 
+    /* [step 278] wifiapp.c: the wifi view. Same argument shell.c makes for
+     * itself -- reachable only when a human taps an icon, on no timing-critical
+     * path, no ISR context, and nothing in the pinned set (panic, flash, store,
+     * task, vectors, window, appcpu, timer, intr) references it. Its blocking
+     * work is a 15 s PBKDF2 that runs with the cache on like everything else.
+     *
+     * If this placement is wrong the wifi icon faults, which is loud, local and
+     * harmless -- the same property that made shell.c a safe first tenant. */
+    *wifiapp.c.o(.literal .literal.* .text .text.*)
+
+    /* [step 278] notes.c and term.c join it, for the same reason and with the
+     * same evidence: both are views entered from the launcher, both run only
+     * while a human is looking at them, and neither is referenced by anything
+     * in the pinned set. They were in iram only because iram was the default,
+     * not because anyone decided they belonged there. */
+    *notes.c.o(.literal .literal.* .text .text.*)
+    *term.c.o(.literal .literal.* .text .text.*)
+
     . = ALIGN(4);
     _flash_text_end = .;
   } > irom

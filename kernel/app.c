@@ -21,6 +21,33 @@ typedef struct {
 
 static app_t g_apps[APP_MAX];
 
+/* [step 277] The shell's keyboard now covers the application band, so the
+ * programs that draw there must stop while it does. A zero-size viewport is
+ * the whole mechanism: vm.c clips every draw against it ('if (x >= vm->vw ||
+ * y >= vm->vh) return'), so nothing reaches the glass and the programs
+ * themselves are untouched -- they keep running, keep counting, keep their
+ * arenas and their mail.
+ *
+ * Suspending the DRAW rather than the program is the point: closing the shell
+ * restores the viewport and the next frame they paint puts them back. */
+static int g_views_suspended;
+
+void app_views_suspend(int on);
+void app_views_suspend(int on)
+{
+    g_views_suspended = on ? 1 : 0;
+    for (int id = 0; id < APP_MAX; id++) {
+        if (g_apps[id].state != APP_RUNNING) { continue; }
+        if (g_views_suspended) {
+            vm_set_viewport(&g_apps[id].vm, 0u, 0u, 0u, 0u);
+        } else {
+            vm_set_viewport(&g_apps[id].vm, 0u,
+                            APP_VIEW_Y0 + (uint32_t)id * APP_VIEW_PITCH,
+                            APP_VIEW_W, APP_VIEW_H);
+        }
+    }
+}
+
 /* The strip geometry now lives in app.h, because the close button has to agree
  * with it exactly. See the note there. */
 
@@ -97,6 +124,9 @@ int app_start(const char *name, const uint8_t *img, uint32_t len,
          * arena, applied to pixels. */
         vm_set_viewport(&a->vm, 0u, APP_VIEW_Y0 + (uint32_t)id * APP_VIEW_PITCH,
                         APP_VIEW_W, APP_VIEW_H);
+        /* [step 277] A program started while the shell is open must not paint
+         * over its keyboard either. */
+        if (g_views_suspended) { vm_set_viewport(&a->vm, 0u, 0u, 0u, 0u); }
         vm_set_app_id(&a->vm, id);
 
         /* A fresh application must not inherit mail addressed to whoever held

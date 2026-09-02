@@ -987,6 +987,13 @@ void wpa_hs_arm(void *bssid)
 /* [step 243] Derive the PMK once, at bring-up, off the driver's connect path.
  * Windowed because the crypto is; reached from call0 through blob_call with no
  * arguments, the same way the self-test is. */
+/* [step 278] Let a new SSID force a fresh derivation. g_hs_pmk_ready exists so
+ * the 15 s PBKDF2 runs once per boot; joining a DIFFERENT network needs a
+ * different key, so the view clears it deliberately rather than the guard
+ * being weakened for everyone. */
+uint32_t g_hs_pmk_ready_reset(void);
+uint32_t g_hs_pmk_ready_reset(void) { g_hs_pmk_ready = 0u; return 0u; }
+
 int wpa_hs_derive_pmk(void);
 int wpa_hs_derive_pmk(void)
 {

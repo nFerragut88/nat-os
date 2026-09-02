@@ -35,6 +35,13 @@
 #define DISP_W 240u
 #define DISP_H 320u
 
+/* [step 277] The colour strip along the bottom -- the 'rainbow bar'. It lived
+ * in kmain.c, which drew it; term.c now needs it too, because the shell's
+ * keyboard is defined as reaching down to it. Panel geometry belongs here with
+ * DISP_W and DISP_H rather than in whichever file happened to paint it. */
+#define SPEC_H 32u
+#define SPEC_Y (DISP_H - SPEC_H)      /* 320 - 32 = 288 */
+
 /* RGB565, the panel's native format. */
 #define RGB(r, g, b) ((uint16_t)((((r) & 0xF8u) << 8) | (((g) & 0xFCu) << 3) | ((b) >> 3)))
 

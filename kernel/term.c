@@ -17,9 +17,17 @@
 #define HDR_H      22u
 #define KEY_ROWS   4u
 #define KEY_COLS   3u
-#define KEY_H      26u
+/* [step 277] 42, was 26. The keyboard now reaches the rainbow bar rather than
+ * stopping at DESK_H, which gives it the 64 px that used to hold the
+ * application strips: four rows of 42 instead of four of 26, on a panel where
+ * a fingertip is wider than a key was tall.
+ *
+ * The strips are SUPPRESSED while the shell is open rather than overdrawn --
+ * see desktop_chrome() and app_views_suspend(). Programs keep running; their
+ * output and close buttons come back with the launcher. */
+#define KEY_H      42u
 #define KEY_W      (DISP_W / KEY_COLS)              /* 80 */
-#define KB_Y       (DESK_H - KEY_ROWS * KEY_H)      /* 224 - 104 = 120 */
+#define KB_Y       (SPEC_Y - KEY_ROWS * KEY_H)      /* 288 - 168 = 120 */
 
 #define INPUT_H    11u
 #define INPUT_Y    (KB_Y - INPUT_H)                 /* 109 */
@@ -31,8 +39,8 @@
 #define TERM_COLS  39u                              /* 240/6, less a margin */
 #define TERM_ROWS  (OUT_H / LINE_H)                 /* 9 */
 
-_Static_assert(KB_Y + KEY_ROWS * KEY_H == DESK_H,
-               "keyboard must end exactly at the region boundary");
+_Static_assert(KB_Y + KEY_ROWS * KEY_H == SPEC_Y,
+               "keyboard must end exactly at the rainbow bar");
 _Static_assert(OUT_Y + OUT_H == INPUT_Y, "output pane must meet the input line");
 _Static_assert(TERM_ROWS >= 6u, "an output pane under six lines is not worth having");
 
@@ -214,7 +222,7 @@ static void draw_key(uint32_t r, uint32_t c, int live)
 
 static void draw_keyboard(void)
 {
-    display_fill_rect(0, KB_Y, DISP_W, DESK_H - KB_Y, TRM_BG);
+    display_fill_rect(0, KB_Y, DISP_W, SPEC_Y - KB_Y, TRM_BG);
     for (uint32_t r = 0; r < KEY_ROWS; r++) {
         for (uint32_t c = 0; c < KEY_COLS; c++) {
             draw_key(r, c, 0);
@@ -416,7 +424,9 @@ static void submit(void)
 void term_frame(void)
 {
     if (!g_kb_drawn) {
-        display_fill_rect(0, 0, DISP_W, DESK_H, TRM_BG);
+        /* [step 277] Down to the rainbow bar: the shell owns the band the
+         * application strips used to have. */
+        display_fill_rect(0, 0, DISP_W, SPEC_Y, TRM_BG);
         draw_header();
         draw_keyboard();
         g_kb_drawn  = 1;
@@ -471,7 +481,10 @@ void term_touch(uint32_t x, uint32_t y, int down)
         return;
     }
 
-    if (y < KB_Y || y >= DESK_H || x >= DISP_W) {
+    /* [step 277] SPEC_Y, not DESK_H. The keyboard grew past the old region
+     * boundary and this test did not, so every press below 224 -- most of the
+     * bottom two rows -- was rejected as outside the keyboard. */
+    if (y < KB_Y || y >= SPEC_Y || x >= DISP_W) {
         return;                 /* header close is handled before this is called */
     }
 
