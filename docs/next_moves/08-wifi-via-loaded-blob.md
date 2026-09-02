@@ -16327,3 +16327,44 @@ open       the white-screen crash is EXPLAINED BUT NOT MEASURED
            no DHCP lease by this route
            the USB link drops
 ```
+
+---
+
+## step 282 — confirmed from the glass
+
+`(this commit)`
+
+```
+ivory-billed
+TC7NR
+```
+
+Two networks, one row each, after an icon tap and a `start`. No white screen, no
+stuck tone, and the exit button visible and answering throughout.
+
+That confirms three things by observation:
+
+- **280b**, the merge. The sweep sights the same access point on adjacent
+  channels and now reports it once. Two APs on the air, two rows — and the
+  second network is the check that matters, because a merge that collapsed
+  *everything* into one row would look identical to a correct one if only a
+  single AP were present.
+- **281a and 281b**, the exit and the deferred bring-up.
+- **281c** only to the extent that the crash did not recur. The guard is in and
+  the symptom is gone, which is consistent with the explanation and is **not the
+  same as having measured the mechanism**. Step 281c stays marked as a candidate.
+  Nothing was read; a symptom stopped appearing.
+
+The whole path — radio up, thirteen channels swept, networks listed, WPA2
+four-way handshake completed (step 280a) — driven by two taps on a board that
+had just booted, with no shell and no serial link involved.
+
+### What is left
+
+1. **No DHCP lease by this route.** `dhcp offer/ack 0/0`, `tx` frozen at 10
+   while `rx` climbed. The link is authenticated and receiving; addressing does
+   not complete. It works from the shell path (step 273), so the two routes into
+   lwIP differ somewhere and that difference is the next thing to find.
+2. **The white screen is explained, not measured.** §281c.
+3. **The USB link drops.** Four void runs in one session, once with the radio
+   idle. Host-side.
