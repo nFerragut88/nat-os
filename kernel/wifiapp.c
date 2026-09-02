@@ -56,6 +56,11 @@ static uint32_t  g_scan_ch;
  * that reads the glass. */
 static int       g_want_start;
 
+/* [step 284] The selected row a join was asked for, or -1. Same reason as
+ * g_want_start: join() blocks for the ~15 s of PBKDF2 and enters the blob, and
+ * neither may happen on the task that reads the glass. */
+static int       g_want_join = -1;
+
 /* What the last action did, shown in the status bar. Deliberately a small enum
  * rather than a string: every state here is one the code puts the radio into,
  * and a free-text message invites saying something the radio did not actually
@@ -378,8 +383,7 @@ static void join(uint32_t i)
     if (i >= g_count) { return; }
     if (!blob_ready()) { g_state = ST_NORADIO; g_dirty = 1; return; }
 
-    g_state = ST_DERIVING;
-    draw_status();
+    g_state = ST_DERIVING;      /* the display task is already painting this */
 
     wifi_join_ssid(g_aps[i].ssid);
 
@@ -420,9 +424,16 @@ static void join(uint32_t i)
  * button. */
 void wifiapp_service(void)
 {
-    if (!g_want_start) { return; }
-    g_want_start = 0;
-    start_radio();
+    if (g_want_start) {
+        g_want_start = 0;
+        start_radio();
+        return;
+    }
+    if (g_want_join >= 0) {
+        uint32_t i = (uint32_t)g_want_join;
+        g_want_join = -1;
+        join(i);
+    }
 }
 
 /* ---- the view ------------------------------------------------------------- */
@@ -473,7 +484,12 @@ void wifiapp_frame(void)
      *
      * The cost is that the sweep pauses for the duration of a bring-up. The
      * bring-up ends by starting a fresh sweep anyway, so nothing is lost. */
-    if (g_scan_ch && !g_want_start && g_state != ST_STARTING) { scan_step(); }
+    /* [step 284] The condition list is gone. A request now STOPS the sweep at
+     * the point of asking (see wifiapp_touch), so there is no window in which a
+     * sweep and a blob-entering request coexist and no set of flags to keep in
+     * agreement. Step 281 added a condition here and step 284 had to add two
+     * more to it, which is the sign that the condition was the wrong shape. */
+    if (g_scan_ch) { scan_step(); }
     if (!g_dirty)  { return; }
     g_dirty = 0;
     draw_all();
@@ -489,9 +505,10 @@ void wifiapp_touch(uint32_t x, uint32_t y, int down)
 
     /* The one button: start when the radio is down, scan when it is up. */
     if (y >= STAT_Y && x >= DISP_W - 52u) {
-        if (g_state == ST_STARTING) {
-            /* Already going. A second press must not queue a second bring-up. */
+        if (g_state == ST_STARTING || g_state == ST_DERIVING) {
+            /* Already going. A second press must not queue a second request. */
         } else if (!blob_ready()) {
+            g_scan_ch    = 0u;      /* the sweep stops HERE, before the request */
             g_want_start = 1;       /* the net task picks this up */
             g_state      = ST_STARTING;
             g_dirty      = 1;
@@ -515,7 +532,11 @@ void wifiapp_touch(uint32_t x, uint32_t y, int down)
      * sees what they picked. Joining takes fifteen seconds and is not something
      * to start by brushing the glass. */
     if (g_sel == (int)i) {
-        join(i);
+        if (g_state == ST_STARTING || g_state == ST_DERIVING) { return; }
+        g_scan_ch   = 0u;           /* the sweep stops HERE, before the request */
+        g_want_join = (int)i;       /* the net task picks this up */
+        g_state     = ST_DERIVING;
+        g_dirty     = 1;
     } else {
         g_sel   = (int)i;
         g_dirty = 1;

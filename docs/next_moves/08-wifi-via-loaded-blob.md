@@ -16435,3 +16435,73 @@ open   whether DHCP binds at all -- now answerable from the glass
        the white screen: explained, not measured (281c)
        the USB link drops
 ```
+
+---
+
+## step 284 — the same defect, three lines away, unfixed
+
+`(this commit)`
+
+Reported as selecting a network and the system crashing outright.
+
+### 284a. What it was
+
+`join()` was still called **directly from `wifiapp_touch()`**. So it ran on the
+touch task, blocked it for the ~15 s of PBKDF2, and entered the blob while
+`scan_step()` on the display task could be doing the same.
+
+That is exactly the defect step 281b and 281c described and fixed — **for
+`start_radio()` only**, while the identical second caller sat three lines below
+it in the same function. Worse, `join()` also called `draw_status()`, so once it
+moved off the touch task it would have had two tasks writing the display SPI.
+
+Fixing one instance of a fault and not looking for the second is how the same
+bug gets found twice. It cost the user a crash to find what reading the function
+I had just edited would have shown.
+
+### 284b. And the guard was the wrong shape
+
+Step 281 added a condition to the sweep:
+
+```c
+if (g_scan_ch && !g_want_start && g_state != ST_STARTING) { scan_step(); }
+```
+
+Step 284 needed two more terms on it. **A guard that grows a term per caller is
+the wrong construction** — it makes correctness depend on every future caller
+remembering to appear in a list that lives somewhere else.
+
+The sweep is now stopped at the point of asking:
+
+```c
+g_scan_ch   = 0u;      /* the sweep stops HERE, before the request */
+g_want_join = (int)i;
+```
+
+so no window exists in which a sweep and a blob-entering request coexist, and
+the condition is back to `if (g_scan_ch)`. Structure rather than vigilance.
+
+### 284c. The passphrase, said plainly
+
+Also reported: *"I couldn't even enter a password or anything."*
+
+That is by design and it is a real limitation. `wifiapp.h` states the scope:
+tapping a network joins it with the passphrase compiled into
+`kernel/wifi_secrets.h`. It is right for the network this board lives on and
+wrong for every other one — **`TC7NR` cannot be joined and will fail the
+four-way handshake**, which the view will report as `join failed`, correctly and
+uselessly.
+
+Typing a passphrase needs the multi-tap keyboard the shell and note pad already
+have. It is a known missing piece, not an oversight, and it is the obvious next
+piece of work on this view.
+
+### State
+
+```
+join       off the touch task; no second blob caller by construction
+open       whether a sweep works at all once associated -- the radio is parked
+           on the AP's channel and the other twelve may return nothing
+           whether DHCP binds (283)
+           the white screen (281c), the USB link
+```
