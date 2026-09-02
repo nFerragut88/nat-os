@@ -9,6 +9,10 @@
 #include "audio.h"
 #include "wifi_secrets.h"
 
+/* The bound DHCP address, or 0. Declared here rather than in each block that
+ * wants it: draw_status() reads it twice, in different scopes. */
+extern uint32_t netif_wifi_ip(void);
+
 /* ---- layout ---------------------------------------------------------------
  *
  * Unlike the shell and the note pad this view has no keyboard, so it stays
@@ -135,6 +139,31 @@ static void draw_status(void)
         scanmsg[at] = 0;
     }
 
+    /* [step 283] JOINED shows the address, because "joined" and "on the
+     * network" are not the same claim and this view had been making the
+     * stronger one. An association with no DHCP lease is exactly the state the
+     * board is in today, and it looked identical to success. */
+    static char joinmsg[40];
+    if (g_state == ST_JOINED) {
+        uint32_t ip = netif_wifi_ip();
+        uint32_t at = 0u;
+        for (uint32_t k = 0u; k < 20u && g_joined[k]; k++) { joinmsg[at++] = g_joined[k]; }
+        joinmsg[at++] = ' ';
+        if (ip) {
+            for (uint32_t b = 0u; b < 4u; b++) {
+                uint32_t v = (ip >> (8u * b)) & 0xFFu;
+                if (v >= 100u) { joinmsg[at++] = (char)('0' + v / 100u); }
+                if (v >= 10u)  { joinmsg[at++] = (char)('0' + (v / 10u) % 10u); }
+                joinmsg[at++] = (char)('0' + v % 10u);
+                if (b < 3u) { joinmsg[at++] = '.'; }
+            }
+        } else {
+            const char *p2 = "-- no IP";
+            while (*p2) { joinmsg[at++] = *p2++; }
+        }
+        joinmsg[at] = 0;
+    }
+
     const char *msg;
     uint16_t    col;
     switch (g_state) {
@@ -144,7 +173,8 @@ static void draw_status(void)
     case ST_SCANNING: msg = scanmsg;                    col = BUSY; break;
     case ST_DERIVING: msg = "deriving key -- 15 s";     col = BUSY; break;
     case ST_JOINING:  msg = "joining";                  col = BUSY; break;
-    case ST_JOINED:   msg = g_joined;                   col = OK;   break;
+    case ST_JOINED:   msg = joinmsg;
+                      col = netif_wifi_ip() ? OK : BUSY;                break;
     case ST_FAILED:   msg = "join failed";              col = BAD;  break;
     default:          msg = "tap a network to join";    col = DIM;  break;
     }
@@ -418,6 +448,14 @@ void wifiapp_open(void)
 
 void wifiapp_frame(void)
 {
+    /* [step 283] DHCP binds seconds after the join, so the address arrives
+     * after the paint that reported the join. Watch for it changing. */
+    if (g_state == ST_JOINED) {
+        static uint32_t shown;
+        uint32_t now = netif_wifi_ip();
+        if (now != shown) { shown = now; g_dirty = 1; }
+    }
+
     /* [step 281] Do NOT enter the blob from here while a bring-up is in flight.
      *
      * wifiapp_frame() runs on the DISPLAY task and scan_step() calls into the

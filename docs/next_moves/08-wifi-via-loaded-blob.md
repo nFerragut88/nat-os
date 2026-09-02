@@ -16368,3 +16368,70 @@ had just booted, with no shell and no serial link involved.
 2. **The white screen is explained, not measured.** §281c.
 3. **The USB link drops.** Four void runs in one session, once with the radio
    idle. Host-side.
+
+---
+
+## step 283 — the address goes on the screen, and a retraction
+
+`(this commit)`
+
+### 283a. Retraction: the DHCP evidence was worthless
+
+Step 280d and 282 both cited this as evidence that DHCP had failed:
+
+```
+net  frames 0  dropped 0  dhcp offer/ack 0/0  arp 0->0  icmp 0->0  [no IP]
+```
+
+**Every one of those counters is zero by construction.** They belong to the
+hand-written network path in `net_handle()`, which runs only when `g_use_lwip`
+is 0. It is 1. lwIP owns the stack and never touches them.
+
+This file warned about it, at step 234, in a comment sitting a few lines above
+the code that prints them:
+
+> *"In lwIP mode the counters below belong to the hand-written path and stay at
+> zero, which reads as 'nothing is happening' when in fact everything is."*
+
+Read a stale instrument, reached the conclusion it was documented to invite, and
+reported it twice. The conclusion may still be right — see 283b — but it was not
+supported by anything quoted for it.
+
+### 283b. What the evidence actually is
+
+The absence of the line lwIP prints when it binds:
+
+```
+lwip      DHCP bound -- address ...
+```
+
+`netif_wifi_report()` announces the first binding and `net_poll_for()` calls it
+every pass. The `lwip +30s`, `+40s` and `+50s` lines were captured, so the stream
+was being read across that window and an announcement in it would have appeared.
+
+Weaker than a positive measurement, and the right instrument to have quoted.
+
+### 283c. The address belongs on the screen anyway
+
+`netif_wifi_ip()` is a pure accessor — `netif_wifi_report()` also announces, and
+a view polling every frame must not decide when that happens.
+
+`ST_JOINED` now reads `ivory-billed 192.168.1.140` in green, or
+`ivory-billed -- no IP` in yellow. **"Joined" and "on the network" are not the
+same claim, and this view had been making the stronger one** — an association
+with no lease looked identical to success, which is precisely the state the
+board has been in.
+
+It repaints when the address arrives, because DHCP binds seconds after the join,
+after the paint that reported it.
+
+And it is readable without a serial link, which four void runs have shown is the
+only kind of instrument worth building here.
+
+### State
+
+```
+open   whether DHCP binds at all -- now answerable from the glass
+       the white screen: explained, not measured (281c)
+       the USB link drops
+```

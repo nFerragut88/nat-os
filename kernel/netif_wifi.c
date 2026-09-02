@@ -195,6 +195,16 @@ uint32_t netif_wifi_report(void)
     return ip;
 }
 
+/* The bound address, or 0. Pure: netif_wifi_report() also announces the first
+ * binding on the UART, and a view that polls it every frame must not be the
+ * thing that decides when that announcement happens. */
+uint32_t netif_wifi_ip(void);
+uint32_t netif_wifi_ip(void)
+{
+    if (!g_up) { return 0u; }
+    return ip4_addr_get_u32(netif_ip4_addr(&g_netif));
+}
+
 void netif_wifi_stats(void);
 void netif_wifi_stats(void)
 {
