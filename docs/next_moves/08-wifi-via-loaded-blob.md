@@ -16240,3 +16240,90 @@ wifi app   icon tap -> radio up -> scan -> associate -> WPA2 handshake complete
 list       one row per network
 open       DHCP does not complete by this route; the USB link is unreliable
 ```
+
+---
+
+## step 281 — three ways to make a view unusable, all of them mine
+
+`(this commit)`
+
+### 281a. A working exit button, painted over
+
+Reported as "I can't reopen the wifi app because it doesn't have an X button".
+
+`desktop_chrome_touch()` accepts the top-right 22x22 corner as *leave this
+view*, and checks it before anything else — so the exit worked the entire time.
+`draw_all()` painted a full-width header across y 0..22, over the top of it.
+
+Step 277c records nearly trapping the user in the shell by removing that
+handler. **This is the same trap reached from the other side**: the handler was
+left alone and its pixels were taken instead. "The button still works" is not a
+defence when nobody can see it. There is a red `x` drawn there now.
+
+### 281b. Ninety seconds with nothing listening
+
+Reported as "it says starting radio, I'm not seeing any network, and the x
+button isn't working".
+
+`start_radio()` was called straight out of `wifiapp_touch()`, which runs on the
+**touch task** — so for the whole ninety-second bring-up the task that reads the
+glass was inside `wifi_bringup()`. The status bar said `starting radio -- 90 s`
+while every press went unread, including the way out.
+
+**A status line that asks the user to wait, displayed by a system that has
+stopped accepting input, is worse than no status line** — it invites exactly the
+presses it cannot answer.
+
+Moved to the net task, which has nothing to service until the radio exists and
+whose frame at that point is shallower than the touch task's was. The touch task
+stays answerable and the display task keeps painting. Leaving the view
+mid-bring-up is allowed and the bring-up continues: the radio is the system's,
+not the view's.
+
+### 281c. And that created a second caller into the blob
+
+Reported as a loud continuous beep and a white screen on re-entering the view.
+
+`wifiapp_frame()` runs on the **display** task and calls `scan_step()`, which
+calls into the blob. After 281b the bring-up runs on the **net** task and does
+the same. `blobcall.c` had left the marker:
+
+> *"Today there is exactly one caller, so this should stay zero; if it does not,
+> something has started entering the blob from a second context and the
+> assumptions above are worth re-reading."*
+
+**I made the second caller.** The symptom fits: a display task parked inside the
+blob stops painting and stops silencing the click, which is a white screen and a
+tone that never ends.
+
+Guarded at the caller I added — `scan_step()` is skipped while a bring-up is in
+flight — rather than by changing the exclusion everything else depends on. The
+sweep pauses for the duration, and the bring-up ends by starting a fresh sweep,
+so nothing is lost.
+
+**NOT CONFIRMED BY MEASUREMENT.** The mechanism fits the symptom and fits a
+marker left in the code for exactly this, and that is not the same as having
+read it happen. Four capture runs were lost to the serial link (§281d) and none
+of them caught the panic. Written down as the leading candidate, not as the
+answer.
+
+### 281d. The link, and what it changes
+
+Four runs void today, each `GetOverlappedResult: Access is denied` followed by
+re-enumeration, once with the radio completely idle. Host-side — cable, port or
+supply — not a board or firmware fault.
+
+The consequence for method: **a board whose log cannot be relied on has to
+report from the glass.** The scan now reads `scanning ch 7 -- 2 found`, so a
+sweep that runs and finds nothing is distinguishable from one that never
+started, without a serial link to watch it on.
+
+### State
+
+```
+wifi app   exit visible; bring-up off the touch task; one blob caller at a time
+scan       reports channel and count on the display
+open       the white-screen crash is EXPLAINED BUT NOT MEASURED
+           no DHCP lease by this route
+           the USB link drops
+```

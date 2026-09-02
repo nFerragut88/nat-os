@@ -1291,7 +1291,12 @@ static void draw_num(uint32_t x, uint32_t y, uint32_t v, uint16_t fg)
 static void task_net(void)
 {
     extern void net_service_task_step(void);
+    extern void wifiapp_service(void);
     for (;;) {
+        /* [step 281] The wifi view's bring-up runs HERE, not on the touch task
+         * that requested it. Ninety blocking seconds on the touch task made the
+         * exit button dead while the screen asked the user to wait. */
+        wifiapp_service();
         net_service_task_step();
         task_sleep(2u);
     }

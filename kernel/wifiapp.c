@@ -47,6 +47,11 @@ static int       g_was_down;
  * responsive and the progress is visible. 0 means idle. */
 static uint32_t  g_scan_ch;
 
+/* [step 281] Set by the touch handler, consumed by wifiapp_service() on the net
+ * task. See wifiapp_service() for why the bring-up must not run on the task
+ * that reads the glass. */
+static int       g_want_start;
+
 /* What the last action did, shown in the status bar. Deliberately a small enum
  * rather than a string: every state here is one the code puts the radio into,
  * and a free-text message invites saying something the radio did not actually
@@ -95,9 +100,40 @@ static void draw_row(uint32_t i)
     put(DISP_W - 26u, y + 6u, g_aps[i].auth ? "wpa" : "open", DIM, bg);
 }
 
+/* Two decimal digits into a caller's buffer, returning where it stopped.
+ * There is no snprintf here and this view should not be the thing that adds
+ * one. */
+static uint32_t num(char *b, uint32_t at, uint32_t v)
+{
+    if (v >= 10u) { b[at++] = (char)('0' + (v / 10u) % 10u); }
+    b[at++] = (char)('0' + v % 10u);
+    return at;
+}
+
 static void draw_status(void)
 {
     display_fill_rect(0, STAT_Y, DISP_W, STAT_H, BG);
+
+    /* [step 281] The scan says where it has got to and what it has found.
+     *
+     * The serial link to this board drops often enough that a run cannot be
+     * relied on to be observed, so a scan that finds nothing must be legible
+     * FROM THE GLASS: "scanning ch 7 -- 0 found" and "no networks -- tap scan"
+     * are different reports, and the first one distinguishes a sweep that is
+     * running and finding nothing from one that never started. */
+    static char scanmsg[28];
+    if (g_state == ST_SCANNING) {
+        uint32_t at = 0u;
+        const char *p = "scanning ch ";
+        while (*p) { scanmsg[at++] = *p++; }
+        at = num(scanmsg, at, g_scan_ch);
+        p = " -- ";
+        while (*p) { scanmsg[at++] = *p++; }
+        at = num(scanmsg, at, g_count);
+        p = " found";
+        while (*p) { scanmsg[at++] = *p++; }
+        scanmsg[at] = 0;
+    }
 
     const char *msg;
     uint16_t    col;
@@ -105,7 +141,7 @@ static void draw_status(void)
     case ST_NORADIO:  msg = "radio off -- tap start";   col = DIM;  break;
     case ST_STARTING: msg = "starting radio -- 90 s";   col = BUSY; break;
     case ST_NOSTART:  msg = "radio did not start";      col = BAD;  break;
-    case ST_SCANNING: msg = "scanning";                 col = BUSY; break;
+    case ST_SCANNING: msg = scanmsg;                    col = BUSY; break;
     case ST_DERIVING: msg = "deriving key -- 15 s";     col = BUSY; break;
     case ST_JOINING:  msg = "joining";                  col = BUSY; break;
     case ST_JOINED:   msg = g_joined;                   col = OK;   break;
@@ -130,6 +166,20 @@ static void draw_all(void)
     display_fill_rect(0, 0, DISP_W, DESK_H, BG);
     display_fill_rect(0, 0, DISP_W, HDR_H, COLOR_BLUE);
     put(6u, 8u, "wifi", FG, COLOR_BLUE);
+
+    /* [step 281] The way out, DRAWN.
+     *
+     * desktop_chrome_touch() has always accepted the top-right 22x22 corner as
+     * "leave this view", and it is checked before anything else -- so the exit
+     * worked the whole time. This header painted over it, which made a working
+     * button invisible and left the view feeling like a trap.
+     *
+     * Step 277 recorded nearly trapping the user in the shell by removing that
+     * handler. This is the same trap reached from the other side: the handler
+     * was left alone and the pixels were taken instead. Worth stating plainly,
+     * because "the button still works" is not a defence when nobody can see it. */
+    display_fill_rect(DISP_W - 22u, 0, 22u, HDR_H, COLOR_RED);
+    put(DISP_W - 14u, 8u, "x", FG, COLOR_RED);
 
     if (g_count == 0u && g_state != ST_SCANNING) {
         put(4u, LIST_Y + 6u, "no networks -- tap scan", DIM, BG);
@@ -234,8 +284,7 @@ static void start_radio(void)
     extern int      phyinit_run_at(uint32_t fn);
     extern int      wifi_joined(void);
 
-    g_state = ST_STARTING;
-    draw_status();
+    g_state = ST_STARTING;      /* held for the duration; gates scan_step() */
 
     /* blob_map() is safe from here even though this file lives in irom. It
      * disables the cache to rewrite the MMU, but it is itself IRAM-resident and
@@ -315,6 +364,37 @@ static void join(uint32_t i)
     g_dirty = 1;
 }
 
+/* Run a requested bring-up. Called from the NET TASK, not the touch task.
+ *
+ * [step 281] The first version called start_radio() straight out of
+ * wifiapp_touch(), which runs on the touch task -- so for the ninety seconds of
+ * bring-up the task that reads the glass was sitting inside wifi_bringup(). The
+ * status bar said "starting radio -- 90 s" while the exit button, the scan
+ * button and every other press went unread. Reported as "the x button isn't
+ * working", and it was not: nothing was listening.
+ *
+ * A status line that asks the user to wait, displayed by a system that has
+ * stopped accepting input, is worse than no status line -- it invites exactly
+ * the presses it cannot answer.
+ *
+ * The net task is the right place: it has nothing to service until the radio
+ * exists, its stack frame is shallow where the shell's is deep (the shell runs
+ * this same sequence with 236 bytes to spare, per UM-NATOS-052 7), and blocking
+ * it blocks nothing a user can see. The display task keeps painting and the
+ * touch task keeps listening, so the view stays alive and answerable throughout
+ * -- including the way out.
+ *
+ * Leaving the view mid-bring-up is therefore allowed, and the bring-up
+ * continues without it. That is deliberate: the radio is the system's, not this
+ * view's, and ninety seconds of work should not be thrown away by a back
+ * button. */
+void wifiapp_service(void)
+{
+    if (!g_want_start) { return; }
+    g_want_start = 0;
+    start_radio();
+}
+
 /* ---- the view ------------------------------------------------------------- */
 
 void wifiapp_open(void)
@@ -338,7 +418,24 @@ void wifiapp_open(void)
 
 void wifiapp_frame(void)
 {
-    if (g_scan_ch) { scan_step(); }
+    /* [step 281] Do NOT enter the blob from here while a bring-up is in flight.
+     *
+     * wifiapp_frame() runs on the DISPLAY task and scan_step() calls into the
+     * vendor blob; the bring-up runs on the NET task and does the same. Moving
+     * the bring-up off the touch task fixed a dead exit button and created this:
+     * two tasks able to be inside windowed vendor code at once, which is the
+     * hazard this project has paid for five times.
+     *
+     * blobcall.c says so in its own words -- "Today there is exactly one caller,
+     * so this should stay zero; if it does not, something has started entering
+     * the blob from a second context and the assumptions above are worth
+     * re-reading." I made the second caller, so the guard belongs here, at the
+     * caller I added, rather than as a change to the exclusion everything else
+     * depends on.
+     *
+     * The cost is that the sweep pauses for the duration of a bring-up. The
+     * bring-up ends by starting a fresh sweep anyway, so nothing is lost. */
+    if (g_scan_ch && !g_want_start && g_state != ST_STARTING) { scan_step(); }
     if (!g_dirty)  { return; }
     g_dirty = 0;
     draw_all();
@@ -354,8 +451,12 @@ void wifiapp_touch(uint32_t x, uint32_t y, int down)
 
     /* The one button: start when the radio is down, scan when it is up. */
     if (y >= STAT_Y && x >= DISP_W - 52u) {
-        if (!blob_ready()) {
-            start_radio();
+        if (g_state == ST_STARTING) {
+            /* Already going. A second press must not queue a second bring-up. */
+        } else if (!blob_ready()) {
+            g_want_start = 1;       /* the net task picks this up */
+            g_state      = ST_STARTING;
+            g_dirty      = 1;
         } else {
             g_count   = 0u;
             g_sel     = -1;

@@ -40,6 +40,11 @@ typedef struct {
 uint32_t wifi_scan_channel(uint32_t scan_fn, uint32_t num_fn, uint32_t recs_fn,
                            uint32_t ch, wifi_ap_t *out, uint32_t max);
 
+/* Runs a requested radio bring-up. Called from the NET task every pass, not
+ * from the touch task -- the bring-up blocks for ~90 s and the task that reads
+ * the glass must stay answerable for all of it. */
+void wifiapp_service(void);
+
 void wifiapp_open(void);                              /* entering the app */
 void wifiapp_frame(void);                             /* per-frame redraw */
 void wifiapp_touch(uint32_t x, uint32_t y, int down); /* routed by kmain  */
