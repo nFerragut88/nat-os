@@ -154,11 +154,42 @@ static void scan_step(void)
         return;
     }
 
-    uint32_t room = MAX_APS - g_count;
-    if (room) {
-        g_count += wifi_scan_channel(e->wifi_scan_start, e->wifi_scan_ap_num,
+    /* [step 280] Scan into a scratch buffer and MERGE, rather than appending
+     * straight into the list.
+     *
+     * Appending showed one network three times. The 2.4 GHz channels overlap by
+     * about 20 MHz, so a beacon transmitted on channel 6 is receivable while the
+     * radio is parked on 5 and on 7, and the blob reports it each time. Three
+     * rows, one access point, and nothing wrong with any of the three readings.
+     *
+     * Merged on SSID and not on BSSID, deliberately: the BSSID is in the record
+     * and is not extracted here, and a person picking a network to join wants
+     * the network. A mesh with three radios behind one name is one row, which is
+     * also the right answer.
+     *
+     * The strongest sighting wins, and carries its channel with it -- that is
+     * the one the radio would actually associate on. */
+    static wifi_ap_t tmp[6];
+    uint32_t got = wifi_scan_channel(e->wifi_scan_start, e->wifi_scan_ap_num,
                                      e->wifi_scan_ap_recs, g_scan_ch,
-                                     &g_aps[g_count], room);
+                                     tmp, 6u);
+    for (uint32_t k = 0u; k < got; k++) {
+        uint32_t i = 0u;
+        for (; i < g_count; i++) {
+            uint32_t j = 0u;
+            while (j < 32u && g_aps[i].ssid[j] && g_aps[i].ssid[j] == tmp[k].ssid[j]) {
+                j++;
+            }
+            if (g_aps[i].ssid[j] == tmp[k].ssid[j]) { break; }   /* both ended */
+        }
+        if (i < g_count) {
+            if (tmp[k].rssi > g_aps[i].rssi) {
+                g_aps[i].rssi = tmp[k].rssi;
+                g_aps[i].ch   = tmp[k].ch;
+            }
+        } else if (g_count < MAX_APS) {
+            g_aps[g_count++] = tmp[k];
+        }
     }
 
     if (++g_scan_ch > 13u || g_count >= MAX_APS) {

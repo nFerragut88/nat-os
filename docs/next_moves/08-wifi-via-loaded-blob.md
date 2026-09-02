@@ -16150,3 +16150,93 @@ wifi app   starts the radio, sweeps 13 channels, joins on a double tap
 status     five distinct states; none of them claims work that did not run
 open       measure it on a cold-booted board -- NOT YET CONFIRMED
 ```
+
+---
+
+## step 280 — the app does the whole job, and one network is one row
+
+`(this commit)`
+
+### 280a. Measured, on a cold-booted board
+
+The board was reset by the capture's own port open, booted to the desktop, and
+then given exactly two taps: the wifi icon, and `start`. Nothing was typed and
+the shell was never opened.
+
+```
+4way pmk=1 step=6 m1=1 m3=1 done=1 micbad=0 why=0
+wpa conn=1 disc=0 cbreason=none
+wpa mgmt calls=3 connect=1
+lwip rx 223 drop 0  tx 10 err 0
+```
+
+`step=6` is `auth_done`. Message one received, message three received, pairwise
+key set, group key set, `ptk_init_done`, `auth_done` — with `micbad=0` and
+`why=0`, so no MIC was rejected and no key unwrap failed.
+
+**nat-os brought up a vendor radio it reverse-engineered the interface to, and
+negotiated a WPA2-PSK link, from an icon tap.** Step 279's `NOT YET CONFIRMED`
+is now confirmed.
+
+### 280b. One row per network, not one per sighting
+
+Reported as the SSID appearing three times.
+
+`scan_step()` appended whatever each channel returned. The 2.4 GHz channels
+overlap by about 20 MHz, so a beacon transmitted on channel 6 is receivable
+while the radio is parked on 5 and on 7, and the blob reports it on each. Three
+rows, one access point, and **all three readings correct** — the defect was in
+treating a sighting as a network.
+
+Merged on SSID, strongest sighting winning and carrying its channel. On SSID and
+not BSSID deliberately: a mesh with three radios behind one name is one row,
+which is also what someone choosing a network to join wants.
+
+### 280c. An instrument that reset the run it was measuring
+
+The capture script opened the serial port, and on a dropped link it reopened it.
+**Opening the port resets the board.** So a link glitch during a 90-second
+bring-up reopened the port and rebooted the board halfway through — and the log
+showed a clean boot banner, which reads as a spontaneous reset rather than as
+one the instrument caused.
+
+Caught by the tick counter: `t=307963` before the drop, `t=4089` after.
+
+Deasserting DTR and RTS before open is **not** sufficient, and this was measured
+rather than assumed:
+
+```
+noreset_test.py:  open #1 last tick 2193
+                  open #2 last tick 37      -> RESET across reopen
+```
+
+So the port is opened **once** and never reopened; on a drop the capture writes
+`RUN IS VOID` and stops. A run that is void must read as void, not as a board
+that mysteriously rebooted.
+
+This also retracts something said several times in this session: *"the board is
+NOT reset, so tap now"*. Every capture opened this session reset the board. It
+cost nothing when nothing was in flight and it cost a whole run today.
+
+UM-NATOS-051 §10.1 and UM-NATOS-053 §6.1 are both about instruments that share
+a dependency with what they measure. This is the third, and the first where the
+instrument did not merely fail to see the fault but **caused** it.
+
+### 280d. Still open
+
+- **No DHCP lease.** `dhcp offer/ack 0/0` with `tx` frozen at 10 while `rx`
+  climbed 124 -> 223. The link is up, authenticated and receiving; addressing
+  has not completed. Below the app, in the lwIP layer that worked from the shell
+  path in step 273 — so something differs between the two routes into it, and
+  that difference is the next thing to find.
+- **The USB link drops.** Three times today, once with no radio activity at all,
+  each as `GetOverlappedResult: Access is denied` followed by re-enumeration.
+  Host-side: cable, port or supply. Not a board fault and not a firmware one.
+
+### State
+
+```
+wifi app   icon tap -> radio up -> scan -> associate -> WPA2 handshake complete
+list       one row per network
+open       DHCP does not complete by this route; the USB link is unreliable
+```
