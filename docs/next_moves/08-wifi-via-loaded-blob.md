@@ -16587,3 +16587,54 @@ wifi app   scan, pick, type a passphrase, join, and it is remembered
 owed       migrate term.c and notes.c onto keyboard.c (285a)
 open       whether a sweep works while associated; DHCP (283); 281c; the USB link
 ```
+
+---
+
+## step 286 — the empty list explains itself
+
+`(this commit)`
+
+### 286a. Three reports, one cause, and it was the interface
+
+"Not seeing any networks", three times, across three different builds. Each time
+I looked for a scan bug. Each time I asked for the status bar text to tell the
+cases apart.
+
+**The radio was off.** Every flash reboots the board, a fresh boot starts with
+the radio down, and the view was opened before `start` was tapped. The app was
+correct on all three occasions.
+
+The list said `no networks -- tap scan` in every empty case — including the one
+where there was no radio to scan with — and the reason lived in the status bar,
+a separate strip. **Reading one without the other gave the wrong answer, and I
+asked the user to do the cross-referencing twice rather than fixing the thing
+that required it.** An interface that needs two places read to understand one
+fact is the defect; the missing networks never existed.
+
+The empty list now carries its own reason: `radio off -- tap start`,
+`scanning...`, `radio did not start`, or `none found -- tap scan`. The last of
+those is the only one that means a scan problem, and it has never yet been seen.
+
+### 286b. A real one, found while looking
+
+`scan_step()` ended the sweep with `g_state = ST_IDLE`, unconditionally. The
+bring-up joins, sets `ST_JOINED`, and then starts a sweep — so **the sweep
+erased a successful join from the display a few seconds after it appeared.**
+The scan finishing says nothing about whether the board is associated, and it
+was overwriting the one field that does.
+
+Now only `ST_SCANNING` returns to `ST_IDLE`.
+
+### 286c. A target you can hit
+
+The scan/start button was 48x16 at the very bottom of the screen — where a
+resistive panel's calibration is worst and a fingertip is widest. 56x28 now. The
+hit test always accepted the whole strip; the button simply did not look like
+the area it occupied, which is its own kind of lie.
+
+### State
+
+```
+open   none found -- tap scan  has never been observed; there may be no scan bug
+       DHCP (283), the white screen (281c), the USB link, term/notes on keyboard.c
+```

@@ -203,8 +203,12 @@ static void draw_status(void)
      *
      * It sits in the status bar rather than the list so that a list which
      * fills the view cannot push it off. */
-    display_fill_rect(DISP_W - 52u, STAT_Y + 4u, 48u, 16u, COLOR_BLUE);
-    put(DISP_W - 46u, STAT_Y + 9u, blob_ready() ? "scan" : "start", FG,
+    /* [step 286] 28 px tall, was 16. A 16-pixel target at the very bottom of a
+     * resistive panel is where the calibration is worst and a fingertip is
+     * widest; the hit test below has always accepted the whole strip, so the
+     * button now looks like the area it actually occupies. */
+    display_fill_rect(DISP_W - 60u, STAT_Y + 3u, 56u, 28u, COLOR_BLUE);
+    put(DISP_W - 50u, STAT_Y + 14u, blob_ready() ? "scan" : "start", FG,
         COLOR_BLUE);
 }
 
@@ -228,8 +232,22 @@ static void draw_all(void)
     display_fill_rect(DISP_W - 22u, 0, 22u, HDR_H, COLOR_RED);
     put(DISP_W - 14u, 8u, "x", FG, COLOR_RED);
 
-    if (g_count == 0u && g_state != ST_SCANNING) {
-        put(4u, LIST_Y + 6u, "no networks -- tap scan", DIM, BG);
+    /* [step 286] The empty list says WHY it is empty.
+     *
+     * It used to read "no networks -- tap scan" in every empty case, including
+     * the one where the radio had never been switched on -- so the reason lived
+     * in the status bar and the symptom lived here, and reading one without the
+     * other gave the wrong answer. Reported three times as "not seeing any
+     * networks", each time from a different cause, and I asked twice for the
+     * status bar instead of putting the two together. An interface that needs
+     * you to cross-reference two places to understand one fact is the bug. */
+    if (g_count == 0u) {
+        const char *why;
+        if (!blob_ready())              { why = "radio off -- tap start"; }
+        else if (g_state == ST_SCANNING){ why = "scanning..."; }
+        else if (g_state == ST_NOSTART) { why = "radio did not start"; }
+        else                            { why = "none found -- tap scan"; }
+        put(4u, LIST_Y + 6u, why, DIM, BG);
     }
     for (uint32_t i = 0u; i < g_count && i < MAX_ROWS; i++) {
         draw_row(i);
@@ -321,7 +339,12 @@ static void scan_step(void)
 
     if (++g_scan_ch > 13u || g_count >= MAX_APS) {
         g_scan_ch = 0u;
-        g_state   = ST_IDLE;
+        /* [step 286] Not unconditionally ST_IDLE. The bring-up joins and sets
+         * ST_JOINED, and then starts this sweep -- so ending it with ST_IDLE
+         * erased a successful join from the display a few seconds after it
+         * appeared. The scan finishing says nothing about whether we are
+         * associated, and it was overwriting the one thing that does. */
+        if (g_state == ST_SCANNING) { g_state = ST_IDLE; }
     }
     g_dirty = 1;
 }
@@ -585,7 +608,7 @@ void wifiapp_touch(uint32_t x, uint32_t y, int down)
     audio_click();
 
     /* The one button: start when the radio is down, scan when it is up. */
-    if (y >= STAT_Y && x >= DISP_W - 52u) {
+    if (y >= STAT_Y && x >= DISP_W - 60u) {
         if (g_state == ST_STARTING || g_state == ST_DERIVING) {
             /* Already going. A second press must not queue a second request. */
         } else if (!blob_ready()) {
