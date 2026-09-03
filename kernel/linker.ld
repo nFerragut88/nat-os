@@ -198,7 +198,6 @@ SECTIONS
      * harmless -- the same property that made shell.c a safe first tenant. */
     *wifiapp.c.o(.literal .literal.* .text .text.*)
       *keyboard.c.o(.literal .literal.* .text .text.*)
-      *wificred.c.o(.literal .literal.* .text .text.*)
 
     /* [step 278] notes.c and term.c join it, for the same reason and with the
      * same evidence: both are views entered from the launcher, both run only

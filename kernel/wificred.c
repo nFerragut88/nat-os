@@ -5,6 +5,24 @@
 #include "flash.h"
 #include "uart.h"
 
+/* [step 287] THIS FILE MUST STAY IN IRAM.
+ *
+ * It drives flash_read/erase/write, and flash.c says what that costs:
+ *
+ *     "SPI1 shares the flash bus with the cache's SPI0, and these registers
+ *      are how the cache issues its own reads. Overwriting them and walking
+ *      away leaves the cache unable to read flash AT ALL -- which presented as
+ *      every string literal in the kernel returning 0xFF immediately after the
+ *      first flash operation."
+ *
+ * It was placed in irom with wifiapp.c and keyboard.c to save iram, which put
+ * flash-resident code in charge of the flash bus. The first tap that reached
+ * wificred_get() whited the screen. store.c -- the only other module that
+ * touches flash -- has always been in iram, and this broke that precedent
+ * without noticing there was one.
+ *
+ * keyboard.c stays in irom: it draws and it counts ticks, and it never goes
+ * near the bus. */
 #define CRED_ADDR    0x202000u          /* clear of the record (0x200000) and
                                          * the message sector (0x201000), and
                                          * 120 KB below the blob (0x220000) */

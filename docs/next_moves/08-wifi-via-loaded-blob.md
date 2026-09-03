@@ -16638,3 +16638,65 @@ the area it occupied, which is its own kind of lie.
 open   none found -- tap scan  has never been observed; there may be no scan bug
        DHCP (283), the white screen (281c), the USB link, term/notes on keyboard.c
 ```
+
+---
+
+## step 287 — flash-resident code driving the flash bus
+
+`(this commit)`
+
+Reported as: tapped a network, the screen turned white.
+
+### 287a. What it was
+
+Tapping a network calls `wificred_get()` to look for a saved passphrase, which
+calls `flash_read()`. That is the **first flash operation this firmware performs
+at runtime**, and it happens at exactly the moment of the tap.
+
+`wificred.c` was in **irom**. `flash.c` says what that costs:
+
+> *"SPI1 shares the flash bus with the cache's SPI0, and these registers are how
+> the cache issues its own reads. Overwriting them and walking away leaves the
+> cache unable to read flash AT ALL — which presented as every string literal in
+> the kernel returning 0xFF immediately after the first flash operation."*
+
+Flash-resident code was put in charge of the flash bus. **`store.c`, the only
+other module in this kernel that touches flash, has always been in iram** — and
+step 285 broke that precedent while adding `wificred.c` to the irom list next to
+`wifiapp.c` and `keyboard.c` to save space, without asking why `store.c` was not
+already there.
+
+Fixed by placement, verified by address rather than by reading the linker script:
+
+```
+flash_read     0x40084ca4   iram
+wificred_get   0x4008d37c   iram   (was 0x400d....)
+keyboard_touch 0x400d6cd0   irom   -- draws and counts ticks; never the bus
+```
+
+### 287b. The hazard I withdrew, and this one
+
+Step 279c withdrew a step-198 hazard about `blob_map()` from flash, correctly:
+`blob_map()` is IRAM-resident and restores the cache before returning, and
+`shell.c` has called it from irom since step 190.
+
+**The withdrawal was right and the general lesson was not drawn.** The rule is
+not "flash-resident callers are fine"; it is "the code that *touches the bus*
+must not live on it". `blob_map()` satisfies that and `wificred.c` did not. A
+correct retraction of a wrong specific claim left the actual principle
+unstated — and four steps later I placed a new file on the wrong side of it.
+
+### 287c. And 281c is still not measured
+
+This is the second white screen with a confident mechanism attached. The first
+(281c, two tasks in the blob) was never measured either, and its symptom stopped
+after a guard went in. **These may not have been the same fault**, and the
+earlier explanation should not gain credibility from this one being found: they
+share a symptom because a white screen is what this board does when the display
+task cannot fetch its own code or its own strings.
+
+### State
+
+```
+open   DHCP (283); 281c unmeasured; the USB link; term/notes onto keyboard.c
+```
