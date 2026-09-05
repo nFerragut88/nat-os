@@ -110,7 +110,21 @@ void wifi_start_enable(int on);
  * been all along: remove nine bytes from window.S, the wild write lands
  * somewhere else, g_bt_enabled stays 0, and the driver correctly reports
  * ESP_ERR_NO_MEM. The build that failed was the honest one. */
-void wifi_start_enable(int on) { g_want_start = on; blob_task_enable(on); }
+int g_bringup_quick;
+void wifi_start_enable(int on)
+{
+    g_want_start = on;
+    blob_task_enable(on);
+    /* [step 304] The full sweep is the DEFAULT. Only a caller that asks for the
+     * quick path after this call gets it, so the shell -- which has no other
+     * view of the air -- cannot inherit the setting from a previous run of the
+     * wifi app. */
+    g_bringup_quick = 0;
+}
+
+/* [step 304] Set by the wifi view after wifi_start_enable(). See the sweep. */
+void wifi_bringup_quick(int on);
+void wifi_bringup_quick(int on) { g_bringup_quick = on; }
 
 uint32_t wifi_bringup(const struct blob_entry *e, int want_null);
 uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
@@ -315,8 +329,19 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
      * whose connect failed with NO_AP_FOUND produced no scan evidence at all
      * and could not distinguish "the network is gone" from "the driver did not
      * look properly". Evidence first, then the action it informs. */
-    wifi_scan_sweep(e->wifi_scan_start, e->wifi_scan_ap_num,
-                    e->wifi_scan_ap_recs);
+    /* [step 304] Skippable. This is thirteen channels at SWEEP_DWELL -- about
+     * five seconds -- and step 227 added it so a failed connect could not be
+     * confused with a missing network: "evidence first, then the action it
+     * informs".
+     *
+     * That reasoning holds for the shell, which has no other way to see what is
+     * on the air. It does not hold for the wifi view, which sweeps on entry and
+     * shows the result on screen, so the same five seconds buys evidence the
+     * user is about to gather themselves. The shell path is unchanged. */
+    if (!g_bringup_quick) {
+        wifi_scan_sweep(e->wifi_scan_start, e->wifi_scan_ap_num,
+                        e->wifi_scan_ap_recs);
+    }
 
     wifi_try_connect(e->wifi_set_config, e->wifi_connect);
 

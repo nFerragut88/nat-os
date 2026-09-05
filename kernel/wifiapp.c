@@ -250,7 +250,7 @@ static void draw_status(void)
     uint16_t    col;
     switch (g_state) {
     case ST_NORADIO:  msg = "radio off -- tap start";   col = DIM;  break;
-    case ST_STARTING: msg = "starting radio -- 90 s";   col = BUSY; break;
+    case ST_STARTING: msg = "starting radio -- 30 s";   col = BUSY; break;
     case ST_NOSTART:  msg = "radio did not start";      col = BAD;  break;
     case ST_SCANNING: msg = scanmsg;                    col = BUSY; break;
     case ST_DERIVING: msg = "deriving key -- 15 s";     col = BUSY; break;
@@ -486,6 +486,7 @@ static void start_radio(void)
     extern int      wifi_joined(void);
 
     g_state = ST_STARTING;      /* held for the duration; gates scan_step() */
+    g_dirty++;
 
     /* blob_map() is safe from here even though this file lives in irom. It
      * disables the cache to rewrite the MMU, but it is itself IRAM-resident and
@@ -515,6 +516,12 @@ static void start_radio(void)
     wifi_rsn_akm_set(2u);
     wifi_appie_shape(4u, 0u);
     wifi_hs_passive(0);
+    {   /* [step 304] This view sweeps on entry and shows the result, so the
+         * driver's own five-second sweep would gather evidence the user is
+         * about to gather again. */
+        extern void wifi_bringup_quick(int on);
+        wifi_bringup_quick(1);
+    }
 
     (void)wifi_bringup(e, 0);
 

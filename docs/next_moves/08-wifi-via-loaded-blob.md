@@ -17545,3 +17545,64 @@ boundary and none of them revisited how the result got back.
 works  the view repaints when the net task changes something, first time
 open   the web fetch; touch 'cal'; steps 49-141; the USB link; term/notes
 ```
+
+---
+
+## step 304 — sixty of the ninety seconds were waiting for nothing
+
+`(this commit)`
+
+Asked for: cut the ninety-second wait after tapping `start`.
+
+### 304a. The poll that outlived its reason
+
+`wifi_rx_start()` ended with `net_poll_for(6000u)` — **sixty seconds**, two
+thirds of the whole wait. Step 271's own comment beside it had already said what
+that call had become:
+
+> *"60 s, was 600. The long window existed because the poll WAS the network:
+> when it ended the stack went silent. The net task now services lwIP for as
+> long as the board is up, so this is only the bring-up window."*
+
+The window was shortened when the task arrived and never questioned again. What
+it still has to do is **reach the handover** at the end of `net_poll_for`, which
+gives the ring to the task — one pass, not six thousand ticks. DHCP completes
+afterwards, serviced by the task, and the view watches for the address rather
+than the bring-up blocking until it arrives.
+
+150 ticks now. **Fifty-eight and a half seconds, removed by reading a comment
+that was already correct.**
+
+### 304b. And a sweep the view is about to repeat
+
+`wifi_bringup()` runs its own thirteen-channel sweep, about five seconds. Step
+227 added it so a failed connect could not be confused with a missing network —
+*"evidence first, then the action it informs"* — and that reasoning still holds
+for the shell, which has no other view of the air.
+
+It does not hold for the wifi view, which sweeps on entry (302) and shows the
+result. Those five seconds bought evidence the user was about to gather
+themselves. Skippable now, and **the full sweep is the default**:
+`wifi_start_enable()` clears the flag, so only a caller that asks afterwards
+gets the quick path and the shell cannot inherit it from a previous run of the
+app.
+
+### 304c. What is left, and what it is
+
+Roughly 25 s, and the largest single piece is **PBKDF2 at 4096 iterations —
+about fifteen seconds** — which is real cryptographic work and cannot be
+removed. It could be *avoided*: the PMK is a pure function of the SSID and the
+passphrase, so caching it beside the credential would make every join after the
+first one near-instant. That means bumping `CRED_VERSION`, which discards saved
+credentials, so it is recorded as the next move rather than taken today.
+
+The screen now says `starting radio -- 30 s`, because a status line with a
+number in it has to have the right number.
+
+### State
+
+```
+works  start -> about 25 s -> associated, versus about 90 s before
+open   cache the PMK beside the credential (304c); the web fetch; touch 'cal'
+       steps 49-141; the USB link; term/notes onto keyboard.c
+```

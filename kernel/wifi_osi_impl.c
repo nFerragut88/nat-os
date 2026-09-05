@@ -2536,7 +2536,21 @@ void wifi_rx_start(uint32_t reg_fn, uint32_t free_fn, uint32_t promisc_fn,
          * now services lwIP for as long as the board is up, so this is only
          * the bring-up window -- long enough to reach a DHCP lease and report
          * it, and no longer a race against the operator. */
-        net_poll_for(6000u);
+        /* [step 304] 150 ticks -- 1.5 s -- was 6000, sixty seconds.
+         *
+         * Step 271 gave the stack a task of its own, and step 271's own comment
+         * said what that made this: "the net task now services lwIP for as long
+         * as the board is up, so this is only the bring-up window". It was
+         * still sixty seconds of blocking to do what the net task does anyway,
+         * and it was two thirds of the ninety-second wait the user sits through
+         * after tapping start.
+         *
+         * What the window still has to do is reach the handover at the end of
+         * net_poll_for, which hands the ring to the task. That takes one pass,
+         * not six thousand ticks. DHCP finishes afterwards, serviced by the
+         * task, and the view watches for the address rather than the bring-up
+         * waiting for it (283). */
+        net_poll_for(150u);
         wifi_rx_report();
         net_report();
     }
