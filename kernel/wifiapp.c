@@ -10,6 +10,7 @@
 #include "keyboard.h"
 #include "wificred.h"
 #include "job.h"
+#include "task.h"
 #include "uart.h"
 
 /* The bound DHCP address, or 0. Declared here rather than in each block that
@@ -699,6 +700,33 @@ static void join(uint32_t i)
     g_state = ST_DERIVING;      /* the display task is already painting this */
 
     wifi_join_ssid_pass(g_aps[i].ssid, g_pass[0] ? g_pass : 0);
+
+    /* [step 317] WAIT. The connect is asynchronous.
+     *
+     * wifi_join_ssid_pass() returns as soon as blob_call(wifi_connect) does --
+     * the association and the four-way handshake have not happened yet.
+     * wifi_joined() reads g_wpa_conn_cb, the supplicant's connected callback,
+     * which fires when they have. Testing it immediately asks whether something
+     * has finished at the moment it was started.
+     *
+     * That race has been here since step 278 and was hidden by the fifteen
+     * seconds of PBKDF2 sitting inside the call. Step 315 cached the PMK, the
+     * fifteen seconds went, and the race started losing every time: "join
+     * failed", and then a scan immediately afterwards finds the network --
+     * because the association had in fact succeeded a moment after the view
+     * declared it hadn't.
+     *
+     * An accidental delay is not a wait. This is the wait.
+     *
+     * Ten seconds: a four-way handshake on an access point that is present and
+     * answering takes well under one. Sleeping is correct here rather than
+     * spinning -- the association is driven by the blob's own task and its
+     * interrupts, so this task has nothing to contribute but patience. */
+    g_state = ST_JOINING;
+    g_dirty++;
+    for (uint32_t w = 0u; w < 1000u && !wifi_joined(); w++) {
+        task_sleep(1u);
+    }
 
     if (wifi_joined()) {
         uint32_t k = 0u;

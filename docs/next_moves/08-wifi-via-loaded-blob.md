@@ -18275,3 +18275,59 @@ new    job.h/job.c; the wifi view converted; a build check that is true
 open   input and repaint contracts (316c); the data-path restructure (313b)
        the web fetch; remove the WA trace; touch 'cal'; steps 49-141
 ```
+
+---
+
+## step 317 — an accidental delay is not a wait
+
+`(this commit)`
+
+Reported: `join failed`, and then a scan immediately afterwards finds the
+network.
+
+Those two facts together are the diagnosis. If the network is there a second
+later, the join did not fail — **the question was asked too early.**
+
+`join()` called `wifi_join_ssid_pass()` and tested `wifi_joined()` on the next
+line. But `wifi_join_ssid_pass()` returns as soon as
+`blob_call(wifi_connect)` does: the association and the four-way handshake have
+not happened yet. `wifi_joined()` reads `g_wpa_conn_cb`, the supplicant's
+connected callback, which fires when they have. **The code asked whether
+something had finished at the moment it started it.**
+
+### 317a. What was holding it together
+
+The race has been there since step 278. It passed because **fifteen seconds of
+PBKDF2 sat inside the call** — long enough that by the time the derivation
+finished and the connect went out and the function returned, the handshake had
+usually completed too.
+
+Step 315 cached the PMK. The fifteen seconds went, and with them the delay that
+had been standing in for a wait. The optimisation did not cause the bug; it
+removed the thing that was concealing it.
+
+**An accidental delay is not a wait**, and code that depends on one is correct
+only by coincidence. The fastest way to find out is to make it faster.
+
+Now: `ST_JOINING`, then a bounded sleep until the callback arrives, ten seconds
+at the outside — a handshake against an access point that is present and
+answering takes well under one. Sleeping rather than spinning, because the
+association is driven by the blob's own task and interrupts and this one has
+nothing to contribute but patience.
+
+### 317b. Two optimisations, two exposed races
+
+This is the second time today that removing time exposed something. Step 304 cut
+a sixty-second poll that had also been standing in for the DHCP bind, and 283
+had already had to move the address check out of the bring-up and into the view
+for the same reason.
+
+The pattern is worth naming: **this system has been carrying waits disguised as
+work.** Each one is invisible until the work goes away.
+
+### State
+
+```
+open   confirm the join; the data-path restructure (313b); the web fetch
+       input and repaint contracts (316c); remove the WA trace; touch 'cal'
+```
