@@ -101,6 +101,32 @@ static void draw_bar(void)
     }
     put(2u, BAR_Y + 3u, msg, col, BG);
 
+    /* [step 299] The board's OWN address, shown whenever there is no fetch in
+     * flight. "no network" is this view reporting that netif_wifi_ip() returned
+     * zero, and the only useful follow-up question is what it actually holds --
+     * which the user could not see without opening a different app. A view that
+     * reports a network failure should say what it believes about the network. */
+    if (webfetch_state() == WEB_IDLE || webfetch_state() == WEB_FAILED) {
+        extern uint32_t netif_wifi_ip(void);
+        uint32_t ip = netif_wifi_ip();
+        static char me[20];
+        uint32_t at = 0u;
+        if (ip) {
+            for (uint32_t b = 0u; b < 4u; b++) {
+                uint32_t v = (ip >> (8u * b)) & 0xFFu;
+                if (v >= 100u) { me[at++] = (char)('0' + v / 100u); }
+                if (v >= 10u)  { me[at++] = (char)('0' + (v / 10u) % 10u); }
+                me[at++] = (char)('0' + v % 10u);
+                if (b < 3u) { me[at++] = '.'; }
+            }
+        } else {
+            const char *q = "no address -- run wifi";
+            while (*q) { me[at++] = *q++; }
+        }
+        me[at] = 0;
+        put(2u, BAR_Y + 3u, me, ip ? DIM : BAD, BG);
+    }
+
     /* The HTTP code, right-aligned, because it is the one number that says what
      * happened and it should not be hunted for in wrapped text. */
     uint32_t code = webfetch_code();

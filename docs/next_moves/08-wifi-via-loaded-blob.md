@@ -17341,3 +17341,34 @@ new    web view: URL bar, keyboard entry, DNS, HTTP GET, response on screen
 open   whether google.com resolves and answers -- NOT YET RUN
        steps 49-141; the USB link; term/notes onto keyboard.c; touch 'cal'
 ```
+
+---
+
+## step 299 — a view that reports a network failure should say what it believes
+
+`(this commit)`
+
+Reported as `no network` from the web view — while the board was answering pings
+at 192.168.1.140 from another machine.
+
+The message is `webfetch_start()` reporting that `netif_wifi_ip()` returned
+zero, which happens when the radio has not been brought up. Every flash reboots
+the board and a fresh boot starts with the radio off, so a `go` tapped before
+running the wifi view produces exactly this — and the FAILED state then persists
+until the next attempt, long after the radio has come up.
+
+**The only useful follow-up question is what the board thinks its address is,
+and the view could not answer it.** The bar now shows the board's own address
+whenever no fetch is in flight: `192.168.1.140` in grey, or `no address -- run
+wifi` in red.
+
+That is the fifth instance of the pattern in UM-NATOS-054 §8 — the first one
+found in a view less than an hour old, which suggests the lesson had not
+actually been learned when the report about it was written.
+
+### State
+
+```
+open   the web fetch has still not run; DNS and the TCP client are unexercised
+       steps 49-141; the USB link; term/notes onto keyboard.c; touch 'cal'
+```
