@@ -19041,3 +19041,86 @@ correct in both cases; the prose was the defect.
 open   the step-319 panic, unexplained
        the web fetch; the data path (313b); touch 'cal'; iram headroom
 ```
+
+---
+
+## step 330-334 — the browser fetches, and a 512-byte ceiling nobody had reached
+
+`(this commit)`
+
+The web view had never fetched anything. DNS and the TCP client had never
+executed a single time. Both worked on their first real run; what stopped the
+page was one constant.
+
+### 330. Say who is being asked
+
+`resolving` says the state, not whether the question is going anywhere. A
+gateway of `0.0.0.0` -- netif up, no router option -- looks exactly like a slow
+lookup. The bar shows `dns 192.168.1.1 try 2` while resolving, in red if the
+server is zero.
+
+### 331-332. The log, on the glass, again
+
+"It doesn't do anything" cannot be acted on. The same eleven-line log the wifi
+view got at 324, and the fetch narrates itself: `go tapped`, `starting fetch`,
+`dns query to gw`, `dns reply, bytes N`, `resolved -- connecting`,
+`request sent`, `recv cb, bytes N`, `peer closed, have N`, `tcp error N`.
+
+One report each time, and each named the exact call. It reached `request sent`,
+then `tcp error 4294967283` -- **-13 as a signed `err_t`, `ERR_ABRT`**, which is
+this code's own `tcp_abort()` after the reply timeout. So: connected, request
+sent, nothing back for twelve seconds.
+
+The request itself was proven innocent without touching the board -- the exact
+75 bytes, sent from a desktop, get a 301 from Google immediately.
+
+### 333. The receive ring truncated every real frame
+
+```c
+#define NET_MAX   512u
+if (len > NET_MAX) { g_net_truncated++; }
+uint32_t n = len < NET_MAX ? len : NET_MAX;     /* TRUNCATED */
+```
+
+A truncated TCP segment fails its checksum and lwIP discards it, so the effect
+is not a short read — it is **total silence on exactly the traffic that
+matters**.
+
+It survived two hundred steps because **everything this ring had ever carried
+was small**: a DHCP offer, an ARP reply, an ICMP echo, a DNS answer, and the
+HTTP *requests* arriving at nat-os's own server. The first thing to come the
+other way — a reply from a web server — is the first packet in this project's
+history to exceed 512 bytes.
+
+`g_net_truncated` was counting it the whole time. Its own comment says *"a
+silently shortened frame is how the DHCP bug hid"*. The instrument existed and
+nobody read it.
+
+### 334. And the fix broke the radio
+
+Six slots at 1600 bytes is 9.6 KB of static DRAM, and static DRAM comes out of
+the heap — which is where the WiFi driver gets its buffers. Reported immediately
+as the wifi view finding no networks.
+
+```
+before  heap : 38648 B usable
+after   heap : 27320 B usable      <- 11 KB gone
+now     heap : 32120 B usable      <- three slots, not six
+```
+
+Three full-size slots cost 1.8 KB more than six small ones, against eleven. A
+burst deeper than three drops and `g_net_dropped` counts it — a visible cost
+rather than a silent one. **Holding one whole frame matters more than holding
+six halves of one.**
+
+The boot banner prints the heap on every boot. It went unread until the radio
+stopped working, which is the third time in a day that a number was already on
+screen before anyone went looking for it.
+
+### State
+
+```
+works  wifi finds networks and joins; the web view fetches over the internet
+open   the step-319 panic, unexplained; iram and DRAM are both tight
+       remove the WA/SWEEP scaffolding; touch 'cal'
+```

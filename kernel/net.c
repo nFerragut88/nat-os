@@ -51,8 +51,42 @@ extern void     netif_wifi_start(uint32_t tx_fn, const uint8_t *mac);
  *
  * 512 covers a DHCP message with options; slots drop from 8 to 6 to keep the
  * cost near 3 KB of .bss. */
-#define NET_SLOTS 6u
-#define NET_MAX   512u
+/* [step 334] 3, was 6.
+ *
+ * Step 333 widened each slot from 512 to 1600 so a full-size frame survives,
+ * and six of those is 9.6 KB of static DRAM. That comes straight out of the
+ * heap -- which is whatever is left between _bss_end and the stack -- and the
+ * heap is where the WiFi driver gets its buffers.
+ *
+ * Measured, not guessed: the boot banner went from "heap: 38648 B usable" to
+ * "27320". Eleven kilobytes, and the symptom was the wifi view finding no
+ * networks at all, because the driver could not allocate.
+ *
+ * Three full-size slots cost 4.8 KB against the old six small ones at 3 KB --
+ * an extra 1.8 KB rather than 11. A burst deeper than three frames now drops,
+ * and g_net_dropped counts it, which is a visible cost rather than a silent
+ * one. Holding a whole frame matters more than holding six halves of one. */
+#define NET_SLOTS 3u
+/* [step 333] 1600, was 512.
+ *
+ * 512 bytes truncates any full-size TCP segment. A truncated segment fails its
+ * checksum and lwIP discards it, so the effect is not a short read -- it is
+ * total silence on exactly the traffic that matters.
+ *
+ * It went unnoticed because everything this ring had carried until tonight is
+ * small: a DHCP offer, an ARP reply, an ICMP echo, a DNS answer, and the HTTP
+ * REQUESTS arriving at nat-os's own server, which are a couple of hundred bytes.
+ * The first thing to come the other way -- a reply from a web server -- is the
+ * first thing that has ever exceeded it. The web view connected to Google, sent
+ * a valid request, and waited twelve seconds for a response that was arriving
+ * and being cut in half.
+ *
+ * 1600 covers the 1514-byte Ethernet maximum with room for the 802.11 headroom
+ * the driver hands over. Six slots is 9,600 bytes of DRAM against 3,072 -- an
+ * extra 6.4 KB on a board with ~38 KB of heap, which is the cheapest fix
+ * available and the only correct one: a receive path that cannot hold a
+ * standard frame is not a receive path. */
+#define NET_MAX   1600u
 
 static volatile uint8_t  g_q[NET_SLOTS][NET_MAX];
 static volatile uint16_t g_qlen[NET_SLOTS];

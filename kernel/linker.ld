@@ -204,6 +204,11 @@ SECTIONS
        * BUS must not live on it. wificred.c drives flash_read/erase/write;
        * webfetch.c only calls lwIP. */
       *webfetch.c.o(.literal .literal.* .text .text.*)
+      /* [step 333] Reporting only -- called from the net and init paths, never
+       * from an ISR, and it does not go near the flash bus (the rule step 316
+       * narrowed to "the flash DRIVER must not live on the bus"). Moved to make
+       * room for a receive ring that can hold a standard frame. */
+      *wpareport.c.o(.literal .literal.* .text .text.*)
 
     /* [step 278] notes.c and term.c join it, for the same reason and with the
      * same evidence: both are views entered from the launcher, both run only

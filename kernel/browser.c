@@ -59,6 +59,35 @@ static int      g_last_state = -1;
 static uint32_t g_last_len;     /* [step 301] redraw on CHANGE, not on state */
 static int      g_full = 1;     /* the next paint must clear the whole view */
 
+/* [step 331] The same on-screen log the wifi view got at step 324, for the same
+ * reason: "it doesn't do anything" cannot be acted on, and every guess made
+ * without one today has been wrong. The fetch has four stages and a dozen ways
+ * to stop; the bar shows a state, which is not the same as showing what
+ * happened. */
+#define LOG_LINES 9u
+#define LOG_COLS  38u
+static char     g_log[LOG_LINES][LOG_COLS + 1u];
+static volatile uint32_t g_log_n;
+
+void browser_note(const char *a, uint32_t v, int has_v);
+void browser_note(const char *a, uint32_t v, int has_v)
+{
+    char *d = g_log[g_log_n % LOG_LINES];
+    uint32_t k = 0u;
+    while (*a && k < LOG_COLS) { d[k++] = *a++; }
+    if (has_v) {
+        if (k < LOG_COLS) { d[k++] = ' '; }
+        char t[11]; uint32_t n = 0u;
+        do { t[n++] = (char)('0' + v % 10u); v /= 10u; } while (v && n < 10u);
+        while (n && k < LOG_COLS) { d[k++] = t[--n]; }
+    }
+    d[k] = 0;
+    g_log_n++;
+    g_dirty++;
+}
+#define BLOG(a)     browser_note((a), 0u, 0)
+#define BLOGV(a,v)  browser_note((a), (uint32_t)(v), 1)
+
 static void put(uint32_t x, uint32_t y, const char *s, uint16_t fg, uint16_t bg)
 {
     display_text(x, y, s, fg, bg, 1u);
@@ -93,7 +122,14 @@ static void draw_text(void)
     }
 
     if (n == 0u) {
-        put(2u, TXT_Y + 2u, "nothing fetched yet -- tap go", DIM, BG);
+        uint32_t total = g_log_n;
+        uint32_t show  = total < LOG_LINES ? total : LOG_LINES;
+        for (uint32_t r = 0u; r < show; r++) {
+            uint32_t idx = (total - show + r) % LOG_LINES;
+            put(2u, TXT_Y + 2u + r * LINE_H, g_log[idx],
+                r + 1u == show ? FG : DIM, BG);
+        }
+        if (!total) { put(2u, TXT_Y + 2u, "tap go", DIM, BG); }
     }
 }
 
@@ -112,6 +148,31 @@ static void draw_bar(void)
     default:             msg = "ready";  break;
     }
     put(2u, BAR_Y + 3u, msg, col, BG);
+
+    /* [step 330] While resolving, say WHO is being asked and how many times.
+     * A DNS server of 0.0.0.0 is a query addressed to nobody, and it looks
+     * exactly like a slow one. */
+    if (webfetch_state() == WEB_RESOLVING) {
+        extern uint32_t webfetch_dns_server(void);
+        extern uint32_t webfetch_tries(void);
+        uint32_t srv = webfetch_dns_server();
+        static char dm[34];
+        uint32_t at = 0u;
+        const char *q = "dns ";
+        while (*q) { dm[at++] = *q++; }
+        for (uint32_t b = 0u; b < 4u; b++) {
+            uint32_t v = (srv >> (8u * b)) & 0xFFu;
+            if (v >= 100u) { dm[at++] = (char)('0' + v / 100u); }
+            if (v >= 10u)  { dm[at++] = (char)('0' + (v / 10u) % 10u); }
+            dm[at++] = (char)('0' + v % 10u);
+            if (b < 3u) { dm[at++] = '.'; }
+        }
+        q = " try ";
+        while (*q) { dm[at++] = *q++; }
+        dm[at++] = (char)('0' + (webfetch_tries() % 10u));
+        dm[at] = 0;
+        put(2u, BAR_Y + 3u, dm, srv ? BUSY : BAD, BG);
+    }
 
     /* [step 299] The board's OWN address, shown whenever there is no fetch in
      * flight. "no network" is this view reporting that netif_wifi_ip() returned
@@ -236,7 +297,8 @@ void browser_service(void)
     if (g_want_fetch) {
         g_want_fetch = 0;
         g_scroll     = 0u;
-        (void)webfetch_start(g_host, "/");
+        BLOG("starting fetch");
+        if (webfetch_start(g_host, "/") != 0) { BLOG("start refused"); }
     }
     webfetch_service();
 }
@@ -292,6 +354,7 @@ void browser_touch(uint32_t x, uint32_t y, int down)
             g_full  = 1;        /* the layout changes; clear once */
             g_dirty++;
         } else if (x >= DISP_W - 96u) {         /* go */
+            BLOG("go tapped");
             g_want_fetch = 1;
             g_dirty++;
         }

@@ -12,6 +12,9 @@
 
 extern uint32_t netif_wifi_ip(void);
 extern uint32_t netif_wifi_gw(void);
+extern void     browser_note(const char *a, uint32_t v, int has_v);
+#define WLOG(a)     browser_note((a), 0u, 0)
+#define WLOGV(a,v)  browser_note((a), (uint32_t)(v), 1)
 
 /* ---- state --------------------------------------------------------------- */
 
@@ -29,6 +32,15 @@ static struct tcp_pcb *g_tcp;
 static uint32_t g_t0;           /* when the current phase started */
 static uint32_t g_tries;
 static uint16_t g_id;
+/* [step 330] The server actually asked, and how many times. "resolving" says
+ * the state; it does not say whether the question is going anywhere. If the
+ * gateway is 0.0.0.0 -- netif up but no DHCP router option -- every query is
+ * addressed to nobody and the only visible symptom is a wait. */
+static uint32_t g_dns_srv;
+uint32_t webfetch_dns_server(void);
+uint32_t webfetch_dns_server(void) { return g_dns_srv; }
+uint32_t webfetch_tries(void);
+uint32_t webfetch_tries(void)      { return g_tries; }
 
 static void fail(const char *why)
 {
@@ -54,9 +66,14 @@ uint32_t    webfetch_code(void)   { return g_code; }
 static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err)
 {
     (void)arg;
+    /* [step 332] Does this callback fire at all? "request sent" and then
+     * nothing has exactly two explanations -- the reply never arrives, or it
+     * arrives and this never runs -- and they need opposite fixes. */
+    WLOGV("recv cb, bytes", p ? p->tot_len : 0u);
     if (err != ERR_OK) { fail("recv error"); return err; }
 
     if (!p) {                       /* the server closed: that is the end */
+        WLOGV("peer closed, have", g_len);
         g_body[g_len] = 0;
         if (g_state == WEB_REQUESTING) {
             g_state  = WEB_DONE;
@@ -99,7 +116,8 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err)
 
 static void on_err(void *arg, err_t err)
 {
-    (void)arg; (void)err;
+    (void)arg;
+    WLOGV("tcp error", (uint32_t)(int32_t)err);
     g_tcp = 0;                      /* lwIP has already freed the pcb */
     if (g_state == WEB_CONNECTING || g_state == WEB_REQUESTING) {
         g_status = "connection failed";
@@ -131,6 +149,7 @@ static err_t on_connected(void *arg, struct tcp_pcb *pcb, err_t err)
         return ERR_MEM;
     }
     tcp_output(pcb);
+    WLOG("request sent");
     g_state  = WEB_REQUESTING;
     g_status = "waiting for reply";
     g_t0     = timer_ticks();
@@ -190,6 +209,7 @@ static void on_dns(void *arg, struct udp_pcb *pcb, struct pbuf *p,
     pbuf_copy_partial(p, b, n, 0);
     pbuf_free(p);
 
+    WLOGV("dns reply, bytes", n);
     if (g_state != WEB_RESOLVING || n < 12u) { return; }
     if (((uint16_t)b[0] << 8 | b[1]) != g_id) { return; }   /* not our question */
 
@@ -222,6 +242,7 @@ static void on_dns(void *arg, struct udp_pcb *pcb, struct pbuf *p,
         i += 10u;
         if (type == 1u && rdl == 4u && i + 4u <= n) {
             IP4_ADDR(&g_addr, b[i], b[i + 1u], b[i + 2u], b[i + 3u]);
+            WLOG("resolved -- connecting");
             udp_remove(g_dns);
             g_dns = 0;
             http_go();
@@ -247,8 +268,11 @@ static void dns_send(void)
      * ask permission. */
     ip_addr_t srv;
     uint32_t gw = netif_wifi_gw();
+    g_dns_srv = gw;
     IP4_ADDR(&srv, gw & 0xFFu, (gw >> 8) & 0xFFu, (gw >> 16) & 0xFFu, (gw >> 24) & 0xFFu);
 
+    WLOGV("dns query to gw, try", g_tries + 1u);
+    WLOGV("  gw byte0", gw & 0xFFu);
     udp_sendto(g_dns, p, &srv, 53);
     pbuf_free(p);
     g_t0 = timer_ticks();
@@ -260,7 +284,10 @@ static void dns_send(void)
 int webfetch_start(const char *host, const char *path)
 {
     if (!host || !host[0]) { return -1; }
-    if (!netif_wifi_ip())  { g_status = "no network"; g_state = WEB_FAILED; return -1; }
+    if (!netif_wifi_ip())  {
+        WLOG("no IP -- run the wifi app first");
+        g_status = "no network"; g_state = WEB_FAILED; return -1;
+    }
 
     if (g_dns) { udp_remove(g_dns); g_dns = 0; }
     if (g_tcp) { tcp_abort(g_tcp);  g_tcp = 0; }
@@ -303,11 +330,16 @@ void webfetch_service(void)
      * the question is answered: nothing is listening. */
     if (g_state == WEB_RESOLVING && el > 200u) {
         if (g_tries < 3u) { dns_send(); }
-        else              { fail("dns timeout"); }
+        else              { WLOG("dns timeout -- no reply"); fail("dns timeout"); }
         return;
     }
-    if (g_state == WEB_CONNECTING && el > 800u) { fail("connect timeout"); return; }
+    if (g_state == WEB_CONNECTING && el > 800u) {
+        WLOG("connect timeout");
+        fail("connect timeout");
+        return;
+    }
     if (g_state == WEB_REQUESTING && el > 1200u) {
+        WLOGV("reply timeout, have", g_len);
         /* Whatever arrived is what there is. A truncated answer is still an
          * answer, and reporting it beats reporting nothing. */
         g_body[g_len] = 0;
