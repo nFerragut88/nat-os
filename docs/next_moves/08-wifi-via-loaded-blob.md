@@ -18069,3 +18069,55 @@ works  as of 311 again: the radio comes up and joins the compiled-in network
 open   move the data path to the join, then land 312 properly
        remove the WA trace; the web fetch; PMK cache; touch 'cal'; 49-141
 ```
+
+---
+
+## step 314 — a number that moves
+
+`(this commit)`
+
+> *"I think it actually worked after tapping on it like waiting for a very long
+> time"*
+
+So the bring-up was not hung. It was slow, and the view gave the user no way to
+tell those apart: a fixed promise of `30 s`, then a screen that never changed
+again until it finished.
+
+A bring-up running longer than the guess is **indistinguishable from one that
+has died** — which is why it was reported as broken twice before it was reported
+as slow.
+
+The status now counts: `starting radio  18s`, advancing once a second. Once a
+second, not every frame — that was step 301's flicker, and repainting to show a
+clock would have reintroduced it.
+
+### 314a. "30 s" was a hope
+
+The number came from arithmetic in step 304 — 60 s removed from a 90 s
+observation — and was never measured on a board. Elapsed time is a fact and
+needs no estimate to be right.
+
+Every duration this view has claimed has been wrong at least once: `90 s` when
+it was 90, then still `90 s` after 304 made it 25, then `30 s` when it is
+evidently longer. **A view that must state a duration should state the one that
+has already happened.**
+
+### 314b. What is still owed
+
+The wait itself is real work and can be cut, not just displayed:
+
+- **PBKDF2, ~15 s.** The PMK is a pure function of SSID and passphrase, so
+  caching it beside the credential removes it from every join after the first
+  (304c). Costs a `CRED_VERSION` bump and the saved passwords with it.
+- **The rest** has never been broken down. There is no per-phase timing in the
+  bring-up, so "what takes the other ten seconds" is unanswered — and this step
+  is the instrument that would answer it, if the elapsed time were printed at
+  each phase rather than only on screen.
+
+### State
+
+```
+works  the bring-up counts, so waiting looks like waiting
+open   the data-path restructure (313b); PMK cache; the web fetch
+       remove the WA trace; touch 'cal'; steps 49-141; the USB link
+```

@@ -284,11 +284,32 @@ static void draw_status(void)
         joinmsg[at] = 0;
     }
 
+    /* [step 314] The bring-up COUNTS. It used to promise "30 s" and then show
+     * a screen that never changed, so a bring-up running longer than the guess
+     * was indistinguishable from one that had hung -- reported as broken twice,
+     * and then as "it actually worked after waiting a very long time".
+     *
+     * A number that moves is the difference between waiting and wondering. It
+     * also stops the view making a promise about a duration nobody has
+     * measured: the elapsed time is a fact, "30 s" was a hope. */
+    static char startmsg[28];
+    if (g_state == ST_STARTING) {
+        uint32_t el = (timer_ticks() - g_req_tick) / 100u;
+        uint32_t at = 0u;
+        const char *q = "starting radio  ";
+        while (*q) { startmsg[at++] = *q++; }
+        if (el >= 100u) { startmsg[at++] = (char)('0' + (el / 100u) % 10u); }
+        if (el >= 10u)  { startmsg[at++] = (char)('0' + (el / 10u) % 10u); }
+        startmsg[at++] = (char)('0' + el % 10u);
+        startmsg[at++] = 's';
+        startmsg[at]   = 0;
+    }
+
     const char *msg;
     uint16_t    col;
     switch (g_state) {
     case ST_NORADIO:  msg = "radio off -- tap start";   col = DIM;  break;
-    case ST_STARTING: msg = "starting radio -- 30 s";   col = BUSY; break;
+    case ST_STARTING: msg = startmsg;                   col = BUSY; break;
     case ST_NOSTART:  msg = "radio did not start";      col = BAD;  break;
     case ST_SCANNING: msg = scanmsg;                    col = BUSY; break;
     case ST_DERIVING: msg = "deriving key -- 15 s";     col = BUSY; break;
@@ -802,6 +823,14 @@ void wifiapp_open(void)
 
 void wifiapp_frame(void)
 {
+    /* [step 314] Once a second while starting, so the clock above advances.
+     * Not every frame -- that was step 301's flicker. */
+    if (g_state == ST_STARTING) {
+        static uint32_t last;
+        uint32_t now = timer_ticks() / 100u;
+        if (now != last) { last = now; g_dirty++; }
+    }
+
     /* [step 289] The flash is a few frames of white, then gone. */
     if (g_flash_row >= 0 && (timer_ticks() - g_flash_tick) > 8u) {
         g_flash_row = -1;
