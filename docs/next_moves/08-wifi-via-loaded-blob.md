@@ -17802,3 +17802,52 @@ works  open wifi -> the radio comes up -> it scans -> pick a network
 open   remove the WA trace; the web fetch; PMK cache (304c); touch 'cal'
        steps 49-141; the USB link; term/notes onto keyboard.c
 ```
+
+---
+
+## step 309 — telling the user to do the thing it was already refusing
+
+`(this commit)`
+
+Step 308 made the radio start on open. Reported immediately: not working at all.
+
+The empty-list text tested `blob_ready()` before anything else:
+
+```c
+if (!blob_ready()) { why = "radio off -- tap start"; }
+```
+
+`blob_ready()` is false for the first part of a bring-up (307). So during an
+**automatic** start the list read `radio off -- tap start`, while the status bar
+above it read `starting radio -- 30 s`. The user tapped `start`, `g_busy`
+correctly refused it, and nothing happened.
+
+**The view told the user to do the one thing it was already doing and
+declining to do again.** Two lines of the same screen disagreeing, and the one
+that was wrong was the one with the instruction in it.
+
+Tested first now, and worded for the situation.
+
+### 309a. The pattern, for the sixth time
+
+Step 308 changed *who* starts the radio and did not revisit text written for a
+start the user had asked for. Every instance of this in the arc has the same
+shape: a message that was true under an assumption, and a change that removed
+the assumption without touching the message.
+
+`join failed` for a join never attempted (279). `no networks -- tap scan` with no
+radio (286). A green address for a dead link (293). Silence for a saved
+credential (295). `no network` without saying what address it had (299). And
+now `tap start` while starting.
+
+**Six.** UM-NATOS-054 §8 called this out and it has happened twice since the
+report was written, which is a fair measure of how much writing something down
+is worth on its own.
+
+### State
+
+```
+works  open wifi -> "starting the radio..." -> scan -> pick
+open   remove the WA trace; the web fetch; PMK cache (304c); touch 'cal'
+       steps 49-141; the USB link; term/notes onto keyboard.c
+```

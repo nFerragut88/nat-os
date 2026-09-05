@@ -362,7 +362,20 @@ static void draw_all(void)
 
     if (g_count == 0u) {
         const char *why;
-        if (!blob_ready())              { why = "radio off -- tap start"; }
+        /* [step 309] STARTING is tested FIRST, before blob_ready().
+         *
+         * blob_ready() is false for the first part of a bring-up (307), so
+         * during an automatic start this read "radio off -- tap start" -- the
+         * view telling the user to do the one thing it was already doing and
+         * refusing, because g_busy correctly blocks the button. Tapping it did
+         * nothing, which is "not working at all" from the only side that
+         * matters.
+         *
+         * Step 308 made the start automatic and did not revisit the text
+         * written for a start the user had asked for. */
+        if (g_busy || g_state == ST_STARTING)
+                                        { why = "starting the radio..."; }
+        else if (!blob_ready())         { why = "radio off -- tap start"; }
         else if (g_state == ST_SCANNING){ why = "scanning..."; }
         else if (g_state == ST_NOSTART) { why = "radio did not start"; }
         else if (g_state == ST_JOINED)  { why = "connected -- scan for others"; }
