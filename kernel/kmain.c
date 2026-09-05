@@ -29,6 +29,7 @@
 #include "term.h"
 #include "wifiapp.h"
 #include "browser.h"
+#include "job.h"
 #include "audio.h"
 #include "messages.h"
 #include "calib.h"
@@ -1298,6 +1299,10 @@ static void task_net(void)
         /* [step 281] The wifi view's bring-up runs HERE, not on the touch task
          * that requested it. Ninety blocking seconds on the touch task made the
          * exit button dead while the screen asked the user to wait. */
+        /* [step 316] The worker. One blocking job at a time, off the tasks
+         * that read the glass and paint it -- see job.h for the four bugs
+         * that were each a hand-rolled version of this. */
+        job_service();
         wifiapp_service();
         /* [step 298] The fetch runs here for the same reason the bring-up does:
          * the raw lwIP API is single-context under NO_SYS, and this is that

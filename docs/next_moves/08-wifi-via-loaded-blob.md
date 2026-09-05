@@ -18189,3 +18189,89 @@ works  the first join derives; every join after it is instant
 open   the data-path restructure (313b); the web fetch; remove the WA trace
        touch 'cal'; steps 49-141; the USB link; term/notes onto keyboard.c
 ```
+
+---
+
+## step 316 — the infrastructure the last thirty steps were missing
+
+`(this commit)`
+
+Asked, after watching the wifi view take fifteen steps to work:
+
+> *"Is there some infrastructure that should be considered before tackling this
+> wifi app and web app? Perhaps some abstraction or organization that may
+> assist you?"*
+
+Measured before answering:
+
+```
+every view hand-rolls the debounce:  term 5  notes 5  wifiapp 5  browser 6 sites
+HDR_H redefined in 4 of 5 views
+adding one native view touches:      kmain(5) desktop.c(2) desktop.h linker.ld
+```
+
+Two pieces built.
+
+### 316a. A job model
+
+`g_want_start`, `g_want_join` and `g_busy` were a hand-rolled job queue, built
+three times across two views and wrong differently each time:
+
+| step | the bug | the missing idea |
+|---|---|---|
+| 281 | bring-up on the TOUCH task, input dead for 90 s | not on a task that serves the user |
+| 288 | sweep on the DISPLAY task, second context in the blob | one at a time |
+| 289 | a double-request guard with no expiry disabled the view forever | the queue owns the lifetime, not the caller |
+| 307 | the view could not tell a bring-up was running | "in progress" must be a thing something records |
+
+`job.h` is that idea once: `job_submit(fn, name)`, `job_busy()`,
+`job_elapsed()`, `job_seq()`, run by `job_service()` on the net task.
+
+**One at a time is the point, not a limitation.** There is one radio, one blob
+that admits one caller, one lwIP that is single-context under `NO_SYS`. A second
+concurrent job is a bug in every case this system has, so refusing it centrally
+is cheaper than each caller inventing a flag — which is precisely what those
+three variables were.
+
+The wifi view is converted. `g_busy` is gone; the elapsed clock from 314 now
+comes from `job_elapsed()`, which the job already knew.
+
+### 316b. A build check, and the rule it corrected
+
+The check was written to enforce step 292's rule — *code that touches the flash
+bus must not live on it* — and immediately failed the build on **`kmain.c`**,
+which calls `flash_read_id()` in the boot banner on every boot and has worked
+forever.
+
+So the rule was wrong. `flash.c` masks interrupts for the whole transaction, so
+during the window **only `flash.c` executes**; its callers are not running and
+their placement is irrelevant.
+
+Worse, the evidence was already in the log: step 291 moved `wificred.c` to iram
+to fix a white screen **and the crash continued**; 292 then found the real cause
+was a call0 into windowed code. The placement change was never shown to fix
+anything, and a rule was generalised from it anyway.
+
+The check now enforces the narrow claim that is true: **`flash.c` itself must
+not be in irom.** A check is a claim about the system, and this is the one that
+survives contact with it.
+
+### 316c. What is still hand-rolled
+
+Not built today, and worth naming so it is owed rather than forgotten:
+
+- **An input contract.** Views see raw `down`/`up` and each reimplements edge
+  detection; steps 305 and 310 are entirely that. A view should receive
+  `tap(x,y)` and never learn whether the launcher opens on press or release.
+- **A repaint contract.** `view_invalidate()` as a cross-task sequence, plus
+  region painting. Steps 301, 302, 303 and 314 all live here.
+- **A view registry**, so adding a view is one table row rather than eight edits
+  in four files. Ergonomics, not correctness — lower priority than it looks.
+
+### State
+
+```
+new    job.h/job.c; the wifi view converted; a build check that is true
+open   input and repaint contracts (316c); the data-path restructure (313b)
+       the web fetch; remove the WA trace; touch 'cal'; steps 49-141
+```

@@ -53,6 +53,7 @@ function Find-Tool($pattern) {
 $gcc     = Find-Tool "toolchain-xtensa-esp32\bin\xtensa-esp32-elf-gcc.exe"
 $objcopy = Find-Tool "toolchain-xtensa-esp32\bin\xtensa-esp32-elf-objcopy.exe"
 $size    = Find-Tool "toolchain-xtensa-esp32\bin\xtensa-esp32-elf-size.exe"
+$nm      = Find-Tool "toolchain-xtensa-esp32\bin\xtensa-esp32-elf-nm.exe"
 $esptool = Find-Tool "tool-esptoolpy\esptool.py"
 # PlatformIO's own interpreter — it already has pyserial, which esptool needs
 # even for offline elf2image (its loader module imports serial unconditionally).
@@ -291,6 +292,37 @@ $ldflags = @(
 if ($LASTEXITCODE -ne 0) { throw "link failed" }
 
 & $size $elf
+
+# ---- placement check: the flash DRIVER must not live on the flash bus -------
+#
+# [step 316] The narrow rule, which is the one that can be shown to be true.
+#
+# flash.c masks interrupts for the duration of a transaction, so while the SPI1
+# registers are reprogrammed the ONLY code executing is flash.c itself. If that
+# were in irom it would be fetching through a cache it had just disabled. Its
+# callers are not executing during the window and their placement is irrelevant:
+# kmain.c is in irom and calls flash_read_id() in the boot banner on every boot.
+#
+# Step 292 recorded the broader rule -- "code that touches the flash bus must
+# not live on it" -- and this check was written to enforce it. It immediately
+# flagged kmain.c, which has worked forever. Step 291 had moved wificred.c to
+# iram to fix a white screen AND THE CRASH CONTINUED; 292 then found the real
+# cause was a call0 into windowed code. The placement change was never shown to
+# fix anything, and the rule generalised from it was too strong.
+#
+# A check is a claim about the system. This one is the claim that survives.
+Write-Host "== checking flash-driver placement ==" -ForegroundColor Cyan
+$iromNames = @()
+foreach ($line in (Get-Content (Join-Path $root "kernel\linker.ld"))) {
+    if ($line -match '\*([A-Za-z0-9_]+\.c\.o)') { $iromNames += $Matches[1] }
+}
+if ($iromNames -contains "flash.c.o") {
+    Write-Host "  FLASH DRIVER IN IROM" -ForegroundColor Red
+    Write-Host "  flash.c reprograms SPI1 with interrupts masked; in irom it" -ForegroundColor Red
+    Write-Host "  would fetch through the cache it just disabled." -ForegroundColor Red
+    throw "flash-driver placement check failed"
+}
+Write-Host "  ok: flash.c is not in irom"
 
 Write-Host "== packaging image ==" -ForegroundColor Cyan
 $bin = Join-Path $build "natos.bin"

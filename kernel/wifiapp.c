@@ -9,6 +9,7 @@
 #include "wifi_secrets.h"
 #include "keyboard.h"
 #include "wificred.h"
+#include "job.h"
 #include "uart.h"
 
 /* The bound DHCP address, or 0. Declared here rather than in each block that
@@ -98,9 +99,15 @@ static uint32_t  g_disc_at_join;
 /* [step 281] Set by the touch handler, consumed by wifiapp_service() on the net
  * task. See wifiapp_service() for why the bring-up must not run on the task
  * that reads the glass. */
-static int       g_want_start;
+/* [step 316] g_want_start, g_want_join and job_busy() are GONE. They were a
+ * hand-rolled job queue -- "one thing at a time, somewhere that is not the
+ * touch task, and everyone can ask whether it is running" -- built three times
+ * across two views and wrong in a different way each time (281, 288, 289, 307).
+ * job.h is that idea, once. What remains here is the row a join was asked for,
+ * because job_fn takes no argument and the row is this view's business. */
+static int       g_join_row = -1;
 
-/* [step 307] A bring-up is in progress.
+/* [step 307] SUPERSEDED by job_busy(). Kept as history:
  *
  * blob_ready() is NOT this. It goes true early in start_radio(), right after
  * blob_init(), with the PHY, the association and the handshake still to come --
@@ -113,12 +120,10 @@ static int       g_want_start;
  * what said all three happened inside it.
  *
  * volatile: set on the touch task, cleared on the net task, read by both. */
-static volatile int g_busy;
 
 /* [step 284] The selected row a join was asked for, or -1. Same reason as
  * g_want_start: join() blocks for the ~15 s of PBKDF2 and enters the blob, and
  * neither may happen on the task that reads the glass. */
-static int       g_want_join = -1;
 
 /* [step 302] The next paint must clear the whole view. Set on entering, and
  * nowhere else: a repaint that blanks the screen first is a flash, not an
@@ -294,7 +299,7 @@ static void draw_status(void)
      * measured: the elapsed time is a fact, "30 s" was a hope. */
     static char startmsg[28];
     if (g_state == ST_STARTING) {
-        uint32_t el = (timer_ticks() - g_req_tick) / 100u;
+        uint32_t el = job_elapsed() / 100u;   /* [step 316] the job knows */
         uint32_t at = 0u;
         const char *q = "starting radio  ";
         while (*q) { startmsg[at++] = *q++; }
@@ -391,13 +396,13 @@ static void draw_all(void)
          * blob_ready() is false for the first part of a bring-up (307), so
          * during an automatic start this read "radio off -- tap start" -- the
          * view telling the user to do the one thing it was already doing and
-         * refusing, because g_busy correctly blocks the button. Tapping it did
+         * refusing, because job_busy() correctly blocks the button. Tapping it did
          * nothing, which is "not working at all" from the only side that
          * matters.
          *
          * Step 308 made the start automatic and did not revisit the text
          * written for a start the user had asked for. */
-        if (g_busy || g_state == ST_STARTING)
+        if (job_busy() || g_state == ST_STARTING)
                                         { why = "starting the radio..."; }
         else if (!blob_ready())         { why = "radio off -- tap start"; }
         else if (g_state == ST_SCANNING){ why = "scanning..."; }
@@ -588,7 +593,7 @@ static void start_radio(void)
      * words, and shell.c has called it from flash since step 190. */
     const struct blob_entry *e = blob_map();
     if (!e || blob_init(e) != 0) {
-        g_busy  = 0;
+        /* job_service() owns this now */
         g_state = ST_NOSTART;
         g_dirty++;
         return;
@@ -633,7 +638,7 @@ static void start_radio(void)
     (void)wifi_bringup(e, 0);
 
     if (!blob_ready()) {
-        g_busy  = 0;
+        /* job_service() owns this now */
         g_state = ST_NOSTART;
         g_dirty++;
         return;
@@ -661,12 +666,21 @@ static void start_radio(void)
      * available on the scan button. Doing it to a user who did not ask, seconds
      * after connecting them, is not a trade -- it is just losing the link. */
     trace("started");
-    g_busy  = 0;               /* the view may act again from here */
+    /* job_service() owns this now */               /* the view may act again from here */
     g_count = 0u;
     g_sel   = -1;
 
     /* [step 311] And now do exactly what a reopen does. */
     view_settle();
+}
+
+static void join(uint32_t i);       /* defined below; job_join calls it */
+
+/* [step 316] The job entry point for a join. job_fn takes no argument; which
+ * row was chosen is this view's business, not the job system's. */
+static void job_join(void)
+{
+    if (g_join_row >= 0) { join((uint32_t)g_join_row); g_join_row = -1; }
 }
 
 /* Join the selected network with the compiled-in passphrase.
@@ -724,17 +738,10 @@ static void join(uint32_t i)
  * button. */
 void wifiapp_service(void)
 {
-    if (g_want_start) {
-        g_want_start = 0;
-        start_radio();
-        return;
-    }
-    if (g_want_join >= 0) {
-        uint32_t i = (uint32_t)g_want_join;
-        g_want_join = -1;
-        join(i);
-        return;
-    }
+    /* [step 316] The bring-up and the join are jobs now; job_service() runs
+     * them, from the same task, before this is called. What is left here is
+     * the sweep, which must not run while a job holds the blob. */
+    if (job_busy()) { return; }
 
     /* [step 288] The SWEEP runs here too, not on the display task.
      *
@@ -770,7 +777,7 @@ static void view_settle(void)
 {
     extern int wifi_joined(void);
 
-    if (g_busy)             { g_state = ST_STARTING; }
+    if (job_busy())             { g_state = ST_STARTING; }
     else if (!blob_ready()) { g_state = ST_NORADIO;  }
     else if (wifi_joined()) { g_state = ST_JOINED;   }
     else                    { g_state = ST_IDLE;     }
@@ -778,7 +785,7 @@ static void view_settle(void)
     /* Sweep when there is a radio, nothing is connected and the list is empty.
      * NOT while joined: scanning retunes the radio off the access point and
      * drops the connection (293). */
-    if (!g_busy && blob_ready() && !wifi_joined() && g_count == 0u && !g_scan_ch) {
+    if (!job_busy() && blob_ready() && !wifi_joined() && g_count == 0u && !g_scan_ch) {
         extern uint32_t g_scan_refused;
         g_sel          = -1;
         g_swept        = 0u;
@@ -809,10 +816,8 @@ void wifiapp_open(void)
     /* No radio? Ask for one; opening this view IS the request (308). The
      * bring-up calls view_settle() when it finishes, so the view lands where a
      * reopen would have put it. */
-    if (!g_busy && !blob_ready()) {
-        g_want_start = 1;
-        g_busy       = 1;
-        g_req_tick   = timer_ticks();
+    if (!job_busy() && !blob_ready()) {
+        (void)job_submit(start_radio, "starting radio");
         trace("autostart");
     }
 
@@ -921,9 +926,9 @@ void wifiapp_touch(uint32_t x, uint32_t y, int down)
         if (g_ask >= 0 && (uint32_t)g_ask < g_count && g_pass[0]) {
             (void)wificred_put(g_aps[g_ask].ssid, g_pass);
             g_scan_ch   = 0u;
-            g_want_join = g_ask;
-            g_state     = ST_DERIVING;
-            g_req_tick  = timer_ticks();
+            g_join_row = g_ask;
+            (void)job_submit(job_join, "joining");
+            g_state    = ST_DERIVING;
         } else {
             g_state = ST_IDLE;          /* nothing typed: back to the list */
         }
@@ -951,14 +956,12 @@ void wifiapp_touch(uint32_t x, uint32_t y, int down)
 
     /* The one button: start when the radio is down, scan when it is up. */
     if (y >= STAT_Y && x >= DISP_W - 60u) {
-        if (g_busy || g_state == ST_STARTING || g_state == ST_DERIVING) {
+        if (job_busy() || g_state == ST_STARTING || g_state == ST_DERIVING) {
             /* Already going. A second press must not queue a second request. */
         } else if (!blob_ready()) {
             g_scan_ch    = 0u;      /* the sweep stops HERE, before the request */
-            g_want_start = 1;       /* the net task picks this up */
-            g_busy       = 1;       /* until start_radio() returns */
-            g_state      = ST_STARTING;
-            g_req_tick   = timer_ticks();
+            (void)job_submit(start_radio, "starting radio");
+            g_state = ST_STARTING;
             g_dirty++;
         } else {
             extern uint32_t g_scan_refused;
@@ -984,15 +987,15 @@ void wifiapp_touch(uint32_t x, uint32_t y, int down)
      * sees what they picked. Joining takes fifteen seconds and is not something
      * to start by brushing the glass. */
     if (g_sel == (int)i) {
-        if (g_busy || g_state == ST_STARTING || g_state == ST_DERIVING) { return; }
+        if (job_busy() || g_state == ST_STARTING || g_state == ST_DERIVING) { return; }
         g_scan_ch = 0u;             /* the sweep stops HERE, before the request */
 
         /* [step 285] A network typed once is not typed again. */
         g_pass[0] = 0;
         if (wificred_get(g_aps[i].ssid, g_pass, sizeof g_pass)) {
-            g_want_join = (int)i;   /* the net task picks this up */
-            g_state     = ST_DERIVING;
-            g_req_tick  = timer_ticks();
+            g_join_row = (int)i;
+            (void)job_submit(job_join, "joining");
+            g_state    = ST_DERIVING;
         } else {
             g_ask   = (int)i;
             g_state = ST_ASKPASS;
