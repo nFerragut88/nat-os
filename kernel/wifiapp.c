@@ -77,6 +77,12 @@ static int       g_was_down;
  * responsive and the progress is visible. 0 means idle. */
 static uint32_t  g_scan_ch;
 static uint32_t  g_swept;       /* channels visited in the sweep just run */
+/* [step 320] When the sweep started, and how long the slowest channel took.
+ * A thirteen-channel sweep at SWEEP_DWELL should be about five seconds; it is
+ * reported as taking a minute, so the assumption that it is fast has never been
+ * checked against the board. */
+static uint32_t  g_sweep_t0;
+static uint32_t  g_ch_worst;
 static int       g_retried;    /* [step 305] one automatic re-sweep, no more */
 
 /* [step 289] The row to paint white for one flash, and when it started. This
@@ -471,6 +477,7 @@ static void draw_ask(void)
  * list filling in rather than as a pause. */
 static void scan_step(void)
 {
+    uint32_t ch_t0 = timer_ticks();
     const struct blob_entry *e = blob_map();
     if (!e || !blob_ready()) {
         g_state   = ST_NORADIO;      /* NOT ST_FAILED -- see the enum */
@@ -517,6 +524,9 @@ static void scan_step(void)
         }
     }
 
+    {   uint32_t d = timer_ticks() - ch_t0;
+        if (d > g_ch_worst) { g_ch_worst = d; }
+    }
     g_swept++;
     if (++g_scan_ch > 13u || g_count >= MAX_APS) {
         /* [step 305] One automatic retry when the driver refused channels and
@@ -532,12 +542,45 @@ static void scan_step(void)
          * Bounded to one. A second failure is a real answer and gets reported
          * with its numbers rather than looped over. */
         extern uint32_t g_scan_refused;
+        {   extern uint32_t g_scan_refused;
+            uart_puts("  SWEEP took ");
+            uart_put_dec((timer_ticks() - g_sweep_t0) * 10u);
+            uart_puts(" ms  worst channel ");
+            uart_put_dec(g_ch_worst * 10u);
+            uart_puts(" ms  found ");
+            uart_put_dec(g_count);
+            uart_puts("  refused ");
+            uart_put_dec(g_scan_refused);
+            uart_puts("\n");
+        }
         trace("sweepend");
-        if (g_count == 0u && g_scan_refused && !g_retried) {
+        /* [step 320] Retry an empty sweep, whether or not channels were
+         * refused.
+         *
+         * Asked for in as many words: "can you make it fail on purpose so this
+         * app works correctly." Which is the honest reading of the evidence --
+         * the first sweep after the radio settles comes back empty and slow,
+         * and a second one immediately afterwards finds the network at once.
+         * That is reproducible and it is what the user has been doing by hand
+         * every single time.
+         *
+         * Step 305 already retried, but only when the driver had REFUSED
+         * channels. The failing sweep apparently refuses nothing -- it simply
+         * returns nothing -- so the condition never fired and the user kept
+         * supplying the second sweep themselves.
+         *
+         * This is a workaround and is labelled as one. It does not explain why
+         * the first sweep is barren, and the SWEEP timing line added alongside
+         * exists to find out. Making the user perform a known-necessary retry
+         * by hand is worse than performing it for them while the cause is still
+         * open. */
+        if (g_count == 0u && !g_retried) {
             g_retried      = 1;
             g_swept        = 0u;
             g_scan_refused = 0u;
             g_scan_ch      = 1u;
+            g_sweep_t0     = timer_ticks();
+            g_ch_worst     = 0u;
             g_dirty++;
             return;
         }
@@ -837,6 +880,8 @@ static void view_settle(void)
         g_scan_refused = 0u;
         g_retried      = 0;
         g_scan_ch      = 1u;
+        g_sweep_t0     = timer_ticks();
+        g_ch_worst     = 0u;
         g_state        = ST_SCANNING;
         trace("autoscan");
     }
@@ -1032,6 +1077,8 @@ void wifiapp_touch(uint32_t x, uint32_t y, int down)
             g_scan_refused = 0u;
             g_retried      = 0;
             g_scan_ch      = 1u;
+            g_sweep_t0     = timer_ticks();
+            g_ch_worst     = 0u;
             g_state        = ST_SCANNING;
             g_dirty++;
             trace("scanbtn");

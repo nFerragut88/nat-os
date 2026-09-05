@@ -18397,3 +18397,62 @@ open   steps 49-141, now provoked 49,065 times and counting
        the data-path restructure (313b); the web fetch; remove the WA trace
        input and repaint contracts (316c); touch 'cal'
 ```
+
+---
+
+## step 320 — do the failing sweep for them
+
+`(this commit)`
+
+Asked for directly:
+
+> *"can you make it fail on purpose so this app works correctly"*
+
+Which is the honest reading of the evidence. The first sweep after the radio
+settles comes back empty and slow; a second one immediately afterwards finds the
+network at once. That is reproducible, and it is what the user has been doing by
+hand every single time.
+
+Step 305 already retried an empty sweep — **but only when the driver had refused
+channels.** The failing sweep apparently refuses nothing; it simply returns
+nothing. So the condition never fired, and the user kept supplying the second
+sweep themselves while the code sat there having decided this case did not
+warrant one.
+
+The retry is unconditional on an empty result now, still bounded to one.
+
+### 320a. This is a workaround and is labelled as one
+
+It does not explain why the first sweep is barren. **Making the user perform a
+retry the code knows is necessary is worse than performing it for them while the
+cause stays open**, but the cause does stay open, and a step that says so is
+worth more than one that quietly declares victory.
+
+The instrument to answer it went in alongside:
+
+```
+SWEEP took 61200 ms  worst channel 48000 ms  found 0  refused 0
+```
+
+Total, worst single channel, results, refusals. Thirteen channels at
+`SWEEP_DWELL` should be about five seconds — the report of *"scans for like a
+whole minute"* says that assumption has never once been checked against the
+board. If a single channel is eating tens of seconds then `blob_call(scan_start)`
+is blocking, most likely against a driver still trying to reassociate; if the
+total is five seconds then the minute is somewhere else entirely and every
+theory in this step is wrong.
+
+### 320b. Two retries, two different conditions, three steps apart
+
+305 retried on refusals. 320 retries on emptiness. Both are the same admission:
+**the first attempt at this operation does not work and the second one does.**
+That has been true since 305 and neither step has explained it — which is the
+part to fix, not the retry count.
+
+### State
+
+```
+works  an empty sweep retries itself; the user should not see the failing one
+open   WHY the first sweep is barren -- instrumented, not answered
+       steps 49-141 (49,065 window losses); the data path (313b); the web fetch
+```
