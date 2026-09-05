@@ -621,7 +621,7 @@ static void start_radio(void)
      * available on the scan button. Doing it to a user who did not ask, seconds
      * after connecting them, is not a trade -- it is just losing the link. */
     trace("started");
-    g_busy  = 0;
+    g_busy  = 0;               /* the view may act again from here */
     g_count = 0u;
     g_sel   = -1;
     if (g_state != ST_JOINED) { g_scan_ch = 1u; }
@@ -761,6 +761,30 @@ void wifiapp_open(void)
      * Results are otherwise kept across opens: a sweep costs five seconds of
      * radio time and the list is very likely still true. */
     trace("open");
+
+    /* [step 308] If there is no radio, START ONE. Do not ask.
+     *
+     * Step 302 removed the scan tap because it carried no decision -- there is
+     * nothing else to do with an empty list. The start tap carries even less:
+     * opening the wifi view IS the request for a radio, and the button below it
+     * offered one option.
+     *
+     * That extra step was also the whole of step 307. It created a
+     * twenty-five-second window in which the user had tapped start, had nothing
+     * to do, and went looking -- reopening the view, tapping scan, and landing
+     * in the middle of a bring-up. Removing the step removes the window: the
+     * view opens, says what it is doing, and does it.
+     *
+     * The button stays. When a bring-up has failed it reads `start` and is a
+     * retry, which is a real decision because the first answer was no. */
+    if (!g_busy && !blob_ready()) {
+        g_want_start = 1;
+        g_busy       = 1;
+        g_state      = ST_STARTING;
+        g_req_tick   = timer_ticks();
+        trace("autostart");
+    }
+
     if (!g_busy && blob_ready() && !wifi_joined() && g_count == 0u && !g_scan_ch) {
         extern uint32_t g_scan_refused;
         g_sel          = -1;

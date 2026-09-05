@@ -17745,3 +17745,60 @@ works  the view knows when a bring-up is running and stays out of its way
 open   remove the WA trace once confirmed; the web fetch; PMK cache (304c)
        touch 'cal'; steps 49-141; the USB link; term/notes onto keyboard.c
 ```
+
+---
+
+## step 308 — the first attempt should not have existed
+
+`(this commit)`
+
+Step 307 fixed the view so it survives being reopened during a bring-up. The
+user's answer to that:
+
+> *"it means that the first attempt should never have been attempted, and you
+> should only do the second attempt"*
+
+Which is right, and is a better fix than the one it replaces.
+
+### 308a. A step with one answer
+
+Step 302 removed the `scan` tap on entry because it carried no decision — there
+is nothing else to do with an empty list. **The `start` tap carried even less.**
+Opening the wifi view *is* the request for a radio; the button offered one
+option and waited to be told.
+
+The view brings the radio up on open now.
+
+### 308b. And the step was the bug
+
+That extra tap is not merely redundant — **it created the twenty-five-second
+window that step 307 is about.** A user who has tapped `start` has nothing to do
+and no way to help, so they go looking: reopen the view, tap `scan`, land in the
+middle of a bring-up. Every symptom in 307 needed that idle window to exist.
+
+Step 307 made the window safe. This removes it. **A window that has to be made
+safe is worth asking whether it should be there at all** — and the answer here
+was no, for the same reason the scan tap went.
+
+The button stays, and reads `start` only when a bring-up has failed. That is a
+real decision, because the first answer was no.
+
+### 308c. What the user was saying, and what I heard
+
+Reported four times as "only works the second time". I read it as a rendering
+problem (302), then a lost update (303), then a stale press (305), then — with a
+trace — as a state-tracking problem (307). All four were real defects in the
+view.
+
+None of them was the point. The point was that **the interface had a step in it
+that should not exist**, and every one of those defects lived in the interval
+that step created. Four measurements of a symptom, and the person reporting it
+had the diagnosis.
+
+### State
+
+```
+works  open wifi -> the radio comes up -> it scans -> pick a network
+open   remove the WA trace; the web fetch; PMK cache (304c); touch 'cal'
+       steps 49-141; the USB link; term/notes onto keyboard.c
+```
