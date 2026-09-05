@@ -51,6 +51,8 @@ static int      g_was_down;
 static uint32_t g_scroll;
 static int      g_want_fetch;
 static int      g_last_state = -1;
+static uint32_t g_last_len;     /* [step 301] redraw on CHANGE, not on state */
+static int      g_full = 1;     /* the next paint must clear the whole view */
 
 static void put(uint32_t x, uint32_t y, const char *s, uint16_t fg, uint16_t bg)
 {
@@ -172,7 +174,8 @@ static void draw_url(uint16_t bg)
 static void draw_all(void)
 {
     if (g_editing) {
-        display_fill_rect(0, 0, DISP_W, KB_TOP, BG);
+        if (g_full) { display_fill_rect(0, 0, DISP_W, SPEC_Y, BG); g_full = 0; }
+        display_fill_rect(0, HDR_H, DISP_W, KB_TOP - HDR_H, BG);
         draw_chrome();
         display_fill_rect(4u, HDR_H + 10u, DISP_W - 8u, 14u, FIELD);
         const char *t = keyboard_text();
@@ -181,7 +184,14 @@ static void draw_all(void)
         return;
     }
 
-    display_fill_rect(0, 0, DISP_W, VIEW_H, BG);
+    /* [step 301] Clear the WHOLE view only when entering it or leaving the
+     * editor. Every draw_* below fills its own region, so a repaint does not
+     * need the screen blanked first -- and blanking it on every frame is what
+     * the flicker was: black, then content, eight times a second. */
+    if (g_full) {
+        display_fill_rect(0, 0, DISP_W, VIEW_H, BG);
+        g_full = 0;
+    }
     draw_chrome();
     draw_url(FIELD);
     draw_text();
@@ -195,6 +205,7 @@ void browser_open(void)
     g_editing  = 0;
     g_was_down = 0;
     g_scroll   = 0u;
+    g_full     = 1;
     g_dirty    = 1;
 }
 
@@ -213,9 +224,15 @@ void browser_frame(void)
     if (g_editing && keyboard_tick()) { g_dirty = 1; }
 
     /* A fetch changes state on the net task; the screen has to notice. */
-    int st = webfetch_state();
+    /* [step 301] A fetch changes state on the net task and the screen has to
+     * notice -- but "notice" means when something CHANGED. Marking the view
+     * dirty every frame while REQUESTING repainted it eight times a second
+     * whether or not a byte had arrived. The response length is the thing that
+     * actually moves, so that is what is watched. */
+    int      st = webfetch_state();
+    uint32_t ln = webfetch_len();
     if (st != g_last_state) { g_last_state = st; g_dirty = 1; }
-    else if (st == WEB_REQUESTING)  { g_dirty = 1; }   /* body still growing */
+    if (ln != g_last_len)   { g_last_len   = ln; g_dirty = 1; }
 
     if (!g_dirty) { return; }
     g_dirty = 0;
@@ -240,6 +257,7 @@ void browser_touch(uint32_t x, uint32_t y, int down)
         }
         g_editing    = 0;
         g_want_fetch = 1;       /* the net task performs it */
+        g_full       = 1;       /* back to the page layout; clear once */
         g_dirty      = 1;
         return;
     }
@@ -248,6 +266,7 @@ void browser_touch(uint32_t x, uint32_t y, int down)
         if (x >= DISP_W - 48u) {                /* ed */
             g_editing = 1;
             keyboard_reset("go");
+            g_full  = 1;        /* the layout changes; clear once */
             g_dirty = 1;
         } else if (x >= DISP_W - 96u) {         /* go */
             g_want_fetch = 1;

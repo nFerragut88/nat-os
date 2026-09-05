@@ -17410,3 +17410,42 @@ open   the web fetch STILL has not run; DNS and the TCP client are unexercised
        touch calibration reads defaults -- 'cal' would help every view
        steps 49-141; the USB link; term/notes onto keyboard.c
 ```
+
+---
+
+## step 301 — the redraw storm
+
+`(this commit)`
+
+Reported as: the web view works, but the screen flashes constantly.
+
+Two mistakes stacked, each harmless alone:
+
+**`draw_all()` cleared the whole view before every repaint.** Every `draw_*`
+below it already fills its own region, so the clear was never needed for
+correctness — but it meant any repaint went black-then-content, which is a
+visible flash rather than an update. It happens once now, on entering the view
+or switching between the page and the editor, which are the only times the
+layout actually changes.
+
+**And the view marked itself dirty on every frame while a fetch was in
+flight.** The comment said *"body still growing"*, which is true for perhaps a
+few frames out of the dozens that pass — the rest repainted an identical screen.
+Combined with the full clear, that is the entire display blanked and rewritten
+about eight times a second.
+
+The response length is what actually moves, so that is what is watched now: the
+view repaints when the state changes or when a byte has arrived, and otherwise
+holds still.
+
+**A dirty flag set unconditionally is not a dirty flag.** It is the same shape
+as step 289's guard that never expired: a mechanism whose whole purpose is to
+distinguish two cases, wired so that it always reports one of them.
+
+### State
+
+```
+works  web view fetches and displays without flicker
+open   the fetch itself -- DNS and the TCP client remain unexercised
+       touch 'cal'; steps 49-141; the USB link; term/notes onto keyboard.c
+```
