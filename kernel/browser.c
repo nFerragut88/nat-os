@@ -14,7 +14,12 @@
  * header and its exit are identical in both, because the way out must not move.
  */
 #define HDR_H     22u
-#define URL_H     16u
+/* [step 300] 30, was 16. Step 286c enlarged the wifi view's button from 16 px
+ * to 28 because a small target at the edge of an uncalibrated resistive panel
+ * is not a target -- and this view was then built with 14-pixel controls, in
+ * the same session, by the same hand. The lesson was written down and not
+ * applied to the next thing built. */
+#define URL_H     30u
 #define URL_Y     HDR_H
 #define TXT_Y     (URL_Y + URL_H + 2u)
 #define VIEW_H    SPEC_Y
@@ -153,13 +158,15 @@ static void draw_chrome(void)
 static void draw_url(uint16_t bg)
 {
     display_fill_rect(0, URL_Y, DISP_W, URL_H, BG);
-    display_fill_rect(2u, URL_Y + 1u, DISP_W - 62u, URL_H - 2u, bg);
-    put(4u, URL_Y + 5u, g_host, FG, bg);
+    display_fill_rect(2u, URL_Y + 2u, DISP_W - 100u, URL_H - 4u, bg);
+    put(5u, URL_Y + 12u, g_host, FG, bg);
 
-    display_fill_rect(DISP_W - 56u, URL_Y + 1u, 26u, URL_H - 2u, COLOR_BLUE);
-    put(DISP_W - 52u, URL_Y + 5u, "go", FG, COLOR_BLUE);
-    display_fill_rect(DISP_W - 28u, URL_Y + 1u, 26u, URL_H - 2u, FIELD);
-    put(DISP_W - 25u, URL_Y + 5u, "ed", DIM, FIELD);
+    /* Two 46-wide, 26-tall targets. A fingertip on this panel is wider than
+     * the old 26x14 was in either direction. */
+    display_fill_rect(DISP_W - 96u, URL_Y + 2u, 46u, URL_H - 4u, COLOR_BLUE);
+    put(DISP_W - 79u, URL_Y + 12u, "go", FG, COLOR_BLUE);
+    display_fill_rect(DISP_W - 48u, URL_Y + 2u, 46u, URL_H - 4u, FIELD);
+    put(DISP_W - 34u, URL_Y + 12u, "ed", FG, FIELD);
 }
 
 static void draw_all(void)
@@ -238,11 +245,11 @@ void browser_touch(uint32_t x, uint32_t y, int down)
     }
 
     if (y >= URL_Y && y < URL_Y + URL_H) {
-        if (x >= DISP_W - 28u) {                /* ed */
+        if (x >= DISP_W - 48u) {                /* ed */
             g_editing = 1;
             keyboard_reset("go");
             g_dirty = 1;
-        } else if (x >= DISP_W - 56u) {         /* go */
+        } else if (x >= DISP_W - 96u) {         /* go */
             g_want_fetch = 1;
             g_dirty      = 1;
         }

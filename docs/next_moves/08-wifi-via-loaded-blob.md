@@ -17372,3 +17372,41 @@ actually been learned when the report about it was written.
 open   the web fetch has still not run; DNS and the TCP client are unexercised
        steps 49-141; the USB link; term/notes onto keyboard.c; touch 'cal'
 ```
+
+---
+
+## step 300 — a lesson written down and not applied
+
+`(this commit)`
+
+Reported as nothing happening in the web view. The wiring was correct — icon,
+action value (5, no collision), mode, both routing chains and the open handler
+all check out by reading.
+
+**The controls were 26x14 pixels.** The touch calibration reads `defaults` and
+the raw X saturates at 4095, so the mapping is poor and a target that small is
+not a target.
+
+Step 286c enlarged the wifi view's button from 16 px to 28 px for exactly this
+reason. This view was then built with 14-pixel controls, **in the same session,
+after that fix**. Writing a lesson into the log is not the same as applying it
+to the next thing built, and nothing in the process caught it — the geometry
+compiled, the asserts passed, and the defect only exists against a panel.
+
+`go` and `ed` are 46x26 now and the URL bar is 30 px tall.
+
+### 300a. The USB link, sixth failure
+
+The flash could not open the port: both COM5 and COM6 reading `Unknown`, stale
+entries with no live device. Recovered by a physical replug, and the user
+reports the port itself is bad. Recorded because it has now cost five capture
+runs and one flash, and because it is the reason every instrument in this arc
+had to move to the glass (UM-NATOS-054 §7.1).
+
+### State
+
+```
+open   the web fetch STILL has not run; DNS and the TCP client are unexercised
+       touch calibration reads defaults -- 'cal' would help every view
+       steps 49-141; the USB link; term/notes onto keyboard.c
+```

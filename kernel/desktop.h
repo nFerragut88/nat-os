@@ -56,8 +56,8 @@ typedef struct {
 #define DESK_ACTION_3D     1    /* hand the region to the raycaster */
 #define DESK_ACTION_NOTES  2    /* hand the region to the note pad    */
 #define DESK_ACTION_TERM   3    /* hand the region to the shell       */
-#define DESK_ACTION_WIFI   4
-#define DESK_ACTION_WEB   5   /* [step 298] the web view; native, not a VM program */    /* hand the region to the wifi view   */
+#define DESK_ACTION_WIFI   4    /* hand the region to the wifi view   */
+#define DESK_ACTION_WEB    5    /* hand the region to the web view    */
 
 int desktop_wifi(void);
 void desktop_init(void);
