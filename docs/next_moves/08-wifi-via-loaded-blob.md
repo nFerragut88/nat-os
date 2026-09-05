@@ -17655,3 +17655,32 @@ both.
 works  scan acts on the first tap; a refused sweep retries itself once
 open   cache the PMK (304c); the web fetch; touch 'cal'; steps 49-141; the USB link
 ```
+
+---
+
+## step 306 — the same two faults, carried across before they were reported
+
+`(this commit)`
+
+The wifi view is working. The browser was built with **both** of the defects
+that took three rounds to find in it:
+
+- `g_dirty` as a plain flag with a test-then-clear across a task boundary (303)
+- `g_was_down` cleared on open, arming the handler for the press that opened
+  the view (305a)
+
+Fixed in `browser.c` without waiting for either to be reported. That is the
+first time in this arc a fault has been carried across rather than rediscovered,
+and it is worth marking because the alternative had already happened three times
+in a row: the flicker (301 then 302), the button size (286c then 300), and the
+held press (305a in a view built after the view it was found in).
+
+**A lesson written into the step log is not applied to anything.** The only
+thing that applied it here was going and looking.
+
+### State
+
+```
+open   the web fetch, still unexercised; cache the PMK (304c); touch 'cal'
+       steps 49-141; the USB link; term/notes onto keyboard.c
+```

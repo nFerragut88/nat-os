@@ -46,7 +46,12 @@ _Static_assert(BAR_Y + BAR_H == VIEW_H, "the status bar must meet the region end
 
 static char     g_host[WEB_HOST_MAX] = "google.com";
 static int      g_editing;
-static int      g_dirty;
+/* [step 306] A sequence, not a flag, and volatile -- step 303's fault carried
+ * across before it could be reported a second time. g_dirty is written by the
+ * touch task and read by the display task, and a test-then-clear across that
+ * boundary loses any set that lands between the two lines. */
+static volatile uint32_t g_dirty;
+static uint32_t          g_drawn;
 static int      g_was_down;
 static uint32_t g_scroll;
 static int      g_want_fetch;
@@ -203,10 +208,15 @@ static void draw_all(void)
 void browser_open(void)
 {
     g_editing  = 0;
-    g_was_down = 0;
+    /* [step 306] The launcher opens on a PRESS and the touch task keeps
+     * reporting it to whoever owns the screen next. Clearing this armed the
+     * handler for a press already spent, so the first thing done in the view
+     * was acted on at the ICON's coordinates -- step 305a, in the view built
+     * after it. */
+    g_was_down = 1;
     g_scroll   = 0u;
     g_full     = 1;
-    g_dirty    = 1;
+    g_dirty++;
 }
 
 void browser_service(void)
@@ -221,7 +231,7 @@ void browser_service(void)
 
 void browser_frame(void)
 {
-    if (g_editing && keyboard_tick()) { g_dirty = 1; }
+    if (g_editing && keyboard_tick()) { g_dirty++; }
 
     /* A fetch changes state on the net task; the screen has to notice. */
     /* [step 301] A fetch changes state on the net task and the screen has to
@@ -231,11 +241,12 @@ void browser_frame(void)
      * actually moves, so that is what is watched. */
     int      st = webfetch_state();
     uint32_t ln = webfetch_len();
-    if (st != g_last_state) { g_last_state = st; g_dirty = 1; }
-    if (ln != g_last_len)   { g_last_len   = ln; g_dirty = 1; }
+    if (st != g_last_state) { g_last_state = st; g_dirty++; }
+    if (ln != g_last_len)   { g_last_len   = ln; g_dirty++; }
 
-    if (!g_dirty) { return; }
-    g_dirty = 0;
+    uint32_t seq = g_dirty;
+    if (seq == g_drawn) { return; }
+    g_drawn = seq;
     draw_all();
 }
 
@@ -247,7 +258,7 @@ void browser_touch(uint32_t x, uint32_t y, int down)
 
     if (g_editing) {
         int r = keyboard_touch(x, y);
-        if (r == KB_EDIT) { g_dirty = 1; return; }
+        if (r == KB_EDIT) { g_dirty++; return; }
         if (r != KB_SUBMIT) { return; }
         const char *t = keyboard_text();
         if (t[0]) {
@@ -258,7 +269,7 @@ void browser_touch(uint32_t x, uint32_t y, int down)
         g_editing    = 0;
         g_want_fetch = 1;       /* the net task performs it */
         g_full       = 1;       /* back to the page layout; clear once */
-        g_dirty      = 1;
+        g_dirty++;
         return;
     }
 
@@ -267,10 +278,10 @@ void browser_touch(uint32_t x, uint32_t y, int down)
             g_editing = 1;
             keyboard_reset("go");
             g_full  = 1;        /* the layout changes; clear once */
-            g_dirty = 1;
+            g_dirty++;
         } else if (x >= DISP_W - 96u) {         /* go */
             g_want_fetch = 1;
-            g_dirty      = 1;
+            g_dirty++;
         }
         return;
     }
@@ -282,6 +293,6 @@ void browser_touch(uint32_t x, uint32_t y, int down)
         if (y > TXT_Y + TXT_H / 2u) { g_scroll += ROWS / 2u; }
         else if (g_scroll >= ROWS / 2u) { g_scroll -= ROWS / 2u; }
         else { g_scroll = 0u; }
-        g_dirty = 1;
+        g_dirty++;
     }
 }
