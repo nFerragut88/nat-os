@@ -18824,3 +18824,60 @@ comment, and every one was believed until something printed a number.**
 open   confirm the app now reaches the scan quickly
        steps 49-141; the data path (313b); the web fetch; touch 'cal'
 ```
+
+---
+
+## step 327 — a settle that ran inside the thing it was settling
+
+`(this commit)`
+
+`driver started`, then nothing. The on-screen log put it one line past the
+bring-up, which is a place no serial capture had ever reached.
+
+`start_radio()` ended with `view_settle()`. **That call runs inside the job —
+the job is that function** — so `job_busy()` is still true when it executes.
+`view_settle()` therefore:
+
+- set `ST_STARTING`, because its first test is `if (job_busy())`
+- **skipped the sweep**, because its condition is `!job_busy() && ...`
+
+Then the job returned, `job_busy()` went false, and nothing asked again. The
+view sat in `ST_STARTING` with no scan running and no reason to ever leave.
+
+### 327a. How the conversion inverted it
+
+Step 311 put the settle there deliberately, and it was correct: the line above
+it read `g_busy = 0;`, so by the time the settle ran the view was **not** busy.
+
+Step 316 replaced `g_busy` with a job whose busy state is owned by the job
+system and **cannot be cleared from inside the job**. That clearing line is now
+a comment reading `/* job_service() owns this now */` — sitting directly above
+the call whose meaning it used to guarantee.
+
+**The call survived the conversion and silently inverted its own condition.**
+Nothing warned, because both sides still compiled and `job_busy()` is a perfectly
+good function to call.
+
+### 327b. The fix was already built and unused
+
+`job_seq()` was added in 316 with the comment *"a view can compare this against
+what it last saw and repaint, without polling any particular piece of state"*.
+It had no callers. `wifiapp_service()` uses it now: when the sequence moves and
+the view is in `ST_STARTING`, settle.
+
+Only out of `ST_STARTING` — a join sets `ST_JOINED` or `ST_FAILED` itself, and
+settling over that would discard the result the user is waiting to read.
+
+### 327c. Third time in this conversion
+
+316 removed `g_req_tick`'s writer and left its reader (321). 316 left the settle
+inside a job whose busy flag it could no longer clear (327). Both are the same
+failure: **a mechanical substitution of a variable for a function, where the
+variable's lifetime was load-bearing and the function's is not.**
+
+### State
+
+```
+open   confirm the sweep now runs after the bring-up
+       steps 49-141; the data path (313b); the web fetch; touch 'cal'
+```

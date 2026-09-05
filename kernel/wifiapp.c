@@ -718,8 +718,23 @@ static void start_radio(void)
     g_count = 0u;
     g_sel   = -1;
 
-    /* [step 311] And now do exactly what a reopen does. */
-    view_settle();
+    /* [step 327] NOT view_settle() here.
+     *
+     * This runs INSIDE the job -- the job IS this function -- so job_busy() is
+     * still true. view_settle() therefore set ST_STARTING and skipped the
+     * sweep, because its condition is `!job_busy()`. Then the job ended,
+     * job_busy() went false, and nothing asked again: "driver started", then
+     * silence forever.
+     *
+     * Step 311 put the settle here when it was guarded by a g_busy this code
+     * could clear itself, two lines above. Step 316 replaced that with a job
+     * whose busy state is owned by the job system and cannot be cleared from
+     * within -- and the call survived the conversion, quietly inverting its own
+     * condition. The line above it, now a comment reading "job_service() owns
+     * this now", is the clearing that used to make this work.
+     *
+     * wifiapp_service() settles on job completion instead, which is what
+     * job_seq() was added for in 316 and then not used for. */
 }
 
 static void join(uint32_t i);       /* defined below; job_join calls it */
@@ -833,6 +848,21 @@ static void join(uint32_t i)
  * button. */
 void wifiapp_service(void)
 {
+    /* [step 327] A job just finished: ask what the view should be doing now.
+     *
+     * Runs on the net task after job_service(), so job_busy() is false here and
+     * view_settle() sees the world as it is. Only out of ST_STARTING -- a join
+     * sets JOINED or FAILED itself, and settling over that would discard the
+     * result the user is waiting to read. */
+    {
+        static uint32_t last_seq;
+        uint32_t seq = job_seq();
+        if (seq != last_seq) {
+            last_seq = seq;
+            if (g_state == ST_STARTING) { view_settle(); }
+        }
+    }
+
     /* [step 316] The bring-up and the join are jobs now; job_service() runs
      * them, from the same task, before this is called. What is left here is
      * the sweep, which must not run while a job holds the blob. */
