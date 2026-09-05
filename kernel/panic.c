@@ -465,7 +465,10 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
                 extern volatile int      g_grant_drift_task;
                 extern volatile uint32_t g_grant_drift_pred, g_grant_drift_real;
                 if (g_grant_drift_task >= 0) {
-                    uart_puts("  GRANT DRIFT: task.c predicted ");
+                    /* [step 329] Pre-Tier-B: see task.c. With the pin off --
+                     * the default -- this compares against a grant model Tier B
+                     * replaced, and fires on normal operation. */
+                    uart_puts("  GRANT DRIFT [pre-TierB, see task.c]: predicted ");
                     uart_put_hex(g_grant_drift_pred);
                     uart_puts(" but vectors.S wrote ");
                     uart_put_hex(g_grant_drift_real);

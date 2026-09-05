@@ -205,8 +205,25 @@ uint32_t task_win_union(void) { return g_win_union; }
 uint32_t task_win_mask(int id) { return (id >= 0 && id < TASK_MAX) ? g_win_mask[id] : 0u; }
 uint32_t task_win_base(int id) { return (id >= 0 && id < TASK_MAX) ? g_win_base[id] : 0u; }
 
-/* Tasks switched away from with more than one live windowed frame. See
- * task_schedule(). Zero is the design; anything else is the bug. */
+/* Tasks switched away from with more than one live windowed frame.
+ *
+ * [step 329] THIS COMMENT USED TO READ "Zero is the design; anything else is
+ * the bug." That was true before Tier B and has been false since step 163.
+ *
+ * Tier B (step 131, proven 162) saves and restores the WHOLE REGISTER FILE per
+ * task -- vectors.S:943, 12 * 64 * 4 bytes -- so windowed frames survive
+ * preemption. The pin that forced one-frame switch-outs was therefore turned
+ * off by default (blobcall.c:163), measured against ten genuine preemptions
+ * with eight frames live and the checksum correct every time.
+ *
+ * So a non-zero count here is the CURRENT DESIGN OPERATING NORMALLY, not a bug.
+ * A session shows tens of thousands. The counter is kept because step 163 keeps
+ * the pin as a build switch and this is the control for every windowed
+ * measurement in the log -- with BLOB_PIN_DISABLE back at 0, zero IS the design
+ * again and this comment applies as written.
+ *
+ * Cost of the stale sentence: an afternoon spent treating 49,065 normal
+ * switch-outs as 49,065 faults, and a panic dump read as corroborating them. */
 static uint32_t g_multiframe_count, g_multiframe_worst, g_multiframe_ws;
 static int      g_multiframe_task = -1;
 
@@ -1317,7 +1334,18 @@ uint32_t task_schedule(uint32_t current_sp)
         }
     }
 
-    /* [step 94] ...and what the restore is about to GRANT it.
+    /* [step 329] LOST AND GRANT DRIFT ARE PRE-TIER-B INSTRUMENTS.
+     *
+     * Both compare against `(1 << base) | g_win_union` -- the grant a two-word
+     * WINDOWBASE/WINDOWSTART save could offer. Tier B saves the whole register
+     * file, so that model no longer describes the restore and a "loss" it
+     * reports is a frame Tier B has in fact preserved.
+     *
+     * They remain meaningful only with BLOB_PIN_DISABLE at 0. Read against a
+     * default build they will fire constantly and mean nothing, which is
+     * exactly how they were read in steps 291 and 319.
+     *
+     * [step 94] ...and what the restore is about to GRANT it.
      *
      * The handler assigns `1 << saved_base | g_win_union`. Anything the task
      * held at switch-out that is not in that grant is a frame the hardware will

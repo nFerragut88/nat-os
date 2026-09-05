@@ -18967,3 +18967,77 @@ open   steps 49-141, now stated precisely rather than gestured at
        iram cannot fit further kernel instrumentation
        the web fetch; the data path (313b); touch 'cal'
 ```
+
+---
+
+## step 329 — the fault was a stale comment
+
+`(this commit)`
+
+Asked: find which path lets task 10 switch out with multiple frames.
+
+**Every path. Deliberately. Since step 163.**
+
+### 329a. The chain
+
+```
+task.c:210    "Zero is the design; anything else is the bug."     <- STALE
+blobcall.c:163  the pin is OFF BY DEFAULT NOW ... Tier B changed that
+vectors.S:943   Tier B: one register file per task slot, 12 * 64 * 4 = 3,072 B
+task.c:1534     Tier B saves and restores the whole register file per task,
+                so they do now -- measured, ten genuine preemptions with eight
+                frames live (step 163)
+```
+
+Tier B replaced the two-word WINDOWBASE/WINDOWSTART save with a **full register
+file per task**. Windowed frames survive preemption, so the pin that forced
+one-frame switch-outs was turned off on purpose — it cost 600 ms of busy-spin
+per `_queue_recv` and forbade sleeping waits in the radio path.
+
+`multiframe`'s declaration was written before that and never updated. **A
+non-zero count is the current design working**, and a session shows tens of
+thousands.
+
+### 329b. All three counters are pre-Tier-B
+
+`LOST` and `GRANT DRIFT` both compare against `(1 << base) | g_win_union` — the
+grant a two-word save could offer. Tier B does not restore that way, so a "loss"
+they report is a frame Tier B has in fact preserved. They are only meaningful
+with `BLOB_PIN_DISABLE` back at 0, which step 163 keeps as a build switch
+precisely so old measurements stay reproducible.
+
+Read against a default build they fire constantly and mean nothing — **which is
+exactly how they were read in steps 291, 319 and 328.**
+
+### 329c. What this cost, and what it retires
+
+An afternoon treating 49,065 normal switch-outs as 49,065 faults, a panic dump
+read as corroborating them, and a recommendation to the user that this was the
+most serious thing outstanding in the project. It was not.
+
+**Retired:** "steps 49-141 are an active fault" as a standing open item. Those
+steps built the ownership model, Tier B superseded it, and the instruments from
+the earlier era were left reporting into a design that no longer works that way.
+
+**Still open and now the only real item from this thread:** the step-319 panic —
+`StoreProhibited`, `excvaddr 0x00000000`, on scanning while joined. Its
+`GRANT DRIFT` and `LOST` lines were noise, so that crash has **no explanation at
+all** rather than a wrong one. Leaving the network before scanning avoids it.
+
+### 329d. The lesson, which is the same one as 326
+
+Step 326 found a minute-long operation labelled "a few milliseconds", because a
+comment was written before PBKDF2 vectors were added and never revisited. This
+is the same failure at kernel depth: a comment written before Tier B, describing
+an invariant Tier B removed, believed for four steps by someone reading it as
+current.
+
+**Both were load-bearing sentences that outlived their subject.** The code was
+correct in both cases; the prose was the defect.
+
+### State
+
+```
+open   the step-319 panic, unexplained
+       the web fetch; the data path (313b); touch 'cal'; iram headroom
+```
