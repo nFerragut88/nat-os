@@ -166,17 +166,44 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
     extern uint32_t wpa_cb_table_fill(uint32_t sta_connect);
     extern void wpa_cb_report(void);
     if (e->wifi_register_wpa_cb) {
-        /* [step 239] Prove the crypto before the radio is asked to rely on it.
-     * Runs once, costs a few milliseconds, and turns "the handshake fails" from
-     * a question about six things into a question about one. */
-    { /* windowed now (it calls the crypto), so it crosses through blob_call --
-       * the same mechanism every other windowed target uses. Zero arguments,
-       * so nothing about the four-argument limit bites here. */
+        /* [step 239] Prove the crypto before the radio is asked to rely on it,
+     * and turn "the handshake fails" from a question about six things into a
+     * question about one.
+     *
+     * [step 326] The rest of that comment used to read "runs once, costs a few
+     * milliseconds". **Both halves were false.** It ran on every bring-up, and
+     * it verifies PBKDF2 against published vectors -- 4096 rounds per vector,
+     * about fifteen seconds each on this part. Measured from the glass: the
+     * view sat on "crypto self-test" for the best part of a minute and was
+     * reported as hung.
+     *
+     * The sentence was true when the self-test covered SHA-1 and AES. The
+     * PBKDF2 vectors were added later and the claim was not revisited, so a
+     * one-minute operation carried a few-milliseconds label for as long as
+     * anyone has been reading this file.
+     *
+     * Two changes. It runs at most ONCE PER BOOT, because a self-test proves a
+     * property of the code and the code does not change between two bring-ups
+     * in the same boot. And it is skipped entirely on the quick path, which is
+     * the wifi view -- the same reasoning that skips the driver's own scan
+     * there (304b): a user waiting to pick a network should not be paying for a
+     * regression test. The shell still runs it.
+     *
+     * windowed, so it crosses through blob_call like every other windowed
+     * target. Zero arguments, so the four-argument limit does not bite. */
+    {
+      static int done;
       extern int wpa_selftest(void);
       extern void wpa_selftest_report(void);
-      wifiapp_note("  crypto self-test");
-      (void)blob_call((uint32_t)&wpa_selftest, 0u, 0u, 0u, 0u);
-      wpa_selftest_report(); }
+      if (!done && !g_bringup_quick) {
+          done = 1;
+          wifiapp_note("  crypto self-test (~60 s, once)");
+          (void)blob_call((uint32_t)&wpa_selftest, 0u, 0u, 0u, 0u);
+          wpa_selftest_report();
+      } else {
+          wifiapp_note("  crypto self-test: skipped");
+      }
+    }
 
     extern uint32_t g_appie_pending;
         g_appie_pending = e->set_appie;

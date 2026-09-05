@@ -18763,3 +18763,64 @@ them.
 open   which phase hangs -- one report away
        steps 49-141; the data path (313b); the web fetch; touch 'cal'
 ```
+
+---
+
+## step 326 — a minute-long operation labelled "a few milliseconds"
+
+`(this commit)`
+
+The on-screen log put it in one line:
+
+> *"now its hung on crypto self-test"*
+
+Not preemption, not the driver task. The comment directly above the call:
+
+> *"[step 239] Prove the crypto before the radio is asked to rely on it. **Runs
+> once, costs a few milliseconds**, and turns 'the handshake fails' from a
+> question about six things into a question about one."*
+
+**Both halves of that were false.** It ran on **every** bring-up, and
+`wpa_selftest` verifies PBKDF2 against published vectors — 4096 rounds per
+vector, about fifteen seconds each on this part.
+
+The sentence was true when the self-test covered SHA-1 and AES. The PBKDF2
+vectors were added later, and the claim was never revisited — so a one-minute
+operation has carried a few-milliseconds label for however long anyone has been
+reading that file, including me, twice today, while hunting the wait it causes.
+
+### 326a. What it costs and what it buys
+
+The value is real: proving the crypto turns a failed handshake into a question
+about one thing. The cost was being paid on every radio start, by a user waiting
+to pick a network from a list.
+
+- **once per boot** — a self-test proves a property of the *code*, and the code
+  does not change between two bring-ups in the same boot
+- **skipped on the quick path** — the wifi view, same reasoning that skips the
+  driver's own scan there (304b). The shell still runs it, and the shell is
+  where anyone debugging the crypto is standing.
+
+### 326b. The user's hypothesis, and why it was still worth having
+
+Preemption around `_task_create_pinned_to_core` was a good theory with support
+in the tree, and it was wrong. It was still worth having: it is what made the
+next question "which phase?" instead of "what is wrong with the driver?", and
+the phase log written to answer it is what found this in one report.
+
+**A wrong hypothesis that produces the right measurement is worth more than a
+right one that produces none.**
+
+### 326c. The pattern, again
+
+Third time today a stated duration has been wrong: `30 s` for a bring-up that
+was longer (314), `SWEEP_DWELL` implying five seconds for a sweep that took ten
+(322), and now "a few milliseconds" for a minute. **Every one of them was a
+comment, and every one was believed until something printed a number.**
+
+### State
+
+```
+open   confirm the app now reaches the scan quickly
+       steps 49-141; the data path (313b); the web fetch; touch 'cal'
+```
