@@ -17606,3 +17606,52 @@ works  start -> about 25 s -> associated, versus about 90 s before
 open   cache the PMK beside the credential (304c); the web fetch; touch 'cal'
        steps 49-141; the USB link; term/notes onto keyboard.c
 ```
+
+---
+
+## step 305 — "not the first time" is a fact about the radio, not the user
+
+`(this commit)`
+
+Reported as: tapping `scan` does not work the first time.
+
+Two causes, both of which produce exactly that and both of which made the user
+do by hand what the code should have done.
+
+### 305a. The finger that opened the view is still down
+
+The launcher opens on a **press**. The touch task keeps reporting that same
+press to whoever owns the screen next — which is now this view — and
+`wifiapp_open()` cleared `g_was_down`, arming the handler for a press the user
+had already spent.
+
+So the first press this view saw was the one that opened it, acted on at the
+coordinates of the **icon**, and the user's next real tap was the one that
+looked like the first. `g_was_down` is set on open now, so the held press is
+swallowed and the release clears it — the release being the event that actually
+means the tap is finished.
+
+This has been true of the wifi view since step 278 and of the browser since 298.
+
+### 305b. A refused sweep is not a sweep
+
+A scan issued while the driver is busy — associating, or parked on the access
+point — is **refused** (288), and the refusals disturb it enough that the next
+sweep goes through. That is precisely "does not work the first time, works the
+second", and it is a fact about the radio.
+
+One automatic retry when a sweep found nothing AND channels were refused.
+Bounded to one: a second failure is a real answer and gets reported with its
+numbers rather than looped over.
+
+**The counter added in 288 to diagnose this is what made the fix possible.**
+Without a refusal count there is no way to distinguish "the driver would not
+look" from "the band is empty", and the retry would have been a guess applied to
+both.
+
+### State
+
+```
+works  scan acts on the first tap; a refused sweep retries itself once
+open   cache the PMK (304c); the web fetch; touch 'cal'; steps 49-141; the USB link
+```

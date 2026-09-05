@@ -74,6 +74,7 @@ static int       g_was_down;
  * responsive and the progress is visible. 0 means idle. */
 static uint32_t  g_scan_ch;
 static uint32_t  g_swept;       /* channels visited in the sweep just run */
+static int       g_retried;    /* [step 305] one automatic re-sweep, no more */
 
 /* [step 289] The row to paint white for one flash, and when it started. This
  * replaces the click: audio said "the press landed" without saying WHERE, and
@@ -441,6 +442,27 @@ static void scan_step(void)
 
     g_swept++;
     if (++g_scan_ch > 13u || g_count >= MAX_APS) {
+        /* [step 305] One automatic retry when the driver refused channels and
+         * nothing was found.
+         *
+         * "It does not work the first time" and works the second is a fact
+         * about the radio, not about the user: a scan issued while the driver
+         * is busy -- associating, or parked on the access point -- is REFUSED
+         * (288), and the refusals themselves disturb it enough that the next
+         * sweep goes through. Making the user perform that second sweep by hand
+         * is asking them to work around a retry the code should be doing.
+         *
+         * Bounded to one. A second failure is a real answer and gets reported
+         * with its numbers rather than looped over. */
+        extern uint32_t g_scan_refused;
+        if (g_count == 0u && g_scan_refused && !g_retried) {
+            g_retried      = 1;
+            g_swept        = 0u;
+            g_scan_refused = 0u;
+            g_scan_ch      = 1u;
+            g_dirty++;
+            return;
+        }
         g_scan_ch = 0u;
         /* [step 286] Not unconditionally ST_IDLE. The bring-up joins and sets
          * ST_JOINED, and then starts this sweep -- so ending it with ST_IDLE
@@ -657,7 +679,19 @@ void wifiapp_open(void)
 
     g_sel      = -1;
     g_dirty++;
-    g_was_down = 0;
+
+    /* [step 305] The finger that opened this view IS STILL DOWN.
+     *
+     * The launcher opens on a press, and the touch task keeps reporting that
+     * same press to whoever owns the screen next -- which is now this view.
+     * Clearing g_was_down here armed the handler for a press the user had
+     * already spent, so the first thing they did after entering was acted on at
+     * the coordinates of the ICON they tapped, and their next real tap was the
+     * one that appeared to be first.
+     *
+     * Setting it swallows the held press. It clears on release, which is the
+     * event that actually means "the user is done with that tap". */
+    g_was_down = 1;
 
     /* Open showing what is true right now rather than a fixed starting state:
      * this view is entered both before and after the radio exists, and "tap a
@@ -689,6 +723,7 @@ void wifiapp_open(void)
         g_sel          = -1;
         g_swept        = 0u;
         g_scan_refused = 0u;
+        g_retried      = 0;
         g_scan_ch      = 1u;
         g_state        = ST_SCANNING;
     }
