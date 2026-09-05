@@ -6,7 +6,6 @@
 #include "desktop.h"
 #include "blob.h"
 #include "timer.h"
-#include "audio.h"
 #include "wifi_secrets.h"
 #include "keyboard.h"
 #include "wificred.h"
@@ -640,9 +639,10 @@ void wifiapp_touch(uint32_t x, uint32_t y, int down)
     g_was_down = 1;
 
     /* [step 285] The passphrase screen owns the glass while it is up. Note the
-     * keyboard clicks for itself, so audio_click() below must not also fire --
-     * two clicks per key reads as a double press on an interface whose whole
-     * problem is telling one press from two. */
+     * keyboard gives its own feedback -- the live key is drawn blue for as long
+     * as another tap can still change that character -- so nothing here needs
+     * to add to it. [step 289] This used to warn against firing audio_click()
+     * twice per key; there is no audio in this view any more. */
     if (g_state == ST_ASKPASS) {
         int r = keyboard_touch(x, y);
         if (r == KB_EDIT) { g_dirty = 1; return; }
