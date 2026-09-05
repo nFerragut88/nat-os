@@ -728,6 +728,23 @@ static void join(uint32_t i)
         task_sleep(1u);
     }
 
+    {   /* [step 318] What the handshake actually did. pmk/step/m1/m3/micbad/why
+         * distinguish every way a WPA2 join can fail -- a wrong key fails the
+         * MIC, a missing message stalls at a step, a refused association never
+         * reaches m1 at all. Guessing between those has cost enough today. */
+        extern void wpa_hs_report(void);
+        extern uint32_t g_wpa_conn_cb, g_wpa_disc_cb, g_wpa_disc_reason;
+        extern int g_used_cached;
+        uart_puts("  JOIN ");
+        uart_puts(g_aps[i].ssid);
+        uart_puts(" conn="); uart_put_dec(g_wpa_conn_cb);
+        uart_puts(" disc="); uart_put_dec(g_wpa_disc_cb);
+        uart_puts(" why=");  uart_put_dec(g_wpa_disc_reason);
+        uart_puts(" cached="); uart_put_dec((unsigned int)g_used_cached);
+        wpa_hs_report();
+        uart_puts("\n");
+    }
+
     if (wifi_joined()) {
         uint32_t k = 0u;
         for (; k < 32u && g_aps[i].ssid[k]; k++) { g_joined[k] = g_aps[i].ssid[k]; }
@@ -993,10 +1010,27 @@ void wifiapp_touch(uint32_t x, uint32_t y, int down)
             g_dirty++;
         } else {
             extern uint32_t g_scan_refused;
+            extern void wifi_leave(void);
+            extern int  wifi_joined(void);
+
+            /* [step 319] Leave first if we are on a network.
+             *
+             * Tapping scan while joined panicked the kernel: the blob task lost
+             * a register window across a switch (49-141) while the radio was
+             * retuned off the access point underneath it. The scan was already
+             * known to be refused (288) and link-dropping (293) in this state;
+             * this is the third and worst thing it does.
+             *
+             * A station has one radio. Looking at other channels means not
+             * being on this one, and doing that deliberately beats doing it by
+             * accident. */
+            if (wifi_joined()) { wifi_leave(); }
+
             g_count        = 0u;
             g_sel          = -1;
             g_swept        = 0u;
             g_scan_refused = 0u;
+            g_retried      = 0;
             g_scan_ch      = 1u;
             g_state        = ST_SCANNING;
             g_dirty++;

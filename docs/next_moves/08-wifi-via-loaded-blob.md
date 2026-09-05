@@ -18331,3 +18331,69 @@ work.** Each one is invisible until the work goes away.
 open   confirm the join; the data-path restructure (313b); the web fetch
        input and repaint contracts (316c); remove the WA trace; touch 'cal'
 ```
+
+---
+
+## step 319 — scanning while joined, for the third and last time
+
+`(this commit)`
+
+```
+*** KERNEL PANIC ***
+  exccause : 29  (StoreProhibited)   excvaddr : 0x00000000
+  epc      : 0x40080009              <- not real code; a corrupted PC
+  GRANT DRIFT: predicted 0x00000008, vectors.S wrote 0x0000000a for task 10
+  frames    : task 10 held 0x0000000a granted 0x00000008 LOST 0x00000002
+  multiframe: 49065 switch-outs with >1 live frame, worst 8
+```
+
+The fault is the register-window ownership problem of steps 49-141 — task 10 is
+the blob's own task, switched out holding two live frames and restored with one,
+exactly as in step 291. **`multiframe` has gone from 21,026 to 49,065**, so it is
+happening far more often than when it was first counted.
+
+The trigger is in the trace two lines above it:
+
+```
+WA open    st=7 ... jn=1     joined
+WA scanbtn st=4 ... jn=1     scan tapped WHILE JOINED
+```
+
+### 319a. The same act, three consequences, three steps apart
+
+Scanning from an associated station has now been measured doing three separate
+things in this project:
+
+| step | what it did |
+|---|---|
+| 288 | the driver **refuses** channels; a sweep finds nothing |
+| 293 | the **link drops** silently, and the view kept showing the address |
+| 319 | the **kernel panics** — the blob task loses a window mid-retune |
+
+Each time it was treated as a new bug. It is one act: **a station has one radio,
+and looking at other channels means not being on this one.** The first two were
+handled by working around it; this one cannot be worked around.
+
+### 319b. Leave, then look
+
+`wifi_leave()` — `esp_wifi_disconnect()` through `blob_call`, then clear
+`g_wpa_conn_cb`, because nothing else clears it and a disconnect this code asked
+for is not a failure to report later.
+
+The scan button disconnects first when joined. That turns a provocation into an
+ordinary sequence — **leave, look, choose, rejoin** — which is what a phone
+does, and what the hardware was always going to require.
+
+### 319c. What this does not fix
+
+**The window fault is untouched and is the real defect.** Steps 49-141 remain
+open, `multiframe` is climbing, and this step only removes one way of reaching
+it. A fault that a user interface has to avoid provoking is still a fault.
+
+### State
+
+```
+open   steps 49-141, now provoked 49,065 times and counting
+       the data-path restructure (313b); the web fetch; remove the WA trace
+       input and repaint contracts (316c); touch 'cal'
+```

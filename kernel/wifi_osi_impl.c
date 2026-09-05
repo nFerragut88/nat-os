@@ -2302,6 +2302,7 @@ static char g_join_ssid[33];
  * point at storage that outlives the caller -- a stack buffer here would be
  * read long after it went away. */
 static char g_join_pass[64];
+int g_used_cached;      /* [step 318] did this join use a cached PMK? */
 static int  g_join_pass_set;
 
 void wifi_join_ssid_pass(const char *ssid, const char *pass);
@@ -2355,9 +2356,12 @@ void wifi_join_ssid(const char *ssid)
          * fails its MIC and the view reports a failed join, which is what a
          * wrong passphrase does anyway. The cache is dropped on a failure so
          * the next attempt derives. */
+        extern int g_used_cached;
         if (pmkcache_get(g_join_ssid, g_hs_pmk)) {
             g_hs_pmk_ready = 1u;
+            g_used_cached  = 1;
         } else {
+            g_used_cached  = 0;
             (void)blob_call((uint32_t)&wpa_hs_derive_pmk, 0u, 0u, 0u, 0u);
             if (g_hs_pmk_ready) { (void)pmkcache_put(g_join_ssid, g_hs_pmk); }
         }
@@ -2390,6 +2394,33 @@ void wifi_join_ssid(const char *ssid)
  * wpa_sta_connected_cb, which step 246 named and measured at ZERO for thirteen
  * steps -- it is the one signal that means associated AND keyed, rather than
  * merely not yet failed. */
+/* [step 319] Leave the network, so a scan can run without fighting it.
+ *
+ * An associated station is parked on its access point's channel. Sweeping the
+ * other twelve from that state has been measured doing three different bad
+ * things in this project: the driver refuses channels (288), the link drops
+ * silently (293), and -- with the blob task live and being switched around a
+ * retune it did not ask for -- it reaches the register-window fault of steps
+ * 49-141 and takes the kernel with it (319).
+ *
+ * Disconnecting first is what a phone does, and it turns "scan while joined"
+ * from a provocation into an ordinary sequence: leave, look, choose, rejoin. */
+void wifi_leave(void);
+void wifi_leave(void)
+{
+    const struct blob_entry *e = blob_map();
+    if (!e || !blob_ready() || !e->wifi_disconnect) { return; }
+    (void)blob_call(e->wifi_disconnect, 0u, 0u, 0u, 0u);
+
+    /* The supplicant's connected flag is what wifi_joined() reads, and nothing
+     * else clears it. A disconnect this code asked for is not a failure to be
+     * reported later, so the flag goes with the association. */
+    {
+        extern uint32_t g_wpa_conn_cb;
+        g_wpa_conn_cb = 0u;
+    }
+}
+
 int wifi_joined(void);
 int wifi_joined(void)
 {
