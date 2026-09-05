@@ -18008,3 +18008,64 @@ works  open wifi -> radio up, nothing joined -> sweep -> list -> tap to join
 open   confirm; remove the WA trace; the web fetch; PMK cache (304c)
        touch 'cal'; steps 49-141; the USB link
 ```
+
+---
+
+## step 313 — the no-connect bring-up crashed the board
+
+`(this commit)`
+
+Step 312 skipped `wifi_try_connect()` so the view could show a list before
+anything was joined. Reported immediately as still broken, stuck on `starting
+the radio -- 30 s` with the scan button refusing — which is `g_busy` behaving
+correctly around a `start_radio()` that never returns.
+
+The capture says why:
+
+```
+WA open      st=0 rdy=0
+WA autostart st=0 rdy=0
+rom stubs : 36 entries, installed
+[copy .data] [zero .bss] [done]
+[phy] saved sp of task 6 changed across the call ... phy used 1296 of 6144 B
+...
+t=24
+```
+
+`t=24`. **The board rebooted.** `blob_init` and PHY init completed and the
+bring-up died somewhere after.
+
+### 313a. What was actually wrong with 312
+
+`wifi_bringup()` does not merely end with an association. It ends with
+*"associate, then start the data path"* — `prof_authmode`, then
+`wifi_rx_start()`, which **transmits a DHCP discover**. Removing the association
+left all of that running on a station that never associated.
+
+**The flag was applied to a sequence, not to a step.** 312 read the call as one
+line that could be skipped; it is the hinge the rest of the function depends on.
+
+### 313b. The idea in 312a stands
+
+A view that lists networks should not join one before the user has seen the
+list. That is still right, and it is still the reason every fix from 302 to 311
+was downstream of the real problem.
+
+Doing it properly means moving the **data path** to the join as well:
+
+```
+bring-up   radio only: blob_init, phy, esp_wifi_init, start
+join       set_config, connect, THEN wifi_rx_start and the netif
+```
+
+That is a restructure of `wifi_bringup()` and `join()`, not a flag on one call,
+and it is the next piece of work. Reverted meanwhile, because a board that
+reboots is worse than a board that joins the wrong network.
+
+### State
+
+```
+works  as of 311 again: the radio comes up and joins the compiled-in network
+open   move the data path to the join, then land 312 properly
+       remove the WA trace; the web fetch; PMK cache; touch 'cal'; 49-141
+```

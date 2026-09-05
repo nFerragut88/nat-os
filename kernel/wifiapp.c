@@ -594,11 +594,19 @@ static void start_radio(void)
          * driver's own five-second sweep would gather evidence the user is
          * about to gather again. */
         extern void wifi_bringup_quick(int on);
-        extern void wifi_bringup_noconnect(int on);
         wifi_bringup_quick(1);
-        /* [step 312] Bring the radio UP; do not join anything. The user opened
-         * a list of networks to choose from, and choosing is theirs. */
-        wifi_bringup_noconnect(1);
+        /* [step 313] wifi_bringup_noconnect(1) WAS HERE and it crashed the
+         * board. Skipping the association leaves everything after it --
+         * prof_authmode, and wifi_rx_start() which TRANSMITS a DHCP discover --
+         * running on a station that never associated. The capture ended at
+         * t=24: a fresh boot.
+         *
+         * The idea is still right (312a): a view that lists networks should not
+         * join one before the user has seen the list. But the bring-up is one
+         * call that ends in "associate, then start the data path", and pulling
+         * the association out means moving the data path to the join as well.
+         * That is a restructure, not a flag, and it is the next piece of work
+         * rather than something to leave a crashing board over. */
     }
 
     (void)wifi_bringup(e, 0);
