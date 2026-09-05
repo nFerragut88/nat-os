@@ -942,7 +942,9 @@ const char *g_hs_ssid;
 const char *g_hs_pass;
 
 static unsigned char g_hs_pmk[32];
-static uint32_t g_hs_pmk_ready;
+/* [step 292] NOT static. The call0 side clears this directly, because a write
+ * crosses no ABI and a call does. See the removal below. */
+uint32_t g_hs_pmk_ready;
 
 void wpa_hs_arm(void *bssid);
 void wpa_hs_arm(void *bssid)
@@ -991,8 +993,26 @@ void wpa_hs_arm(void *bssid)
  * the 15 s PBKDF2 runs once per boot; joining a DIFFERENT network needs a
  * different key, so the view clears it deliberately rather than the guard
  * being weakened for everyone. */
-uint32_t g_hs_pmk_ready_reset(void);
-uint32_t g_hs_pmk_ready_reset(void) { g_hs_pmk_ready = 0u; return 0u; }
+/* [step 292] g_hs_pmk_ready_reset() WAS HERE, and it was the crash.
+ *
+ * This file is compiled WINDOWED. wifi_join_ssid(), which called it, is call0.
+ * A call0 `call0` into a windowed function reaches a `retw` that pops a
+ * register window nobody pushed -- so it returned onto a garbage a0 (0x30 in
+ * the dump) and executed it: exccause 0, IllegalInstruction, at epc 0x4009d36e,
+ * which is inside this twelve-byte function.
+ *
+ * The line below it in the same block did it correctly:
+ *
+ *     (void)g_hs_pmk_ready_reset();                              <- direct
+ *     (void)blob_call((uint32_t)&wpa_hs_derive_pmk, 0,0,0,0);    <- bridged
+ *
+ * Sixth time this project has paid for that ABI crossing, and the first where
+ * the correct form was one line away in the same expression block.
+ *
+ * Not replaced with a bridged call. The whole function existed to zero one
+ * word, and a memory write has no calling convention: the flag is extern now
+ * and the call0 side assigns it. The cheapest fix for an ABI bug is to not
+ * make the call. */
 
 int wpa_hs_derive_pmk(void);
 int wpa_hs_derive_pmk(void)

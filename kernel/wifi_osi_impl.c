@@ -2330,7 +2330,7 @@ void wifi_join_ssid(const char *ssid)
     {   /* Re-derive: a new SSID means a new key, and g_hs_pmk_ready guards
          * against doing it twice for the same one. */
         extern const char *g_hs_ssid;
-        extern uint32_t g_hs_pmk_ready_reset(void);
+        extern uint32_t g_hs_pmk_ready;
         extern int wpa_hs_derive_pmk(void);
         extern const char *g_hs_pass;
         g_hs_ssid = g_join_ssid;
@@ -2338,7 +2338,7 @@ void wifi_join_ssid(const char *ssid)
          * typed the old behaviour stands, so the board still joins the network
          * it was built for with no credential saved. */
         if (g_join_pass_set) { g_hs_pass = g_join_pass; }
-        (void)g_hs_pmk_ready_reset();
+        g_hs_pmk_ready = 0u;    /* [step 292] a write, not a call -- see wifi_glue.c */
         (void)blob_call((uint32_t)&wpa_hs_derive_pmk, 0u, 0u, 0u, 0u);
     }
 

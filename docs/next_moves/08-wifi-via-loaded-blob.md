@@ -16954,3 +16954,89 @@ open   the window-ownership fault (49-141) -- pre-existing, now easily provoked
        281c's white screen: my explanation for it is now doubtful too
        the USB link; term/notes onto keyboard.c; net stack margin 664 B
 ```
+
+---
+
+## step 292 — the crash was a call0 into windowed code, and it was mine
+
+`(this commit)`
+
+### 292a. Named, not guessed
+
+The fault survived a reboot in the persistence record and pointed twice at the
+same twelve bytes:
+
+```
+live dump   epc 0x4009d35e
+next boot   LAST FAULT: exception, exccause 0, epc 0x4009d36e (boot #815)
+
+4009d334 T wpa_sta_connect_impl
+4009d364 T g_hs_pmk_ready_reset      <- 0x4009d36e is inside this
+4009d370 T wpa_hs_derive_pmk
+```
+
+`g_hs_pmk_ready_reset()` is twelve bytes long and was added by **step 278**. It
+lives in `vendor/windowed/wifi_glue.c`, compiled **windowed**.
+`wifi_join_ssid()`, which called it, is in `kernel/wifi_osi_impl.c` and is
+**call0**.
+
+A call0 `call0` into a windowed function reaches a `retw` that pops a register
+window nobody pushed. It returned onto `a0 = 0x30` and executed it. That is the
+`IllegalInstruction`, and it is the same fault in both reports.
+
+### 292b. The correct form was one line away
+
+```c
+(void)g_hs_pmk_ready_reset();                              /* direct  */
+(void)blob_call((uint32_t)&wpa_hs_derive_pmk, 0,0,0,0);    /* bridged */
+```
+
+The next statement in the same block crosses the same boundary correctly, and
+the two sat one line apart for fourteen steps. This is the **sixth** time this
+project has paid for that crossing and the first where the right answer was
+visible without moving the eye.
+
+### 292c. Fixed by not making the call
+
+`g_hs_pmk_ready` is one word. The function existed to zero it. **A memory write
+has no calling convention**, so the flag is `extern` now and the call0 side
+assigns it directly. Verified in the binary: the symbol is gone, and
+`g_hs_pmk_ready` is `B` at 0x3ffc8a60 — data, not text.
+
+The cheapest fix for an ABI bug is to not make the call.
+
+### 292d. What this retires, and what it does not
+
+Both user reports were this: "kernel panic once I entered the password" (the
+save requests a join, which calls `wifi_join_ssid`) and "crashing when I tap on
+the network" (the passphrase had by then been saved, so the tap joins directly
+and skips the keyboard). One bug, two symptoms, and the second only appeared
+because the first had **successfully saved a credential** — the feature working
+is what exposed it.
+
+**It does not retire step 291's window-ownership finding.** `LOST 0x00000002`
+and `GRANT DRIFT` were real readings of a real accounting problem, and
+`multiframe` still counts 21,026 switch-outs with more than one live frame. What
+changes is that they were the *consequence* here, not the cause: a `retw` with
+no matching `entry` is exactly how a window goes missing. Steps 49-141 remain
+open; this particular crash is no longer evidence for them.
+
+Step 291b's boot-time prime stays. It removed a real trigger and it was not the
+cause of anything.
+
+### 292e. And the touch calibration is gone
+
+```
+touch cal    : defaults (run 'cal' to measure)
+```
+
+Which explains `rx=400-4095` and a saturated raw X. Unrelated to any of the
+above, and worth a `cal` run.
+
+### State
+
+```
+open   steps 49-141 window ownership (no longer evidenced by this crash)
+       wificred_put() erases flash with the radio live -- still untested
+       the USB link; term/notes onto keyboard.c; net stack margin 664 B
+```
