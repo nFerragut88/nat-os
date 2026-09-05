@@ -93,7 +93,6 @@ static uint32_t  g_flash_tick;
 
 /* When the in-flight request started. A request that never finishes must not
  * silently disable the view -- see wifiapp_frame(). */
-static uint32_t  g_req_tick;
 
 /* [step 293] The driver's disconnect count AS IT WAS when we joined.
  *
@@ -943,8 +942,24 @@ void wifiapp_frame(void)
      * view again. It expires now and says so: 120 s is well past the 15 s a key
      * derivation takes and the ~90 s of a bring-up, so anything still pending
      * then is not going to finish. */
-    if ((g_state == ST_DERIVING || g_state == ST_STARTING) &&
-        (timer_ticks() - g_req_tick) > 12000u) {
+    /* [step 321] Ask the JOB how long it has been running.
+     *
+     * This read g_req_tick, which step 316 stopped assigning when the request
+     * flags became jobs -- the read was left behind and the compiler had no
+     * reason to complain, because the variable still existed. Permanently zero,
+     * so `timer_ticks() - g_req_tick` is the uptime, and on any board up longer
+     * than two minutes THE TIMEOUT WAS ALREADY EXPIRED BEFORE THE OPERATION
+     * STARTED. Every bring-up and every join was stamped FAILED on the next
+     * frame while the work carried on underneath and eventually succeeded.
+     *
+     * That is the whole of "it runs the full timer, fails, and then works".
+     * Asked as: why does the timer even run in the first place -- and it should
+     * not have been.
+     *
+     * A timeout with an unset baseline is not a timeout, it is a constant. The
+     * job holds the only start time that means anything, so it is the only
+     * thing that should be asked. */
+    if (job_busy() && job_elapsed() > 12000u) {
         g_state = ST_FAILED;
         g_dirty++;
     }

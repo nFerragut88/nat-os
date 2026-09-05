@@ -18456,3 +18456,66 @@ works  an empty sweep retries itself; the user should not see the failing one
 open   WHY the first sweep is barren -- instrumented, not answered
        steps 49-141 (49,065 window losses); the data path (313b); the web fetch
 ```
+
+---
+
+## step 321 — a timeout with an unset baseline is a constant
+
+`(this commit)`
+
+Asked, after watching it run, fail, and then work:
+
+> *"So why does the timer even run in the first place?"*
+
+It should not have. The view held:
+
+```c
+static uint32_t g_req_tick;                    /* declared */
+(timer_ticks() - g_req_tick) > 12000u          /* read */
+```
+
+and **nothing assigned it.** Step 316 replaced the request flags with jobs and
+deleted every `g_req_tick = timer_ticks()` alongside them, leaving the read
+behind. The compiler had no reason to object: the variable still existed and
+zero is a valid value.
+
+So the expression was the **uptime**, and on any board running longer than two
+minutes the timeout had already expired before the operation began. Every
+`ST_STARTING` and every `ST_DERIVING` was stamped `FAILED` on the next frame,
+while the job carried on underneath and finished successfully a few seconds
+later.
+
+**That is the whole of "runs the full timer, fails, then works."** The failure
+was a display state with no relationship to the work, and the work was fine.
+
+### 321a. What the user's question was worth
+
+Every report before this described the *symptom* and I chased the subsystem it
+appeared in — the scan, the join, the association, the driver. The question
+"why does the timer run at all" is about the **mechanism**, and it took one
+grep to answer: two references to a variable, one of them missing.
+
+Steps 317, 319 and 320 were all aimed at this symptom. 317 (an unwaited
+association) and 319 (a panic from scanning while joined) were real and stay
+fixed. **320 was not — it added an unconditional retry to work around a failure
+that was never a failure**, and it should be revisited now the reported symptom
+has an actual cause.
+
+### 321b. The generalisation
+
+`job_elapsed()` existed, was correct, and was already being used two hundred
+lines away for the on-screen clock. The timeout used a hand-maintained baseline
+instead — the exact duplication step 316 was written to remove, surviving in the
+one place that was not converted.
+
+**Deleting a producer and leaving its consumer is a silent failure mode**, and C
+gives no warning for it. A timeout is not a number; it is a number *since
+something*, and if nothing sets the something it is not a timeout at all.
+
+### State
+
+```
+open   revisit 320's blind retry now the timer is fixed
+       WHY the first sweep is slow (the SWEEP instrument is in and unread)
+       steps 49-141; the data path (313b); the web fetch
+```
