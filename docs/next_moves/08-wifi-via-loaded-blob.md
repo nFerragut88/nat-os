@@ -18881,3 +18881,89 @@ variable's lifetime was load-bearing and the function's is not.**
 open   confirm the sweep now runs after the bring-up
        steps 49-141; the data path (313b); the web fetch; touch 'cal'
 ```
+
+---
+
+## step 328 — the instrument was already there and I misread it
+
+`(this commit — documentation only; task.c is unchanged)`
+
+Asked to address the register-window fault before anything else. The first move
+was meant to be making its instrument trustworthy. Instead the instrument turned
+out to be trustworthy and **the reading of it was wrong — mine, twice, in
+opposite directions.**
+
+### 328a. What multiframe actually says
+
+I quoted `multiframe: 49065` as an alarm, then corrected myself that it was
+"normal traffic for windowed code", reasoning from the ownership comment at
+`task.c:154`. The counter's own declaration settles it:
+
+```c
+/* Tasks switched away from with more than one live windowed frame. See
+ * task_schedule(). Zero is the design; anything else is the bug. */
+```
+
+**Zero is the design.** So 49,065 is 49,065 violations of the invariant the
+switching design rests on: saving only WINDOWBASE and WINDOWSTART — two words
+— is sound *only* while every task leaves with exactly one live frame
+(`task.c:868`). The first quote was right and the correction was wrong.
+
+### 328b. GRANT DRIFT does not mean what it says
+
+`task.c:141` treats a mismatch as *"this file's model of the restore has
+diverged from the restore"*. But `vectors.S:484` records `g_rin_ws` from
+`l32i a3, a1, 88` — **the task's saved WINDOWSTART**, not the grant the handler
+computed. Comparing that against `(1 << base) | union` compares *what the task
+had* against *what the model says it gets*.
+
+Those differ exactly when the task saved more than one frame. So **GRANT DRIFT,
+LOST and multiframe are three views of one condition**, and only one of them is
+labelled as what it measures.
+
+### 328c. Why nothing was changed
+
+A per-task breakdown and an un-latched `LOST` counter were written and then
+reverted: iram was 144 bytes short, and trimming to fit removed exactly the
+parts that made them worth having. What survived would have duplicated
+`g_multiframe_count`, which already answers "how often".
+
+**That iram is too tight for the kernel to measure itself is a finding in its own
+right**, and a better one than the counter would have been.
+
+### 328d. And the pin already documents the user's hypothesis
+
+`task.c:1123` records it as a failure that has already happened once:
+
+> *"init pinned the caller, created the blob's task, waited for it, and the pin
+> prevented the task it was waiting for from ever running."*
+
+The response was to bound the watchdog feeding so a wedged call is eventually
+caught — not to prevent the deadlock. The pin still holds in that state, "because
+switching away would corrupt the window either way".
+
+**So the invariant is violated tens of thousands of times per session, and the
+mechanism meant to protect it is documented as capable of deadlocking the thing
+it protects.** That is the fault, and it is architectural rather than a bug to
+patch.
+
+### 328e. What to do next, stated rather than started
+
+1. **Find out which path violates the invariant.** Every dump says task 10 — the
+   blob task — with up to eight frames live. The pin is supposed to make that
+   impossible, so either the pin is not applied on that path or it is released
+   while frames are live.
+2. **Then decide between two designs**: save the whole window on switch (correct,
+   costly, and removes the invariant entirely), or make the pin actually
+   inviolable and solve the deadlock it causes.
+
+Both are large. Neither should be started from a dump whose three counters are
+one measurement wearing three labels.
+
+### State
+
+```
+open   steps 49-141, now stated precisely rather than gestured at
+       iram cannot fit further kernel instrumentation
+       the web fetch; the data path (313b); touch 'cal'
+```
