@@ -16877,3 +16877,80 @@ works  icon tap -> radio -> scan -> associate -> WPA2 -> DHCP -> 192.168.1.140
 open   the save panic (unreproduced); net stack margin 664 B; 281c unmeasured;
        the USB link; term/notes onto keyboard.c
 ```
+
+---
+
+## step 291 — the panic measured: a lost register window, and my trigger for it
+
+`(this commit)`
+
+Reported as `IllegalInstruction` on tapping a network. Measured this time
+instead of explained.
+
+### 291a. What the fault actually is
+
+```
+exccause : 0  (IllegalInstruction)
+epc      : 0x4009d35e
+fault regs: a0 0x00000030   wb 3  ws 0x0000000a
+GRANT DRIFT: task.c predicted 0x00000008 but vectors.S wrote 0x0000000a for task 10
+frames    : task 10 held 0x0000000a granted 0x00000008 LOST 0x00000002
+overlap   : task 10 pushed a switch frame at 0x3ffb29e0 across 0x3ffb2a10
+multiframe: 21026 switch-outs with >1 live frame, worst 7 frames
+```
+
+`epc` is in **iram**, not flash — so the two theories I was carrying into this
+(the flash cache, and a second context in the blob) are both wrong, and were
+wrong for the earlier white screens too as far as anything here shows.
+
+Task 10 holds a 7168-byte stack: `BLOB_TASK_STACK_WORDS`, so it is the driver's
+own task. It was switched out holding **two** live register windows and restored
+with **one** — `LOST 0x00000002` — and resumed on `a0 = 0x30`, a return address
+that is not one, and executed it.
+
+This is the window-ownership problem of steps 49-50 and 123-141, in the area
+`task.c` describes as needing owners "because more than one task holds frames in
+the register file at once". `multiframe` says it has survived 21,026 such
+switch-outs. **The fault is pre-existing and is not the wifi view's.**
+
+### 291b. What IS mine: the trigger
+
+`wificred_get()` faulted the credential record in **lazily**, so the first tap on
+a network performed a flash read — and `flash_read()` masks interrupts for the
+whole SPI transaction. Dropped next to a live blob task, that perturbation
+turned a 1-in-21,000 window race into something reproducible on demand.
+
+Primed at boot now, from `kmain`, before the radio or any windowed vendor task
+exists. **This does not fix the fault and is not claimed to**; it removes a
+trigger this module introduced, at a moment when there is nothing windowed to
+disturb.
+
+### 291c. A dead line, and a comment that was the opposite of true
+
+`start_radio()` carried:
+
+```c
+blob_task_enable(0);      /* blob task creation still panics (step 190) */
+wifi_start_enable(1);
+```
+
+`wifi_start_enable()` sets `blob_task_enable(on)` itself — step 214: *"Starting
+the driver REQUIRES its task, so enabling one enables the other."* So the first
+line was **overwritten one line later**, and the comment beside it described a
+state of the world that ended at step 214.
+
+A no-op asking for something that would break the radio, annotated with the
+opposite of the current design. It got there by copying the shell's settled
+block wholesale (285/279) without re-reading what each line still meant. The
+capture is what caught it: `[blobtask] req en=0x00000001` said plainly that the
+flag was on when I believed I had turned it off.
+
+### State
+
+```
+open   the window-ownership fault (49-141) -- pre-existing, now easily provoked
+       wificred_put() still erases flash with the radio live: same trigger class,
+       and a far longer masked window. UNTESTED.
+       281c's white screen: my explanation for it is now doubtful too
+       the USB link; term/notes onto keyboard.c; net stack margin 664 B
+```

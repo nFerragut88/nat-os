@@ -400,14 +400,12 @@ static void scan_step(void)
  *   rsn_akm_set(2)        AKM 2 = PSK, not 1 = 802.1X         (step 254)
  *   appie_shape(4, 0)     type RSN(4), flag 0 -- the fix      (step 256/257)
  *   hs_passive(0)         run the four-way handshake for real (step 257)
- *   blob_task_enable(0)   blob task creation still panics     (step 190)
  * Copying them rather than re-deriving them is deliberate: this view must not
  * become a second opinion about how to start the radio. */
 static void start_radio(void)
 {
     extern void     wifi_start_enable(int on);
     extern uint32_t wifi_bringup(const struct blob_entry *e, int want_null);
-    extern void     blob_task_enable(int on);
     extern void     wifi_rsn_ie_enable(int on);
     extern void     wifi_rsn_akm_set(unsigned int t);
     extern void     wifi_appie_shape(unsigned int t, unsigned int f);
@@ -429,7 +427,17 @@ static void start_radio(void)
     }
     (void)phyinit_run_at(e->phy_init);
 
-    blob_task_enable(0);
+    /* [step 291] wifi_start_enable() enables the blob's task as a side effect,
+     * and that is deliberate -- step 214: "Starting the driver REQUIRES its
+     * task, so enabling one enables the other."
+     *
+     * This used to read blob_task_enable(0) on the line above, copied from the
+     * shell's pre-214 arrangement along with everything else in this block. It
+     * was DEAD -- overwritten one line later -- and the comment beside it
+     * claimed blob task creation still panics, which stopped being true at step
+     * 214. A no-op line asking for something that would break the radio, next to
+     * a comment stating the opposite of the current design: exactly the kind of
+     * thing copying a settled block without re-reading it produces. */
     wifi_start_enable(1);
     wifi_rsn_ie_enable(1);
     wifi_rsn_akm_set(2u);

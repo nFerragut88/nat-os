@@ -1808,6 +1808,15 @@ void kmain(void)
     uart_puts("  flash id     : ");
     uart_put_hex(flash_read_id());
     uart_puts("\n  store        : ");
+    {   /* [step 291] Read the saved WiFi credentials HERE, at boot, with no
+         * radio and no windowed vendor task in existence. Doing it lazily on
+         * the first tap put a flash read -- and its interrupt-masked SPI
+         * transaction -- next to a live blob task, which reliably provoked the
+         * window-ownership fault of steps 49-141. */
+        extern void wificred_prime(void);
+        wificred_prime();
+    }
+
     int found = (store_load() == 0);
     store_count_boot();
     int saved = (store_save() == 0);

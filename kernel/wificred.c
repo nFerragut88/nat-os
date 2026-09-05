@@ -89,6 +89,8 @@ static int same(const char *a, const char *b)
     return a[i] == b[i];
 }
 
+void wificred_prime(void) { load(); }
+
 int wificred_get(const char *ssid, char *pass, uint32_t max)
 {
     if (!ssid || !pass || !max) { return 0; }

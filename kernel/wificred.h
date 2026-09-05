@@ -31,6 +31,21 @@
 #define WIFICRED_PASS_MAX  64u      /* 63 + NUL, the WPA2 maximum */
 #define WIFICRED_SLOTS      8u
 
+/* Read the record into RAM. Call ONCE at boot, from kmain, BEFORE the radio
+ * exists.
+ *
+ * [step 291] Not an optimisation. wificred_get() used to fault the record in
+ * lazily, which meant the first tap on a network performed a flash read -- and
+ * flash_read() masks interrupts for the whole SPI transaction. With the vendor
+ * blob running, that perturbation reliably landed a blob task's context switch
+ * in the window-ownership fault of steps 49-141: switched out holding two live
+ * register frames, restored with one, resumed on a garbage a0, IllegalInstruction.
+ *
+ * The fault is NOT this module's and priming does not fix it. It removes a
+ * trigger that this module introduced, at a moment when there is nothing
+ * windowed to disturb. */
+void wificred_prime(void);
+
 /* Copy the saved passphrase for `ssid` into `pass`. Returns 1 if one was
  * found, 0 otherwise; `pass` is left untouched when 0 is returned. */
 int wificred_get(const char *ssid, char *pass, uint32_t max);
