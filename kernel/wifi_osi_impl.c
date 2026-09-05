@@ -1756,6 +1756,8 @@ void wifi_ap_report(uint32_t fn, uint32_t count)
  *
  * ONE CHANNEL PER CALL, so the caller can paint progress across a sweep
  * instead of freezing for five seconds. */
+uint32_t g_scan_refused;    /* [step 288] channels the driver would not scan */
+
 uint32_t wifi_scan_channel(uint32_t scan_fn, uint32_t num_fn, uint32_t recs_fn,
                            uint32_t ch, wifi_ap_t *out, uint32_t max)
 {
@@ -1766,10 +1768,20 @@ uint32_t wifi_scan_channel(uint32_t scan_fn, uint32_t num_fn, uint32_t recs_fn,
     if (!scan_fn || !num_fn || !recs_fn || !out || !max) { return 0u; }
 
     cfg[2] = ch;
-    if (blob_call(scan_fn, (uint32_t)cfg, 1u, 0u, 0u) != 0u) { return 0u; }
+    /* [step 288] A channel the driver REFUSED and a channel that was quiet are
+     * both "no results", and telling them apart is the whole difference between
+     * "nothing is on the air" and "the radio would not look". Counted, because
+     * the reported symptom is inconsistency and inconsistency is a rate. */
+    if (blob_call(scan_fn, (uint32_t)cfg, 1u, 0u, 0u) != 0u) {
+        g_scan_refused++;
+        return 0u;
+    }
 
     n = 0xFFFFu;
-    if (blob_call(num_fn, (uint32_t)&n, 0u, 0u, 0u) != 0u) { return 0u; }
+    if (blob_call(num_fn, (uint32_t)&n, 0u, 0u, 0u) != 0u) {
+        g_scan_refused++;
+        return 0u;
+    }
     if (n == 0xFFFFu || n == 0u) { return 0u; }
 
     unsigned short want = (unsigned short)(n > 6u ? 6u : n);

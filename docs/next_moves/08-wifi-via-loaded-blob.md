@@ -16700,3 +16700,61 @@ task cannot fetch its own code or its own strings.
 ```
 open   DHCP (283); 281c unmeasured; the USB link; term/notes onto keyboard.c
 ```
+
+---
+
+## step 288 — inconsistency is a rate, so count it
+
+`(this commit)`
+
+Reported as: the network list is *inconsistent* — sometimes there, sometimes not.
+
+### 288a. One task in the blob, by construction
+
+`scan_step()` ran on the **display** task. Two things wrong with that, and the
+second is the one that matters:
+
+- It blocks for `SWEEP_DWELL` (400 ms) **per channel**, so a thirteen-channel
+  sweep froze the display for over five seconds.
+- It was **the last place the display task entered the blob** — the hazard step
+  281c guarded around instead of removing, and then step 284 had to widen that
+  guard, and then narrow it again by stopping the sweep at the point of request.
+
+Three steps of tending a condition that existed only because two tasks could be
+in the blob at once. The sweep now runs where the bring-up and the join already
+do, so **exactly one task enters the blob**, which is what `blobcall.c` assumed
+from the beginning:
+
+> *"Today there is exactly one caller, so this should stay zero."*
+
+**A guard that keeps two callers apart is worth less than not having two.**
+
+### 288b. Refused and quiet are different answers
+
+`wifi_scan_channel()` returned 0 both when the driver refused the scan and when
+the channel was genuinely empty. Those are opposite findings and they printed
+identically.
+
+`g_scan_refused` counts the refusals, and the empty list now shows what the last
+sweep did:
+
+```
+none found -- tap scan
+13 ch, 11 refused
+```
+
+Thirteen channels with eleven refused is a driver that would not look — most
+likely because it is associated and parked on the AP's channel. Thirteen with
+none refused is an empty band. **The reported symptom is a rate, and a rate
+cannot be diagnosed from a message that has no numbers in it.**
+
+This is the third instrument added to the display rather than the log (281d,
+286a), for the same reason: a serial link that voids four runs out of five is
+not an instrument, and the glass is.
+
+### State
+
+```
+open   whether refusals explain the inconsistency -- NOW MEASURABLE, not yet measured
+       DHCP (283); 281c unmeasured; the USB link; term/notes onto keyboard.c
+```

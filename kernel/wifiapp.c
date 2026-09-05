@@ -57,6 +57,7 @@ static int       g_was_down;
 /* The sweep is spread across frames: one channel per frame, so the view stays
  * responsive and the progress is visible. 0 means idle. */
 static uint32_t  g_scan_ch;
+static uint32_t  g_swept;       /* channels visited in the sweep just run */
 
 /* [step 281] Set by the touch handler, consumed by wifiapp_service() on the net
  * task. See wifiapp_service() for why the bring-up must not run on the task
@@ -248,6 +249,23 @@ static void draw_all(void)
         else if (g_state == ST_NOSTART) { why = "radio did not start"; }
         else                            { why = "none found -- tap scan"; }
         put(4u, LIST_Y + 6u, why, DIM, BG);
+
+        /* [step 288] What the last sweep actually DID. "Inconsistent" is a
+         * rate, and a rate needs numbers: thirteen channels visited with eleven
+         * refused is a driver that would not look; thirteen with none refused
+         * is an empty band. Both used to print the same four words. */
+        if (g_swept) {
+            extern uint32_t g_scan_refused;
+            static char sm[32];
+            uint32_t at = 0u;
+            const char *q;
+            at = num(sm, at, g_swept);
+            q = " ch, "; while (*q) { sm[at++] = *q++; }
+            at = num(sm, at, g_scan_refused);
+            q = " refused"; while (*q) { sm[at++] = *q++; }
+            sm[at] = 0;
+            put(4u, LIST_Y + 20u, sm, DIM, BG);
+        }
     }
     for (uint32_t i = 0u; i < g_count && i < MAX_ROWS; i++) {
         draw_row(i);
@@ -337,6 +355,7 @@ static void scan_step(void)
         }
     }
 
+    g_swept++;
     if (++g_scan_ch > 13u || g_count >= MAX_APS) {
         g_scan_ch = 0u;
         /* [step 286] Not unconditionally ST_IDLE. The bring-up joins and sets
@@ -498,7 +517,22 @@ void wifiapp_service(void)
         uint32_t i = (uint32_t)g_want_join;
         g_want_join = -1;
         join(i);
+        return;
     }
+
+    /* [step 288] The SWEEP runs here too, not on the display task.
+     *
+     * Two reasons, and the second is the one that matters. It blocks for
+     * SWEEP_DWELL -- 400 ms -- per channel, so a thirteen-channel sweep froze
+     * the display for over five seconds. And it was the last place the DISPLAY
+     * task entered the blob, which is the hazard step 281c guarded around
+     * rather than removed. With this moved, exactly ONE task enters the blob,
+     * which is what blobcall.c has assumed all along:
+     *
+     *     "Today there is exactly one caller, so this should stay zero."
+     *
+     * A guard that keeps two callers apart is worth less than not having two. */
+    if (g_scan_ch) { scan_step(); }
 }
 
 /* ---- the view ------------------------------------------------------------- */
@@ -550,11 +584,6 @@ void wifiapp_frame(void)
      *
      * The cost is that the sweep pauses for the duration of a bring-up. The
      * bring-up ends by starting a fresh sweep anyway, so nothing is lost. */
-    /* [step 284] The condition list is gone. A request now STOPS the sweep at
-     * the point of asking (see wifiapp_touch), so there is no window in which a
-     * sweep and a blob-entering request coexist and no set of flags to keep in
-     * agreement. Step 281 added a condition here and step 284 had to add two
-     * more to it, which is the sign that the condition was the wrong shape. */
     if (g_state == ST_ASKPASS) {
         if (keyboard_tick()) { g_dirty = 1; }
         if (!g_dirty) { return; }
@@ -563,7 +592,6 @@ void wifiapp_frame(void)
         return;
     }
 
-    if (g_scan_ch) { scan_step(); }
     if (!g_dirty)  { return; }
     g_dirty = 0;
     draw_all();
@@ -617,11 +645,14 @@ void wifiapp_touch(uint32_t x, uint32_t y, int down)
             g_state      = ST_STARTING;
             g_dirty      = 1;
         } else {
-            g_count   = 0u;
-            g_sel     = -1;
-            g_scan_ch = 1u;
-            g_state   = ST_SCANNING;
-            g_dirty   = 1;
+            extern uint32_t g_scan_refused;
+            g_count        = 0u;
+            g_sel          = -1;
+            g_swept        = 0u;
+            g_scan_refused = 0u;
+            g_scan_ch      = 1u;
+            g_state        = ST_SCANNING;
+            g_dirty        = 1;
         }
         return;
     }
