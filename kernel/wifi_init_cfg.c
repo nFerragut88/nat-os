@@ -2,6 +2,7 @@
 
 #include "wifi_init_cfg.h"
 #include "wifi_osi_table.h"
+#include "wifiapp.h"
 #include "uart.h"
 #include "blob.h"
 #include "blobcall.h"
@@ -137,6 +138,9 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
     /* blob_call, not phy_stack_call: the driver reaches
      * _task_create_pinned_to_core, and a task created inside a masked call can
      * never run. Exclusion is the mutex; the scheduler keeps running. */
+    /* [step 325] The phases, on screen. "starting the wifi driver" covers a
+     * dozen blob calls and the user can only report the whole of it. */
+    wifiapp_note("  esp_wifi_init");
     uint32_t r = blob_call(e->wifi_init,
                            want_null ? 0u : (uint32_t)wifi_init_cfg(),
                            0u, 0u, 0u);
@@ -158,6 +162,7 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
     extern void wifi_try_connect(uint32_t cfg, uint32_t conn);
     extern void wifi_rx_start(uint32_t reg, uint32_t freefn, uint32_t pr,
                               uint32_t tx);
+    wifiapp_note("  registering wpa callbacks");
     extern uint32_t wpa_cb_table_fill(uint32_t sta_connect);
     extern void wpa_cb_report(void);
     if (e->wifi_register_wpa_cb) {
@@ -169,6 +174,7 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
        * so nothing about the four-argument limit bites here. */
       extern int wpa_selftest(void);
       extern void wpa_selftest_report(void);
+      wifiapp_note("  crypto self-test");
       (void)blob_call((uint32_t)&wpa_selftest, 0u, 0u, 0u, 0u);
       wpa_selftest_report(); }
 
@@ -219,6 +225,7 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
      * inside phyinit. */
     if (e->wifi_set_mode) {
         uint32_t mr = blob_call(e->wifi_set_mode, 1u, 0u, 0u, 0u);
+        wifiapp_note("  set mode STA");
         uart_puts("   set_mode  STA returned ");
         uart_put_hex(mr);
         uart_puts("\n");
@@ -229,6 +236,7 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
         return r;
     }
 
+    wifiapp_note("  esp_wifi_start");
     uart_puts("   calling esp_wifi_start at ");
     uart_put_hex(e->wifi_start);
     uart_puts("\n");
@@ -327,6 +335,7 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
      * the position-sensitive one and it should be SHRINKING, not growing --
      * the same reasoning that moved wifi_bringup() out of shell.c at step
      * 190. Twenty-two lines become one. */
+    wifiapp_note("  radio configured");
     wifi_tx_beacons(e->wifi_80211_tx, e->wifi_set_channel);
 
     /* [step 217] Then try to associate. One call; see wifi_osi_impl.c. */
@@ -361,6 +370,7 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
      * PBKDF2 derivation for a network they may not have wanted.
      *
      * The shell path is unchanged and still connects. */
+    wifiapp_note("  associating");
     if (!g_bringup_noconnect) {
         wifi_try_connect(e->wifi_set_config, e->wifi_connect);
     }
@@ -407,6 +417,7 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
     }
 
     /* [step 222] The data path, after the association. */
+    wifiapp_note("  starting the data path");
     wifi_rx_start(e->reg_rxcb, e->free_rx_buffer, e->wifi_promiscuous,
                   e->internal_tx);
 

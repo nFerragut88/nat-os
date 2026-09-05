@@ -18697,3 +18697,69 @@ stopped, and the user is the only instrument that is always attached.
 open   read the log and find where it stops -- that is the next step
        steps 49-141; the data path (313b); the web fetch; touch 'cal'
 ```
+
+---
+
+## step 325 — inside the long one
+
+`(this commit)`
+
+The log from 324 put it in one call:
+
+> *"its stuck on starting the wifi driver ... I'm thinking its some sort of
+> preemption issue ... which explains why it would traditionally work the second
+> time ... perhaps there is some addresses in memory that are being set while
+> its failing so the second time works perfectly"*
+
+**That hypothesis has support already written into this project.** `blobcall.c`:
+
+> *"the driver has reached `_task_create_pinned_to_core`, and a task created
+> inside a masked call can never run. Exclusion moves to a mutex; the scheduler
+> keeps running."*
+
+`esp_wifi_init_internal()` creates the driver's own task and then waits for it.
+If that task cannot be scheduled — or blocks against the blob mutex the calling
+context is holding — the init never returns. And a second attempt finding
+hardware already configured is exactly the shape described.
+
+### 325a. The phases, on screen
+
+`wifiapp_note()` is exported so `wifi_bringup()` reports into the same
+eleven-line log:
+
+```
+  esp_wifi_init
+  registering wpa callbacks
+  crypto self-test
+  set mode STA
+  esp_wifi_start
+  radio configured
+  associating
+  starting the data path
+```
+
+"starting the wifi driver" covered all eight, so the user could only ever report
+the whole of it. Each of those is a different suspect: `esp_wifi_init` is where
+the driver task is created and waited on, `crypto self-test` is sixty seconds of
+computation that has hung before, and `associating` is the four-way handshake.
+
+### 325b. What each answer would mean
+
+- stuck at **`esp_wifi_init`** — the task-creation wait, and the user's
+  preemption hypothesis is confirmed. The fix is in how `blob_call` holds the
+  mutex around a call that blocks on a task it just created.
+- stuck at **`crypto self-test`** — a known slow path, and step 259 recorded it
+  stopping outright under a specific instrument.
+- stuck at **`associating`** — the handshake, which has its own counters.
+- **reaches the end and the view still says nothing** — the bring-up is fine and
+  the fault is in what happens after it.
+
+No fix in this step, deliberately. Four suspects and one measurement between
+them.
+
+### State
+
+```
+open   which phase hangs -- one report away
+       steps 49-141; the data path (313b); the web fetch; touch 'cal'
+```

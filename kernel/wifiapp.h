@@ -45,6 +45,13 @@ uint32_t wifi_scan_channel(uint32_t scan_fn, uint32_t num_fn, uint32_t recs_fn,
  * the glass must stay answerable for all of it. */
 void wifiapp_service(void);
 
+/* [step 325] Append a line to the wifi view's on-screen log.
+ *
+ * Exported so wifi_bringup() can report its phases to the glass. The serial
+ * link is unreliable on this board and the person watching the screen is the
+ * only instrument always attached (324). */
+void wifiapp_note(const char *msg);
+
 void wifiapp_open(void);                              /* entering the app */
 void wifiapp_frame(void);                             /* per-frame redraw */
 void wifiapp_touch(uint32_t x, uint32_t y, int down); /* routed by kmain  */

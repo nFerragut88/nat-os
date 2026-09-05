@@ -227,6 +227,9 @@ static void logln(const char *a, const char *b, uint32_t v, int has_v)
     g_dirty++;
 }
 
+void wifiapp_note(const char *msg);
+void wifiapp_note(const char *msg) { logln(msg, 0, 0u, 0); }
+
 #define LOG(a)          logln((a), 0, 0u, 0)
 #define LOGS(a,b)       logln((a), (b), 0u, 0)
 #define LOGV(a,v)       logln((a), 0, (uint32_t)(v), 1)
