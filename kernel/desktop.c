@@ -132,7 +132,7 @@ static void draw_glyph(const uint8_t *g, uint32_t x, uint32_t y, uint16_t fg)
 static const desk_icon_t ICONS[COLS * ROWS] = {
     { "shell",    0,          COLOR_CYAN,    DESK_ACTION_TERM },
     { "wifi",     0,          COLOR_GREEN,   DESK_ACTION_WIFI },
-    { "draw",     "draw",     COLOR_YELLOW,  DESK_ACTION_NONE },
+    { "web",      0,          COLOR_YELLOW,  DESK_ACTION_WEB  },
     { "paint",    "paint",    COLOR_MAGENTA, DESK_ACTION_NONE },
     { "notes",    0,          COLOR_WHITE,   DESK_ACTION_NOTES },
     { "ping",     "ping",     COLOR_CYAN,    DESK_ACTION_NONE },
@@ -148,6 +148,7 @@ static const desk_icon_t ICONS[COLS * ROWS] = {
 #define MODE_NOTES    2
 #define MODE_TERM     3
 #define MODE_WIFI     4
+#define MODE_WEB      5
 static int      g_mode = MODE_LAUNCHER;
 #define g_active (g_mode == MODE_LAUNCHER)
 static int      g_sel = 0;              /* cell under the cursor */
@@ -184,6 +185,7 @@ int      desktop_active(void) { return g_mode == MODE_LAUNCHER; }
 int      desktop_notes(void)  { return g_mode == MODE_NOTES; }
 int      desktop_term(void)   { return g_mode == MODE_TERM; }
 int      desktop_wifi(void)   { return g_mode == MODE_WIFI; }
+int      desktop_web(void)    { return g_mode == MODE_WEB; }
 
 void desktop_invalidate(void) { g_dirty = 1; }
 
@@ -351,7 +353,7 @@ void desktop_chrome(void)
     /* [step 277] The shell AND the note pad now occupy this band with their
      * keyboards. Chrome is drawn LAST every frame, so without this it would
      * paint its close buttons over the bottom row of keys. */
-    if (desktop_term() || desktop_notes() || desktop_wifi()) { return; }
+    if (desktop_term() || desktop_notes() || desktop_wifi() || desktop_web()) { return; }
 
     /* The strips are BELOW a full-width view, and that is load-bearing.
      *
@@ -485,7 +487,7 @@ int desktop_chrome_touch(uint32_t x, uint32_t y)
      * in the band both keyboards now cover. kmain offers this function the
      * press BEFORE term_touch() and notes_touch(), so leaving them live would
      * make a key in the bottom row close a program instead of typing. */
-    if (desktop_term() || desktop_notes() || desktop_wifi()) { return 0; }
+    if (desktop_term() || desktop_notes() || desktop_wifi() || desktop_web()) { return 0; }
 
     if (x < CLOSE_X) {
         return 0;               /* the name is a label, not a button */
@@ -555,6 +557,16 @@ static void open_selected(void)
         app_views_suspend(1);   /* [step 277] the keyboard owns the band now */
         term_open();
         g_opens++;
+        return;
+    }
+
+    if (ic->action == DESK_ACTION_WEB) {
+        /* [step 298] Claims the band, as the shell, note pad and wifi view do:
+         * the URL editor puts a keyboard there. */
+        extern void browser_open(void);
+        g_mode = MODE_WEB;
+        app_views_suspend(1);
+        browser_open();
         return;
     }
 

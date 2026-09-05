@@ -205,6 +205,16 @@ uint32_t netif_wifi_ip(void)
     return ip4_addr_get_u32(netif_ip4_addr(&g_netif));
 }
 
+/* [step 298] The default gateway, or 0. The web view asks the router for DNS:
+ * a home gateway forwards it, and using it keeps this board off any name server
+ * the user did not already choose by joining their network. */
+uint32_t netif_wifi_gw(void);
+uint32_t netif_wifi_gw(void)
+{
+    if (!g_up) { return 0u; }
+    return ip4_addr_get_u32(netif_ip4_gw(&g_netif));
+}
+
 void netif_wifi_stats(void);
 void netif_wifi_stats(void)
 {

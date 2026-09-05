@@ -17277,3 +17277,67 @@ works  scan, pick, type, join, remembered across reboots, forgettable
        and the page is served over the link that credential opened
 open   steps 49-141; the USB link; term/notes onto keyboard.c; touch 'cal'
 ```
+
+---
+
+## step 298 — a web view, and what it honestly cannot do
+
+`(this commit)`
+
+Asked for: replace `draw` with a browser that displays Google.
+
+### 298a. What was said before building it
+
+**google.com is HTTPS-only, and TLS does not fit on this board.** A TLS 1.2
+handshake needs X.509 parsing, RSA or ECDSA verification, ECDHE, AES-GCM,
+SHA-256 and a root store; mbedTLS wants roughly 40-50 KB of heap for one
+handshake, and this board reports **38,648 bytes of heap in total** at boot. Nor
+is there an HTML parser, a layout engine or CSS, and there would be no room for
+them either.
+
+So what was built is a browser in the fetch-and-show sense: DNS, TCP, an HTTP
+GET, and the response on screen. Pointed at google.com it shows **Google's 301
+redirect to HTTPS** — a real answer from Google's servers, reached over a link
+this board negotiated itself, displayed as what it is rather than dressed up as
+a page. The header says so, so the icon does not overpromise.
+
+### 298b. Its own DNS resolver
+
+`lwipopts.h` has `LWIP_DNS 0`, annotated *"needs str* this kernel does not
+have"*. Rather than pull in lwIP's resolver and the string library under it,
+`webfetch.c` asks one A-record question over raw UDP: a twelve-byte header, the
+name as length-prefixed labels, and four bytes of answer. Name compression is
+handled by skipping 0xC0 pointers.
+
+It asks **the gateway**, not a public resolver. A home router forwards DNS, and
+using it keeps this board off any name server the user did not already choose by
+joining their network — which is the right default for something that is not
+going to ask.
+
+### 298c. Placement, by the rule that cost a crash
+
+```
+wificred.c   iram    drives flash_read/erase/write
+webfetch.c   irom    only calls lwIP
+browser.c    irom    draws
+```
+
+iram overflowed by 700 bytes on the first link, and the fix was **not** to move
+whatever was largest. Step 292's rule decides it: *code that touches the flash
+bus must not live on it.* `webfetch.c` does not, so it goes to flash; the
+linker script says why, next to the entry.
+
+### 298d. Where the fetch runs
+
+On the **net task**, through `browser_service()`. Two reasons, both already
+paid for: the raw lwIP API is single-context under `NO_SYS=1`, and the task that
+reads the glass must stay answerable (281b). The view sets a flag; the net task
+performs the fetch and times it out.
+
+### State
+
+```
+new    web view: URL bar, keyboard entry, DNS, HTTP GET, response on screen
+open   whether google.com resolves and answers -- NOT YET RUN
+       steps 49-141; the USB link; term/notes onto keyboard.c; touch 'cal'
+```

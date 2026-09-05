@@ -198,6 +198,12 @@ SECTIONS
      * harmless -- the same property that made shell.c a safe first tenant. */
     *wifiapp.c.o(.literal .literal.* .text .text.*)
       *keyboard.c.o(.literal .literal.* .text .text.*)
+      *browser.c.o(.literal .literal.* .text .text.*)
+      /* [step 298] webfetch.c is irom and wificred.c is NOT, and the difference
+       * is the rule step 292 cost a crash to state: code that touches the FLASH
+       * BUS must not live on it. wificred.c drives flash_read/erase/write;
+       * webfetch.c only calls lwIP. */
+      *webfetch.c.o(.literal .literal.* .text .text.*)
 
     /* [step 278] notes.c and term.c join it, for the same reason and with the
      * same evidence: both are views entered from the launcher, both run only

@@ -28,6 +28,7 @@
 #include "notes.h"
 #include "term.h"
 #include "wifiapp.h"
+#include "browser.h"
 #include "audio.h"
 #include "messages.h"
 #include "calib.h"
@@ -1292,11 +1293,16 @@ static void task_net(void)
 {
     extern void net_service_task_step(void);
     extern void wifiapp_service(void);
+    extern void browser_service(void);
     for (;;) {
         /* [step 281] The wifi view's bring-up runs HERE, not on the touch task
          * that requested it. Ninety blocking seconds on the touch task made the
          * exit button dead while the screen asked the user to wait. */
         wifiapp_service();
+        /* [step 298] The fetch runs here for the same reason the bring-up does:
+         * the raw lwIP API is single-context under NO_SYS, and this is that
+         * context. It is also not the task that reads the glass. */
+        browser_service();
         net_service_task_step();
         task_sleep(2u);
     }
@@ -1348,6 +1354,8 @@ static void task_display(void)
             term_frame();
         } else if (desktop_wifi()) {
             wifiapp_frame();
+        } else if (desktop_web()) {
+            browser_frame();
         } else {
             raycast_frame();
         }
@@ -1522,6 +1530,8 @@ static void task_touch(void)
             term_touch(t.x, t.y, down);
         } else if (desktop_wifi()) {
             wifiapp_touch(t.x, t.y, down);
+        } else if (desktop_web()) {
+            browser_touch(t.x, t.y, down);
         } else {
             desktop_touch(t.x, t.y, down);
         }
