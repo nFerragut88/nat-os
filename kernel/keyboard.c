@@ -2,7 +2,6 @@
 
 #include "keyboard.h"
 #include "display.h"
-#include "audio.h"
 #include "timer.h"
 
 /* The same tables as term.c, with the bottom-right face supplied by the caller.
@@ -110,11 +109,18 @@ int keyboard_touch(uint32_t x, uint32_t y)
 
     const char *seq = KEYS[r][c];
 
-    /* A click on every accepted press. Multi-tap's worst property is that a
-     * press registering is invisible (UM-NATOS-022 3.4): the press that "did
-     * not register" is usually one that did, which then replaces the letter you
-     * wanted. */
-    audio_click();
+    /* [step 289] No click. Multi-tap's worst property is that a press
+     * registering is invisible (UM-NATOS-022 3.4) -- the press that "did not
+     * register" is usually one that did, which then replaces the letter you
+     * wanted -- and the two existing copies answer that with audio.
+     *
+     * This one answers it with the LIVE KEY HIGHLIGHT: the key being cycled is
+     * drawn blue for as long as another tap can still change it, so the
+     * feedback says WHICH key and FOR HOW LONG, where a beep said only that
+     * something had happened. Audio is off in this view by request.
+     *
+     * term.c and notes.c keep their click. If they migrate here (285a), this
+     * becomes a flag rather than a decision made on their behalf. */
 
     if (seq[0] == '<' && seq[1] == 0) {
         settle();

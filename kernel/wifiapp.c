@@ -59,6 +59,16 @@ static int       g_was_down;
 static uint32_t  g_scan_ch;
 static uint32_t  g_swept;       /* channels visited in the sweep just run */
 
+/* [step 289] The row to paint white for one flash, and when it started. This
+ * replaces the click: audio said "the press landed" without saying WHERE, and
+ * on a list the where is the whole message. */
+static int       g_flash_row = -1;
+static uint32_t  g_flash_tick;
+
+/* When the in-flight request started. A request that never finishes must not
+ * silently disable the view -- see wifiapp_frame(). */
+static uint32_t  g_req_tick;
+
 /* [step 281] Set by the touch handler, consumed by wifiapp_service() on the net
  * task. See wifiapp_service() for why the bring-up must not run on the task
  * that reads the glass. */
@@ -114,12 +124,15 @@ static void draw_row(uint32_t i)
     if (i >= g_count || i >= MAX_ROWS) { return; }
     uint32_t y = LIST_Y + i * ROW_H;
     int      on = ((int)i == g_sel);
-    uint16_t bg = on ? COLOR_BLUE : BG;
+    int      fl = ((int)i == g_flash_row);
+    uint16_t bg = fl ? COLOR_WHITE : (on ? COLOR_BLUE : BG);
+    uint16_t fg = fl ? COLOR_BLACK : FG;
+    uint16_t dm = fl ? COLOR_BLACK : DIM;
 
     display_fill_rect(0, y, DISP_W, ROW_H - 1u, bg);
-    put(4u, y + 6u, g_aps[i].ssid, FG, bg);
-    put(DISP_W - 58u, y + 6u, strength(g_aps[i].rssi), DIM, bg);
-    put(DISP_W - 26u, y + 6u, g_aps[i].auth ? "wpa" : "open", DIM, bg);
+    put(4u, y + 6u, g_aps[i].ssid, fg, bg);
+    put(DISP_W - 58u, y + 6u, strength(g_aps[i].rssi), dm, bg);
+    put(DISP_W - 26u, y + 6u, g_aps[i].auth ? "wpa" : "open", dm, bg);
 }
 
 /* Two decimal digits into a caller's buffer, returning where it stopped.
@@ -559,6 +572,29 @@ void wifiapp_open(void)
 
 void wifiapp_frame(void)
 {
+    /* [step 289] The flash is a few frames of white, then gone. */
+    if (g_flash_row >= 0 && (timer_ticks() - g_flash_tick) > 8u) {
+        g_flash_row = -1;
+        g_dirty     = 1;
+    }
+
+    /* [step 289] A request that never finishes must not disable the view.
+     *
+     * Every press began with "if STARTING or DERIVING, return" -- so if a join
+     * or a bring-up did not complete, the view ignored every press from then
+     * on, forever, while still clicking to say the press had landed. Reported
+     * as "when I tap a network nothing happens", which is exactly what it did.
+     *
+     * A guard against a second request became a guard against ever using the
+     * view again. It expires now and says so: 120 s is well past the 15 s a key
+     * derivation takes and the ~90 s of a bring-up, so anything still pending
+     * then is not going to finish. */
+    if ((g_state == ST_DERIVING || g_state == ST_STARTING) &&
+        (timer_ticks() - g_req_tick) > 12000u) {
+        g_state = ST_FAILED;
+        g_dirty = 1;
+    }
+
     /* [step 283] DHCP binds seconds after the join, so the address arrives
      * after the paint that reported the join. Watch for it changing. */
     if (g_state == ST_JOINED) {
@@ -625,6 +661,7 @@ void wifiapp_touch(uint32_t x, uint32_t y, int down)
             g_scan_ch   = 0u;
             g_want_join = g_ask;
             g_state     = ST_DERIVING;
+            g_req_tick  = timer_ticks();
         } else {
             g_state = ST_IDLE;          /* nothing typed: back to the list */
         }
@@ -633,7 +670,6 @@ void wifiapp_touch(uint32_t x, uint32_t y, int down)
         return;
     }
 
-    audio_click();
 
     /* The one button: start when the radio is down, scan when it is up. */
     if (y >= STAT_Y && x >= DISP_W - 60u) {
@@ -643,6 +679,7 @@ void wifiapp_touch(uint32_t x, uint32_t y, int down)
             g_scan_ch    = 0u;      /* the sweep stops HERE, before the request */
             g_want_start = 1;       /* the net task picks this up */
             g_state      = ST_STARTING;
+            g_req_tick   = timer_ticks();
             g_dirty      = 1;
         } else {
             extern uint32_t g_scan_refused;
@@ -675,6 +712,7 @@ void wifiapp_touch(uint32_t x, uint32_t y, int down)
         if (wificred_get(g_aps[i].ssid, g_pass, sizeof g_pass)) {
             g_want_join = (int)i;   /* the net task picks this up */
             g_state     = ST_DERIVING;
+            g_req_tick  = timer_ticks();
         } else {
             g_ask   = (int)i;
             g_state = ST_ASKPASS;
@@ -682,7 +720,9 @@ void wifiapp_touch(uint32_t x, uint32_t y, int down)
         }
         g_dirty = 1;
     } else {
-        g_sel   = (int)i;
-        g_dirty = 1;
+        g_sel        = (int)i;
+        g_flash_row  = (int)i;      /* [step 289] white, where the finger went */
+        g_flash_tick = timer_ticks();
+        g_dirty      = 1;
     }
 }

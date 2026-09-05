@@ -16758,3 +16758,59 @@ not an instrument, and the glass is.
 open   whether refusals explain the inconsistency -- NOW MEASURABLE, not yet measured
        DHCP (283); 281c unmeasured; the USB link; term/notes onto keyboard.c
 ```
+
+---
+
+## step 289 — a guard that became a lock, and feedback that says where
+
+`(this commit)`
+
+### 289a. "When I tap a network nothing happens"
+
+Every press in this view began:
+
+```c
+if (g_state == ST_STARTING || g_state == ST_DERIVING) { return; }
+```
+
+That was added in step 284 so a second press could not queue a second bring-up.
+It has no expiry. **If a join or a bring-up ever fails to complete, the view
+ignores every press from then on — permanently — while still clicking to say
+the press had landed.**
+
+A guard against a second request became a guard against ever using the view
+again, and the audio feedback made it worse by confirming presses the code had
+already decided to discard.
+
+It expires now, into `ST_FAILED`, at 120 s: well past the 15 s a key derivation
+takes and the ~90 s of a bring-up, so anything still pending then is not going
+to finish. The view says so instead of going quiet.
+
+**This is the same shape as step 279's status line**: a state the code could
+enter and not report. There it was `join failed` for a join never attempted;
+here it was silence for presses never processed. Both told the user something
+untrue about what the system was doing.
+
+### 289b. Feedback that says WHERE
+
+Asked for: no beep, a white flash on the selected network instead.
+
+The click said *a press landed*. On a list, **where** is the whole message — and
+the click was identical whether the press hit the row above, the row below, or a
+guard that threw it away. The row now flashes white for a few frames.
+
+The keyboard's click goes too, and it loses nothing: it already draws the live
+key blue for exactly as long as another tap can still change that character. That
+is strictly more information than a beep — which key, and how long left — and it
+was there all along underneath the noise.
+
+`term.c` and `notes.c` keep their click; that decision is theirs, and if they
+migrate onto `keyboard.c` (285a) this becomes a flag rather than something
+chosen on their behalf.
+
+### State
+
+```
+open   whether refusals explain the inconsistency (288b); DHCP (283);
+       281c unmeasured; the USB link; term/notes onto keyboard.c
+```
