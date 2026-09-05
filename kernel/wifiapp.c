@@ -594,7 +594,11 @@ static void start_radio(void)
          * driver's own five-second sweep would gather evidence the user is
          * about to gather again. */
         extern void wifi_bringup_quick(int on);
+        extern void wifi_bringup_noconnect(int on);
         wifi_bringup_quick(1);
+        /* [step 312] Bring the radio UP; do not join anything. The user opened
+         * a list of networks to choose from, and choosing is theirs. */
+        wifi_bringup_noconnect(1);
     }
 
     (void)wifi_bringup(e, 0);
@@ -608,15 +612,9 @@ static void start_radio(void)
 
     /* The bring-up ends by joining the network in wifi_secrets.h. If that
      * worked, say so: the user asked for a radio and got a connection. */
-    if (wifi_joined()) {
-        /* The bring-up joins the compiled-in network, so that -- and not the
-         * selected row, which does not exist yet -- is what to name. */
-        const char *n = WIFI_STA_SSID;
-        uint32_t    k = 0u;
-        for (; k < 32u && n[k]; k++) { g_joined[k] = n[k]; }
-        g_joined[k] = 0;
-        { extern uint32_t g_wpa_disc_cb; g_disc_at_join = g_wpa_disc_cb; }
-    }   /* the state itself is view_settle()'s to decide, below */
+    /* [step 312] No join happens here any more, so there is no name to record.
+     * view_settle() below finds no connection and sweeps, which is what puts a
+     * list of networks in front of the user -- the thing they opened this for. */
 
     /* [step 293] Sweep ONLY if we did not just join.
      *

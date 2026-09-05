@@ -111,10 +111,15 @@ void wifi_start_enable(int on);
  * somewhere else, g_bt_enabled stays 0, and the driver correctly reports
  * ESP_ERR_NO_MEM. The build that failed was the honest one. */
 int g_bringup_quick;
+int g_bringup_noconnect;
+void wifi_bringup_noconnect(int on);
+void wifi_bringup_noconnect(int on) { g_bringup_noconnect = on; }
+
 void wifi_start_enable(int on)
 {
     g_want_start = on;
     blob_task_enable(on);
+    g_bringup_noconnect = 0;
     /* [step 304] The full sweep is the DEFAULT. Only a caller that asks for the
      * quick path after this call gets it, so the shell -- which has no other
      * view of the air -- cannot inherit the setting from a previous run of the
@@ -343,7 +348,22 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
                         e->wifi_scan_ap_recs);
     }
 
-    wifi_try_connect(e->wifi_set_config, e->wifi_connect);
+    /* [step 312] Skippable, and the wifi view skips it.
+     *
+     * wifi_bringup() has always ended by associating with the network compiled
+     * into wifi_secrets.h, because for two hundred steps the only consumer was
+     * a shell command whose whole purpose was to reach that one network.
+     *
+     * For a view that exists to LIST networks and let someone choose, it is
+     * the wrong ending in three separate ways: the choice is made before the
+     * user sees it; the resulting association makes the scan that would show
+     * them the list unreliable (288) or link-dropping (293); and it costs the
+     * PBKDF2 derivation for a network they may not have wanted.
+     *
+     * The shell path is unchanged and still connects. */
+    if (!g_bringup_noconnect) {
+        wifi_try_connect(e->wifi_set_config, e->wifi_connect);
+    }
 
     {   /* [step 250] What was actually on the air during the association. */
         extern void wifi_sniff_report(void);

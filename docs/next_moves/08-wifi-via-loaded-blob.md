@@ -17952,3 +17952,59 @@ symptom reports rather than as the diagnosis they were.**
 open   confirm; remove the WA trace; the web fetch; PMK cache (304c)
        touch 'cal'; steps 49-141; the USB link; term/notes onto keyboard.c
 ```
+
+---
+
+## step 312 — the app was connecting instead of listing
+
+`(this commit)`
+
+One trace line, and it was the whole answer:
+
+```
+WA started st=2 n=0 ch=0 rdy=1 jn=1 ref=0
+```
+
+**`jn=1`.** The bring-up had joined. So `view_settle()` correctly declined to
+sweep — scanning while associated drops the link (293) — and left an empty list
+reading `connected -- scan for others`.
+
+**The app was doing exactly what it was built to do, and what it was built to do
+is wrong.** Someone opens a wifi app to see the networks around them and pick
+one. This one silently associated with the network compiled into
+`wifi_secrets.h` and showed them nothing.
+
+### 312a. Why the ending was wrong in three ways
+
+`wifi_bringup()` has ended by associating since it was written, because for two
+hundred steps its only caller was a shell command whose entire purpose was
+reaching that one network. Inherited by a view that exists to list networks, the
+same ending:
+
+- **makes the choice before the user sees it** — the one thing the view is for
+- **breaks the list**: an associated station refuses off-channel scans (288) or
+  loses its link running them (293), so the two behaviours are in direct
+  conflict
+- **spends the fifteen-second PBKDF2** on a network the user may not want
+
+`wifi_bringup_noconnect(1)`. The shell path is untouched and still connects.
+
+### 312b. Every "fix" before this one was downstream of it
+
+302's auto-scan, 305's retry, 307's `g_busy`, 309's text, 311's shared decision
+— all of them were attempts to get a list in front of the user **around** an
+association that should not have been there. Several were real defects and
+remain fixed. None could have worked, because the view's central job and the
+bring-up's ending were incompatible and the bring-up won every time.
+
+The user said it five times and never once described a rendering bug. *Find the
+network and connect* is a description of what the app is for, and the app was
+skipping straight past the first half.
+
+### State
+
+```
+works  open wifi -> radio up, nothing joined -> sweep -> list -> tap to join
+open   confirm; remove the WA trace; the web fetch; PMK cache (304c)
+       touch 'cal'; steps 49-141; the USB link
+```
