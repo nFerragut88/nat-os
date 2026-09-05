@@ -16814,3 +16814,66 @@ chosen on their behalf.
 open   whether refusals explain the inconsistency (288b); DHCP (283);
        281c unmeasured; the USB link; term/notes onto keyboard.c
 ```
+
+---
+
+## step 290 — DHCP binds, and the claim it did not is withdrawn
+
+`(this commit)`
+
+### 290a. Measured
+
+```
+4way pmk=1 step=6 m1=1 m3=1 done=1 micbad=0 why=0
+lwip      DHCP bound -- address 192.168.1.140
+```
+
+**The wifi view does the whole job from two taps**: radio up, thirteen channels
+swept, associated, WPA2-PSK four-way handshake complete, DHCP lease bound. The
+board is on the network at 192.168.1.140, which is the address step 273 reached
+from the shell.
+
+### 290b. Withdrawing the claim, not just the evidence
+
+Steps 280d and 282 said DHCP did not complete by this route. Step 283a already
+retracted the **evidence** — the `dhcp offer/ack 0/0` counters belong to the
+hand-written path and are zero by construction — while noting the conclusion
+might still be right on the strength of a missing `DHCP bound` line.
+
+It was not right. The line is here. **A conclusion that survives the retraction
+of its evidence is still just a guess**, and it should have been demoted to one
+in 283 rather than kept on the open list for three more steps.
+
+The honest summary of that whole thread: an instrument was misread, the
+misreading produced a bug report, the bug report shaped three steps of work, and
+the bug did not exist.
+
+### 290c. The net task is now the tightest stack in the system
+
+```
+tightest stack=net 664/2048 B free
+```
+
+It was `touch 580/2048` when the bring-up ran there (280a) and `app-host
+1396/2048` before any of this. The net task now carries the bring-up, the join
+and the sweep — every blocking, blob-entering job in the view — and 664 bytes is
+the margin that is left.
+
+That is not a fault today and it is the thinnest margin in the kernel. Recorded
+because the next thing added to `wifiapp_service()` spends from it, and because
+`TASK_STACK_WORDS` is one size for every task (task.h:197 already notes that
+this stopped being workable).
+
+### 290d. The panic did not reproduce
+
+A 420 s capture across a full bring-up: no panic, no reset, no fault, and no
+`wificred saved` — so the passphrase submit was not reached in that window. The
+reported panic remains real and unmeasured; the capture stands ready.
+
+### State
+
+```
+works  icon tap -> radio -> scan -> associate -> WPA2 -> DHCP -> 192.168.1.140
+open   the save panic (unreproduced); net stack margin 664 B; 281c unmeasured;
+       the USB link; term/notes onto keyboard.c
+```
