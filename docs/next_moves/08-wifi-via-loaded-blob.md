@@ -17684,3 +17684,64 @@ thing that applied it here was going and looking.
 open   the web fetch, still unexercised; cache the PMK (304c); touch 'cal'
        steps 49-141; the USB link; term/notes onto keyboard.c
 ```
+
+---
+
+## step 307 — measured, after three guesses
+
+`(this commit)`
+
+"It only works when it is closed and reopened" — reported four times, with three
+fixes aimed at it (302 the flicker, 303 the dirty race, 305 the held press). All
+three were real defects. **None of them was this one.**
+
+So the view was made to print its state, and the answer arrived in five lines:
+
+```
+WA open     st=1 n=0 ch=0 rdy=0 jn=0     first open: no radio, correct
+WA open     st=0 n=0 ch=0 rdy=1 jn=0     second open: "ready", not joined
+WA autoscan st=4 n=0 ch=1 rdy=1 jn=0     so it sweeps
+WA scanbtn  st=4 n=0 ch=1 rdy=1 jn=0     the user taps scan
+WA started  st=7 n=0 ch=1 rdy=1 jn=1     the BRING-UP ends -- here, LAST
+```
+
+**`WA started` is the end of `start_radio()`, and it is last.** Everything above
+it happened *inside* the bring-up.
+
+### 307a. blob_ready() was never the question
+
+`blob_ready()` goes true early in `start_radio()`, immediately after
+`blob_init()` — with the PHY, the association and the four-way handshake still
+to come. There was no flag for *a bring-up is in progress*, so:
+
+- reopening mid-bring-up saw "radio ready, not joined"
+- `wifiapp_open()` **overwrote `ST_STARTING`** and reported an idle radio
+- the auto-scan (302) then fired **into a running bring-up**, fighting it for
+  the radio
+- and `start_radio()` finished by setting `g_count = 0`, **wiping the list the
+  scan had just built**
+
+Every one of those follows from asking a question that meant something else.
+
+`g_busy` is the real state: set when a start is requested, cleared when
+`start_radio()` returns by any path. Open respects it, the auto-scan waits for
+it, and both buttons check it.
+
+### 307b. Why three correct fixes did not help
+
+302, 303 and 305 were all genuine and all in the *view*. This is in what the
+view **believed about the radio** — and the belief was wrong in a window that
+only exists for twenty-five seconds, which is exactly the window a user spends
+tapping around wondering why nothing works.
+
+The reported symptom named that window precisely and I read it as a UI
+complaint three times. **"Works the second time" meant "works once the first
+attempt has finished", and the first attempt was still running.**
+
+### State
+
+```
+works  the view knows when a bring-up is running and stays out of its way
+open   remove the WA trace once confirmed; the web fetch; PMK cache (304c)
+       touch 'cal'; steps 49-141; the USB link; term/notes onto keyboard.c
+```

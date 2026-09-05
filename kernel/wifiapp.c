@@ -9,6 +9,7 @@
 #include "wifi_secrets.h"
 #include "keyboard.h"
 #include "wificred.h"
+#include "uart.h"
 
 /* The bound DHCP address, or 0. Declared here rather than in each block that
  * wants it: draw_status() reads it twice, in different scopes. */
@@ -99,6 +100,21 @@ static uint32_t  g_disc_at_join;
  * that reads the glass. */
 static int       g_want_start;
 
+/* [step 307] A bring-up is in progress.
+ *
+ * blob_ready() is NOT this. It goes true early in start_radio(), right after
+ * blob_init(), with the PHY, the association and the handshake still to come --
+ * so a view opened mid-bring-up saw "radio ready, not joined", overwrote the
+ * STARTING state, and started an auto-scan that fought the bring-up for the
+ * radio. start_radio() then finished and cleared the list the scan had built.
+ *
+ * Measured, not reasoned about: the trace put "WA started" -- the END of
+ * start_radio -- after the open, the autoscan and the scan button, which is
+ * what said all three happened inside it.
+ *
+ * volatile: set on the touch task, cleared on the net task, read by both. */
+static volatile int g_busy;
+
 /* [step 284] The selected row a join was asked for, or -1. Same reason as
  * g_want_start: join() blocks for the ~15 s of PBKDF2 and enters the blob, and
  * neither may happen on the task that reads the glass. */
@@ -133,6 +149,24 @@ static int      g_ask = -1;
 static char     g_pass[WIFICRED_PASS_MAX];
 
 /* ---- helpers -------------------------------------------------------------- */
+
+/* [step 307] TEMPORARY. Three fixes have been aimed at "only works the second
+ * time" and none of them was it, so this prints the state rather than reasoning
+ * about it. One line per event, short enough to survive a bad serial link. */
+static void trace(const char *ev)
+{
+    extern int wifi_joined(void);
+    extern uint32_t g_scan_refused;
+    uart_puts("  WA ");
+    uart_puts(ev);
+    uart_puts(" st=");   uart_put_dec((unsigned int)g_state);
+    uart_puts(" n=");    uart_put_dec(g_count);
+    uart_puts(" ch=");   uart_put_dec(g_scan_ch);
+    uart_puts(" rdy=");  uart_put_dec((unsigned int)(blob_ready() ? 1 : 0));
+    uart_puts(" jn=");   uart_put_dec((unsigned int)(wifi_joined() ? 1 : 0));
+    uart_puts(" ref=");  uart_put_dec(g_scan_refused);
+    uart_puts("\n");
+}
 
 static void put(uint32_t x, uint32_t y, const char *s, uint16_t fg, uint16_t bg)
 {
@@ -455,6 +489,7 @@ static void scan_step(void)
          * Bounded to one. A second failure is a real answer and gets reported
          * with its numbers rather than looped over. */
         extern uint32_t g_scan_refused;
+        trace("sweepend");
         if (g_count == 0u && g_scan_refused && !g_retried) {
             g_retried      = 1;
             g_swept        = 0u;
@@ -516,6 +551,7 @@ static void start_radio(void)
      * words, and shell.c has called it from flash since step 190. */
     const struct blob_entry *e = blob_map();
     if (!e || blob_init(e) != 0) {
+        g_busy  = 0;
         g_state = ST_NOSTART;
         g_dirty++;
         return;
@@ -548,6 +584,7 @@ static void start_radio(void)
     (void)wifi_bringup(e, 0);
 
     if (!blob_ready()) {
+        g_busy  = 0;
         g_state = ST_NOSTART;
         g_dirty++;
         return;
@@ -583,6 +620,8 @@ static void start_radio(void)
      * Scanning while connected is a genuine trade, not a bug, and it stays
      * available on the scan button. Doing it to a user who did not ask, seconds
      * after connecting them, is not a trade -- it is just losing the link. */
+    trace("started");
+    g_busy  = 0;
     g_count = 0u;
     g_sel   = -1;
     if (g_state != ST_JOINED) { g_scan_ch = 1u; }
@@ -698,9 +737,12 @@ void wifiapp_open(void)
      * network to join" on a board with no radio is the same kind of lie the
      * status enum was just split to stop telling. */
     g_ask = -1;
-    if (!blob_ready())      { g_state = ST_NORADIO; }
-    else if (wifi_joined()) { g_state = ST_JOINED;  }
-    else                    { g_state = ST_IDLE;    }
+    /* [step 307] A bring-up in progress owns the state. Recomputing it here
+     * from blob_ready() reported a half-initialised radio as an idle one. */
+    if (g_busy)             { g_state = ST_STARTING; }
+    else if (!blob_ready()) { g_state = ST_NORADIO;  }
+    else if (wifi_joined()) { g_state = ST_JOINED;   }
+    else                    { g_state = ST_IDLE;     }
     g_full = 1;
 
     /* [step 302] Sweep on entry when there is a radio, nothing is connected and
@@ -718,7 +760,8 @@ void wifiapp_open(void)
      *
      * Results are otherwise kept across opens: a sweep costs five seconds of
      * radio time and the list is very likely still true. */
-    if (blob_ready() && !wifi_joined() && g_count == 0u && !g_scan_ch) {
+    trace("open");
+    if (!g_busy && blob_ready() && !wifi_joined() && g_count == 0u && !g_scan_ch) {
         extern uint32_t g_scan_refused;
         g_sel          = -1;
         g_swept        = 0u;
@@ -726,6 +769,7 @@ void wifiapp_open(void)
         g_retried      = 0;
         g_scan_ch      = 1u;
         g_state        = ST_SCANNING;
+        trace("autoscan");
     }
 }
 
@@ -844,11 +888,12 @@ void wifiapp_touch(uint32_t x, uint32_t y, int down)
 
     /* The one button: start when the radio is down, scan when it is up. */
     if (y >= STAT_Y && x >= DISP_W - 60u) {
-        if (g_state == ST_STARTING || g_state == ST_DERIVING) {
+        if (g_busy || g_state == ST_STARTING || g_state == ST_DERIVING) {
             /* Already going. A second press must not queue a second request. */
         } else if (!blob_ready()) {
             g_scan_ch    = 0u;      /* the sweep stops HERE, before the request */
             g_want_start = 1;       /* the net task picks this up */
+            g_busy       = 1;       /* until start_radio() returns */
             g_state      = ST_STARTING;
             g_req_tick   = timer_ticks();
             g_dirty++;
@@ -861,6 +906,7 @@ void wifiapp_touch(uint32_t x, uint32_t y, int down)
             g_scan_ch      = 1u;
             g_state        = ST_SCANNING;
             g_dirty++;
+            trace("scanbtn");
         }
         return;
     }
@@ -875,7 +921,7 @@ void wifiapp_touch(uint32_t x, uint32_t y, int down)
      * sees what they picked. Joining takes fifteen seconds and is not something
      * to start by brushing the glass. */
     if (g_sel == (int)i) {
-        if (g_state == ST_STARTING || g_state == ST_DERIVING) { return; }
+        if (g_busy || g_state == ST_STARTING || g_state == ST_DERIVING) { return; }
         g_scan_ch = 0u;             /* the sweep stops HERE, before the request */
 
         /* [step 285] A network typed once is not typed again. */
