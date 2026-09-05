@@ -19124,3 +19124,63 @@ works  wifi finds networks and joins; the web view fetches over the internet
 open   the step-319 panic, unexplained; iram and DRAM are both tight
        remove the WA/SWEEP scaffolding; touch 'cal'
 ```
+
+---
+
+## step 335 — the scaffolding comes out, the log stays
+
+`(this commit)`
+
+Two instruments retired, one kept, and the difference is which of them found
+anything.
+
+### 335a. Out: the `WA` trace
+
+`trace()` printed the view's state to the UART on every open, autostart,
+autoscan, scan press and sweep end. It answered exactly one question, in step
+307 — `WA started` arriving **after** the open and the autoscan is what proved
+all three happened inside a running bring-up — and it needed a serial capture,
+a machine attached, and a board reset to do it.
+
+Everything after that was found from the glass.
+
+### 335b. Out: the `SWEEP` timing
+
+Added in 320 to answer *"scans for like a whole minute"*, and it answered it on
+its first run: `SWEEP took 10090 ms, worst channel 700 ms, found 1, refused 0`.
+Ten seconds, not sixty, and the network was there — which retired three steps of
+theory about a slow sweep and pointed at 20-pixel rows instead.
+
+**It was built for one measurement, it made it, and the answer does not change
+per run.** Keeping a timer for a timing question that is settled is how a log
+fills with numbers nobody reads.
+
+### 335c. Kept: the log on the glass
+
+`LOG()` and the eleven-line ring stay. They are not scaffolding; they are the
+view's account of itself, and they found four separate faults in one report
+each:
+
+| what the user read | step | what it was |
+|---|---|---|
+| `crypto self-test` | 326 | a minute-long operation labelled "a few milliseconds" |
+| `driver started`, then silence | 327 | a settle running inside the job it was settling |
+| `request sent`, then `tcp error` | 332 | ERR_ABRT from this code's own timeout |
+| `recv cb` never appearing | 333 | a 512-byte ring truncating every real frame |
+
+None needed a capture, a reset, or a theory. The serial link voided six runs in
+the same period.
+
+### 335d. Kept: the JOIN report
+
+One line per join carrying the handshake counters — `conn`, `disc`, `step`,
+`m1`, `m3`, `micbad`, `cached`. UART-only, fires once per join, and it is the
+only thing that distinguishes a wrong key from a refused association from a
+stalled handshake. It costs nothing when nobody is listening.
+
+### State
+
+```
+open   the step-319 panic; iram and DRAM headroom; term/notes onto keyboard.c
+       the data-path restructure (313b); touch 'cal'
+```

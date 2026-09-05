@@ -86,12 +86,6 @@ static int       g_was_down;
  * responsive and the progress is visible. 0 means idle. */
 static uint32_t  g_scan_ch;
 static uint32_t  g_swept;       /* channels visited in the sweep just run */
-/* [step 320] When the sweep started, and how long the slowest channel took.
- * A thirteen-channel sweep at SWEEP_DWELL should be about five seconds; it is
- * reported as taking a minute, so the assumption that it is fast has never been
- * checked against the board. */
-static uint32_t  g_sweep_t0;
-static uint32_t  g_ch_worst;
 static int       g_retried;    /* [step 305] one automatic re-sweep, no more */
 
 /* [step 289] The row to paint white for one flash, and when it started. This
@@ -170,25 +164,7 @@ static char     g_pass[WIFICRED_PASS_MAX];
 
 /* ---- helpers -------------------------------------------------------------- */
 
-/* [step 307] TEMPORARY. Three fixes have been aimed at "only works the second
- * time" and none of them was it, so this prints the state rather than reasoning
- * about it. One line per event, short enough to survive a bad serial link. */
-static void trace(const char *ev)
-{
-    extern int wifi_joined(void);
-    extern uint32_t g_scan_refused;
-    uart_puts("  WA ");
-    uart_puts(ev);
-    uart_puts(" st=");   uart_put_dec((unsigned int)g_state);
-    uart_puts(" n=");    uart_put_dec(g_count);
-    uart_puts(" ch=");   uart_put_dec(g_scan_ch);
-    uart_puts(" rdy=");  uart_put_dec((unsigned int)(blob_ready() ? 1 : 0));
-    uart_puts(" jn=");   uart_put_dec((unsigned int)(wifi_joined() ? 1 : 0));
-    uart_puts(" ref=");  uart_put_dec(g_scan_refused);
-    uart_puts("\n");
-}
-
-/* Defined below wifiapp_open(); start_radio() calls it from above. */
+/* Defined below wifiapp_open(); wifiapp_service() calls it from above. */
 static void view_settle(void);
 
 /* [step 324] A LOG, ON THE GLASS.
@@ -470,7 +446,6 @@ static void draw_ask(void)
  * list filling in rather than as a pause. */
 static void scan_step(void)
 {
-    uint32_t ch_t0 = timer_ticks();
     const struct blob_entry *e = blob_map();
     if (!e || !blob_ready()) {
         g_state   = ST_NORADIO;      /* NOT ST_FAILED -- see the enum */
@@ -517,9 +492,6 @@ static void scan_step(void)
         }
     }
 
-    {   uint32_t d = timer_ticks() - ch_t0;
-        if (d > g_ch_worst) { g_ch_worst = d; }
-    }
     g_swept++;
     LOGV("  channel", g_scan_ch);
     if (++g_scan_ch > 13u || g_count >= MAX_APS) {
@@ -536,46 +508,11 @@ static void scan_step(void)
          * Bounded to one. A second failure is a real answer and gets reported
          * with its numbers rather than looped over. */
         extern uint32_t g_scan_refused;
-        {   extern uint32_t g_scan_refused;
-            uart_puts("  SWEEP took ");
-            uart_put_dec((timer_ticks() - g_sweep_t0) * 10u);
-            uart_puts(" ms  worst channel ");
-            uart_put_dec(g_ch_worst * 10u);
-            uart_puts(" ms  found ");
-            uart_put_dec(g_count);
-            uart_puts("  refused ");
-            uart_put_dec(g_scan_refused);
-            uart_puts("\n");
-        }
-        LOGV("scan done -- networks found:", g_count);
-        trace("sweepend");
-        /* [step 320] Retry an empty sweep, whether or not channels were
-         * refused.
-         *
-         * Asked for in as many words: "can you make it fail on purpose so this
-         * app works correctly." Which is the honest reading of the evidence --
-         * the first sweep after the radio settles comes back empty and slow,
-         * and a second one immediately afterwards finds the network at once.
-         * That is reproducible and it is what the user has been doing by hand
-         * every single time.
-         *
-         * Step 305 already retried, but only when the driver had REFUSED
-         * channels. The failing sweep apparently refuses nothing -- it simply
-         * returns nothing -- so the condition never fired and the user kept
-         * supplying the second sweep themselves.
-         *
-         * This is a workaround and is labelled as one. It does not explain why
-         * the first sweep is barren, and the SWEEP timing line added alongside
-         * exists to find out. Making the user perform a known-necessary retry
-         * by hand is worse than performing it for them while the cause is still
-         * open. */
         if (g_count == 0u && !g_retried) {
             g_retried      = 1;
             g_swept        = 0u;
             g_scan_refused = 0u;
             g_scan_ch      = 1u;
-            g_sweep_t0     = timer_ticks();
-            g_ch_worst     = 0u;
             g_dirty++;
             return;
         }
@@ -713,7 +650,6 @@ static void start_radio(void)
      * Scanning while connected is a genuine trade, not a bug, and it stays
      * available on the scan button. Doing it to a user who did not ask, seconds
      * after connecting them, is not a trade -- it is just losing the link. */
-    trace("started");
     /* job_service() owns this now */               /* the view may act again from here */
     g_count = 0u;
     g_sel   = -1;
@@ -917,11 +853,8 @@ static void view_settle(void)
         g_scan_refused = 0u;
         g_retried      = 0;
         g_scan_ch      = 1u;
-        g_sweep_t0     = timer_ticks();
-        g_ch_worst     = 0u;
         g_state        = ST_SCANNING;
         LOG("scanning the channels");
-        trace("autoscan");
     }
 
     g_full = 1;
@@ -939,7 +872,6 @@ void wifiapp_open(void)
      * opposite assumption and made the view ignore every first tap. */
     g_was_down = 0;
 
-    trace("open");
     LOG("view opened");
 
     /* No radio? Ask for one; opening this view IS the request (308). The
@@ -948,7 +880,6 @@ void wifiapp_open(void)
     if (!job_busy() && !blob_ready()) {
         LOG("no radio -- starting one");
         (void)job_submit(start_radio, "starting radio");
-        trace("autostart");
     }
 
     /* Results are kept across opens: a sweep costs five seconds of radio time
