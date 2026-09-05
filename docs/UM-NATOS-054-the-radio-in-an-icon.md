@@ -36,7 +36,7 @@ four were faults in what it claimed.
 |---|---|---|
 | joining a network | `wifiinit start` over serial | **two taps on an icon** |
 | which network | compiled into the binary | **any, with the passphrase typed on the device** |
-| the passphrase | `#define WIFI_STA_PASS` | **typed, saved to flash, forgettable** |
+| the passphrase | `#define WIFI_STA_PASS` | **typed, saved to flash, forgettable — exercised end to end (§9.1)** |
 | the keyboard | two copies, term and notes | **a module, plus those two copies (§7.3)** |
 | scan results | printed to a serial console | **a list you can touch** |
 | the page | reachable if you caught the window | reachable because the board stays on the network |
@@ -261,6 +261,26 @@ service    HTTP on port 80      200, 350 bytes, 625 ms
 reached    from 192.168.1.102, ping 0% loss, ARP resolved
 launched   by two taps on a touchscreen
 ```
+
+---
+
+## 9.1 Postscript — the save path, exercised
+
+The report above went out with `wificred_put()` erasing a flash sector with the
+radio live recorded as **untested**. Step 297 ran it:
+
+```
+HTTP 200   353 bytes in 480 ms      (350 in §6 -- generated, not cached)
+```
+
+`forget` (296) removed the credential, the double tap reached the keyboard, the
+typed passphrase was written to flash with the radio up, the join used it, and
+the board reassociated and served.
+
+It needed `forget` to be testable at all: while the store had no way to remove
+an entry, every attempt joined silently instead. **A feature that cannot be
+re-run cannot be tested** — 296 was written as a usability gap without noticing
+it was also why the risky path had stayed unmeasured for eleven steps.
 
 ---
 

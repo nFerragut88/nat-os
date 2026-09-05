@@ -17234,3 +17234,46 @@ one that appears exactly when it applies explains itself by appearing.
 works  scan, pick, type a passphrase, join, remembered, and now forgettable
 open   steps 49-141; the USB link; term/notes onto keyboard.c; touch 'cal'
 ```
+
+---
+
+## step 297 — the whole path, exercised
+
+`(this commit)`
+
+```
+HTTP 200   353 bytes in 480 ms
+arp -a     192.168.1.140   5c-01-3b-50-3f-64   dynamic
+```
+
+353 bytes against the 350 of step 294: the page is generated, not cached, so
+this is a live fetch and not a stale answer.
+
+With `forget` in place (296) the last untested piece finally ran:
+
+- the credential was removed from flash and the dot went with it
+- the double tap reached the **keyboard** instead of joining silently
+- `wificred_put()` **erased and rewrote a flash sector with the radio live** —
+  flagged as structurally risky and untested since step 285, and now run
+- the join used the **typed** passphrase, through the `g_hs_pmk_ready` write
+  that replaced the call which crashed in 292
+- the board reassociated, rebound DHCP, and served
+
+**That closes the request that started this arc**: enter the password for a
+network on the device, and have it kept.
+
+### 297a. And it needed `forget` to be testable at all
+
+The save path could not be exercised a second time while the store had no way
+to remove an entry — every attempt joined silently instead. A feature that
+cannot be re-run cannot be tested, and 296 was written as a usability gap
+without noticing it was also the reason the risky path had stayed unmeasured
+for eleven steps.
+
+### State
+
+```
+works  scan, pick, type, join, remembered across reboots, forgettable
+       and the page is served over the link that credential opened
+open   steps 49-141; the USB link; term/notes onto keyboard.c; touch 'cal'
+```
