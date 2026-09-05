@@ -17851,3 +17851,52 @@ works  open wifi -> "starting the radio..." -> scan -> pick
 open   remove the WA trace; the web fetch; PMK cache (304c); touch 'cal'
        steps 49-141; the USB link; term/notes onto keyboard.c
 ```
+
+---
+
+## step 310 — the fix for "only the second time" was causing "only the second time"
+
+`(this commit)`
+
+Step 305a set `g_was_down = 1` in `wifiapp_open()`, reasoning that the launcher
+opens on a press the user is still holding, so the view should swallow it.
+
+**The launcher opens on RELEASE.** `desktop_touch()` calls `open_selected()`
+from its `!down` branch, after clearing its own `g_was_down`. The finger is
+already up by the time a view's open function runs.
+
+So arming the handler made it wait for a release that had already happened:
+
+```
+press icon      desktop selects
+release icon    desktop opens the view -> g_was_down = 1   <- already up
+press           if (g_was_down) return;                    <- IGNORED
+release         g_was_down = 0
+press           works
+```
+
+**That is "only works the second time", introduced by the fix aimed at "only
+works the second time".** From step 305 onward the symptom the user kept
+reporting was partly this, and every measurement after it was taken on a build
+that had it.
+
+### 310a. The premise was never checked
+
+305a is one of the few changes in this arc made without reading the thing it
+was about. `desktop_touch()` is thirty lines away in a file already open; the
+branch that calls `open_selected()` is visibly inside `if (!down)`. Steps 307
+and 309 were then both measured against a build carrying this, which is why the
+trace in 307 was correct and the conclusion drawn from it was incomplete.
+
+**A fix built on an unchecked assumption about another module is a guess wearing
+a comment.** The comment made it look considered, and it read plausibly enough
+that I carried it into `browser.c` in 306 as a known-good fix.
+
+Both reverted.
+
+### State
+
+```
+open   confirm the wifi view; remove the WA trace; the web fetch
+       PMK cache (304c); touch 'cal'; steps 49-141; the USB link
+```

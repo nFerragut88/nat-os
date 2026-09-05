@@ -743,7 +743,19 @@ void wifiapp_open(void)
      *
      * Setting it swallows the held press. It clears on release, which is the
      * event that actually means "the user is done with that tap". */
-    g_was_down = 1;
+    /* [step 310] ZERO, not one. Step 305a set this to 1 on the reasoning that
+     * the launcher opens on a PRESS still being held -- and it does not:
+     * desktop_touch() calls open_selected() from its RELEASE branch, after
+     * clearing its own g_was_down. The finger is already up when this runs.
+     *
+     * So arming the handler here made it wait for a release that had already
+     * happened: the next press was ignored, its release cleared the flag, and
+     * the press after that worked. That is "only works the second time" --
+     * introduced by the fix aimed at "only works the second time", from a
+     * premise about the launcher that was never checked against the launcher.
+     *
+     * The check is one line away in desktop.c and would have cost nothing. */
+    g_was_down = 0;
 
     /* Open showing what is true right now rather than a fixed starting state:
      * this view is entered both before and after the radio exists, and "tap a

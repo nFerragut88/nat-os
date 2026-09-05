@@ -213,7 +213,19 @@ void browser_open(void)
      * handler for a press already spent, so the first thing done in the view
      * was acted on at the ICON's coordinates -- step 305a, in the view built
      * after it. */
-    g_was_down = 1;
+    /* [step 310] ZERO, not one. Step 305a set this to 1 on the reasoning that
+     * the launcher opens on a PRESS still being held -- and it does not:
+     * desktop_touch() calls open_selected() from its RELEASE branch, after
+     * clearing its own g_was_down. The finger is already up when this runs.
+     *
+     * So arming the handler here made it wait for a release that had already
+     * happened: the next press was ignored, its release cleared the flag, and
+     * the press after that worked. That is "only works the second time" --
+     * introduced by the fix aimed at "only works the second time", from a
+     * premise about the launcher that was never checked against the launcher.
+     *
+     * The check is one line away in desktop.c and would have cost nothing. */
+    g_was_down = 0;
     g_scroll   = 0u;
     g_full     = 1;
     g_dirty++;
