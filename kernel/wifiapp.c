@@ -138,6 +138,19 @@ static void draw_row(uint32_t i)
 
     display_fill_rect(0, y, DISP_W, ROW_H - 1u, bg);
     put(4u, y + 6u, g_aps[i].ssid, fg, bg);
+
+    /* [step 295] A green dot for a network whose passphrase is already saved.
+     *
+     * The user tapped a known network, was not asked for a password, and read
+     * that as the feature failing -- when it was the feature working: ask once,
+     * remember forever. There was nothing on screen that distinguished "I know
+     * this one" from "I did not respond".
+     *
+     * Reads the primed RAM cache, never flash, so this is safe on a draw path
+     * (step 291 explains at length why that distinction matters here). */
+    if (wificred_has(g_aps[i].ssid)) {
+        display_fill_rect(DISP_W - 70u, y + 7u, 6u, 6u, fl ? COLOR_BLACK : OK);
+    }
     put(DISP_W - 58u, y + 6u, strength(g_aps[i].rssi), dm, bg);
     put(DISP_W - 26u, y + 6u, g_aps[i].auth ? "wpa" : "open", dm, bg);
 }

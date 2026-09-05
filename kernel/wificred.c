@@ -107,6 +107,16 @@ int wificred_get(const char *ssid, char *pass, uint32_t max)
     return 0;
 }
 
+int wificred_has(const char *ssid)
+{
+    if (!ssid) { return 0; }
+    load();
+    for (uint32_t i = 0u; i < g_rec.count; i++) {
+        if (same(g_rec.e[i].ssid, ssid)) { return 1; }
+    }
+    return 0;
+}
+
 uint32_t wificred_count(void)
 {
     load();

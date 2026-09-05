@@ -17158,3 +17158,51 @@ open   wificred_put() with the radio live, still untested -- the TC7NR path
        steps 49-141 window ownership; the USB link; term/notes onto keyboard.c
        the touch panel reads saturated with calibration at defaults ('cal')
 ```
+
+---
+
+## step 295 — the feature worked and looked like nothing happening
+
+`(this commit)`
+
+Reported as: tapping `ivory-billed` gives no password prompt, maybe it needs
+reflashing.
+
+### 295a. It was already saved
+
+The passphrase typed during the step-292 crash **had been written to flash
+before the crash**. `wificred_put()` runs and returns; the fault was in the join
+that followed it. So the credential has been on the board ever since, through
+every reflash — the kernel image is at 0x10000 and the credential sector is at
+0x202000, and nothing in the build touches it.
+
+So the tap found a saved passphrase and joined without asking. **That is the
+whole feature: ask once, remember forever.** It has been working since before
+the crash that hid it was found.
+
+### 295b. Which nothing on screen said
+
+The list showed a network the board had the key for exactly as it showed one it
+did not. There was no way to tell "I know this one" from "I did not respond to
+your tap", and the second reading is the natural one when the expected keyboard
+does not appear.
+
+A green dot on rows with a saved passphrase. It reads the primed RAM cache and
+never touches flash, so it is safe on a draw path — the distinction step 291 was
+about.
+
+**This is the fourth time in this arc a working system read as a broken one
+because the interface did not report its own state**: `join failed` for a join
+never attempted (279), an empty list that would not say why (286), a green
+address for a link that had gone (293), and now silence for a credential it
+already had. Each was a real defect in the same place — not in what the code
+did, but in what it said it was doing.
+
+### State
+
+```
+works  ask once, remember forever -- confirmed by its own silence, now visible
+open   an explicit way to FORGET a credential; there is none, and re-testing the
+       ask path currently needs the sector erased by other means
+       steps 49-141; the USB link; term/notes onto keyboard.c; touch 'cal'
+```

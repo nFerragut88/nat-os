@@ -56,6 +56,10 @@ int wificred_get(const char *ssid, char *pass, uint32_t max);
  * milliseconds — call it on a user action, never from a frame path. */
 int wificred_put(const char *ssid, const char *pass);
 
+/* Is there a saved passphrase for this SSID? Reads the primed RAM cache and
+ * performs NO flash access, so it is safe to call from a draw path. */
+int wificred_has(const char *ssid);
+
 /* How many credentials are stored. Reads the cache, not the flash. */
 uint32_t wificred_count(void);
 
