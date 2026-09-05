@@ -17900,3 +17900,55 @@ Both reverted.
 open   confirm the wifi view; remove the WA trace; the web fetch
        PMK cache (304c); touch 'cal'; steps 49-141; the USB link
 ```
+
+---
+
+## step 311 — one function for "what should this view be doing"
+
+`(this commit)`
+
+Asked for directly:
+
+> *"just use the functionality of before of closing out of the wifi app and
+> having it open the second time, but on the first time"*
+
+Which is the right instruction, and names the actual defect: there were **two
+implementations of the same decision.**
+
+`wifiapp_open()` decided the state and whether to sweep. `start_radio()` then
+decided the same things again for itself, in its own code, at the end of the
+bring-up. Reopening worked because it re-ran the first one with the radio
+finally up; the automatic path ran the second one, and the two had drifted.
+
+Every fix from 302 onward patched one or the other. **307 and 309 were both
+edits to the copy, made without noticing there was a copy.**
+
+`view_settle()` is that decision, once. `wifiapp_open()` calls it after
+requesting a radio if there is none; the end of `start_radio()` calls it too.
+The first attempt now runs exactly the code the second attempt ran, because it
+**is** that code rather than a second version intended to match it.
+
+### 311a. The shape of the whole episode
+
+Reported five times. Four fixes, all real defects, none of them the cause:
+
+| step | fixed | was it the cause |
+|---|---|---|
+| 302 | thirteen full repaints per sweep | no |
+| 303 | a dirty flag raced across two tasks | no |
+| 305 | a held press — **and introduced the symptom** (310) | no, worse |
+| 307 | the view not knowing a bring-up was running | no |
+| 309 | `tap start` shown while starting | no |
+
+The cause was duplicated logic, and the person reporting it said so in plain
+words twice: *the first attempt should never have been attempted*, then *do the
+second attempt on the first time.* Both are descriptions of one decision being
+made in two places. **Neither needed a debugger and both were treated as
+symptom reports rather than as the diagnosis they were.**
+
+### State
+
+```
+open   confirm; remove the WA trace; the web fetch; PMK cache (304c)
+       touch 'cal'; steps 49-141; the USB link; term/notes onto keyboard.c
+```

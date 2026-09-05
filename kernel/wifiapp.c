@@ -168,6 +168,9 @@ static void trace(const char *ev)
     uart_puts("\n");
 }
 
+/* Defined below wifiapp_open(); start_radio() calls it from above. */
+static void view_settle(void);
+
 static void put(uint32_t x, uint32_t y, const char *s, uint16_t fg, uint16_t bg)
 {
     display_text(x, y, s, fg, bg, 1u);
@@ -613,10 +616,7 @@ static void start_radio(void)
         for (; k < 32u && n[k]; k++) { g_joined[k] = n[k]; }
         g_joined[k] = 0;
         { extern uint32_t g_wpa_disc_cb; g_disc_at_join = g_wpa_disc_cb; }
-        g_state = ST_JOINED;
-    } else {
-        g_state = ST_IDLE;
-    }
+    }   /* the state itself is view_settle()'s to decide, below */
 
     /* [step 293] Sweep ONLY if we did not just join.
      *
@@ -637,8 +637,9 @@ static void start_radio(void)
     g_busy  = 0;               /* the view may act again from here */
     g_count = 0u;
     g_sel   = -1;
-    if (g_state != ST_JOINED) { g_scan_ch = 1u; }
-    g_dirty++;
+
+    /* [step 311] And now do exactly what a reopen does. */
+    view_settle();
 }
 
 /* Join the selected network with the compiled-in passphrase.
@@ -725,91 +726,31 @@ void wifiapp_service(void)
 
 /* ---- the view ------------------------------------------------------------- */
 
-void wifiapp_open(void)
+/* [step 311] What this view should be doing, given the radio, right now.
+ *
+ * Asked for directly: "use the functionality of before of closing out of the
+ * wifi app and having it open the second time, but on the first time."
+ *
+ * Reopening worked because it re-asked this question with the radio finally up.
+ * The automatic path answered it once, at the start, when the answer was still
+ * "there is no radio" -- and then hand-rolled its own ending, which drifted
+ * from what the working path did.
+ *
+ * So there is one function, and the end of a bring-up calls it. The first
+ * attempt runs exactly the code the second attempt ran, because it IS that
+ * code rather than a second implementation meant to match it. */
+static void view_settle(void)
 {
     extern int wifi_joined(void);
 
-    g_sel      = -1;
-    g_dirty++;
-
-    /* [step 305] The finger that opened this view IS STILL DOWN.
-     *
-     * The launcher opens on a press, and the touch task keeps reporting that
-     * same press to whoever owns the screen next -- which is now this view.
-     * Clearing g_was_down here armed the handler for a press the user had
-     * already spent, so the first thing they did after entering was acted on at
-     * the coordinates of the ICON they tapped, and their next real tap was the
-     * one that appeared to be first.
-     *
-     * Setting it swallows the held press. It clears on release, which is the
-     * event that actually means "the user is done with that tap". */
-    /* [step 310] ZERO, not one. Step 305a set this to 1 on the reasoning that
-     * the launcher opens on a PRESS still being held -- and it does not:
-     * desktop_touch() calls open_selected() from its RELEASE branch, after
-     * clearing its own g_was_down. The finger is already up when this runs.
-     *
-     * So arming the handler here made it wait for a release that had already
-     * happened: the next press was ignored, its release cleared the flag, and
-     * the press after that worked. That is "only works the second time" --
-     * introduced by the fix aimed at "only works the second time", from a
-     * premise about the launcher that was never checked against the launcher.
-     *
-     * The check is one line away in desktop.c and would have cost nothing. */
-    g_was_down = 0;
-
-    /* Open showing what is true right now rather than a fixed starting state:
-     * this view is entered both before and after the radio exists, and "tap a
-     * network to join" on a board with no radio is the same kind of lie the
-     * status enum was just split to stop telling. */
-    g_ask = -1;
-    /* [step 307] A bring-up in progress owns the state. Recomputing it here
-     * from blob_ready() reported a half-initialised radio as an idle one. */
     if (g_busy)             { g_state = ST_STARTING; }
     else if (!blob_ready()) { g_state = ST_NORADIO;  }
     else if (wifi_joined()) { g_state = ST_JOINED;   }
     else                    { g_state = ST_IDLE;     }
-    g_full = 1;
 
-    /* [step 302] Sweep on entry when there is a radio, nothing is connected and
-     * the list is empty.
-     *
-     * Reported as having to leave the view, come back and tap scan before
-     * anything could be joined. That WAS the design: start_radio() clears the
-     * list and 293 stopped it sweeping afterwards, so entering showed nothing
-     * until the user asked. Asking was a step with no decision in it -- there
-     * is nothing else to do with an empty list.
-     *
-     * NOT when already joined. Scanning retunes the radio off the access point
-     * (293) and would drop the connection the user came here to keep. The scan
-     * button stays, for choosing a different network on purpose.
-     *
-     * Results are otherwise kept across opens: a sweep costs five seconds of
-     * radio time and the list is very likely still true. */
-    trace("open");
-
-    /* [step 308] If there is no radio, START ONE. Do not ask.
-     *
-     * Step 302 removed the scan tap because it carried no decision -- there is
-     * nothing else to do with an empty list. The start tap carries even less:
-     * opening the wifi view IS the request for a radio, and the button below it
-     * offered one option.
-     *
-     * That extra step was also the whole of step 307. It created a
-     * twenty-five-second window in which the user had tapped start, had nothing
-     * to do, and went looking -- reopening the view, tapping scan, and landing
-     * in the middle of a bring-up. Removing the step removes the window: the
-     * view opens, says what it is doing, and does it.
-     *
-     * The button stays. When a bring-up has failed it reads `start` and is a
-     * retry, which is a real decision because the first answer was no. */
-    if (!g_busy && !blob_ready()) {
-        g_want_start = 1;
-        g_busy       = 1;
-        g_state      = ST_STARTING;
-        g_req_tick   = timer_ticks();
-        trace("autostart");
-    }
-
+    /* Sweep when there is a radio, nothing is connected and the list is empty.
+     * NOT while joined: scanning retunes the radio off the access point and
+     * drops the connection (293). */
     if (!g_busy && blob_ready() && !wifi_joined() && g_count == 0u && !g_scan_ch) {
         extern uint32_t g_scan_refused;
         g_sel          = -1;
@@ -820,6 +761,37 @@ void wifiapp_open(void)
         g_state        = ST_SCANNING;
         trace("autoscan");
     }
+
+    g_full = 1;
+    g_dirty++;
+}
+
+void wifiapp_open(void)
+{
+    g_sel      = -1;
+    g_ask      = -1;
+
+    /* [step 310] ZERO. The launcher opens on RELEASE -- desktop_touch() calls
+     * open_selected() from its !down branch -- so the finger is already up and
+     * there is no held press to swallow. Step 305a set this to 1 on the
+     * opposite assumption and made the view ignore every first tap. */
+    g_was_down = 0;
+
+    trace("open");
+
+    /* No radio? Ask for one; opening this view IS the request (308). The
+     * bring-up calls view_settle() when it finishes, so the view lands where a
+     * reopen would have put it. */
+    if (!g_busy && !blob_ready()) {
+        g_want_start = 1;
+        g_busy       = 1;
+        g_req_tick   = timer_ticks();
+        trace("autostart");
+    }
+
+    /* Results are kept across opens: a sweep costs five seconds of radio time
+     * and the list is very likely still true. */
+    view_settle();
 }
 
 void wifiapp_frame(void)
