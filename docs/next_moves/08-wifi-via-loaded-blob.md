@@ -18572,3 +18572,66 @@ the fifth thing tried — a duration is a number and nothing was printing it.
 open   remove 320's blind retry (322b); the SWEEP instrument can go with it
        steps 49-141; the data path (313b); the web fetch; remove the WA trace
 ```
+
+---
+
+## step 323 — no buttons, no jargon, just networks
+
+`(this commit)`
+
+Asked for:
+
+> *"remove the scan button and the 'starting radio' labels and instead have it
+> scan automatically and display networks"*
+
+### 323a. The button did nothing a decision was needed for
+
+Step 302 removed the scan tap on entry because it carried no decision. Step 308
+removed the start tap for the same reason. What survived was **a single button
+that could only ever mean "do the thing you opened this view to do"** — and
+which of the two it meant depended on a state the user should not have to track.
+
+Gone. Opening the view is the request: the radio comes up and the sweep runs. A
+fresh sweep is one close-and-reopen away, which is cheaper than a control that
+needs explaining.
+
+It also removes the only way a user could ask for a scan **while joined**, which
+panicked the kernel at step 319. A control that can only be used correctly is
+worse than no control.
+
+`forget` stays, and moves into the space the button vacated. That one **is** a
+decision, and it only appears when there is something to forget.
+
+### 323b. The labels named mechanisms, not waits
+
+`starting the radio -- 30 s`, `starting radio 18s`, `scanning ch 7 -- 2 found`,
+`radio off -- tap start`, `none found -- tap scan`, `connected -- scan for
+others`. Six phrases for two situations: **the radio is busy on your behalf**,
+or **here are the networks.**
+
+Every one of them named a mechanism — the radio, the channel, the sweep — when
+what the user is waiting for is a list. One phrase now: `looking for
+networks...`.
+
+The counting clock from 314 goes with them. It was the right fix for *"is this
+hung or slow"* when the answer was thirty-plus seconds of derivation; step 315
+cached the PMK and 322 measured the sweep at ten seconds, so the wait it made
+legible is largely gone. **An instrument built for a problem that has since been
+fixed is just noise**, and keeping it because it was hard-won is the wrong
+reason.
+
+### 323c. What the view is now
+
+```
+open it   ->  looking for networks...  ->  a list  ->  tap twice to join
+```
+
+No start, no scan, no status vocabulary. The only control is `forget`, and only
+when a saved network is selected.
+
+### State
+
+```
+open   steps 49-141 (the window fault); the data path (313b); the web fetch
+       remove the WA trace and the SWEEP instrument; touch 'cal'
+```

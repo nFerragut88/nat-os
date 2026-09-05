@@ -250,27 +250,7 @@ static void draw_status(void)
 {
     display_fill_rect(0, STAT_Y, DISP_W, STAT_H, BG);
 
-    /* [step 281] The scan says where it has got to and what it has found.
-     *
-     * The serial link to this board drops often enough that a run cannot be
-     * relied on to be observed, so a scan that finds nothing must be legible
-     * FROM THE GLASS: "scanning ch 7 -- 0 found" and "no networks -- tap scan"
-     * are different reports, and the first one distinguishes a sweep that is
-     * running and finding nothing from one that never started. */
-    static char scanmsg[28];
-    if (g_state == ST_SCANNING) {
-        uint32_t at = 0u;
-        const char *p = "scanning ch ";
-        while (*p) { scanmsg[at++] = *p++; }
-        at = num(scanmsg, at, g_scan_ch);
-        p = " -- ";
-        while (*p) { scanmsg[at++] = *p++; }
-        at = num(scanmsg, at, g_count);
-        p = " found";
-        while (*p) { scanmsg[at++] = *p++; }
-        scanmsg[at] = 0;
-    }
-
+    
     /* [step 283] JOINED shows the address, because "joined" and "on the
      * network" are not the same claim and this view had been making the
      * stronger one. An association with no DHCP lease is exactly the state the
@@ -304,34 +284,14 @@ static void draw_status(void)
         joinmsg[at] = 0;
     }
 
-    /* [step 314] The bring-up COUNTS. It used to promise "30 s" and then show
-     * a screen that never changed, so a bring-up running longer than the guess
-     * was indistinguishable from one that had hung -- reported as broken twice,
-     * and then as "it actually worked after waiting a very long time".
-     *
-     * A number that moves is the difference between waiting and wondering. It
-     * also stops the view making a promise about a duration nobody has
-     * measured: the elapsed time is a fact, "30 s" was a hope. */
-    static char startmsg[28];
-    if (g_state == ST_STARTING) {
-        uint32_t el = job_elapsed() / 100u;   /* [step 316] the job knows */
-        uint32_t at = 0u;
-        const char *q = "starting radio  ";
-        while (*q) { startmsg[at++] = *q++; }
-        if (el >= 100u) { startmsg[at++] = (char)('0' + (el / 100u) % 10u); }
-        if (el >= 10u)  { startmsg[at++] = (char)('0' + (el / 10u) % 10u); }
-        startmsg[at++] = (char)('0' + el % 10u);
-        startmsg[at++] = 's';
-        startmsg[at]   = 0;
-    }
-
+    
     const char *msg;
     uint16_t    col;
     switch (g_state) {
-    case ST_NORADIO:  msg = "radio off -- tap start";   col = DIM;  break;
-    case ST_STARTING: msg = startmsg;                   col = BUSY; break;
+    case ST_NORADIO:  msg = "starting";                 col = BUSY; break;
+    case ST_STARTING: msg = "looking for networks";     col = BUSY; break;
     case ST_NOSTART:  msg = "radio did not start";      col = BAD;  break;
-    case ST_SCANNING: msg = scanmsg;                    col = BUSY; break;
+    case ST_SCANNING: msg = "looking for networks";     col = BUSY; break;
     case ST_DERIVING: msg = "deriving key -- 15 s";     col = BUSY; break;
     case ST_JOINING:  msg = "joining";                  col = BUSY; break;
     case ST_JOINED:   msg = joinmsg;
@@ -347,13 +307,21 @@ static void draw_status(void)
      *
      * It sits in the status bar rather than the list so that a list which
      * fills the view cannot push it off. */
-    /* [step 286] 28 px tall, was 16. A 16-pixel target at the very bottom of a
-     * resistive panel is where the calibration is worst and a fingertip is
-     * widest; the hit test below has always accepted the whole strip, so the
-     * button now looks like the area it actually occupies. */
-    display_fill_rect(DISP_W - 60u, STAT_Y + 3u, 56u, 28u, COLOR_BLUE);
-    put(DISP_W - 50u, STAT_Y + 14u, blob_ready() ? "scan" : "start", FG,
-        COLOR_BLUE);
+    /* [step 323] The scan/start button is GONE.
+     *
+     * Asked for: scan automatically and show the networks. Both of the things
+     * that button did were steps with no decision in them -- 302 removed the
+     * scan tap on entry for exactly that reason and 308 removed the start tap,
+     * and what was left was a button that only ever meant "do the thing you
+     * opened this view to do".
+     *
+     * Opening the view is the request. It brings the radio up and sweeps; a
+     * fresh sweep is one close-and-reopen away, which is cheaper than a control
+     * that has to be explained. It also removes the one way a user could ask
+     * for a scan while joined, which panicked the kernel (319).
+     *
+     * `forget` stays, below: that IS a decision, and only appears when there is
+     * something to forget. */
 
     /* [step 296] `forget`, and ONLY when a selected network has something to
      * forget. A button that is always present but usually does nothing teaches
@@ -366,8 +334,8 @@ static void draw_status(void)
      * never untaught. */
     if (g_sel >= 0 && (uint32_t)g_sel < g_count &&
         wificred_has(g_aps[g_sel].ssid)) {
-        display_fill_rect(DISP_W - 124u, STAT_Y + 3u, 60u, 28u, COLOR_RED);
-        put(DISP_W - 118u, STAT_Y + 14u, "forget", FG, COLOR_RED);
+        display_fill_rect(DISP_W - 66u, STAT_Y + 3u, 62u, 28u, COLOR_RED);
+        put(DISP_W - 60u, STAT_Y + 14u, "forget", FG, COLOR_RED);
     }
 }
 
@@ -417,13 +385,15 @@ static void draw_all(void)
          *
          * Step 308 made the start automatic and did not revisit the text
          * written for a start the user had asked for. */
-        if (job_busy() || g_state == ST_STARTING)
-                                        { why = "starting the radio..."; }
-        else if (!blob_ready())         { why = "radio off -- tap start"; }
-        else if (g_state == ST_SCANNING){ why = "scanning..."; }
-        else if (g_state == ST_NOSTART) { why = "radio did not start"; }
-        else if (g_state == ST_JOINED)  { why = "connected -- scan for others"; }
-        else                            { why = "none found -- tap scan"; }
+        /* [step 323] One phrase while the radio is being brought up and swept.
+         * "starting the radio" named a mechanism the user did not ask about;
+         * what they are waiting for is a list of networks. */
+        if (job_busy() || g_state == ST_STARTING || !blob_ready())
+                                        { why = "looking for networks..."; }
+        else if (g_state == ST_SCANNING){ why = "looking for networks..."; }
+        else if (g_state == ST_NOSTART) { why = "no radio -- reopen to retry"; }
+        else if (g_state == ST_JOINED)  { why = "connected"; }
+        else                            { why = "none found -- reopen to retry"; }
         put(4u, LIST_Y + 6u, why, DIM, BG);
 
         /* [step 288] What the last sweep actually DID. "Inconsistent" is a
@@ -1053,7 +1023,7 @@ void wifiapp_touch(uint32_t x, uint32_t y, int down)
 
 
     /* [step 296] forget, checked before the scan/start button beside it. */
-    if (y >= STAT_Y && x >= DISP_W - 124u && x < DISP_W - 60u &&
+    if (y >= STAT_Y && x >= DISP_W - 66u &&
         g_sel >= 0 && (uint32_t)g_sel < g_count &&
         wificred_has(g_aps[g_sel].ssid)) {
         {   /* [step 315] The cached PMK was derived FROM this passphrase.
@@ -1066,48 +1036,6 @@ void wifiapp_touch(uint32_t x, uint32_t y, int down)
         (void)wificred_forget(g_aps[g_sel].ssid);
         g_dirty++;
         return;                 /* the dot goes; a double tap now asks */
-    }
-
-    /* The one button: start when the radio is down, scan when it is up. */
-    if (y >= STAT_Y && x >= DISP_W - 60u) {
-        if (job_busy() || g_state == ST_STARTING || g_state == ST_DERIVING) {
-            /* Already going. A second press must not queue a second request. */
-        } else if (!blob_ready()) {
-            g_scan_ch    = 0u;      /* the sweep stops HERE, before the request */
-            (void)job_submit(start_radio, "starting radio");
-            g_state = ST_STARTING;
-            g_dirty++;
-        } else {
-            extern uint32_t g_scan_refused;
-            extern void wifi_leave(void);
-            extern int  wifi_joined(void);
-
-            /* [step 319] Leave first if we are on a network.
-             *
-             * Tapping scan while joined panicked the kernel: the blob task lost
-             * a register window across a switch (49-141) while the radio was
-             * retuned off the access point underneath it. The scan was already
-             * known to be refused (288) and link-dropping (293) in this state;
-             * this is the third and worst thing it does.
-             *
-             * A station has one radio. Looking at other channels means not
-             * being on this one, and doing that deliberately beats doing it by
-             * accident. */
-            if (wifi_joined()) { wifi_leave(); }
-
-            g_count        = 0u;
-            g_sel          = -1;
-            g_swept        = 0u;
-            g_scan_refused = 0u;
-            g_retried      = 0;
-            g_scan_ch      = 1u;
-            g_sweep_t0     = timer_ticks();
-            g_ch_worst     = 0u;
-            g_state        = ST_SCANNING;
-            g_dirty++;
-            trace("scanbtn");
-        }
-        return;
     }
 
     if (y < LIST_Y || y >= STAT_Y) { return; }
