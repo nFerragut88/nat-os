@@ -1824,7 +1824,9 @@ void kmain(void)
          * transaction -- next to a live blob task, which reliably provoked the
          * window-ownership fault of steps 49-141. */
         extern void wificred_prime(void);
+        extern void pmkcache_prime(void);
         wificred_prime();
+        pmkcache_prime();       /* [step 315] same rule: flash, before the radio */
     }
 
     int found = (store_load() == 0);

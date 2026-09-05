@@ -941,7 +941,10 @@ uint32_t g_hs_e_tx, g_hs_e_setkey, g_hs_e_ptkdone, g_hs_e_authdone, g_hs_e_getma
 const char *g_hs_ssid;
 const char *g_hs_pass;
 
-static unsigned char g_hs_pmk[32];
+/* [step 315] NOT static. The call0 side reads it after a derivation to cache
+ * it, and writes it on a cache hit to skip one. Both are memory accesses, which
+ * cross no ABI -- step 292's rule, applied deliberately this time. */
+unsigned char g_hs_pmk[32];
 /* [step 292] NOT static. The call0 side clears this directly, because a write
  * crosses no ABI and a call does. See the removal below. */
 uint32_t g_hs_pmk_ready;

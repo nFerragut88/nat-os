@@ -18121,3 +18121,71 @@ works  the bring-up counts, so waiting looks like waiting
 open   the data-path restructure (313b); PMK cache; the web fetch
        remove the WA trace; touch 'cal'; steps 49-141; the USB link
 ```
+
+---
+
+## step 315 — the fifteen seconds, cached
+
+`(this commit)`
+
+The largest measurable piece of the bring-up is PBKDF2-SHA1 at 4096 iterations,
+about fifteen seconds. It is also a **pure function** of the passphrase and the
+SSID: the same two inputs give the same 32 bytes on every boot, forever.
+Deriving it again is not caution, it is arithmetic repeated.
+
+`pmkcache.c` keeps it, and `wifi_join_ssid()` consults it before spending the
+time.
+
+### 315a. A second sector, not a wider record
+
+`store.c` taught this once (285b) and it applies again: extending a versioned
+record discards every existing one. The credentials in `wificred` are
+passphrases **a person typed on a multi-tap keyboard**. Costing someone that to
+save fifteen seconds is a bad trade; a second sector costs 4 KB of a 1.8 MB gap.
+
+The two records also differ in kind, and that is the better argument. **A
+credential is authoritative; a cached PMK is disposable.** If this sector is
+lost, corrupt or old, the answer is to derive again — fifteen seconds, not a
+lost password. Nothing here is ever the only copy of anything.
+
+### 315b. Two memory accesses, no call
+
+`g_hs_pmk` is in `wifi_glue.c`, which is compiled **windowed**;
+`wifi_join_ssid()` is **call0**. Step 292 spent three rounds and a crash
+learning what a call across that boundary does.
+
+So there is no call. The buffer is `extern` and the call0 side reads it after a
+derivation and writes it on a hit — memory accesses, which have no calling
+convention. Same shape as `g_hs_pmk_ready` in 292, applied deliberately this
+time rather than discovered.
+
+### 315c. Forgetting has to forget both
+
+`forget` (296) removes the passphrase. The cached PMK was **derived from that
+passphrase**, so leaving it would make a newly typed password appear to be
+ignored — the cache would answer with the key from the old one, and the join
+would fail in a way that looked like the new passphrase was wrong.
+
+`pmkcache_forget()` runs first, in the same handler.
+
+### 315d. What a wrong cached key can do
+
+Nothing quiet. The four-way handshake fails its MIC and the view reports a
+failed join — the same outcome as a wrong passphrase, which is exactly what a
+wrong cached key is. The entry is dropped on that path so the next attempt
+derives.
+
+Placement verified by address, not by reading the linker script:
+
+```
+pmkcache_get   0x40088f9c   iram   -- drives the flash bus (292)
+wificred_get   0x4008d770   iram
+```
+
+### State
+
+```
+works  the first join derives; every join after it is instant
+open   the data-path restructure (313b); the web fetch; remove the WA trace
+       touch 'cal'; steps 49-141; the USB link; term/notes onto keyboard.c
+```

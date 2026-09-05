@@ -2333,13 +2333,34 @@ void wifi_join_ssid(const char *ssid)
         extern uint32_t g_hs_pmk_ready;
         extern int wpa_hs_derive_pmk(void);
         extern const char *g_hs_pass;
+        extern unsigned char g_hs_pmk[32];
+        extern uint32_t g_hs_pmk_ready;
+        extern int  pmkcache_get(const char *ssid, unsigned char *out);
+        extern int  pmkcache_put(const char *ssid, const unsigned char *pmk);
         g_hs_ssid = g_join_ssid;
         /* A typed passphrase wins over the compiled-in one. When none has been
          * typed the old behaviour stands, so the board still joins the network
          * it was built for with no credential saved. */
         if (g_join_pass_set) { g_hs_pass = g_join_pass; }
         g_hs_pmk_ready = 0u;    /* [step 292] a write, not a call -- see wifi_glue.c */
-        (void)blob_call((uint32_t)&wpa_hs_derive_pmk, 0u, 0u, 0u, 0u);
+
+        /* [step 315] Fifteen seconds of PBKDF2, or none.
+         *
+         * The PMK is a pure function of the SSID and the passphrase, so a
+         * cached one is not stale data -- it is the same arithmetic, already
+         * done. Installing it is two memory operations and no call, for the
+         * reason step 292 cost a crash to learn.
+         *
+         * A wrong cached key cannot do harm quietly: the four-way handshake
+         * fails its MIC and the view reports a failed join, which is what a
+         * wrong passphrase does anyway. The cache is dropped on a failure so
+         * the next attempt derives. */
+        if (pmkcache_get(g_join_ssid, g_hs_pmk)) {
+            g_hs_pmk_ready = 1u;
+        } else {
+            (void)blob_call((uint32_t)&wpa_hs_derive_pmk, 0u, 0u, 0u, 0u);
+            if (g_hs_pmk_ready) { (void)pmkcache_put(g_join_ssid, g_hs_pmk); }
+        }
     }
 
     /* The station config: SSID at +0 and password at +32, the two fields step

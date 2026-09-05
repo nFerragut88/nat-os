@@ -937,6 +937,13 @@ void wifiapp_touch(uint32_t x, uint32_t y, int down)
     if (y >= STAT_Y && x >= DISP_W - 124u && x < DISP_W - 60u &&
         g_sel >= 0 && (uint32_t)g_sel < g_count &&
         wificred_has(g_aps[g_sel].ssid)) {
+        {   /* [step 315] The cached PMK was derived FROM this passphrase.
+             * Leaving it behind would make a re-entered password appear to be
+             * ignored -- the cache would answer with the key from the old
+             * one. */
+            extern void pmkcache_forget(const char *ssid);
+            pmkcache_forget(g_aps[g_sel].ssid);
+        }
         (void)wificred_forget(g_aps[g_sel].ssid);
         g_dirty++;
         return;                 /* the dot goes; a double tap now asks */
