@@ -50,7 +50,24 @@ _Static_assert(STAT_Y + STAT_H == VIEW_H, "status bar must meet the region end")
 static wifi_ap_t g_aps[MAX_APS];
 static uint32_t  g_count;
 static int       g_sel = -1;
-static int       g_dirty;
+/* [step 303] A SEQUENCE, not a flag, and volatile.
+ *
+ * This is written by the net task -- scan_step(), join(), start_radio() -- and
+ * read by the display task, and the read used to be:
+ *
+ *     if (!g_dirty) { return; }
+ *     g_dirty = 0;                 <- a set landing here is LOST
+ *     draw_all();
+ *
+ * A sweep result arriving in that window was never drawn, and nothing set the
+ * flag again, so the view stayed stale until it was re-entered -- which is
+ * exactly how it was reported: "it only works when I exit out and reopen".
+ *
+ * A counter cannot lose an update. Producers bump it, the display task records
+ * what it last painted, and a bump that happens during a paint is simply seen
+ * on the next frame. */
+static volatile uint32_t g_dirty;
+static uint32_t          g_drawn;
 static int       g_was_down;
 
 /* The sweep is spread across frames: one channel per frame, so the view stays
@@ -380,7 +397,7 @@ static void scan_step(void)
     if (!e || !blob_ready()) {
         g_state   = ST_NORADIO;      /* NOT ST_FAILED -- see the enum */
         g_scan_ch = 0u;
-        g_dirty   = 1;
+        g_dirty++;
         return;
     }
 
@@ -432,7 +449,7 @@ static void scan_step(void)
          * associated, and it was overwriting the one thing that does. */
         if (g_state == ST_SCANNING) { g_state = ST_IDLE; }
     }
-    g_dirty = 1;
+    g_dirty++;
 }
 
 /* Bring the radio up: the whole of what the shell's `wifiinit start` does.
@@ -477,7 +494,7 @@ static void start_radio(void)
     const struct blob_entry *e = blob_map();
     if (!e || blob_init(e) != 0) {
         g_state = ST_NOSTART;
-        g_dirty = 1;
+        g_dirty++;
         return;
     }
     (void)phyinit_run_at(e->phy_init);
@@ -503,7 +520,7 @@ static void start_radio(void)
 
     if (!blob_ready()) {
         g_state = ST_NOSTART;
-        g_dirty = 1;
+        g_dirty++;
         return;
     }
 
@@ -540,7 +557,7 @@ static void start_radio(void)
     g_count = 0u;
     g_sel   = -1;
     if (g_state != ST_JOINED) { g_scan_ch = 1u; }
-    g_dirty = 1;
+    g_dirty++;
 }
 
 /* Join the selected network with the compiled-in passphrase.
@@ -554,7 +571,7 @@ static void join(uint32_t i)
     extern int  wifi_joined(void);
 
     if (i >= g_count) { return; }
-    if (!blob_ready()) { g_state = ST_NORADIO; g_dirty = 1; return; }
+    if (!blob_ready()) { g_state = ST_NORADIO; g_dirty++; return; }
 
     g_state = ST_DERIVING;      /* the display task is already painting this */
 
@@ -569,7 +586,7 @@ static void join(uint32_t i)
     } else {
         g_state = ST_FAILED;
     }
-    g_dirty = 1;
+    g_dirty++;
 }
 
 /* Run a requested bring-up. Called from the NET TASK, not the touch task.
@@ -632,7 +649,7 @@ void wifiapp_open(void)
     extern int wifi_joined(void);
 
     g_sel      = -1;
-    g_dirty    = 1;
+    g_dirty++;
     g_was_down = 0;
 
     /* Open showing what is true right now rather than a fixed starting state:
@@ -675,7 +692,7 @@ void wifiapp_frame(void)
     /* [step 289] The flash is a few frames of white, then gone. */
     if (g_flash_row >= 0 && (timer_ticks() - g_flash_tick) > 8u) {
         g_flash_row = -1;
-        g_dirty     = 1;
+        g_dirty++;
     }
 
     /* [step 289] A request that never finishes must not disable the view.
@@ -692,7 +709,7 @@ void wifiapp_frame(void)
     if ((g_state == ST_DERIVING || g_state == ST_STARTING) &&
         (timer_ticks() - g_req_tick) > 12000u) {
         g_state = ST_FAILED;
-        g_dirty = 1;
+        g_dirty++;
     }
 
     /* [step 283] DHCP binds seconds after the join, so the address arrives
@@ -700,7 +717,7 @@ void wifiapp_frame(void)
     if (g_state == ST_JOINED) {
         static uint32_t shown;
         uint32_t now = netif_wifi_ip();
-        if (now != shown) { shown = now; g_dirty = 1; }
+        if (now != shown) { shown = now; g_dirty++; }
     }
 
     /* [step 281] Do NOT enter the blob from here while a bring-up is in flight.
@@ -721,15 +738,17 @@ void wifiapp_frame(void)
      * The cost is that the sweep pauses for the duration of a bring-up. The
      * bring-up ends by starting a fresh sweep anyway, so nothing is lost. */
     if (g_state == ST_ASKPASS) {
-        if (keyboard_tick()) { g_dirty = 1; }
-        if (!g_dirty) { return; }
-        g_dirty = 0;
+        if (keyboard_tick()) { g_dirty++; }
+        uint32_t seq = g_dirty;
+        if (seq == g_drawn) { return; }
+        g_drawn = seq;
         draw_ask();
         return;
     }
 
-    if (!g_dirty)  { return; }
-    g_dirty = 0;
+    uint32_t seq = g_dirty;
+    if (seq == g_drawn) { return; }
+    g_drawn = seq;
     draw_all();
 }
 
@@ -746,7 +765,7 @@ void wifiapp_touch(uint32_t x, uint32_t y, int down)
      * twice per key; there is no audio in this view any more. */
     if (g_state == ST_ASKPASS) {
         int r = keyboard_touch(x, y);
-        if (r == KB_EDIT) { g_dirty = 1; return; }
+        if (r == KB_EDIT) { g_dirty++; return; }
         if (r != KB_SUBMIT) { return; }
 
         /* Save first, then join. A passphrase that turns out to be wrong is
@@ -767,7 +786,7 @@ void wifiapp_touch(uint32_t x, uint32_t y, int down)
             g_state = ST_IDLE;          /* nothing typed: back to the list */
         }
         g_ask   = -1;
-        g_dirty = 1;
+        g_dirty++;
         return;
     }
 
@@ -777,7 +796,7 @@ void wifiapp_touch(uint32_t x, uint32_t y, int down)
         g_sel >= 0 && (uint32_t)g_sel < g_count &&
         wificred_has(g_aps[g_sel].ssid)) {
         (void)wificred_forget(g_aps[g_sel].ssid);
-        g_dirty = 1;
+        g_dirty++;
         return;                 /* the dot goes; a double tap now asks */
     }
 
@@ -790,7 +809,7 @@ void wifiapp_touch(uint32_t x, uint32_t y, int down)
             g_want_start = 1;       /* the net task picks this up */
             g_state      = ST_STARTING;
             g_req_tick   = timer_ticks();
-            g_dirty      = 1;
+            g_dirty++;
         } else {
             extern uint32_t g_scan_refused;
             g_count        = 0u;
@@ -799,7 +818,7 @@ void wifiapp_touch(uint32_t x, uint32_t y, int down)
             g_scan_refused = 0u;
             g_scan_ch      = 1u;
             g_state        = ST_SCANNING;
-            g_dirty        = 1;
+            g_dirty++;
         }
         return;
     }
@@ -828,11 +847,11 @@ void wifiapp_touch(uint32_t x, uint32_t y, int down)
             g_state = ST_ASKPASS;
             keyboard_reset("join");
         }
-        g_dirty = 1;
+        g_dirty++;
     } else {
         g_sel        = (int)i;
         g_flash_row  = (int)i;      /* [step 289] white, where the finger went */
         g_flash_tick = timer_ticks();
-        g_dirty      = 1;
+        g_dirty++;
     }
 }

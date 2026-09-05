@@ -17494,3 +17494,54 @@ was doing it at the one moment it is both safe and wanted.
 works  enter the view -> it scans -> tap a network -> join; no flicker
 open   the web fetch; touch 'cal'; steps 49-141; the USB link; term/notes
 ```
+
+---
+
+## step 303 — a dirty flag raced across two tasks
+
+`(this commit)`
+
+Reported as: it still only works after leaving the view and reopening it.
+
+That symptom names the fault precisely. **Re-entering forces a repaint** — so
+the state underneath was correct all along and the SCREEN was stale. Something
+was losing updates.
+
+`g_dirty` is written by the **net task** (`scan_step`, `join`, `start_radio`)
+and read by the **display task**:
+
+```c
+if (!g_dirty) { return; }
+g_dirty = 0;                /* a set landing HERE is lost */
+draw_all();
+```
+
+A plain `int`, not volatile, with a test-then-clear straddling two tasks. A
+sweep result arriving in that window was never drawn, and nothing set the flag
+again, so the view stayed stale until it was re-entered.
+
+Now a **sequence**: producers bump it, the display task records what it last
+painted, and a bump during a paint is simply seen on the next frame. A counter
+cannot lose an update.
+
+### 303a. Why the earlier fixes did not find it
+
+Steps 302 and 301 were both real (thirteen full repaints per sweep; a dirty flag
+set unconditionally) and both were in the drawing. This one is not in the
+drawing — it is in the handoff between the task that changes the state and the
+task that shows it, which no amount of looking at `draw_all()` would reveal.
+
+The clue was in the report and not in the code: *only* when I exit and reopen.
+An action that fixes a symptom without touching the subsystem being blamed is
+pointing somewhere else, and it took three tries to read that.
+
+**The wifi view was the first thing in this project to move work onto another
+task** (281b, 284, 288). Every one of those steps moved a producer across a task
+boundary and none of them revisited how the result got back.
+
+### State
+
+```
+works  the view repaints when the net task changes something, first time
+open   the web fetch; touch 'cal'; steps 49-141; the USB link; term/notes
+```
