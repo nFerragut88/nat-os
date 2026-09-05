@@ -17449,3 +17449,48 @@ works  web view fetches and displays without flicker
 open   the fetch itself -- DNS and the TCP client remain unexercised
        touch 'cal'; steps 49-141; the USB link; term/notes onto keyboard.c
 ```
+
+---
+
+## step 302 — the wifi view: a flash per channel, and a step with no decision in it
+
+`(this commit)`
+
+Reported as: the view is glitchy, and connecting means leaving it, coming back
+and tapping scan.
+
+### 302a. Thirteen full repaints per sweep
+
+`draw_all()` blanked the whole view before repainting, and `scan_step()` marks
+the view dirty **once per channel**. So a sweep was thirteen
+black-then-content cycles — a flash each time, not an update.
+
+Identical to the browser's flicker (301), in code written earlier, and not
+noticed until the same mistake was made twice. The full clear now happens on
+entering the view; the list region clears itself so rows and the empty-state
+text can replace each other, and nothing else needs blanking at all.
+
+### 302b. A step with no decision in it
+
+`start_radio()` clears the list, and step 293 correctly stopped it sweeping
+afterwards — so entering the view showed an empty list until the user tapped
+`scan`. **That tap carried no decision.** There is nothing else to do with an
+empty list, and the interface was asking anyway.
+
+The view now sweeps on entry when there is a radio, nothing is connected, and
+the list is empty. **Not when already joined**: scanning retunes the radio off
+the access point (293) and would drop the connection the user came here to
+keep. The scan button stays for choosing a different network on purpose, and
+the empty list while connected now reads `connected -- scan for others` rather
+than inviting a tap that would cost the link.
+
+This is 293 finishing properly. That step removed a sweep that was destroying
+the connection and left the user with nothing in its place; the missing half
+was doing it at the one moment it is both safe and wanted.
+
+### State
+
+```
+works  enter the view -> it scans -> tap a network -> join; no flicker
+open   the web fetch; touch 'cal'; steps 49-141; the USB link; term/notes
+```

@@ -86,6 +86,12 @@ static int       g_want_start;
  * neither may happen on the task that reads the glass. */
 static int       g_want_join = -1;
 
+/* [step 302] The next paint must clear the whole view. Set on entering, and
+ * nowhere else: a repaint that blanks the screen first is a flash, not an
+ * update, and scan_step() marks the view dirty once per channel -- thirteen
+ * full blank-and-repaint cycles per sweep. */
+static int       g_full = 1;
+
 /* What the last action did, shown in the status bar. Deliberately a small enum
  * rather than a string: every state here is one the code puts the radio into,
  * and a free-text message invites saying something the radio did not actually
@@ -271,7 +277,7 @@ static void draw_status(void)
 
 static void draw_all(void)
 {
-    display_fill_rect(0, 0, DISP_W, VIEW_H, BG);
+    if (g_full) { display_fill_rect(0, 0, DISP_W, VIEW_H, BG); g_full = 0; }
     display_fill_rect(0, 0, DISP_W, HDR_H, COLOR_BLUE);
     put(6u, 8u, "wifi", FG, COLOR_BLUE);
 
@@ -298,11 +304,16 @@ static void draw_all(void)
      * networks", each time from a different cause, and I asked twice for the
      * status bar instead of putting the two together. An interface that needs
      * you to cross-reference two places to understand one fact is the bug. */
+    /* Only the list, not the screen. Rows and the empty-state text share this
+     * region and each must be able to replace the other. */
+    display_fill_rect(0, LIST_Y, DISP_W, STAT_Y - LIST_Y, BG);
+
     if (g_count == 0u) {
         const char *why;
         if (!blob_ready())              { why = "radio off -- tap start"; }
         else if (g_state == ST_SCANNING){ why = "scanning..."; }
         else if (g_state == ST_NOSTART) { why = "radio did not start"; }
+        else if (g_state == ST_JOINED)  { why = "connected -- scan for others"; }
         else                            { why = "none found -- tap scan"; }
         put(4u, LIST_Y + 6u, why, DIM, BG);
 
@@ -632,8 +643,31 @@ void wifiapp_open(void)
     if (!blob_ready())      { g_state = ST_NORADIO; }
     else if (wifi_joined()) { g_state = ST_JOINED;  }
     else                    { g_state = ST_IDLE;    }
-    /* Results are kept across opens: a scan costs five seconds of radio time
-     * and the list is very likely still true. */
+    g_full = 1;
+
+    /* [step 302] Sweep on entry when there is a radio, nothing is connected and
+     * the list is empty.
+     *
+     * Reported as having to leave the view, come back and tap scan before
+     * anything could be joined. That WAS the design: start_radio() clears the
+     * list and 293 stopped it sweeping afterwards, so entering showed nothing
+     * until the user asked. Asking was a step with no decision in it -- there
+     * is nothing else to do with an empty list.
+     *
+     * NOT when already joined. Scanning retunes the radio off the access point
+     * (293) and would drop the connection the user came here to keep. The scan
+     * button stays, for choosing a different network on purpose.
+     *
+     * Results are otherwise kept across opens: a sweep costs five seconds of
+     * radio time and the list is very likely still true. */
+    if (blob_ready() && !wifi_joined() && g_count == 0u && !g_scan_ch) {
+        extern uint32_t g_scan_refused;
+        g_sel          = -1;
+        g_swept        = 0u;
+        g_scan_refused = 0u;
+        g_scan_ch      = 1u;
+        g_state        = ST_SCANNING;
+    }
 }
 
 void wifiapp_frame(void)
