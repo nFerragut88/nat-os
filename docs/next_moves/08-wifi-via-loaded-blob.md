@@ -17110,3 +17110,51 @@ open   whether the link now survives the bring-up -- the point of this step
        wificred_put() with the radio live, still untested
        steps 49-141; the USB link; term/notes onto keyboard.c
 ```
+
+---
+
+## step 294 — the page, from an icon
+
+`(this commit)`
+
+Confirmed from a second machine on the same network, not from the board's own
+account of itself:
+
+```
+HTTP 200   350 bytes in 625 ms
+Reply from 192.168.1.140: time=86ms TTL=255    0% loss
+arp -a     192.168.1.140   5c-01-3b-50-3f-64   dynamic
+```
+
+The ARP entry matters as much as the 200: it is the board answering at the link
+layer with its own MAC, which is the thing that was absent in 293a.
+
+**Every layer at once, launched by two taps on a touchscreen:**
+
+- the radio brought up from an icon — no shell, no serial, no typed command
+- a vendor blob running behind an interface this project measured out of a
+  disassembly rather than took from a header
+- WPA2-PSK negotiated by this project's own supplicant: PBKDF2-SHA1 at 4096
+  rounds, PTK derivation, HMAC-SHA1 MIC, AES key unwrap, `step=6 micbad=0`
+- DHCP bound
+- TCP and HTTP over the encrypted link, to a browser that knows none of it
+
+### 294a. What actually changed
+
+Nothing in this step. 293 stopped the view sweeping immediately after a join,
+and the sweep was the whole difference between a board that answered and a board
+that showed a green address and nothing else.
+
+Worth stating plainly: **the stack was working the entire time.** Steps 280-292
+found and fixed six real defects, and none of them was why the page did not
+load. The page did not load because the view retuned the radio away from the
+access point five seconds after connecting, for no reason a user had asked for.
+
+### State
+
+```
+works  icon tap -> radio -> associate -> WPA2 -> DHCP -> HTTP 200, from a browser
+open   wificred_put() with the radio live, still untested -- the TC7NR path
+       steps 49-141 window ownership; the USB link; term/notes onto keyboard.c
+       the touch panel reads saturated with calibration at defaults ('cal')
+```
