@@ -191,6 +191,46 @@ static void trace(const char *ev)
 /* Defined below wifiapp_open(); start_radio() calls it from above. */
 static void view_settle(void);
 
+/* [step 324] A LOG, ON THE GLASS.
+ *
+ * Asked for after the view sat on "looking for networks...": show what the code
+ * is doing, line by line, and the user will say where it stops.
+ *
+ * That is the right instrument for this board. The serial link has voided six
+ * capture runs and needs a machine attached; the screen is always there and the
+ * person watching it is the one who knows what "stuck" looks like. Every
+ * diagnosis that has actually landed today came from putting a number in front
+ * of the user (286, 288, 314, 322) rather than from reasoning at a distance.
+ *
+ * Written from the net task and read by the display task. The line count is the
+ * repaint trigger, for the reason step 303 needed a sequence rather than a
+ * flag. */
+#define LOG_LINES 11u
+#define LOG_COLS  38u
+static char     g_log[LOG_LINES][LOG_COLS + 1u];
+static volatile uint32_t g_log_n;       /* lines ever written */
+
+static void logln(const char *a, const char *b, uint32_t v, int has_v)
+{
+    char *d = g_log[g_log_n % LOG_LINES];
+    uint32_t k = 0u;
+    while (*a && k < LOG_COLS) { d[k++] = *a++; }
+    if (b) { while (*b && k < LOG_COLS) { d[k++] = *b++; } }
+    if (has_v) {
+        if (k < LOG_COLS) { d[k++] = ' '; }
+        char t[11]; uint32_t n = 0u;
+        do { t[n++] = (char)('0' + v % 10u); v /= 10u; } while (v && n < 10u);
+        while (n && k < LOG_COLS) { d[k++] = t[--n]; }
+    }
+    d[k] = 0;
+    g_log_n++;
+    g_dirty++;
+}
+
+#define LOG(a)          logln((a), 0, 0u, 0)
+#define LOGS(a,b)       logln((a), (b), 0u, 0)
+#define LOGV(a,v)       logln((a), 0, (uint32_t)(v), 1)
+
 static void put(uint32_t x, uint32_t y, const char *s, uint16_t fg, uint16_t bg)
 {
     display_text(x, y, s, fg, bg, 1u);
@@ -373,46 +413,18 @@ static void draw_all(void)
     display_fill_rect(0, LIST_Y, DISP_W, STAT_Y - LIST_Y, BG);
 
     if (g_count == 0u) {
-        const char *why;
-        /* [step 309] STARTING is tested FIRST, before blob_ready().
-         *
-         * blob_ready() is false for the first part of a bring-up (307), so
-         * during an automatic start this read "radio off -- tap start" -- the
-         * view telling the user to do the one thing it was already doing and
-         * refusing, because job_busy() correctly blocks the button. Tapping it did
-         * nothing, which is "not working at all" from the only side that
-         * matters.
-         *
-         * Step 308 made the start automatic and did not revisit the text
-         * written for a start the user had asked for. */
-        /* [step 323] One phrase while the radio is being brought up and swept.
-         * "starting the radio" named a mechanism the user did not ask about;
-         * what they are waiting for is a list of networks. */
-        if (job_busy() || g_state == ST_STARTING || !blob_ready())
-                                        { why = "looking for networks..."; }
-        else if (g_state == ST_SCANNING){ why = "looking for networks..."; }
-        else if (g_state == ST_NOSTART) { why = "no radio -- reopen to retry"; }
-        else if (g_state == ST_JOINED)  { why = "connected"; }
-        else                            { why = "none found -- reopen to retry"; }
-        put(4u, LIST_Y + 6u, why, DIM, BG);
-
-        /* [step 288] What the last sweep actually DID. "Inconsistent" is a
-         * rate, and a rate needs numbers: thirteen channels visited with eleven
-         * refused is a driver that would not look; thirteen with none refused
-         * is an empty band. Both used to print the same four words. */
-        if (g_swept) {
-            extern uint32_t g_scan_refused;
-            static char sm[32];
-            uint32_t at = 0u;
-            const char *q;
-            at = num(sm, at, g_swept);
-            q = " ch, "; while (*q) { sm[at++] = *q++; }
-            at = num(sm, at, g_scan_refused);
-            q = " refused"; while (*q) { sm[at++] = *q++; }
-            sm[at] = 0;
-            put(4u, LIST_Y + 20u, sm, DIM, BG);
+        /* [step 324] The log, not a phrase. While there is nothing to list,
+         * the space belongs to whatever the code is doing. */
+        uint32_t total = g_log_n;
+        uint32_t show  = total < LOG_LINES ? total : LOG_LINES;
+        for (uint32_t r = 0u; r < show; r++) {
+            uint32_t idx = (total - show + r) % LOG_LINES;
+            put(4u, LIST_Y + 2u + r * 10u, g_log[idx],
+                r + 1u == show ? FG : DIM, BG);
         }
+        if (!total) { put(4u, LIST_Y + 2u, "starting", DIM, BG); }
     }
+
     for (uint32_t i = 0u; i < g_count && i < MAX_ROWS; i++) {
         draw_row(i);
     }
@@ -506,6 +518,7 @@ static void scan_step(void)
         if (d > g_ch_worst) { g_ch_worst = d; }
     }
     g_swept++;
+    LOGV("  channel", g_scan_ch);
     if (++g_scan_ch > 13u || g_count >= MAX_APS) {
         /* [step 305] One automatic retry when the driver refused channels and
          * nothing was found.
@@ -531,6 +544,7 @@ static void scan_step(void)
             uart_put_dec(g_scan_refused);
             uart_puts("\n");
         }
+        LOGV("scan done -- networks found:", g_count);
         trace("sweepend");
         /* [step 320] Retry an empty sweep, whether or not channels were
          * refused.
@@ -613,14 +627,20 @@ static void start_radio(void)
      * disables the cache to rewrite the MMU, but it is itself IRAM-resident and
      * turns the cache back on before returning -- blob.c says so in as many
      * words, and shell.c has called it from flash since step 190. */
+    LOG("mapping the blob");
     const struct blob_entry *e = blob_map();
+    if (!e) { LOG("FAILED: no blob image"); }
+    LOG("loading the driver");
     if (!e || blob_init(e) != 0) {
+        LOG("FAILED: loader refused");
         /* job_service() owns this now */
         g_state = ST_NOSTART;
         g_dirty++;
         return;
     }
+    LOG("starting the radio PHY");
     (void)phyinit_run_at(e->phy_init);
+    LOG("PHY up");
 
     /* [step 291] wifi_start_enable() enables the blob's task as a side effect,
      * and that is deliberate -- step 214: "Starting the driver REQUIRES its
@@ -657,7 +677,10 @@ static void start_radio(void)
          * rather than something to leave a crashing board over. */
     }
 
+    LOG("starting the wifi driver");
+    LOG("  (this is the long one)");
     (void)wifi_bringup(e, 0);
+    LOG("driver started");
 
     if (!blob_ready()) {
         /* job_service() owns this now */
@@ -719,6 +742,8 @@ static void join(uint32_t i)
     if (!blob_ready()) { g_state = ST_NORADIO; g_dirty++; return; }
 
     g_state = ST_DERIVING;      /* the display task is already painting this */
+    LOGS("joining ", g_aps[i].ssid);
+    LOG("deriving the key (slow once)");
 
     wifi_join_ssid_pass(g_aps[i].ssid, g_pass[0] ? g_pass : 0);
 
@@ -744,6 +769,7 @@ static void join(uint32_t i)
      * spinning -- the association is driven by the blob's own task and its
      * interrupts, so this task has nothing to contribute but patience. */
     g_state = ST_JOINING;
+    LOG("associating, waiting for the AP");
     g_dirty++;
     for (uint32_t w = 0u; w < 1000u && !wifi_joined(); w++) {
         task_sleep(1u);
@@ -861,6 +887,7 @@ static void view_settle(void)
         g_sweep_t0     = timer_ticks();
         g_ch_worst     = 0u;
         g_state        = ST_SCANNING;
+        LOG("scanning the channels");
         trace("autoscan");
     }
 
@@ -880,11 +907,13 @@ void wifiapp_open(void)
     g_was_down = 0;
 
     trace("open");
+    LOG("view opened");
 
     /* No radio? Ask for one; opening this view IS the request (308). The
      * bring-up calls view_settle() when it finishes, so the view lands where a
      * reopen would have put it. */
     if (!job_busy() && !blob_ready()) {
+        LOG("no radio -- starting one");
         (void)job_submit(start_radio, "starting radio");
         trace("autostart");
     }
@@ -977,6 +1006,9 @@ void wifiapp_frame(void)
         return;
     }
 
+    /* [step 324] The log is written from the net task while a job blocks it.
+     * g_dirty is bumped per line, and the sequence compare below picks that up
+     * -- which is exactly what step 303 built it for. */
     uint32_t seq = g_dirty;
     if (seq == g_drawn) { return; }
     g_drawn = seq;

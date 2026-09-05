@@ -18635,3 +18635,65 @@ when a saved network is selected.
 open   steps 49-141 (the window fault); the data path (313b); the web fetch
        remove the WA trace and the SWEEP instrument; touch 'cal'
 ```
+
+---
+
+## step 324 — put the log on the glass
+
+`(this commit)`
+
+Stuck on `looking for networks...`, and asked for:
+
+> *"use print statements instead ... display a bunch of statements of what the
+> code is doing, and I'll let you know where it's getting stuck"*
+
+Which is the right instrument for this board, and better than what I have been
+doing.
+
+The serial link has voided six capture runs, needs a machine attached, and
+resets the board when opened. The screen is always there, and **the person
+watching it is the one who knows what "stuck" looks like.** Every diagnosis that
+actually landed today came from putting a number in front of the user — the
+self-explaining empty list (286), the refusal count (288), the elapsed clock
+(314), the sweep timing (322) — and every one that did not came from me
+reasoning at a distance about a symptom I could not see.
+
+### 324a. What it shows
+
+An eleven-line ring in the space the list will occupy, newest line bright:
+
+```
+view opened
+no radio -- starting one
+mapping the blob
+loading the driver
+starting the radio PHY
+PHY up
+starting the wifi driver
+  (this is the long one)
+driver started
+scanning the channels
+  channel 7
+```
+
+Written from the net task while a job blocks it; the display task keeps
+painting because the line count bumps the repaint sequence — which is precisely
+what step 303 built that sequence for.
+
+### 324b. Why this beats the phrase it replaces
+
+`looking for networks...` was step 323's simplification, and against a working
+system it is the right thing to say. Against a broken one it is **the worst
+possible message**: it covers the whole of blob mapping, driver load, PHY init,
+a twenty-second bring-up and a thirteen-channel sweep with a single sentence
+that changes for none of them.
+
+A view that says one thing for six operations cannot tell the user where it
+stopped, and the user is the only instrument that is always attached.
+
+### State
+
+```
+open   read the log and find where it stops -- that is the next step
+       steps 49-141; the data path (313b); the web fetch; touch 'cal'
+```
