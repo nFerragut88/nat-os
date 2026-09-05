@@ -25,7 +25,16 @@ extern uint32_t netif_wifi_ip(void);
  * app_views_suspend() -- which should be paid only by the views that need it.
  */
 #define HDR_H     22u
-#define ROW_H     20u
+/* [step 322] 32, was 20.
+ *
+ * Step 286c enlarged the scan button from 16 px to 28, because a small target
+ * on an uncalibrated resistive panel is not a target; step 300 did the same for
+ * the browser. The list rows stayed at 20 -- the thing the user has to hit to
+ * perform the one action this view exists for.
+ *
+ * Measured: the sweep finds the network, the list draws it, and no JOIN ever
+ * runs. The taps were not landing on the row. */
+#define ROW_H     32u
 #define LIST_Y    (HDR_H + 2u)
 #define STAT_H    34u
 /* [step 285] SPEC_Y, not DESK_H. The view took the application band when it
@@ -208,8 +217,8 @@ static void draw_row(uint32_t i)
     uint16_t fg = fl ? COLOR_BLACK : FG;
     uint16_t dm = fl ? COLOR_BLACK : DIM;
 
-    display_fill_rect(0, y, DISP_W, ROW_H - 1u, bg);
-    put(4u, y + 6u, g_aps[i].ssid, fg, bg);
+    display_fill_rect(0, y, DISP_W, ROW_H - 2u, bg);
+    put(4u, y + 12u, g_aps[i].ssid, fg, bg);
 
     /* [step 295] A green dot for a network whose passphrase is already saved.
      *
@@ -221,10 +230,10 @@ static void draw_row(uint32_t i)
      * Reads the primed RAM cache, never flash, so this is safe on a draw path
      * (step 291 explains at length why that distinction matters here). */
     if (wificred_has(g_aps[i].ssid)) {
-        display_fill_rect(DISP_W - 70u, y + 7u, 6u, 6u, fl ? COLOR_BLACK : OK);
+        display_fill_rect(DISP_W - 70u, y + 13u, 6u, 6u, fl ? COLOR_BLACK : OK);
     }
-    put(DISP_W - 58u, y + 6u, strength(g_aps[i].rssi), dm, bg);
-    put(DISP_W - 26u, y + 6u, g_aps[i].auth ? "wpa" : "open", dm, bg);
+    put(DISP_W - 58u, y + 12u, strength(g_aps[i].rssi), dm, bg);
+    put(DISP_W - 26u, y + 12u, g_aps[i].auth ? "wpa" : "open", dm, bg);
 }
 
 /* Two decimal digits into a caller's buffer, returning where it stopped.

@@ -18519,3 +18519,56 @@ open   revisit 320's blind retry now the timer is fixed
        WHY the first sweep is slow (the SWEEP instrument is in and unread)
        steps 49-141; the data path (313b); the web fetch
 ```
+
+---
+
+## step 322 — the sweep was never the problem
+
+`(this commit)`
+
+The instrument added in 320 answered it on its first run:
+
+```
+SWEEP took 10090 ms   worst channel 700 ms   found 1   refused 0
+WA sweepend st=4 n=1  rdy=1 jn=0
+WA open     st=0 n=1  rdy=1 jn=0
+```
+
+**Ten seconds, not a minute. No refusals. The network was found.** Thirteen
+channels at about 780 ms each, worst 700 ms against a 400 ms dwell — ordinary
+overhead, not a stall.
+
+And **no `JOIN` line anywhere in the capture.** The list was on screen with the
+network in it, and `join()` never ran once. The taps were not landing on the
+row.
+
+### 322a. The rows were 20 px
+
+Step 286c enlarged the scan button from 16 px to 28 because a small target on a
+resistive panel whose calibration reads `defaults` is not a target. Step 300 did
+the same for the browser's controls. **The list rows stayed at 20** — the thing
+the user has to hit to perform the one action this view exists for, left at the
+size the two previous fixes were about.
+
+32 px now, seven rows instead of eleven.
+
+### 322b. What this retires
+
+Three steps were aimed at a slow, failing sweep that does not exist:
+
+- **320**'s unconditional retry works around an emptiness that was measured as
+  `found 1`. It should come out.
+- **305**'s refusal retry answers `refused 0`. Harmless, unnecessary.
+- The "scans for a whole minute" in every report was the bring-up plus the
+  sweep plus **321's phantom `FAILED`**, read as one long scan.
+
+The measurement cost one line of instrument and ended four steps of theory. It
+should have been the first thing added when the user said "a whole minute", not
+the fifth thing tried — a duration is a number and nothing was printing it.
+
+### State
+
+```
+open   remove 320's blind retry (322b); the SWEEP instrument can go with it
+       steps 49-141; the data path (313b); the web fetch; remove the WA trace
+```
