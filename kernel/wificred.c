@@ -107,6 +107,40 @@ int wificred_get(const char *ssid, char *pass, uint32_t max)
     return 0;
 }
 
+int wificred_forget(const char *ssid)
+{
+    if (!ssid) { return -1; }
+    load();
+
+    uint32_t at = WIFICRED_SLOTS;
+    for (uint32_t i = 0u; i < g_rec.count; i++) {
+        if (same(g_rec.e[i].ssid, ssid)) { at = i; break; }
+    }
+    if (at >= g_rec.count) { return -1; }       /* nothing to forget */
+
+    /* Close the gap rather than leaving a hole: wificred_get walks count
+     * entries in order, so a hole would shadow every entry behind it. */
+    for (uint32_t i = at + 1u; i < g_rec.count; i++) { g_rec.e[i - 1u] = g_rec.e[i]; }
+    g_rec.count--;
+
+    /* Wipe the vacated slot. The passphrase would otherwise stay legible in
+     * flash after the user asked for it to be gone, which is not what "forget"
+     * means to the person who tapped it. */
+    {
+        unsigned char *p = (unsigned char *)&g_rec.e[g_rec.count];
+        for (uint32_t i = 0u; i < sizeof g_rec.e[0]; i++) { p[i] = 0u; }
+    }
+
+    g_rec.checksum = sum_of(&g_rec);
+    if (flash_erase_sector(CRED_ADDR) != 0) { return -1; }
+    if (flash_write(CRED_ADDR, &g_rec, sizeof g_rec) != 0) { return -1; }
+
+    uart_puts("   wificred  forgot ");
+    uart_puts(ssid);
+    uart_puts("\n");
+    return 0;
+}
+
 int wificred_has(const char *ssid)
 {
     if (!ssid) { return 0; }

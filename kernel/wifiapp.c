@@ -252,6 +252,21 @@ static void draw_status(void)
     display_fill_rect(DISP_W - 60u, STAT_Y + 3u, 56u, 28u, COLOR_BLUE);
     put(DISP_W - 50u, STAT_Y + 14u, blob_ready() ? "scan" : "start", FG,
         COLOR_BLUE);
+
+    /* [step 296] `forget`, and ONLY when a selected network has something to
+     * forget. A button that is always present but usually does nothing teaches
+     * people to ignore it; one that appears exactly when it applies explains
+     * itself by appearing.
+     *
+     * It is how the password screen is reached for a network already known --
+     * to correct a wrong passphrase, or to hand the board to a different
+     * network with the same name. Without it the store could be taught and
+     * never untaught. */
+    if (g_sel >= 0 && (uint32_t)g_sel < g_count &&
+        wificred_has(g_aps[g_sel].ssid)) {
+        display_fill_rect(DISP_W - 124u, STAT_Y + 3u, 60u, 28u, COLOR_RED);
+        put(DISP_W - 118u, STAT_Y + 14u, "forget", FG, COLOR_RED);
+    }
 }
 
 static void draw_all(void)
@@ -722,6 +737,15 @@ void wifiapp_touch(uint32_t x, uint32_t y, int down)
         return;
     }
 
+
+    /* [step 296] forget, checked before the scan/start button beside it. */
+    if (y >= STAT_Y && x >= DISP_W - 124u && x < DISP_W - 60u &&
+        g_sel >= 0 && (uint32_t)g_sel < g_count &&
+        wificred_has(g_aps[g_sel].ssid)) {
+        (void)wificred_forget(g_aps[g_sel].ssid);
+        g_dirty = 1;
+        return;                 /* the dot goes; a double tap now asks */
+    }
 
     /* The one button: start when the radio is down, scan when it is up. */
     if (y >= STAT_Y && x >= DISP_W - 60u) {

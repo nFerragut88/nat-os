@@ -17206,3 +17206,31 @@ open   an explicit way to FORGET a credential; there is none, and re-testing the
        ask path currently needs the sector erased by other means
        steps 49-141; the USB link; term/notes onto keyboard.c; touch 'cal'
 ```
+
+---
+
+## step 296 — forget
+
+`(this commit)`
+
+The store could be taught a passphrase and never untaught. That made a wrong
+password uncorrectable and put the "ask me" path out of reach for every network
+already known — which is how step 295 was reported in the first place: *"I can't
+double tap it to enter password."*
+
+`wificred_forget()` removes the entry, **closes the gap** rather than leaving a
+hole (`wificred_get` walks `count` entries in order, so a hole would shadow
+everything behind it), and **wipes the vacated slot** — the passphrase would
+otherwise stay legible in flash after someone asked for it to be gone, which is
+not what "forget" means to the person who tapped it.
+
+The button appears only when a selected network has something to forget. A
+control that is always present but usually inert teaches people to ignore it;
+one that appears exactly when it applies explains itself by appearing.
+
+### State
+
+```
+works  scan, pick, type a passphrase, join, remembered, and now forgettable
+open   steps 49-141; the USB link; term/notes onto keyboard.c; touch 'cal'
+```

@@ -56,6 +56,14 @@ int wificred_get(const char *ssid, char *pass, uint32_t max);
  * milliseconds — call it on a user action, never from a frame path. */
 int wificred_put(const char *ssid, const char *pass);
 
+/* Forget the saved passphrase for `ssid`. Returns 0 if one was removed.
+ *
+ * [step 296] Without this the store was write-only: a network could be taught a
+ * passphrase and never untaught, so a wrong password could not be corrected and
+ * the "ask me" path could not be reached again for any network already known.
+ * Rewrites the sector, so the same caution as wificred_put applies. */
+int wificred_forget(const char *ssid);
+
 /* Is there a saved passphrase for this SSID? Reads the primed RAM cache and
  * performs NO flash access, so it is safe to call from a draw path. */
 int wificred_has(const char *ssid);
