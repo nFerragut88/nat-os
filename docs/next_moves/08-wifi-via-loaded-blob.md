@@ -17040,3 +17040,73 @@ open   steps 49-141 window ownership (no longer evidenced by this crash)
        wificred_put() erases flash with the radio live -- still untested
        the USB link; term/notes onto keyboard.c; net stack margin 664 B
 ```
+
+---
+
+## step 293 — the view scanned the link out from under itself
+
+`(this commit)`
+
+Reported as: the screen says green `ivory-billed 192.168.1.140`, and the URL
+does not load.
+
+### 293a. Measured from the other end
+
+```
+this machine        192.168.1.102      (same subnet)
+ping 192.168.1.140  no reply
+arp -a 192.168.1.140  No ARP Entries Found
+HTTP                timed out
+```
+
+**No ARP entry** is the useful one: the board was not answering at the link
+layer at all, so this was never an HTTP question. Meanwhile the board itself was
+healthy — shell responsive, `t=296080` and climbing, no reset.
+
+### 293b. What it was
+
+`start_radio()` ended with:
+
+```c
+/* Either way, fill the list, so what appears next is a set of networks to
+ * choose from rather than an empty view with a live radio. */
+g_scan_ch = 1u;
+```
+
+Unconditionally — **including immediately after a successful join.**
+
+A station has one radio. A passive sweep retunes it away from the access point
+for `SWEEP_DWELL` (400 ms) per channel, thirteen channels, five seconds across
+the band. The view was doing that seconds after associating and binding a DHCP
+address, to a user who had not asked for it.
+
+The address on screen was true when it was printed and dead by the time anyone
+used it. **Every ingredient of this was written by me in step 279, and the
+comment justifying it reads like a courtesy.**
+
+Scanning while connected is a real trade and it stays on the scan button, where
+someone chooses it. Doing it unasked, right after connecting, is not a trade.
+
+### 293c. And the green line was overclaiming
+
+`netif_wifi_ip()` returns lwIP's address, and lwIP keeps its address when the
+radio goes away. So the view showed a working address in green — the strongest
+claim it can make — for a link that no longer existed.
+
+It now consults the driver's own disconnect callback and reads `-- link lost`.
+
+**Against a baseline, not against zero.** `g_wpa_disc_cb` counts every
+disconnect since boot, so testing it for non-zero would report a live link as
+lost because of a drop that happened before this join and was recovered from.
+The count is stamped when `ST_JOINED` is entered and compared against that. The
+question is not "has this board ever disconnected" but "has it disconnected
+since it connected this time" — the same distinction step 283 got wrong with the
+DHCP counters, caught this time before it shipped.
+
+### State
+
+```
+open   whether the link now survives the bring-up -- the point of this step
+       wificred_put() with the radio live, still untested
+       steps 49-141; the USB link; term/notes onto keyboard.c
+```

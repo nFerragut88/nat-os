@@ -68,6 +68,14 @@ static uint32_t  g_flash_tick;
  * silently disable the view -- see wifiapp_frame(). */
 static uint32_t  g_req_tick;
 
+/* [step 293] The driver's disconnect count AS IT WAS when we joined.
+ *
+ * g_wpa_disc_cb counts every disconnect since boot, so testing it against zero
+ * would report a link as lost because of a drop that happened before this join
+ * and was already recovered from. The question is not "has this board ever
+ * disconnected" but "has it disconnected since it connected THIS time". */
+static uint32_t  g_disc_at_join;
+
 /* [step 281] Set by the touch handler, consumed by wifiapp_service() on the net
  * task. See wifiapp_service() for why the bring-up must not run on the task
  * that reads the glass. */
@@ -173,9 +181,17 @@ static void draw_status(void)
      * network" are not the same claim and this view had been making the
      * stronger one. An association with no DHCP lease is exactly the state the
      * board is in today, and it looked identical to success. */
+    /* [step 293] A dropped link must stop reading as a connection.
+     *
+     * netif_wifi_ip() returns lwIP's address, and lwIP keeps it when the radio
+     * goes away -- so the view reported an address that had stopped working,
+     * in green, which is the strongest claim it can make. The driver's own
+     * disconnect callback is the truth here. */
     static char joinmsg[40];
     if (g_state == ST_JOINED) {
-        uint32_t ip = netif_wifi_ip();
+        extern uint32_t g_wpa_disc_cb;
+        int lost = (g_wpa_disc_cb != g_disc_at_join);
+        uint32_t ip = lost ? 0u : netif_wifi_ip();
         uint32_t at = 0u;
         for (uint32_t k = 0u; k < 20u && g_joined[k]; k++) { joinmsg[at++] = g_joined[k]; }
         joinmsg[at++] = ' ';
@@ -188,7 +204,7 @@ static void draw_status(void)
                 if (b < 3u) { joinmsg[at++] = '.'; }
             }
         } else {
-            const char *p2 = "-- no IP";
+            const char *p2 = lost ? "-- link lost" : "-- no IP";
             while (*p2) { joinmsg[at++] = *p2++; }
         }
         joinmsg[at] = 0;
@@ -461,17 +477,31 @@ static void start_radio(void)
         uint32_t    k = 0u;
         for (; k < 32u && n[k]; k++) { g_joined[k] = n[k]; }
         g_joined[k] = 0;
+        { extern uint32_t g_wpa_disc_cb; g_disc_at_join = g_wpa_disc_cb; }
         g_state = ST_JOINED;
     } else {
         g_state = ST_IDLE;
     }
 
-    /* Either way, fill the list, so what appears next is a set of networks to
-     * choose from rather than an empty view with a live radio. */
-    g_count   = 0u;
-    g_sel     = -1;
-    g_scan_ch = 1u;
-    g_dirty   = 1;
+    /* [step 293] Sweep ONLY if we did not just join.
+     *
+     * This used to sweep unconditionally, "so what appears next is a set of
+     * networks to choose from". A station has ONE radio: a passive sweep retunes
+     * it away from the access point for SWEEP_DWELL (400 ms) per channel, five
+     * seconds across the band -- and it was being run immediately after
+     * associating and binding an address.
+     *
+     * The board showed a green "ivory-billed 192.168.1.140" and answered
+     * nothing: no ping, no ARP entry, no HTTP. The address was real when it was
+     * printed and the link was gone by the time anyone used it.
+     *
+     * Scanning while connected is a genuine trade, not a bug, and it stays
+     * available on the scan button. Doing it to a user who did not ask, seconds
+     * after connecting them, is not a trade -- it is just losing the link. */
+    g_count = 0u;
+    g_sel   = -1;
+    if (g_state != ST_JOINED) { g_scan_ch = 1u; }
+    g_dirty = 1;
 }
 
 /* Join the selected network with the compiled-in passphrase.
@@ -495,6 +525,7 @@ static void join(uint32_t i)
         uint32_t k = 0u;
         for (; k < 32u && g_aps[i].ssid[k]; k++) { g_joined[k] = g_aps[i].ssid[k]; }
         g_joined[k] = 0;
+        { extern uint32_t g_wpa_disc_cb; g_disc_at_join = g_wpa_disc_cb; }
         g_state = ST_JOINED;
     } else {
         g_state = ST_FAILED;
