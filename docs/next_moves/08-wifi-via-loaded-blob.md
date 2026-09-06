@@ -19267,3 +19267,5 @@ was taken, and it took one to settle the question.
 works  open wifi -> list in ~1 s -> joined, addressed, serving; browser fetches
 open   the bring-up still auto-joins the compiled-in network (312/313b)
        50% ping loss seen once, unexplained; the step-319 panic
+       the 8-char guard and cal are in; term/notes onto keyboard.c
+```
