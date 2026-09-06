@@ -1744,7 +1744,18 @@ void wifi_ap_report(uint32_t fn, uint32_t count)
  * whatever transient state a single scan leaves behind, and the question is
  * about the radio, not about back-to-back calls. */
 #define SWEEP_PASSES 1u   /* [step 227] one pass: evidence, not a survey */
-#define SWEEP_DWELL  400u
+/* [step 337] 220, was 400.
+ *
+ * A passive scan hears a channel only while it is parked there, so the dwell
+ * has to cover at least one beacon interval. Access points beacon every ~102 ms
+ * by default, so 220 ms covers two -- one missed beacon still leaves a second
+ * inside the window.
+ *
+ * 400 covered four, which is generosity rather than reliability. Step 322
+ * measured the real cost: 700 ms worst channel against a 400 ms dwell, so about
+ * 300 ms of per-channel overhead sits on top regardless. Halving the dwell
+ * takes a thirteen-channel sweep from ~10 s to ~6.8 s. */
+#define SWEEP_DWELL  220u
 
 /* [step 278] Scan results AS DATA, for the wifi view.
  *
@@ -2602,7 +2613,12 @@ void wifi_rx_start(uint32_t reg_fn, uint32_t free_fn, uint32_t promisc_fn,
          * not six thousand ticks. DHCP finishes afterwards, serviced by the
          * task, and the view watches for the address rather than the bring-up
          * waiting for it (283). */
-        net_poll_for(150u);
+        /* [step 338] 60 ticks -- 0.6 s -- was 150. All this window has to do is
+         * reach the handover at the end of net_poll_for, which gives the ring
+         * to the net task; DHCP completes afterwards, serviced by the task, and
+         * the view watches for the address (283). Step 304 cut this from 6000
+         * and left a margin that was never measured. */
+        net_poll_for(60u);
         wifi_rx_report();
         net_report();
     }

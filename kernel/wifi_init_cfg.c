@@ -363,7 +363,14 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
      * the same reasoning that moved wifi_bringup() out of shell.c at step
      * 190. Twenty-two lines become one. */
     wifiapp_note("  radio configured");
-    wifi_tx_beacons(e->wifi_80211_tx, e->wifi_set_channel);
+    /* [step 337] Twenty beacons advertising a fake access point, from step 209,
+     * where they were the proof that this board can transmit at all. That is
+     * proven and stays proven; it does not need re-proving every time a user
+     * opens a list of networks -- and it transmits on channel 1 while they are
+     * waiting. The shell still runs it. */
+    if (!g_bringup_quick) {
+        wifi_tx_beacons(e->wifi_80211_tx, e->wifi_set_channel);
+    }
 
     /* [step 217] Then try to associate. One call; see wifi_osi_impl.c. */
     /* [step 227] SCAN BEFORE CONNECTING. The sweep used to run last, so a run

@@ -19184,3 +19184,86 @@ stalled handshake. It costs nothing when nobody is listening.
 open   the step-319 panic; iram and DRAM headroom; term/notes onto keyboard.c
        the data-path restructure (313b); touch 'cal'
 ```
+
+---
+
+## step 337-340 — faster, legible, and a ring that never worked
+
+`(this commit)`
+
+### 337. The sweep, where the networks actually are
+
+- **1, 6 and 11 first.** The only non-overlapping channels in 2.4 GHz, and where
+  consumer access points overwhelmingly sit. Numeric order meant a network on 11
+  appeared eight seconds after one on 1, for no reason but the counting. Total
+  sweep time is unchanged; the answer arrives in the first second.
+- **Dwell 400 -> 220 ms.** A passive scan hears a channel only while parked
+  there, so the dwell must cover a beacon interval -- ~102 ms by default, so 220
+  covers two and one missed beacon still leaves a second inside the window. 400
+  covered four, which is generosity rather than reliability. Step 322 measured
+  ~300 ms of fixed per-channel overhead on top, so a sweep goes ~10 s -> ~6.8 s.
+- **No beacons on the app path.** Twenty frames advertising a fake access point,
+  from step 209 where they proved this board can transmit. That is proven and
+  stays proven; it does not need re-proving while a user waits for a list, and
+  it transmitted on channel 1 to do it.
+
+### 338. The join says what it is doing
+
+Tapping a network was reported as nothing happening. The list stayed on screen,
+the status bar changed one phrase, and the cached key, the association and the
+handshake all happened silently. **The list is what you read while choosing;
+once you have chosen, what matters is what the radio is doing** -- so the log
+takes the list area during a join, as it already did during the bring-up.
+
+The bring-up poll also went 150 -> 60 ticks. All it must do is reach the
+handover that gives the ring to the net task.
+
+### 339. Eight characters, because that is the standard
+
+An accidental submit -- the keyboard's bottom-right key is `join`, and on a
+panel with default calibration a tap meant for a letter can land there -- saved
+a **partial passphrase to flash**, and every later join then used a key nobody
+had typed. `join` refuses anything under eight characters now: not a policy, the
+WPA2-PSK minimum. The keyboard keeps what was typed, so the user carries on.
+
+### 340. A byte ring that never worked, reverted
+
+Steps 333 and 334 put full-size frames and heap pressure in direct conflict, and
+a byte ring was written to resolve it: cost what the frames are, rather than
+NET_MAX apiece.
+
+It shipped with
+
+```c
+uint32_t used = (g_head - g_tail) % NET_RING;
+```
+
+which is the standard idiom and **only correct when the size is a power of
+two**. `NET_RING` is 5120. Past the first wrap it reported 4,226 bytes used
+where 130 were, believed itself full, and dropped almost everything -- including
+EAPOL message one, so the supplicant never saw it and the access point timed the
+handshake out. Measured exactly: `m1=0 micbad=0 why=15 cached=0`.
+
+Fixing the arithmetic did not make it work, and the user asked the right
+question: what did the code look like when it worked?
+
+**Reverted to three fixed slots of 1600 -- the configuration confirmed end to
+end at step 334.** Verified: `HTTP 200` and ping replies from another machine.
+
+### 340a. What actually went wrong here
+
+The `-- no IP` report that started this arrived *after the scaffolding cleanup*,
+not after the slot change. I attributed it to the most recent thing I
+**understood** rather than the most recent thing I had **changed**, and rewrote a
+working data structure on the strength of it. The known-good configuration was
+in git the whole time.
+
+**A revert is a measurement.** It was available for three exchanges before it
+was taken, and it took one to settle the question.
+
+### State
+
+```
+works  open wifi -> list in ~1 s -> joined, addressed, serving; browser fetches
+open   the bring-up still auto-joins the compiled-in network (312/313b)
+       50% ping loss seen once, unexplained; the step-319 panic

@@ -391,7 +391,17 @@ static void draw_all(void)
      * region and each must be able to replace the other. */
     display_fill_rect(0, LIST_Y, DISP_W, STAT_Y - LIST_Y, BG);
 
-    if (g_count == 0u) {
+    /* [step 338] The log takes the list area during a join too, not only when
+     * the list is empty.
+     *
+     * Tapping a network was reported as "I don't see anything happening": the
+     * list stays on screen, the status bar changes one short phrase, and every
+     * interesting thing -- the cached key, the association, the handshake --
+     * happens with no account of itself. The list is what you read while
+     * choosing; once you have chosen, what matters is what the radio is doing. */
+    int busy = (g_state == ST_DERIVING || g_state == ST_JOINING ||
+                g_state == ST_STARTING);
+    if (g_count == 0u || busy) {
         /* [step 324] The log, not a phrase. While there is nothing to list,
          * the space belongs to whatever the code is doing. */
         uint32_t total = g_log_n;
@@ -469,9 +479,23 @@ static void scan_step(void)
      *
      * The strongest sighting wins, and carries its channel with it -- that is
      * the one the radio would actually associate on. */
+    /* [step 337] 1, 6 and 11 FIRST.
+     *
+     * Those are the only non-overlapping channels in the 2.4 GHz band, and
+     * consumer access points overwhelmingly sit on one of them. Sweeping in
+     * numeric order means a network on channel 11 appears eight seconds after
+     * one on channel 1, for no reason but the counting.
+     *
+     * The sweep still covers all thirteen and takes the same total time. What
+     * changes is that the answer usually arrives in the first second, which is
+     * the difference between a list that fills and a screen that waits. */
+    static const uint8_t ORDER[13] = { 1u, 6u, 11u, 2u, 3u, 4u, 5u,
+                                       7u, 8u, 9u, 10u, 12u, 13u };
+    uint32_t ch = ORDER[(g_scan_ch - 1u) % 13u];
+
     static wifi_ap_t tmp[6];
     uint32_t got = wifi_scan_channel(e->wifi_scan_start, e->wifi_scan_ap_num,
-                                     e->wifi_scan_ap_recs, g_scan_ch,
+                                     e->wifi_scan_ap_recs, ch,
                                      tmp, 6u);
     for (uint32_t k = 0u; k < got; k++) {
         uint32_t i = 0u;
@@ -493,7 +517,7 @@ static void scan_step(void)
     }
 
     g_swept++;
-    LOGV("  channel", g_scan_ch);
+    LOGV("  channel", ch);   /* [step 337] the channel, not the counter */
     if (++g_scan_ch > 13u || g_count >= MAX_APS) {
         /* [step 305] One automatic retry when the driver refused channels and
          * nothing was found.
@@ -697,7 +721,7 @@ static void join(uint32_t i)
 
     g_state = ST_DERIVING;      /* the display task is already painting this */
     LOGS("joining ", g_aps[i].ssid);
-    LOG("deriving the key (slow once)");
+    LOG("looking for a saved key");
 
     wifi_join_ssid_pass(g_aps[i].ssid, g_pass[0] ? g_pass : 0);
 
@@ -747,12 +771,14 @@ static void join(uint32_t i)
     }
 
     if (wifi_joined()) {
+        LOG("joined -- waiting for an address");
         uint32_t k = 0u;
         for (; k < 32u && g_aps[i].ssid[k]; k++) { g_joined[k] = g_aps[i].ssid[k]; }
         g_joined[k] = 0;
         { extern uint32_t g_wpa_disc_cb; g_disc_at_join = g_wpa_disc_cb; }
         g_state = ST_JOINED;
     } else {
+        LOG("join FAILED -- no connect callback");
         g_state = ST_FAILED;
     }
     g_dirty++;
@@ -995,6 +1021,26 @@ void wifiapp_touch(uint32_t x, uint32_t y, int down)
         if (r == KB_EDIT) { g_dirty++; return; }
         if (r != KB_SUBMIT) { return; }
 
+        /* [step 339] A WPA2-PSK passphrase is 8 to 63 characters -- that is the
+         * standard, not a policy. Anything shorter cannot be the password for
+         * the network being joined, so a submit carrying one is an accident.
+         *
+         * Reported as the password submitting before it had been fully typed.
+         * The submit key is the bottom-right of the keyboard, and on a panel
+         * whose calibration reads `defaults` with a saturating X axis, a tap
+         * meant for a letter can land there. That is worth fixing with `cal`,
+         * but the guard is worth having anyway: without it an accidental submit
+         * SAVES the partial passphrase to flash, and the next join then fails
+         * with a stored key nobody typed.
+         *
+         * Refused rather than accepted-and-failed: the keyboard keeps what was
+         * typed, so the user carries on rather than starting again. */
+        if (keyboard_len() < 8u) {
+            LOGV("need 8+ characters, have", keyboard_len());
+            g_dirty++;
+            return;
+        }
+
         /* Save first, then join. A passphrase that turns out to be wrong is
          * still the one the user meant to type, and losing it to a failed join
          * means typing it again on a multi-tap keyboard to find out why. */
@@ -1060,6 +1106,7 @@ void wifiapp_touch(uint32_t x, uint32_t y, int down)
         }
         g_dirty++;
     } else {
+        LOGS("selected ", g_aps[i].ssid);
         g_sel        = (int)i;
         g_flash_row  = (int)i;      /* [step 289] white, where the finger went */
         g_flash_tick = timer_ticks();
