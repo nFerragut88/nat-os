@@ -1,7 +1,7 @@
 # NatScript — the language, v0
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 0.4 · 2026-09-07 · Covers `next_moves` VM-09 through VM-13.
+Revision 0.5 · 2026-09-07 · Covers `next_moves` VM-09 through VM-13.
 
 NatScript compiles to NatVM bytecode. This document describes **what the
 compiler in `tools/natc.py` actually accepts today**, not what the proposal
@@ -432,6 +432,42 @@ pushed and popped — and it is reported here rather than left for someone to
 find with `ls`. On a board with 4 MB of flash and per-program arenas measured in
 kilobytes, source size is the scarce thing and bytecode is not. That is a
 judgement about this machine, not a general one.
+
+### 11.2 Run on the board, 2026-09-07
+
+The comparison was made on the hardware rather than on the page. Both programs
+were flashed and run from the shell over the serial link.
+
+```
+> run dev                                  > run devnat
+   started id=2 perms=light store echo        started id=2 perms=light store echo
+  [dev] 0 = light                            [devnat] 0 = light
+  [dev] 1 = beep                             [devnat] 1 = beep
+  ...                                        ...
+  [dev] 6 = sd                               [devnat] 6 = sd
+  [dev] bulk transfer round trip OK          [devnat] bulk transfer round trip OK
+  [dev] light = 143                          [devnat] light = 156
+  ... sixteen readings ...                   ... sixteen readings ...
+  [dev] 16 readings taken, exiting.          [devnat] 16 readings taken, exiting.
+```
+
+Same device table, same round trip through the loopback, same sixteen readings.
+One from 117 lines of assembly, the other from 37 lines of NatScript.
+
+`perms=light store echo` on both is the manifest of §8 resolving by name, and
+`devnat` never contained a device number: it asked for `light`, `store` and
+`echo` by name and the kernel answered.
+
+`run hello` reproduced the host results exactly — `fib(0..9)`, `gcd(1071, 462)
+= 21`, `triangle(100) = 5050`, and the short-circuit `&&` that would divide by
+zero if its right side ran.
+
+`run evtnat` and `run evt` both had the kernel calling into them, a tick a
+second, counting up while the main flow sat in its wait.
+
+**The host reference (§12) predicted all of this correctly**, which is the first
+evidence that it agrees with `vm.c` on anything that matters. It is still not
+the kernel and still not authoritative.
 
 ### 11.1 What the rewrites could not carry over
 

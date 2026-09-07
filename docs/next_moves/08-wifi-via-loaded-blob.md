@@ -20265,3 +20265,90 @@ works  24 cases, ten of them refusals, gating every build
 open   `run hello`, `run devnat`, `run evtnat` on hardware -- three programs
        verified only against a simulator; VM-08 image identity; per-task stacks
 ```
+
+---
+
+## step 361 — the reading that counts
+
+Steps 357 to 360 shipped three programs verified only against a host simulator I
+had written myself, and every one of those entries said so. Flashed and run:
+
+### 361a. `run hello`
+
+```
+   started id=2 perms=none
+  [hello] fib(0) = 0 ... fib(9) = 34
+  [hello] gcd(1071, 462) = 21
+  [hello] triangle(100) = 5050
+  [hello] short-circuit && ok
+  [hello] multiples of fifteen under thirty: 2
+  [hello] done
+```
+
+Identical to the host run. Recursion nine frames deep, a `while` loop with a
+remainder, an `else if` chain, and a short-circuit `&&` whose right side would
+divide by zero if it were evaluated — from a language, on an operating system,
+both written from scratch.
+
+### 361b. `run dev` and `run devnat`, side by side
+
+```
+> run dev                              > run devnat
+   started id=2 perms=light store echo    started id=2 perms=light store echo
+  [dev] 0 = light                        [devnat] 0 = light
+  ... 7 entries ...                      ... 7 entries ...
+  [dev] bulk transfer round trip OK      [devnat] bulk transfer round trip OK
+  [dev] light = 143                      [devnat] light = 156
+  ... sixteen readings ...               ... sixteen readings ...
+  [dev] 16 readings taken, exiting.      [devnat] 16 readings taken, exiting.
+```
+
+**The proposal's test, settled on hardware.** Same device table, same round trip
+through the loopback device, same sixteen readings, from 117 lines of assembly
+and 37 lines of NatScript.
+
+`perms=light store echo` on both is step 356's manifest resolving by name — and
+`devnat` never contained a device number anywhere. It asked for `light`,
+`store` and `echo` by name through `DEV_OP_FIND` and the kernel answered.
+
+### 361c. `run evtnat`
+
+```
+   started id=2 perms=none
+  [evtnat] setup done; arming, then waiting
+  [evtnat] tick handler, count 39
+  [evtnat] tick handler, count 57
+  ...
+  [evtnat] tick handler, count 125
+   killed 2, arena released
+```
+
+`when` and `every` firing on the board, the kernel calling into a program
+compiled from four lines of NatScript, the counter accumulating across
+injections while the main flow sat in its one-instruction wait.
+
+The rate: 47 ticks across roughly 43 seconds of wall clock, against `every 1s`.
+Within the resolution of a capture whose boundaries are `time.time()` on a
+laptop — and the reason it is worth checking at all is 359b: the compiler
+refuses `every 5ms` on the grounds that a tick is exactly 10 ms, and a claim
+like that should be measured once rather than asserted forever.
+
+### 361d. What this actually settles
+
+The host reference (`tools/natvm_ref.py`) predicted **all** of it correctly.
+That is the first evidence it agrees with `vm.c` on anything that matters, and
+it is worth exactly that much: it is still not the kernel, still not
+authoritative, and the note at the top of the file stays.
+
+What it does not settle: the signed-print fix from 360. Every number these
+programs print goes through `pd_signed`, so the call, the return and the plain
+path all ran — but none of them prints a negative, so the four instructions that
+handle one are covered by the suite and not by the board.
+
+### State
+
+```
+works  NatScript compiles, and every one of its programs has now run on the
+       hardware it was written for
+open   VM-08 image identity; per-task stack sizing (352c); the null-sp fault
+```
