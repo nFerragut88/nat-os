@@ -1,11 +1,11 @@
 # NatScript — the language, v0
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 0.5 · 2026-09-07 · Covers `next_moves` VM-09 through VM-13.
+Revision 0.6 · 2026-09-07 · Covers `next_moves` VM-09 through VM-13.
 
 NatScript compiles to NatVM bytecode. This document describes **what the
 compiler in `tools/natc.py` actually accepts today**, not what the proposal
-imagines. Where the two differ, §10 says so by name.
+imagines. Where the two differ, §11 says so by name.
 
 The proposal's own §15 warned against designing syntax before the ABI was
 written down. The ABI is now written down and frozen — `docs/vm-abi.md`,
@@ -101,7 +101,7 @@ Zero is false and everything else is true; there is no separate boolean type.
 
 Redeclaring a name in the same function is an error. There is **no block
 scoping**: a `let` inside an `if` is visible for the rest of the function. That
-is a simplification, not a design, and §10 lists it.
+is a simplification, not a design, and §11 lists it.
 
 ---
 
@@ -312,7 +312,60 @@ reason: a program reaching for hardware that is not there runs blind.
 
 ---
 
-## 9. `when` and `every`
+## 9. The screen
+
+Until step 362 NatScript could compute, print, and reach a device — which made
+it a language for writing **serial console programs**, on a board whose entire
+point is a 240×320 panel and a touchscreen. `fill` and `text` were reachable and
+`touch` was not, so a program could draw something and then had no way to learn
+whether anybody had touched it.
+
+```
+screen.fill(x, y, w, h, colour)
+screen.text(string, x, y, fg, bg, scale)
+screen.blit(pixels, x, y, w, h)
+screen.touched()                    -> 1 or 0; where, in screen.x / screen.y
+screen.width      screen.height
+```
+
+`screen` needs no permission. It is the program's **own viewport strip**, not
+somebody else's hardware: coordinates are viewport-relative, the kernel clips
+them, and a program cannot draw outside its strip or learn where that strip
+sits on the panel.
+
+### 9.1 `touched()` reports whether, separately from where
+
+Same rule as `d.read()` in §8: a call that must be able to say **no** cannot
+also be the coordinate. `screen.touched()` evaluates to 1 or 0 and stashes the
+point in `screen.x` and `screen.y`.
+
+### 9.2 `width` and `height` ask, every time
+
+They are properties rather than something a `screen.size()` call leaves behind.
+A `size()` that had to be called first would give **0** to anyone who forgot it,
+silently — and the panel is not going to change size between two instructions.
+This started as a `size()` and was deleted.
+
+Both come from `sys dims`, which reports the **viewport**, not the panel.
+
+### 9.3 The panel is polled; only keys are delivered
+
+`touch` is a syscall a program asks. The kernel pushes a key (§10) and nothing
+else. So a program that wants to feel touches polls, and the natural place to
+poll is a tick handler:
+
+```
+every 100ms {
+    if screen.touched() { ... }
+}
+```
+
+Ten times a second is faster than a finger and leaves the rest of the quantum to
+everything else.
+
+---
+
+## 10. `when` and `every`
 
 The two pieces of syntax the proposal cared most about, and the last thing the
 VM could do that the language could not say.
@@ -334,7 +387,7 @@ Top level only. A handler is entered by the **kernel**, so it has no caller to
 be nested inside; one declared within a function would be registered or not
 depending on whether that function happened to run.
 
-### 9.1 Durations
+### 10.1 Durations
 
 A tick is **10 ms** (`kmain.c`, `TICK_INTERVAL_CYCLES`), and has been real time
 rather than a yield counter since the `timer_isr` fix.
@@ -350,13 +403,13 @@ rather than a yield counter since the `timer_isr` fix.
 rounding it to 10 ms silently would be a lie about the period the program asked
 for. The error says what a tick is.
 
-### 9.2 One handler per event
+### 10.2 One handler per event
 
 `vm.c` keeps a single handler offset per event id, so a second `every` block
 would **replace** the first and the first would never fire. That is a compile
 error naming the line of the block it would have displaced.
 
-### 9.3 Handlers arm after the top level, and then the program waits
+### 10.3 Handlers arm after the top level, and then the program waits
 
 The top-level statements are setup. When they finish, the handlers are
 registered, and the main flow becomes a one-instruction wait.
@@ -372,7 +425,7 @@ existed; it is stated here rather than left to be discovered in a disassembly.
 **A program with a handler does not exit.** `exit(0)` still works if that is
 what is wanted.
 
-### 9.4 A refused registration stops the program
+### 10.4 A refused registration stops the program
 
 `sys event` refuses rather than faulting when the VM will not take a handler.
 The generated code checks, and stops:
@@ -387,12 +440,26 @@ to diagnose and the check costs two instructions.
 
 ---
 
-## 10. What v0 still does not have
+## 11. What v0 still does not have
 
 1. **No block scoping**, and no shadowing.
 2. **No `for`, no `break`, no `continue`.**
-3. **Strings are literals only.** `"Scans: " + count` needs an allocator inside
-   an arena, which does not exist.
+3. **Strings are literals only, and this is now the biggest gap.** `"Scans: " +
+   count` needs an allocator inside an arena, and there is not one. A literal
+   can be printed; a number can be printed; a number that has to appear **on the
+   panel** rather than on the serial line has to be turned into digits by hand:
+
+   ```
+   func render(n) {
+       label[0] = 116          // t
+       ...
+       label[i] = 48 + n % 10
+   }
+   ```
+
+   Nine lines in `tools/app_tap.nat` are what `"taps: " + n` costs today. It did
+   not matter while every program printed to a terminal; it matters the moment
+   one draws.
 4. **No constant folding.** `2 * 3` emits a multiply.
 5. **No compile-time bounds checking** on buffer indices — §7.
 6. **Two event sources**, tick and key, because that is what the VM has.
@@ -400,7 +467,7 @@ to diagnose and the check costs two instructions.
 
 ---
 
-## 11. The honest test, taken
+## 12. The honest test, taken
 
 The proposal set it:
 
@@ -433,7 +500,7 @@ find with `ls`. On a board with 4 MB of flash and per-program arenas measured in
 kilobytes, source size is the scarce thing and bytecode is not. That is a
 judgement about this machine, not a general one.
 
-### 11.2 Run on the board, 2026-09-07
+### 12.2 Run on the board, 2026-09-07
 
 The comparison was made on the hardware rather than on the page. Both programs
 were flashed and run from the shell over the serial link.
@@ -469,7 +536,7 @@ second, counting up while the main flow sat in its wait.
 evidence that it agrees with `vm.c` on anything that matters. It is still not
 the kernel and still not authoritative.
 
-### 11.1 What the rewrites could not carry over
+### 12.1 What the rewrites could not carry over
 
 The assembly's comments. `app_dev.vasm` carries a paragraph about a jump that
 landed past its setup code and silently skipped a slot claim; `app_evt.vasm`
@@ -482,7 +549,7 @@ the reasoning is what took the time.
 
 ---
 
-## 12. The test suite
+## 13. The test suite
 
 `tools/tests/*.nat`, run by `tools/nattest.py`, run by `build.ps1` **before it
 compiles anything with the compiler**. A failure fails the build.
@@ -519,7 +586,7 @@ Two checks run on **every** case regardless of what it asserts:
 - **the program must not fault.** `BOUNDS`, `ALIGN`, `DIV0`, `CALL_DEPTH` and
   `RET` all fail the case by name.
 
-### 12.1 The oracle is not the kernel
+### 13.1 The oracle is not the kernel
 
 `tools/natvm_ref.py` is a NatVM on the host, and its header says what it is for
 in its first line: **it is not authoritative — `kernel/vm.c` is.** Its semantics
@@ -532,7 +599,7 @@ pass.** A second implementation of an instruction set is exactly the shape this
 project keeps finding bugs in (§1), and this one is allowed to exist only
 because it is a test oracle rather than a second source of truth.
 
-### 12.2 What it found immediately
+### 13.2 What it found immediately
 
 The first case, on arithmetic precedence, failed on a line that had nothing to
 do with precedence:

@@ -569,9 +569,22 @@ BUILTIN_SYS = {
     "puts": ("puts", 1, False),     # print bytes AT an offset -- see `buf`
     "exit": ("exit", 1, False),
     "ticks": ("ticks", 0, True),
-    "dims": ("dims", 0, True),
-    "fill": ("fill", 5, False),
-    "text": ("text", 6, False),
+}
+
+# [step 362] The screen, as a namespace rather than seven loose builtins.
+#
+# Until now NatScript could compute, print, and reach a device, and that made
+# it a language for writing SERIAL CONSOLE programs on a board whose whole
+# point is a 240x320 panel and a touchscreen. `fill` and `text` were exposed
+# and `touch` was not, so a program could draw and then had no way to find out
+# whether anybody had touched what it drew.
+#
+#   name         syscall  args (-> r0, r1, ...)          evaluates to
+SCREEN_METHODS = {
+    "fill":    ("fill", ["x", "y", "w", "h", "colour"],            None),
+    "text":    ("text", ["string", "x", "y", "fg", "bg", "scale"], None),
+    "blit":    ("blit", ["pixels", "x", "y", "w", "h"],            None),
+    "touched": ("touch", [],                                       "touch"),
 }
 
 # [step 358] Device methods. The operation numbers are device.h's DEV_OP_*.
@@ -606,6 +619,7 @@ class Codegen:
         self.bufs = {}           # name -> size in bytes
         self.devices = []        # declared in `permissions`, resolved at start
         self.needs_putd = False
+        self.needs_screen = False
         self.funcs = {}
         self.label_n = 0
         self.out = self.body     # where emit() currently writes
@@ -793,8 +807,8 @@ class Codegen:
         if node[0] != "var":
             raise NatError(line, "a device method needs a device name")
         name = node[1]
-        if name == "device":
-            return "device"
+        if name in ("device", "screen"):
+            return name
         if name not in self.devices:
             raise NatError(line, f"'{name}' is not a declared device. Devices "
                                  "are the names in the permissions block -- "
@@ -805,6 +819,32 @@ class Codegen:
     def property_of(self, node):
         _, obj, field, line = node
         dev = self.device_of(obj, line)
+        if dev == "screen":
+            # Where the last touch was, and how big the panel is. Stashed by
+            # the call that asked, for the reason d.value is: `touched()` has
+            # to be able to say NO, so it cannot also be the coordinate.
+            if field in ("width", "height"):
+                # These ASK, every time, rather than reading something a
+                # previous call stashed. A `screen.size()` that had to be
+                # remembered would give 0 to anyone who forgot it, silently,
+                # and the panel is not going to change size between two
+                # instructions.
+                self.emit("sys     dims")
+                if field == "width":
+                    self.emit("ldi     r1, 16")
+                    self.emit("shr     r0, r0, r1")
+                else:
+                    self.emit("ldi     r1, 0xFFFF")
+                    self.emit("and     r0, r0, r1")
+                return
+            slot = {"x": "sc_x", "y": "sc_y"}.get(field)
+            if not slot:
+                raise NatError(line, "the screen has x, y, width and height, "
+                                     f"not {field!r}")
+            self.emit(f"ldi     r1, @{slot}")
+            self.emit("ldw     r0, r1, 0")
+            self.needs_screen = True
+            return
         if dev == "device":
             raise NatError(line, "the device table has no properties")
         slot = {"value": "dv", "flags": "df", "id": "di"}.get(field)
@@ -813,9 +853,41 @@ class Codegen:
         self.emit(f"ldi     r1, @{slot}_{dev}")
         self.emit("ldw     r0, r1, 0")
 
+    def screen_method(self, name, args, line):
+        if name not in SCREEN_METHODS:
+            known = ", ".join(sorted(SCREEN_METHODS))
+            raise NatError(line, f"the screen has no {name!r}; it has {known}")
+        call, params, result = SCREEN_METHODS[name]
+        if len(args) != len(params):
+            wanted = ", ".join(params) if params else "nothing"
+            raise NatError(line, f"screen.{name} takes {wanted}, "
+                                 f"given {len(args)}")
+        self.needs_screen = True
+
+        # Coordinates are VIEWPORT-RELATIVE and the kernel clips them, so a
+        # program cannot draw outside its strip and does not need to know where
+        # its strip is (vm-abi.md section 4).
+        for a in args:
+            self.expr(a)
+            self.push(0)
+        for i in reversed(range(len(args))):
+            self.pop(i)
+        self.emit(f"sys     {call}")
+
+        if result == "touch":
+            # r0 = touched, r1 = x, r2 = y. The coordinates are stashed before
+            # the next statement overwrites them.
+            self.emit("ldi     r3, @sc_x")
+            self.emit("stw     r1, r3, 0")
+            self.emit("ldi     r3, @sc_y")
+            self.emit("stw     r2, r3, 0")
+
     def method(self, node):
         _, obj, name, args, line = node
         dev = self.device_of(obj, line)
+        if dev == "screen":
+            self.screen_method(name, args, line)
+            return
         table = TABLE_METHODS if dev == "device" else DEVICE_METHODS
         if name not in table:
             known = ", ".join(sorted(table))
@@ -1302,6 +1374,10 @@ class Codegen:
         for name in self.globals:
             lines.append(f"g_{name}:")
             lines.append("        .word   0")
+        if self.needs_screen:
+            for slot in ("sc_x", "sc_y"):
+                lines.append(f"{slot}:")
+                lines.append("        .word   0")
         for d in self.devices:
             # id, last value, last flags -- one word each, per declared device.
             lines.append(f"di_{d}:")

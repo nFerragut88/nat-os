@@ -11,6 +11,7 @@ A case is a .nat file in tools/tests/ with its expectation in a header comment:
     // expect: a second line
     // arena: 2048                (optional, default 4096)
     // keys: hi                   (optional, fed to `when key`)
+    // touch: 30,40 100,200        (optional, one point per touch poll)
     // steps: 40000               (optional instruction limit)
 
 or, for a program that must NOT compile:
@@ -39,13 +40,13 @@ import vasm                                             # noqa: E402
 
 def parse_header(text):
     spec = {"expect": [], "error": None, "arena": 4096, "keys": "",
-            "steps": 200000}
+            "steps": 200000, "touch": []}
     for line in text.splitlines():
         line = line.strip()
         if not line.startswith("//"):
             continue
         body = line[2:].strip()
-        for key in ("expect", "error", "arena", "keys", "steps"):
+        for key in ("expect", "error", "arena", "keys", "steps", "touch"):
             if body.startswith(key + ":"):
                 value = body[len(key) + 1:]
                 if key == "expect":
@@ -53,6 +54,10 @@ def parse_header(text):
                                           else value)
                 elif key in ("arena", "steps"):
                     spec[key] = int(value.strip())
+                elif key == "touch":
+                    for pair in value.split():
+                        x, y = pair.split(",")
+                        spec["touch"].append((int(x), int(y)))
                 else:
                     spec[key] = value.strip()
     return spec
@@ -88,7 +93,8 @@ def run_case(path):
 
     out, steps, regs, why = natvm_ref.run(spec["arena"], image,
                                           limit=spec["steps"],
-                                          keys=spec["keys"])
+                                          keys=spec["keys"],
+                                          touches=spec["touch"])
     want = "\n".join(spec["expect"])
     got = out.rstrip("\n")
     if got != want:

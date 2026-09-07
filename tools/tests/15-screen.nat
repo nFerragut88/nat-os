@@ -1,0 +1,25 @@
+// The screen namespace: drawing is accepted and clipped by the kernel, and a
+// touch reports whether it happened separately from where -- `touched()` has
+// to be able to say no, so it cannot also be the coordinate.
+//
+// width and height ASK every time rather than reading something a previous
+// call stashed, so there is no `size()` anybody can forget.
+// touch: 30,40 100,200
+// steps: 4000
+// expect: 240x320
+// expect: touched 30,40
+// expect: touched 100,200
+// expect: nothing
+println(screen.width, "x", screen.height)
+screen.fill(0, 0, screen.width, screen.height, 0)
+let n = 0
+while n < 3 {
+    if screen.touched() {
+        print("touched ", screen.x, ",", screen.y)
+        println("")
+        screen.fill(screen.x, screen.y, 4, 4, 65535)
+    } else {
+        println("nothing")
+    }
+    n = n + 1
+}

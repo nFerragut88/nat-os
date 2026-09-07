@@ -57,6 +57,7 @@
 #include "generated/app_hello.h"   /* [step 357] NatScript, not assembly */
 #include "generated/app_devnat.h" /* [step 358] app_dev, in NatScript */
 #include "generated/app_evtnat.h" /* [step 359] app_evt, in NatScript */
+#include "generated/app_tap.h"    /* [step 362] NatScript with a UI */
 #include "generated/app_ping.h"
 #include "generated/app_pong.h"
 #include "uart.h"
@@ -977,6 +978,17 @@ static const shell_program_t PROGRAMS[] = {
     { "evtnat",  vm_app_evtnat, VM_APP_EVTNAT_LEN, 1024u,
       VM_APP_EVTNAT_AT_G_PUBLISH,
       vm_app_evtnat_perms, VM_APP_EVTNAT_PERM_COUNT },
+    /* [step 362] The first NatScript program with a user interface. Every one
+     * before it was a serial-console program on a board whose entire point is
+     * a panel and a touchscreen: `fill` and `text` were reachable and `touch`
+     * was not, so a program could draw something and then had no way to learn
+     * whether anybody had touched it.
+     *
+     * 4 KB because the image alone is 3.1 KB -- the price of the evaluation
+     * model on a program with this many expressions, and visible here rather
+     * than in a footnote. */
+    { "tap",     vm_app_tap,   VM_APP_TAP_LEN,   4096u, VM_APP_TAP_AT_G_TAPS,
+      vm_app_tap_perms, VM_APP_TAP_PERM_COUNT },
     { "ping",    vm_app_ping,  VM_APP_PING_LEN,  512u, 0u, vm_app_ping_perms, VM_APP_PING_PERM_COUNT },
     { "pong",    vm_app_pong,  VM_APP_PONG_LEN,  512u, 0u, vm_app_pong_perms, VM_APP_PONG_PERM_COUNT },
 };

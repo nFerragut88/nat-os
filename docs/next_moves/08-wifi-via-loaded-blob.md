@@ -20352,3 +20352,95 @@ works  NatScript compiles, and every one of its programs has now run on the
        hardware it was written for
 open   VM-08 image identity; per-task stack sizing (352c); the null-sp fault
 ```
+
+---
+
+## step 362 — the screen, and a language that can be touched
+
+Until now NatScript could compute, print, and reach a device. That made it a
+language for writing **serial console programs**, on a board whose entire point
+is a 240x320 panel and a touchscreen.
+
+`fill` and `text` were reachable. `touch` was not. So a program could draw
+something and then had no way to find out whether anybody had touched it.
+
+```
+screen.fill(x, y, w, h, colour)
+screen.text(string, x, y, fg, bg, scale)
+screen.blit(pixels, x, y, w, h)
+screen.touched()                    -> 1 or 0; where, in screen.x / screen.y
+screen.width      screen.height
+```
+
+`screen` needs no permission, because it is not somebody else's hardware: it is
+the program's own viewport strip, clipped by the kernel, and `sys dims` reports
+the **viewport** rather than the panel — checked in `vm.c` rather than assumed.
+
+### 362a. `size()` was written and then deleted
+
+The first version had `screen.size()`, which asked once and left the answer
+where `screen.width` and `screen.height` could read it.
+
+Anyone who forgot to call it got **0**, silently, and then drew a zero-wide
+rectangle. So width and height ask every time. The panel is not going to change
+size between two instructions, and this project has spent enough reports on
+quantities that were quietly not what they claimed.
+
+`touched()` keeps the stash, because there the split is real: a call that must
+be able to say **no** cannot also be the coordinate. Same rule as `d.read()`.
+
+### 362b. `app_tap`, and the gap it exposes
+
+Three-by-three grid, lights the cell you touch, counts the taps, shows the
+count along the bottom. 3,107 bytes of bytecode from 60 lines.
+
+The interesting part is nine of those lines:
+
+```
+func render(n) {
+    label[0] = 116          // t
+    ...
+    label[i] = 48 + n % 10
+}
+```
+
+**That is what `"taps: " + n` costs today.** NatScript has no string type and no
+allocator inside an arena. `print` handles a number on the serial line; a number
+that has to appear ON THE PANEL has to be turned into digits by hand.
+
+It did not matter while every program printed to a terminal. It matters the
+moment one draws, and it is now the top of §11 with this code as the argument
+rather than a note saying strings would be nice.
+
+### 362c. Half verified, and which half
+
+`run tap` starts, draws, and prints `  [tap] touch a cell`. The suite is 25 for
+25 with a case that feeds touch points to the reference.
+
+**The touch path has NOT been confirmed on the panel.** Two attempts:
+
+| | |
+|---|---|
+| first capture | the window closed before anyone could be asked |
+| second, 3 minutes | the board **watchdog-reset** partway (`rst:0x7`, `boot #909`), and `touch g/w=0/0` with the driver's own `zmax` unchanged for the whole window — **no press reached the touch driver at all** |
+
+`touch g/w` counts touches given to a program AND touches withheld because they
+landed outside its viewport, so a tap that merely missed the app would still
+have moved it. Nothing did.
+
+A third run, 150 seconds with `tap` running and nobody touching it, showed **no
+reboot**. So the watchdog reset is not "running tap"; it is unexplained, and the
+touch handler — three fills and a text per tap, inside an injected handler — is
+the obvious next suspect if it recurs.
+
+What is claimed here: the syntax compiles, the suite covers it, the program
+loads and draws on hardware. What is not: that a finger works.
+
+### State
+
+```
+works  NatScript draws on the panel; screen.touched() compiles, tested against
+       the reference, unproven against a finger
+open   STRINGS -- the top gap now that programs draw; the watchdog reset seen
+       once and not reproduced; VM-08 image identity; per-task stacks
+```

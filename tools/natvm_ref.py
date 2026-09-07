@@ -53,7 +53,8 @@ class Halt(Exception):
         self.why = why
 
 
-def run(arena_bytes, image, limit=2_000_000, keys="", trace=False):
+def run(arena_bytes, image, limit=2_000_000, keys="", touches=(),
+        trace=False):
     """Returns (output, steps, registers, why). `why` is 'halted', 'exit',
     'limit', or a fault name."""
     if len(image) > arena_bytes:
@@ -74,6 +75,7 @@ def run(arena_bytes, image, limit=2_000_000, keys="", trace=False):
     evt_due = [0, 0]
     pending = None
     keyfeed = list(keys)
+    touchfeed = list(touches)
     bounce = bytearray()
 
     def fault(name, detail=""):
@@ -189,7 +191,7 @@ def run(arena_bytes, image, limit=2_000_000, keys="", trace=False):
                     mem[addr] = r[a] & 0xFF
             elif op == 0x50:
                 res = _syscall(imm, r, mem, out, arena_bytes, steps,
-                               evt_h, evt_p, evt_due, bounce, fault)
+                               evt_h, evt_p, evt_due, bounce, touchfeed, fault)
                 if res == "exit":
                     why = "exit"
                     break
@@ -206,7 +208,7 @@ def run(arena_bytes, image, limit=2_000_000, keys="", trace=False):
 
 
 def _syscall(num, r, mem, out, arena_bytes, steps,
-             evt_h, evt_p, evt_due, bounce, fault):
+             evt_h, evt_p, evt_due, bounce, touchfeed, fault):
     if num == 0:
         return "exit"
     if num == 1:
@@ -224,6 +226,15 @@ def _syscall(num, r, mem, out, arena_bytes, steps,
         r[0] = steps
     elif num == 7:
         r[0] = (240 << 16) | 320
+    elif num == 8:
+        # One touch per poll, from the list the harness supplied. A real panel
+        # reports the same press for many polls; a test that needed that would
+        # repeat the point.
+        if touchfeed:
+            x, y = touchfeed.pop(0)
+            r[0], r[1], r[2] = 1, x, y
+        else:
+            r[0] = 0
     elif num == 12:
         _device(r, mem, arena_bytes, steps, bounce, fault)
     elif num == 13:
