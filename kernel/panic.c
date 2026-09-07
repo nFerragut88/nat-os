@@ -339,6 +339,34 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
         uart_puts("  excvaddr : ");
         uart_put_hex(va);
         uart_puts("   <- the address it tried to reach\n");
+
+        /* [step 351] Name the window-spill fault; its raw form hides what it
+         * is. The step-319 panic read exccause 29, excvaddr 0, epc 0x40080009
+         * and was filed as an unexplained crash while scanning. 0x40080009 is
+         * nine bytes into _vecbase, and the linker script puts
+         * .vectors.window.of4 at _vecbase + 0x000: it is INSIDE
+         * WindowOverflow4.
+         *
+         * That handler spills the outgoing registers to the CALLER'S frame
+         * through a5. A fault there, storing near zero, means the frame
+         * pointer it was handed was null -- the hardware was asked to spill a
+         * window to nowhere. That is step 30's garbage stack pointer and step
+         * 292's zeroed a0/a1, not a fault in whatever the board was doing.
+         *
+         * The window vectors occupy _vecbase..+0x180. A fault inside them with
+         * a near-null address can only be this. */
+        {
+            extern char _vecbase;
+            uint32_t vb = (uint32_t)&_vecbase;
+            if (epc >= vb && epc < vb + 0x180u && va < 0x1000u) {
+                uart_puts("  ** WINDOW SPILL TO A NULL FRAME POINTER **\n");
+                uart_puts("     in the window vectors at _vecbase+");
+                uart_put_hex(epc - vb);
+                uart_puts("\n     a frame carried sp = 0: look for a call0 ->\n");
+                uart_puts("     windowed crossing (292), or a switch that\n");
+                uart_puts("     restored a zero stack pointer (30).\n");
+            }
+        }
     }
 
     /* IllegalInstruction on a windowed kernel is nearly always the register

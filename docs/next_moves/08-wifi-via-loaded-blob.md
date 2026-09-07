@@ -19479,3 +19479,69 @@ It was capability: two defects came from that seam and neither is reachable now.
 works  radio up -> auto-join the remembered network -> address; or scan and pick
 open   the step-319 panic; term/notes onto keyboard.c; memory headroom
 ```
+
+---
+
+## step 351 — the step-319 panic, named
+
+`(this commit)`
+
+The panic was filed as unexplained after step 329 showed its `GRANT DRIFT`,
+`LOST` and `multiframe` lines were pre-Tier-B instruments reporting normal
+operation. What survived was three numbers:
+
+```
+exccause : 29  (StoreProhibited)
+excvaddr : 0x00000000
+epc      : 0x40080009
+```
+
+`linker.ld:97` puts `.vectors.window.of4` at `_vecbase + 0x000`, and `_vecbase`
+is `0x40080000`. **The faulting instruction is nine bytes inside
+WindowOverflow4.**
+
+That handler spills the outgoing registers to the **caller's** frame through
+`a5`. A store fault there, at an address near zero, means the frame pointer it
+was handed was **null**: the hardware was asked to spill a register window to
+nowhere.
+
+So it is not a crash in the scan. It is step 30's *"died on a garbage stack
+pointer"* and step 292's zeroed `a0`/`a1`, reached from whatever code path
+happened to trigger a spill -- and the scan-while-joined path was doing plenty
+of windowed vendor calls.
+
+### 351a. Not fixed, and why
+
+The trigger is gone: step 319 leaves the network before scanning, and step 350
+removed the association from the bring-up entirely. It has not recurred and
+cannot be provoked the way it was.
+
+Fixing the cause means finding which context carried `sp = 0`, and the honest
+position is that there is nothing left to measure -- the fault is unreproducible
+and the instruments that appeared to corroborate it were measuring something
+else. **Chasing it further would be theory, and this log has enough of that.**
+
+### 351b. What was done instead
+
+`panic.c` recognises the shape. A fault inside `_vecbase..+0x180` -- the six
+window vectors -- with a near-null `excvaddr` can only be a spill to a null
+frame pointer, so it says so:
+
+```
+** WINDOW SPILL TO A NULL FRAME POINTER **
+   in the window vectors at _vecbase+0x9
+   a frame carried sp = 0: look for a call0 ->
+   windowed crossing (292), or a switch that
+   restored a zero stack pointer (30).
+```
+
+A fault that names itself is worth more than a fault someone has to decode from
+an address, and this one took two readings of a linker script to identify. If it
+returns, the next reader starts where this step finished.
+
+### State
+
+```
+open   the null-sp fault itself, unreproducible; memory headroom;
+       term/notes onto keyboard.c
+```
