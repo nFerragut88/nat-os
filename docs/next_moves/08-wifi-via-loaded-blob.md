@@ -20047,3 +20047,118 @@ open   `when` and `every` -- the mechanism has existed since step ~300 and the
        language still cannot say it; VM-08 image identity; per-task stacks
        `run devnat` on hardware, next to `run dev`
 ```
+
+---
+
+## step 359 — `when` and `every`
+
+The two pieces of syntax the proposal cared most about, and the last thing the
+VM could do that the language could not say.
+
+```
+every 1s {
+    ticks = ticks + 1
+    println("  [evtnat] tick handler, count ", ticks)
+}
+
+when key(k) {
+    print("  [evtnat] key handler, got ")
+    putc(k)
+    println("")
+}
+```
+
+`tools/app_evtnat.nat` is `app_evt.vasm` rewritten, registered next to it:
+
+| | assembly | NatScript |
+|---|---|---|
+| lines, excluding comments and blanks | **55** | **16** |
+| bytecode | **328 bytes** | **551 bytes** |
+
+Two handlers and their registration are eight lines instead of thirty-one.
+
+### 359a. It needed no new mechanism at all
+
+Worth stating because it is the return on a decision made four steps ago.
+
+`sys event` has existed since events were added. The kernel delivers by pushing
+the interrupted `pc` onto **the same return stack `call` uses**, so a handler is
+an ordinary function and `ret` unwinds the injection. There is no separate
+handler calling convention.
+
+Which means `when` and `every` compile to `f_on_key` and `f_on_tick` — two
+functions emitted by the same code path that emits every other function, plus
+five instructions of registration. The whole feature is a parser change.
+
+That is what `vm-abi.md` §5 was for: *"the kernel detects the exit by the return
+stack coming back to the depth it had before the injection — no marker, no
+cooperation required."* Written down at step 354 as a description; used at 359
+without a line of it needing to change.
+
+### 359b. `every 5ms` is a compile error
+
+A tick is 10 ms, and has been real time rather than a yield counter since the
+`timer_isr` fix. So `100ms` is ten ticks and `2s` is two hundred.
+
+`5ms` is not a whole number of ticks. Rounding it up silently would be a lie
+about the period the program asked for — and the error names what a tick is, so
+the reader learns the constraint at the point of hitting it rather than from a
+header.
+
+This project has spent two reports on quantities that were not what they were
+labelled. The tick was one of them.
+
+### 359c. Handlers arm AFTER the top level
+
+The order is a decision, not an accident of emission.
+
+Arming first would let a tick fire while the top level was still assigning the
+globals the handler reads. A handler seeing a half-initialised program is a bug
+that appears once in a hundred runs, and every one of those runs looks like
+something else.
+
+So the top level is setup; the handlers go live when it finishes; and the main
+flow becomes a one-instruction wait. A program with a handler does not exit.
+
+### 359d. Two refusals worth the instructions
+
+**A second `every`** is a compile error naming the line of the block it would
+have displaced. `vm.c` keeps one handler offset per event id, so the second
+would replace the first and the first would simply never fire — silent, and the
+sort of thing found weeks later.
+
+**A refused registration** stops the program. `sys event` refuses rather than
+faults, and a program written around something happening on its own, with the
+handler quietly not registered, spins forever looking busy. Two instructions to
+turn that into a line of text.
+
+### 359e. Checked, with the injection simulated
+
+The host simulator grew an event model: it registers handlers, injects a call
+the way `vm.c` does, saves and restores all sixteen registers, and detects the
+handler's exit by the return stack coming back to its previous depth.
+
+```
+  [evtnat] setup running
+  [evtnat] setup done; arming, then waiting
+  [evtnat] key handler, got h
+  [evtnat] key handler, got i
+  [evtnat] tick handler, count 1
+  ...
+  [evtnat] tick handler, count 21
+[sim] step limit -- a program with handlers waits forever, which is correct
+```
+
+The counter accumulating across injections is the interesting line: globals
+survive, the register save/restore leaves the idle spin intact, and the handler
+returns to exactly where it interrupted. **Still not the kernel** -- `run
+evtnat` next to `run evt` is the reading that counts.
+
+### State
+
+```
+works  NatScript says everything the VM can do: variables, buffers, functions,
+       recursion, devices by name, and now `when` and `every`
+open   `run hello`, `run devnat`, `run evtnat` on hardware -- three programs
+       verified only in a simulator; VM-08 image identity; per-task stacks
+```

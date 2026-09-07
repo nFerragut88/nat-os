@@ -28,7 +28,8 @@ do something is worse than one that says so:
 
 What it does have is variables, buffers, functions with parameters and locals,
 recursion, if/else, while, the ordinary operators with short-circuit && and ||,
-print, and devices reached by NAME through the permissions manifest. A program
+print, devices reached by NAME through the permissions manifest, and `when` /
+`every` -- the two pieces of syntax the proposal cared most about. A program
 written in it compiles, assembles, loads, and runs on the board.
 
 DEVICE NAMES ARE RESOLVED AT RUN TIME, not baked in. Step 356 moved permissions
@@ -49,6 +50,7 @@ import sys
 KEYWORDS = {
     "let", "func", "if", "else", "while", "return",
     "permissions", "true", "false", "buf", "device",
+    "every", "when",
 }
 
 # Longest first: '<<' must not lex as '<' '<'.
@@ -253,6 +255,7 @@ class Parser:
         perms = []
         funcs = []
         bufs = []
+        handlers = []
         body = []
         self.skip_newlines()
         while not self.at("eof"):
@@ -262,10 +265,57 @@ class Parser:
                 funcs.append(self.parse_func())
             elif self.at("kw", "buf"):
                 bufs.append(self.parse_buf())
+            elif self.at("kw", "every") or self.at("kw", "when"):
+                handlers.append(self.parse_handler())
             else:
                 body.append(self.parse_statement())
             self.skip_newlines()
-        return perms, funcs, bufs, body
+        return perms, funcs, bufs, handlers, body
+
+    def parse_handler(self):
+        """every <duration> { }   and   when key(name) { }
+
+        Top level only. A handler is entered by the KERNEL, so it has no caller
+        to be nested inside; one declared within a function would be registered
+        or not depending on whether that function happened to run."""
+        t = self.next()
+        if t.value == "every":
+            ticks = self.parse_duration()
+            return ("every", ticks, None, self.parse_block(), t.line)
+
+        # `when` names an event source. `key` is the only one the VM has.
+        what = self.expect("name").value
+        if what != "key":
+            raise NatError(t.line, f"there is no {what!r} event. The VM has "
+                                   "tick (which is `every`) and key")
+        param = None
+        if self.accept("punct", "("):
+            param = self.expect("name").value
+            self.expect("punct", ")")
+        return ("when", what, param, self.parse_block(), t.line)
+
+    def parse_duration(self):
+        """A tick is 10 ms (kmain.c TICK_INTERVAL_CYCLES), and has been real
+        time rather than a yield counter since the timer_isr fix."""
+        t = self.expect("num")
+        n = t.value
+        unit = "ticks"
+        if self.at("name") and self.peek().value in ("ms", "s", "tick", "ticks"):
+            unit = self.next().value
+        if unit == "ms":
+            if n % 10:
+                raise NatError(t.line, f"{n}ms is not a whole number of ticks. "
+                                       "A tick is 10 ms; rounding it silently "
+                                       "would be a lie about the period")
+            n = n // 10
+        elif unit == "s":
+            n = n * 100
+        if n < 1:
+            raise NatError(t.line, "an interval of less than one tick would "
+                                   "fire every poll and starve the main flow")
+        if n > 0xFFFF:
+            raise NatError(t.line, "an interval must fit in 16 bits (655 s)")
+        return n
 
     def parse_buf(self):
         """buf name[N]        -- N zero bytes
@@ -1089,7 +1139,37 @@ class Codegen:
             self.emit(f"ldi     r2, @di_{d}")
             self.emit("stw     r1, r2, 0")
 
-    def compile(self, perms, funcs, bufs, body):
+    def arm_handlers(self, handlers):
+        """Registers the handlers AFTER the top-level statements have run.
+
+        The order is a decision. Arming first would let a tick fire while the
+        top level was still assigning the globals the handler reads, and a
+        handler seeing a half-initialised program is a bug that shows up once in
+        a hundred runs. So the top level is setup, and the handlers go live when
+        it finishes -- which is also the moment the main flow becomes a spin."""
+        for kind, ident, param, _body, line in handlers:
+            evt = 0 if kind == "every" else 1
+            label = "f_on_tick" if evt == 0 else "f_on_key"
+            self.comment(f"[startup] arm `{kind}`")
+            self.load_imm(0, evt)
+            self.emit(f"ldi     r1, @{label}")
+            self.load_imm(2, ident if kind == "every" else 0)
+            self.emit("sys     event")
+            # A refusal is not survivable: the program was written around
+            # something happening on its own, and without the handler it would
+            # spin forever looking busy. The VM reports its own faults; a
+            # REFUSAL has to report itself.
+            armed = self.new_label("armed")
+            self.emit(f"brnz    r0, {armed}")
+            self.emit("ldi     r0, @" + self.string_label(
+                "  [natc] the kernel refused a handler\n"))
+            self.emit("sys     puts")
+            self.emit("ldi     r0, 1")
+            self.emit("sys     exit")
+            self.label(armed)
+
+    def compile(self, perms, funcs, bufs, handlers, body):
+        self.has_handlers = bool(handlers)
         for f in funcs:
             if f[1] in self.funcs:
                 raise NatError(f[4], f"'{f[1]}' is defined twice")
@@ -1100,12 +1180,41 @@ class Codegen:
             self.bufs[b[1]] = (b[2], b[3])
         self.devices = list(perms)
 
+        # One handler per event: vm.c keeps a single offset per event id, so a
+        # second `every` would REPLACE the first and the first would simply
+        # never fire. Silent, and the sort of thing found weeks later.
+        seen = {}
+        for h in handlers:
+            key = h[0]
+            if key in seen:
+                raise NatError(h[4], f"a second `{key}` block. The VM keeps one "
+                                     f"handler per event, so this would replace "
+                                     f"the one on line {seen[key]} and that one "
+                                     f"would never fire")
+            seen[key] = h[4]
+            name = "on_tick" if key == "every" else "on_key"
+            if name in self.funcs:
+                raise NatError(h[4], f"`{key}` compiles to a function called "
+                                     f"{name!r}, which this program already "
+                                     "defines")
+
         # Top level runs with no frame: r14 is left as vm_init found it and no
         # local can be declared, so `let` at the top level is a global.
         self.out = self.body
         self.resolve_devices()
         for s in body:
             self.statement(s)
+        self.arm_handlers(handlers)
+
+        # Each handler becomes an ordinary function. The kernel enters it by
+        # pushing a return address the same way `call` does, so `ret` unwinds
+        # the injection -- there is no separate handler calling convention to
+        # get wrong, and vm-abi.md section 5 is why.
+        for kind, _ident, param, hbody, line in handlers:
+            name = "on_tick" if kind == "every" else "on_key"
+            params = [param] if param else []
+            funcs = funcs + [("func", name, params, hbody, line)]
+            self.funcs[name] = len(params)
 
         for f in funcs:
             self.function(f)
@@ -1125,8 +1234,18 @@ class Codegen:
         lines.append("start:")
         lines.extend(self.body)
         lines.append("")
-        lines.append("        ldi     r0, 0")
-        lines.append("        sys     exit")
+        if handlers:
+            # A program with handlers does not END; it waits. There is no yield
+            # syscall, so the wait is a one-instruction spin and the scheduler
+            # preempts it by quantum -- the same shape app_evt.vasm has run in
+            # since events existed. Saying so here rather than leaving a reader
+            # to wonder why the exit disappeared.
+            lines.append("; ---- the main flow: wait for the kernel to call in " + "-" * 15)
+            lines.append("idle:")
+            lines.append("        jmp     idle")
+        else:
+            lines.append("        ldi     r0, 0")
+            lines.append("        sys     exit")
         lines.extend(self.funcs_asm)
 
         if self.strings or self.globals or self.bufs or self.devices:
@@ -1187,8 +1306,8 @@ def escape(text):
 
 
 def compile_source(text, source_name):
-    perms, funcs, bufs, body = Parser(lex(text)).parse_program()
-    return Codegen(source_name).compile(perms, funcs, bufs, body)
+    perms, funcs, bufs, handlers, body = Parser(lex(text)).parse_program()
+    return Codegen(source_name).compile(perms, funcs, bufs, handlers, body)
 
 
 def main():

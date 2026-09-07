@@ -1,11 +1,11 @@
 # NatScript — the language, v0
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 0.2 · 2026-09-07 · Covers `next_moves` VM-09 through VM-13.
+Revision 0.3 · 2026-09-07 · Covers `next_moves` VM-09 through VM-13.
 
 NatScript compiles to NatVM bytecode. This document describes **what the
 compiler in `tools/natc.py` actually accepts today**, not what the proposal
-imagines. Where the two differ, §9 says so by name.
+imagines. Where the two differ, §10 says so by name.
 
 The proposal's own §15 warned against designing syntax before the ABI was
 written down. The ABI is now written down and frozen — `docs/vm-abi.md`,
@@ -94,12 +94,14 @@ only kind of pointer, are §7.
 | `while expr { }` | |
 | `return expr` / `return` | only inside a function |
 | `expr` | evaluated for its effect |
+| `every <duration> { }` | top level only — §9 |
+| `when key(name) { }` | top level only — §9 |
 
 Zero is false and everything else is true; there is no separate boolean type.
 
 Redeclaring a name in the same function is an error. There is **no block
 scoping**: a `let` inside an `if` is visible for the rest of the function. That
-is a simplification, not a design, and §9 lists it.
+is a simplification, not a design, and §10 lists it.
 
 ---
 
@@ -300,42 +302,120 @@ reason: a program reaching for hardware that is not there runs blind.
 
 ---
 
-## 9. What v0 still does not have
+## 9. `when` and `every`
 
-1. **No `when` or `every`.** `sys event` exists and `app_evt.vasm` exercises it;
-   the language does not reach it yet. This is the next piece of work and it is
-   the one the proposal cared most about.
-2. **No block scoping**, and no shadowing.
-3. **No `for`, no `break`, no `continue`.**
-4. **Strings are literals only.** `"Scans: " + count` needs an allocator inside
-   an arena, which does not exist.
-5. **No constant folding.** `2 * 3` emits a multiply.
-6. **No compile-time bounds checking** on buffer indices — §7.
+The two pieces of syntax the proposal cared most about, and the last thing the
+VM could do that the language could not say.
+
+```
+every 1s {
+    ticks = ticks + 1
+    println("tick ", ticks)
+}
+
+when key(k) {
+    print("got ")
+    putc(k)
+    println("")
+}
+```
+
+Top level only. A handler is entered by the **kernel**, so it has no caller to
+be nested inside; one declared within a function would be registered or not
+depending on whether that function happened to run.
+
+### 9.1 Durations
+
+A tick is **10 ms** (`kmain.c`, `TICK_INTERVAL_CYCLES`), and has been real time
+rather than a yield counter since the `timer_isr` fix.
+
+| | |
+|---|---|
+| `every 100ms` | 10 ticks |
+| `every 2s` | 200 ticks |
+| `every 10 ticks` | 10 ticks, said directly |
+| `every 10` | the same; ticks are the default unit |
+
+**`every 5ms` is a compile error.** It is not a whole number of ticks, and
+rounding it to 10 ms silently would be a lie about the period the program asked
+for. The error says what a tick is.
+
+### 9.2 One handler per event
+
+`vm.c` keeps a single handler offset per event id, so a second `every` block
+would **replace** the first and the first would never fire. That is a compile
+error naming the line of the block it would have displaced.
+
+### 9.3 Handlers arm after the top level, and then the program waits
+
+The top-level statements are setup. When they finish, the handlers are
+registered, and the main flow becomes a one-instruction wait.
+
+Arming first would let a tick fire while the top level was still assigning the
+globals the handler reads — a handler seeing a half-initialised program, which
+is a bug that appears once in a hundred runs.
+
+There is no yield syscall, so the wait is a spin and the scheduler preempts it
+by quantum. That is the same shape `app_evt.vasm` has run in since events
+existed; it is stated here rather than left to be discovered in a disassembly.
+
+**A program with a handler does not exit.** `exit(0)` still works if that is
+what is wanted.
+
+### 9.4 A refused registration stops the program
+
+`sys event` refuses rather than faulting when the VM will not take a handler.
+The generated code checks, and stops:
+
+```
+  [natc] the kernel refused a handler
+```
+
+A program written around something happening on its own, with the handler
+silently not registered, spins forever looking busy. That failure is expensive
+to diagnose and the check costs two instructions.
 
 ---
 
-## 10. The honest test, taken
+## 10. What v0 still does not have
+
+1. **No block scoping**, and no shadowing.
+2. **No `for`, no `break`, no `continue`.**
+3. **Strings are literals only.** `"Scans: " + count` needs an allocator inside
+   an arena, which does not exist.
+4. **No constant folding.** `2 * 3` emits a multiply.
+5. **No compile-time bounds checking** on buffer indices — §7.
+6. **Two event sources**, tick and key, because that is what the VM has.
+   `when button.pressed` from the proposal needs a device that can deliver.
+
+---
+
+## 11. The honest test, taken
 
 The proposal set it:
 
 > *rewrite `app_dev.vasm` in NatScript, and if it is not shorter and clearer
 > than the assembly, the language has not earned itself.*
 
-`tools/app_devnat.nat` is that rewrite. Both are registered, so `run dev` and
-`run devnat` can be compared on the board rather than on the page.
+`tools/app_devnat.nat` is that rewrite, and `tools/app_evtnat.nat` is the same
+exercise for `app_evt.vasm`. Each is registered next to the assembly original,
+so `run dev` / `run devnat` and `run evt` / `run evtnat` compare on the board
+rather than on the page.
 
-| | assembly | NatScript |
-|---|---|---|
-| lines, excluding comments and blanks | **117** | **37** |
-| bytecode | **583 bytes** | **1,381 bytes** |
+| | assembly | NatScript | |
+|---|---|---|---|
+| `app_dev` lines | **117** | **37** | 3.2x shorter |
+| `app_dev` bytecode | **583 B** | **1,381 B** | 2.4x larger |
+| `app_evt` lines | **55** | **16** | 3.4x shorter |
+| `app_evt` bytecode | **328 B** | **551 B** | 1.7x larger |
 
-**Three times shorter in source, and two and a half times larger in bytecode.**
-Both halves of that are the point.
+**Three times shorter in source, and larger in bytecode.** Both halves are the
+point.
 
 The source result is the language earning itself: the enumeration loop is four
 lines instead of a register-allocated counter, a comparison, a branch and a
-manual increment; the transfer round trip is one `if` with a short-circuited
-`&&` instead of two branches to a shared failure label.
+manual increment; two event handlers and their registration are eight lines
+instead of thirty-one.
 
 The bytecode result is the price of §6's evaluation model — every operand
 pushed and popped — and it is reported here rather than left for someone to
@@ -343,10 +423,13 @@ find with `ls`. On a board with 4 MB of flash and per-program arenas measured in
 kilobytes, source size is the scarce thing and bytecode is not. That is a
 judgement about this machine, not a general one.
 
-### 10.1 What the rewrite could not carry over
+### 11.1 What the rewrites could not carry over
 
 The assembly's comments. `app_dev.vasm` carries a paragraph about a jump that
-landed past its setup code and silently skipped a slot claim, and another about
-why sixteen readings rather than an endless loop. Those are the most valuable
-part of that file and they are not a language feature; they were copied across
-by hand.
+landed past its setup code and silently skipped a slot claim; `app_evt.vasm`
+explains that its spin counter exists so a clobbered register would show up in
+`ps`. Those are the most valuable part of those files, they are not a language
+feature, and they were copied across by hand.
+
+A language makes the code shorter. It does not make the reasoning shorter, and
+the reasoning is what took the time.

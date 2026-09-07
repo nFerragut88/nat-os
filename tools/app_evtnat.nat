@@ -1,0 +1,48 @@
+// app_evtnat -- app_evt.vasm, rewritten in NatScript.
+//
+// app_evt was the first program the kernel could call INTO: it registers two
+// handlers and then does nothing at all, and everything it prints is printed by
+// code the kernel entered on its own initiative.
+//
+// That mechanism has existed since events were added. What did not exist was a
+// way to SAY it: `when` and `every` are the two pieces of syntax the NatScript
+// proposal cared most about, and until now the language could not express the
+// one feature the VM had been built for.
+//
+// Delivery is a call the kernel injects -- it pushes the interrupted pc onto
+// the same return stack `call` uses -- so a handler is an ordinary function and
+// `ret` resumes what was interrupted. There is no separate handler calling
+// convention, which is why these compile to nothing special.
+
+let ticks = 0
+let keys = 0
+
+// Published where `ps` can read it, straight out of the arena.
+let publish = 0
+
+println("  [evtnat] setup running")
+
+// A tick is 10 ms and has been real time, not a yield counter, since the
+// timer_isr fix. `1s` is 100 ticks; the compiler refuses any interval that is
+// not a whole number of them rather than rounding it quietly.
+every 1s {
+    ticks = ticks + 1
+    publish = ticks
+    println("  [evtnat] tick handler, count ", ticks)
+}
+
+// The key queue is SHARED and reading it is destructive, so this competes with
+// the shell's `keys` command and with any other program doing the same. Real,
+// and documented rather than hidden: per-application queues would need a
+// concept of focus that this system does not have.
+when key(k) {
+    keys = keys + 1
+    print("  [evtnat] key handler, got ")
+    putc(k)
+    println("")
+}
+
+// Handlers arm AFTER the top level finishes, so this is the last thing the
+// main flow does before it becomes a wait. Everything after it is the kernel
+// calling in.
+println("  [evtnat] setup done; arming, then waiting")

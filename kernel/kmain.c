@@ -56,6 +56,7 @@
 #include "generated/app_frame.h"
 #include "generated/app_hello.h"   /* [step 357] NatScript, not assembly */
 #include "generated/app_devnat.h" /* [step 358] app_dev, in NatScript */
+#include "generated/app_evtnat.h" /* [step 359] app_evt, in NatScript */
 #include "generated/app_ping.h"
 #include "generated/app_pong.h"
 #include "uart.h"
@@ -966,6 +967,16 @@ static const shell_program_t PROGRAMS[] = {
     { "devnat",  vm_app_devnat, VM_APP_DEVNAT_LEN, 2048u,
       VM_APP_DEVNAT_AT_G_PUBLISH,
       vm_app_devnat_perms, VM_APP_DEVNAT_PERM_COUNT },
+    /* [step 359] app_evt, rewritten in NatScript. The VM has been able to call
+     * INTO a program since events were added; `when` and `every` are the two
+     * pieces of syntax the proposal cared most about, and until now the
+     * language could not say the one thing the VM was built for.
+     *
+     * Like `evt`, this program never exits: its main flow is a one-instruction
+     * wait and everything it prints is printed by code the kernel entered. */
+    { "evtnat",  vm_app_evtnat, VM_APP_EVTNAT_LEN, 1024u,
+      VM_APP_EVTNAT_AT_G_PUBLISH,
+      vm_app_evtnat_perms, VM_APP_EVTNAT_PERM_COUNT },
     { "ping",    vm_app_ping,  VM_APP_PING_LEN,  512u, 0u, vm_app_ping_perms, VM_APP_PING_PERM_COUNT },
     { "pong",    vm_app_pong,  VM_APP_PONG_LEN,  512u, 0u, vm_app_pong_perms, VM_APP_PONG_PERM_COUNT },
 };

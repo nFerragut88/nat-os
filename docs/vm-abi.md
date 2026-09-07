@@ -123,7 +123,7 @@ pushing a return address and setting `pc`; the handler **returns like any other
 function**, and the kernel detects the exit by the return stack coming back to
 the depth it had before the injection — no marker, no cooperation required.
 
-This is the mechanism `when` and `every` compile to.
+This is the mechanism `when` and `every` compile to -- literally, since step 359.
 
 **Faults**, all of which stop the program and never the kernel:
 `NONE OPCODE REG PC ALIGN BOUNDS DIV0 CALL_DEPTH RET STRING SYSCALL`.
@@ -260,12 +260,12 @@ Everything above can be depended on now. These cannot:
 | VM-03 frame layout | **done — §6**, `r15` initialised at step 355, proved by `tools/app_frame.vasm` |
 | VM-04 nested call/ret | **already works**, 32 deep, faults on underflow |
 | VM-05 event ABI | **done — §5** |
-| VM-06 tick/key delivery | implemented; `app_evt.vasm` exercises both |
+| VM-06 tick/key delivery | implemented; `app_evt.vasm` exercises both, and `when`/`every` compile to it (step 359) |
 | VM-07 manifest | **done — §7**, step 356 |
 | VM-08 permission enforcement | enforced from the manifest; **image identity still missing** |
 | VM-09..11 grammar, parser, codegen | **done — `tools/natc.py`, `docs/natscript.md`**, step 357 |
 | VM-12 buffers and device syntax | **done — `natscript.md` §7, §8**, step 358 |
-| VM-13 the honest test | **taken — `natscript.md` §10**: 117 lines of assembly became 37 |
+| VM-13 the honest test | **taken — `natscript.md` §11**: 117 lines of assembly became 37, and `app_evt`'s 55 became 16 |
 
 So `when` and `every` have a mechanism, `device` is a compile-time lookup
 against a table that already exists, and `permissions` has a format to compile
