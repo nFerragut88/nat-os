@@ -151,7 +151,7 @@ arena:  [ code ][ static data ] ........ free ........ [ stack ] arena_len
 | `r0`–`r3` | arguments, and `r0` is the return value |
 | `r4`–`r11` | **caller-saved** scratch |
 | `r12`–`r13` | reserved |
-| `r14` | frame pointer (optional; a compiler with fixed frames may skip it) |
+| `r14` | **frame pointer — required, not optional.** See below |
 | `r15` | **stack pointer** — byte offset into the arena, 4-aligned |
 
 Prologue and epilogue are ordinary arithmetic:
@@ -162,6 +162,15 @@ Prologue and epilogue are ordinary arithmetic:
     addi  r15, +N
     ret
 ```
+
+**[step 357] `r14` was written here as "optional; a compiler with fixed frames
+may skip it". That was wrong, and the first compiler to target this ABI found
+out why.** Any code generator with an *expression stack* — pushing the left
+operand of a binary operator while the right is evaluated — moves `r15` in the
+middle of the statement that reads a local. A local addressed as `r15 + 8` is
+somewhere else after the first `+` in the expression addressing it. So locals
+are addressed through `r14`, the callee saves and restores it, and a compiler
+may only skip it if it never pushes anything during an expression.
 
 Consequences a compiler must respect:
 
@@ -246,6 +255,8 @@ Everything above can be depended on now. These cannot:
 | VM-06 tick/key delivery | implemented; `app_evt.vasm` exercises both |
 | VM-07 manifest | **done — §7**, step 356 |
 | VM-08 permission enforcement | enforced from the manifest; **image identity still missing** |
+| VM-09..11 grammar, parser, codegen | **done — `tools/natc.py`, `docs/natscript.md`**, step 357 |
+| VM-12 arrays and device syntax | **not started**, and it blocks the honest test |
 
 So `when` and `every` have a mechanism, `device` is a compile-time lookup
 against a table that already exists, and `permissions` has a format to compile

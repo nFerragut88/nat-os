@@ -19829,3 +19829,113 @@ works  VM-01 02 03 04 05 06 07 -- a compiler has an ABI, a frame and a manifest
 open   VM-08 image identity; VM-09..13 the language itself
        per-task stack sizing (352c); the null-sp fault (351)
 ```
+
+---
+
+## step 357 — NatScript compiles (VM-09, VM-10, VM-11)
+
+`tools/app_hello.nat` is the first nat-os program nobody wrote in assembly.
+
+```
+NatScript  ->  natc.py  ->  vasm assembly  ->  vasm.py  ->  bytecode  ->  NatVM
+```
+
+Grammar, lexer, parser and code generator, in `tools/natc.py`. The language is
+documented in `docs/natscript.md` — what the compiler **accepts**, not what the
+proposal imagines, with §7 naming everything it cannot do.
+
+### 357a. It emits assembly, not bytecode
+
+The decision that made this a day's work rather than a week's.
+
+`vasm.py` already resolves labels, lays out `.string`/`.word`/`.space`, emits
+the generated header and carries the `.permission` manifest. A backend inside
+`natc` would have been a **second encoder of the same instruction set** — and
+every *"these two must agree"* comment in this log has eventually failed, most
+recently one commit ago, when `kmain.c`'s duplicate launch path was about to
+disagree with the shell's.
+
+It also leaves a readable intermediate. `build/nat/app_hello.vasm` is 437 lines
+a person can check against `vm-abi.md`, which is how a compiler earns trust it
+has not been given yet.
+
+### 357b. The frame convention, used in anger
+
+Step 355 wrote down a calling convention and proved it with one hand-written
+program. This compiler is its first real user, and using it found the thing the
+hand-written proof had not needed to think about:
+
+**locals cannot be addressed from the stack pointer.** The expression evaluator
+pushes the left operand of every binary operator, so `r15` moves *during* the
+statement that reads a local. A local at `r15 + 8` is at a different place after
+the first `+` in the expression addressing it.
+
+So `r14` is the frame pointer, the callee saves and restores it, and the
+convention's reservation of `r14` — written down at 355 as "optional; a compiler
+with fixed frames may skip it" — turns out to be mandatory for any compiler with
+an expression stack. `vm-abi.md` said the right thing for a reason it had not
+identified.
+
+Parameters are spilled into the frame on entry rather than left in registers,
+for the same class of reason: an argument that survives or not depending on
+whether the body happens to call something is not a language anybody can reason
+about.
+
+### 357c. One peephole, and why only one
+
+Every expression leaves its value in `r0` and every binary operator pushes.
+That is two instructions per operator more than a register allocator would emit,
+and it is correct for an expression of any depth with no case analysis to get
+wrong — which, for a compiler with no test suite behind it, is worth more than
+the instructions.
+
+The exception: a call with one argument evaluated it into `r0`, pushed it, and
+popped it straight back into `r0`. Four instructions and two memory accesses to
+achieve nothing, on **every call in the language**. `pop` now cancels an
+immediately preceding `push`. 1,863 bytes → 1,738.
+
+### 357d. Checked before it was flashed
+
+A throwaway host simulator of the ABI ran the compiled image:
+
+```
+[hello] fib(0..9) = 0 1 1 2 3 5 8 13 21 34
+[hello] gcd(1071, 462) = 21
+[hello] triangle(100) = 5050
+[hello] short-circuit && ok
+--- 14518 instructions, r15=3072 (started 3072)
+```
+
+Every value correct, and **`r15` back where it started** — the frame discipline
+balancing exactly across nine levels of recursion and 14,518 instructions. Its
+opcode semantics were checked against `vm.c` line by line for everything `natc`
+emits: `ldi` zero-extends, `ldih` ORs the high half, `addi` is signed on `r[a]`,
+`slt`/`sle` are signed, branches are relative in instructions from the next one.
+
+**A simulator is not the kernel.** It was written to avoid spending a flash
+cycle on a program that could not compute; `run hello` on the board is the
+reading that counts and it has not been taken.
+
+### 357e. What v0 cannot do, said out loud
+
+**No arrays, no buffers, no pointers.** Device operations that write into the
+arena — `DEV_OP_NAME`, the transfer pair — take an arena offset, and NatScript
+has no way to name one.
+
+So **`app_dev.vasm` is not yet rewritable in NatScript**, and the proposal's own
+test — *rewrite it, and if it is not shorter and clearer than the assembly, the
+language has not earned itself* — cannot be attempted. That is the next piece of
+work. It is written here, and in `docs/natscript.md` §7, rather than left for a
+reader to find by trying.
+
+Also absent: `device`/`when`/`every` syntax, block scoping, `for`, `break`,
+strings as values, and constant folding.
+
+### State
+
+```
+works  a language: variables, functions, recursion, if/else, while, print,
+       and the permissions manifest, compiled and simulated
+open   VM-12 arrays and device syntax, which unblocks VM-13, the honest test
+       `run hello` on hardware; per-task stack sizing (352c); the null-sp fault
+```

@@ -88,6 +88,27 @@ Write-Host "== board: $Board ==" -ForegroundColor Cyan
 # and carries no assembler. Generated headers are build products, not sources.
 $gen = Join-Path $root "kernel\generated"
 New-Item -ItemType Directory -Force -Path $gen | Out-Null
+# [step 357] NatScript first: natc compiles *.nat to assembly, which then goes
+# through the SAME assembler as every hand-written program. One encoder of the
+# instruction set, not two -- see the header of tools/natc.py.
+#
+# The intermediate lands in build\nat\ rather than tools\, so a generated .vasm
+# cannot be mistaken for a source file or edited by hand and then overwritten.
+$natdir = Join-Path $root "build\nat"
+$nat = Get-ChildItem "$root\tools\*.nat" -ErrorAction SilentlyContinue
+if ($nat) {
+    Write-Host "== compiling NatScript ==" -ForegroundColor Cyan
+    New-Item -ItemType Directory -Force -Path $natdir | Out-Null
+    foreach ($src in $nat) {
+        $asm = Join-Path $natdir ($src.BaseName + ".vasm")
+        & $python "$root\tools\natc.py" $src.FullName -o $asm
+        if ($LASTEXITCODE -ne 0) { throw "natc failed: $($src.Name)" }
+        $hdr = Join-Path $gen ($src.BaseName + ".h")
+        & $python "$root\tools\vasm.py" $asm -o $hdr --name ("vm_" + $src.BaseName)
+        if ($LASTEXITCODE -ne 0) { throw "vasm failed: $($src.BaseName).vasm" }
+    }
+}
+
 $vasm = Get-ChildItem "$root\tools\*.vasm" -ErrorAction SilentlyContinue
 if ($vasm) {
     Write-Host "== assembling bytecode ==" -ForegroundColor Cyan

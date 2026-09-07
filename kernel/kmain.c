@@ -54,6 +54,7 @@
 #include "generated/app_dev.h"
 #include "generated/app_evt.h"
 #include "generated/app_frame.h"
+#include "generated/app_hello.h"   /* [step 357] NatScript, not assembly */
 #include "generated/app_ping.h"
 #include "generated/app_pong.h"
 #include "uart.h"
@@ -942,6 +943,17 @@ static const shell_program_t PROGRAMS[] = {
      * own, and checks on the way out that nothing was trampled. The convention
      * is docs/vm-abi.md section 6; this is whether it is true. */
     { "frame",   vm_app_frame, VM_APP_FRAME_LEN, 512u, 0u, vm_app_frame_perms, VM_APP_FRAME_PERM_COUNT },
+    /* [step 357] The first program in this table that nobody wrote in
+     * assembly. tools/app_hello.nat is NatScript; natc compiles it to the same
+     * assembly every other entry is written in, and vasm assembles that.
+     *
+     * 3 KB of arena because it recurses: fib(9) is nine frames deep, each with
+     * a saved frame pointer, a local, and the operand temporaries the compiler
+     * pushes -- on top of an image that is already 1,738 bytes. The stack and
+     * the image share the arena (vm-abi.md section 6) and nothing but
+     * VM_FAULT_BOUNDS stands between them. */
+    { "hello",   vm_app_hello, VM_APP_HELLO_LEN, 3072u, 0u,
+      vm_app_hello_perms, VM_APP_HELLO_PERM_COUNT },
     { "ping",    vm_app_ping,  VM_APP_PING_LEN,  512u, 0u, vm_app_ping_perms, VM_APP_PING_PERM_COUNT },
     { "pong",    vm_app_pong,  VM_APP_PONG_LEN,  512u, 0u, vm_app_pong_perms, VM_APP_PONG_PERM_COUNT },
 };
