@@ -119,7 +119,21 @@ uint32_t g_use_lwip = 1u;
 uint32_t g_net_arp_req, g_net_arp_rep, g_net_icmp_req, g_net_icmp_rep;
 uint32_t g_net_dhcp_offer, g_net_dhcp_ack, g_net_frames;
 
-static uint8_t g_out[NET_MAX + 160u];
+/* [step 352] 512, was NET_MAX + 160 = 1760.
+ *
+ * This is the TRANSMIT buffer of the hand-written network path -- ARP replies,
+ * ICMP echoes and the hand-rolled DHCP exchange -- and that path has not run
+ * since step 233 put lwIP in charge (`g_use_lwip = 1`). It was sized to mirror
+ * a full received frame so a large ping could be echoed, which is a capability
+ * of a fallback nobody has used in a hundred steps.
+ *
+ * 512 covers an ARP reply (42 bytes), a DHCP message (~300) and any ping worth
+ * answering from a fallback. The guard that already existed --
+ * `if (len > sizeof g_out) { return; }` -- turns anything larger into a
+ * declined reply rather than an overflow, which is what it was written for.
+ *
+ * 1,248 bytes back to the heap the WiFi driver allocates from. */
+static uint8_t g_out[512u];
 
 /* ---- helpers ------------------------------------------------------------ */
 

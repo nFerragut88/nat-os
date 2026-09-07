@@ -215,6 +215,20 @@ SECTIONS
        * while the bus is taken matters. Moved to make room for wifiprefs. */
       *calib.c.o(.literal .literal.* .text .text.*)
 
+      /* [step 352] ALL OF lwIP, 40 KB of it.
+       *
+       * iram had 848 bytes free of 128 KB and had already refused kernel
+       * instrumentation twice (328, 341). lwIP is the largest thing in it and
+       * has no business being there: every one of its entry points runs on the
+       * net task -- netif_wifi_input() from the drain loop, sys_check_timeouts()
+       * from the tick, the tcp/udp callbacks from those two. None of it runs
+       * from an interrupt handler, and none of it touches the flash bus, which
+       * is the only rule that actually constrains placement (316).
+       *
+       * A flash erase masks interrupts, so no task switch can land inside one:
+       * lwIP cannot be executing while the bus is taken. */
+      *lwip_*.c.o(.literal .literal.* .text .text.*)
+
     /* [step 278] notes.c and term.c join it, for the same reason and with the
      * same evidence: both are views entered from the launcher, both run only
      * while a human is looking at them, and neither is referenced by anything

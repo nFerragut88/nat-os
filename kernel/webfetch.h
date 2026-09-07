@@ -27,7 +27,11 @@
 #include <stdint.h>
 
 #define WEB_HOST_MAX  64u
-#define WEB_BODY_MAX  1536u     /* what is kept of the response, not of the page */
+/* [step 352] 768, was 1536. The view shows nine lines of thirty-nine columns --
+ * 351 characters -- and scrolls through what is kept. 768 is two screens of
+ * history, which is as much of a raw HTTP response as anyone reads on a
+ * 240x320 panel, and 768 bytes back to the heap. */
+#define WEB_BODY_MAX  768u
 
 enum {
     WEB_IDLE = 0,

@@ -19545,3 +19545,70 @@ returns, the next reader starts where this step finished.
 open   the null-sp fault itself, unreproducible; memory headroom;
        term/notes onto keyboard.c
 ```
+
+---
+
+## step 352 — both memories, measured
+
+`(this commit)`
+
+```
+                 before      after
+iram free           848     41,040     of 131,072
+heap             30,216     33,896     (was 38,648 before the web work)
+```
+
+### 352a. iram: lwIP had no business being there
+
+`.text` was 129,200 of a 128 KB region, and iram had refused kernel
+instrumentation twice (328, 341). The largest thing in it was **lwIP: 40 KB**.
+
+Every lwIP entry point runs on the net task -- `netif_wifi_input()` from the
+drain loop, `sys_check_timeouts()` from the tick, the TCP and UDP callbacks from
+those two. **None of it runs from an interrupt handler and none of it touches
+the flash bus**, which is the only rule that actually constrains placement
+(316). A flash erase masks interrupts, so no task switch can land inside one and
+lwIP cannot be executing while the bus is taken.
+
+`.text` 129,200 -> 89,008. The constraint that shaped three steps is gone.
+
+### 352b. DRAM: two dead buffers, and the rest is load-bearing
+
+- **`g_out`, 1,760 -> 512.** The transmit buffer of the hand-written network
+  path, sized to mirror a whole received frame so a large ping could be echoed
+  -- by a fallback that has not run since step 233. The overflow guard that
+  already existed turns anything larger into a declined reply.
+- **`WEB_BODY_MAX`, 1,536 -> 768.** The browser shows nine lines of
+  thirty-nine columns; 768 is two screens of scrollback.
+
+Everything else large is load-bearing, and the numbers say so:
+
+| | | |
+|---|---|---|
+| `g_stacks` | 26,624 | 13 tasks x 2 KB, one size for all (task.h:197) |
+| `PBUF_POOL` | 9,216 | already halved from 12 buffers |
+| `g_blob_stack` | 7,168 | what the driver's task demands |
+| `ram_heap` | 6,163 | lwIP's own, already cut from 16 KB |
+| `g_q` | 4,800 | three full-size frames; 512-byte slots was step 333's bug |
+
+### 352c. The one structural DRAM win, not taken
+
+`TASK_STACK_WORDS` is 512 words for **every** task, and `task.h:197` already
+records that "one size for every task ... stopped being workable". The telemetry
+has been printing the evidence all along -- `tightest stack=net 664/2048` --
+while the reporting, IPC and VM tasks use a fraction of theirs.
+
+Per-task sizing would return perhaps 8-10 KB. It is also a change to
+`task_create()` and the stack pool, which is the scheduler, and this log
+contains enough examples of what that costs when done in passing.
+
+**Recorded as the next real memory work rather than attempted at the end of a
+session.**
+
+### State
+
+```
+iram   41 KB free; the instrumentation that 328 could not fit now fits
+heap   33,896 B; the remaining consumers are all justified above
+open   per-task stack sizing (352c); term/notes onto keyboard.c
+```
