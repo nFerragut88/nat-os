@@ -1,6 +1,7 @@
 /* nat-os — the shell, on the panel. See term.h. */
 
 #include "term.h"
+#include "keyboard.h"
 #include "shell.h"
 #include "display.h"
 #include "desktop.h"
@@ -27,7 +28,7 @@
  * output and close buttons come back with the launcher. */
 #define KEY_H      42u
 #define KEY_W      (DISP_W / KEY_COLS)              /* 80 */
-#define KB_Y       (SPEC_Y - KEY_ROWS * KEY_H)      /* 288 - 168 = 120 */
+#define KB_Y       KB_TOP    /* [step 354] the shared keyboard owns this */
 
 #define INPUT_H    11u
 #define INPUT_Y    (KB_Y - INPUT_H)                 /* 109 */
@@ -67,25 +68,20 @@ _Static_assert(TERM_ROWS >= 6u, "an output pane under six lines is not worth hav
  * The bottom row differs from the note pad's. There is no `save`; the third key
  * is `run`, because a shell's terminating key submits.
  */
-static const char *const KEYS[KEY_ROWS][KEY_COLS] = {
-    { ".,-1",  "abc2", "def3"  },
-    { "ghi4",  "jkl5", "mno6"  },
-    { "pqrs7", "tuv8", "wxyz9" },
-    { "<",     " 0",   ">"     },   /* delete, space/zero, run */
-};
-
-static const char *const FACES[KEY_ROWS][KEY_COLS] = {
-    { "1 .,-", "2 abc", "3 def"  },
-    { "4 ghi", "5 jkl", "6 mno"  },
-    { "7 pqrs","8 tuv", "9 wxyz" },
-    { "del",   "space", "run"    },
-};
-
-#define CYCLE_TICKS 80u         /* ~800 ms, as the note pad */
-
-static int      g_live_row = -1, g_live_col = -1;
-static uint32_t g_live_index;
-static uint32_t g_live_tick;
+/* [step 354] The tables, the cycling state and draw_key/draw_keyboard were
+ * here, above the comment that asked for this:
+ *
+ *   "This is a SECOND copy of the note pad's cycling logic ... If a third
+ *    consumer appears, factor it then."
+ *
+ * One did, at step 285, and the migration has been owed since. What kept it
+ * owed is that keyboard.c owns its text in a 64-byte field, and this file needs
+ * two things it cannot give up: a command line, and a queue of every SETTLED
+ * character, which term_key_pop() hands to vm.c and device.c so bytecode
+ * programs can read the keyboard.
+ *
+ * Step 353 gave the module an event API. The layout, the cycling and the 800 ms
+ * settle are the module's; the line and the queue stay here. */
 
 /* ---- state --------------------------------------------------------------- */
 
@@ -175,7 +171,7 @@ void term_open(void)
     g_out_dirty = 1;
     g_in_dirty  = 1;
     g_was_down  = 0;
-    g_live_row  = -1;
+    keyboard_reset("run");      /* [step 354] label and liveness are the module's */
 
     if (g_commands == 0u) {
         out_puts("nat-os shell");
@@ -201,34 +197,6 @@ static void draw_header(void)
     }
 }
 
-static void draw_key(uint32_t r, uint32_t c, int live)
-{
-    uint32_t x = c * KEY_W;
-    uint32_t y = KB_Y + r * KEY_H;
-
-    uint16_t bg = live ? TRM_FG : TRM_KEY;
-    uint16_t fg = live ? TRM_BG : TRM_FG;
-
-    display_fill_rect(x + 1u, y + 1u, KEY_W - 2u, KEY_H - 2u, bg);
-
-    const char *label = FACES[r][c];
-    uint32_t tw = 0;
-    for (const char *p = label; *p; p++) {
-        tw += CHAR_W;
-    }
-    uint32_t tx = x + (KEY_W > tw ? (KEY_W - tw) / 2u : 1u);
-    display_text(tx, y + (KEY_H - 8u) / 2u, label, fg, bg, 1u);
-}
-
-static void draw_keyboard(void)
-{
-    display_fill_rect(0, KB_Y, DISP_W, SPEC_Y - KB_Y, TRM_BG);
-    for (uint32_t r = 0; r < KEY_ROWS; r++) {
-        for (uint32_t c = 0; c < KEY_COLS; c++) {
-            draw_key(r, c, 0);
-        }
-    }
-}
 
 /* Draws a window into the ring, newest line at the bottom where a terminal puts
  * it, offset back by g_scroll.
@@ -360,32 +328,24 @@ void term_key_inject(uint32_t ch)
 
 uint32_t term_keys_queued(void) { return g_keyq_total; }
 
-/* Ends any live multi-tap cycle WITHOUT settling a character. Used by
- * backspace, where the live character is about to be deleted and must not be
- * delivered to anybody. */
-static void commit(void)
+/* [step 354] commit() and settle() were here. The module ends cycles now, and
+ * the distinction they drew -- deleting is not settling -- moved with them
+ * (keyboard.c, end_cycle). What this file kept is the queue: drain_settled()
+ * pushes every finalised character to term_key_pop(), which vm.c and device.c
+ * read so bytecode programs can take the keyboard. */
+static void drain_settled(void)
 {
-    g_live_row = -1;
-    g_live_col = -1;
+    char ch = keyboard_settled();
+    if (ch) { keyq_push(ch); }
 }
 
-/* Ends the cycle and DELIVERS the live character: it can no longer change, so
- * it is now what the user typed. Also clears the key's highlight, which every
- * caller previously did for itself. */
-static void settle(void)
-{
-    if (g_live_row >= 0) {
-        if (g_inlen) {
-            keyq_push(g_input[g_inlen - 1u]);
-        }
-        draw_key((uint32_t)g_live_row, (uint32_t)g_live_col, 0);
-    }
-    commit();
-}
 
 static void submit(void)
 {
-    settle();                   /* the last character typed is now final */
+    /* [step 354] No settle here. keyboard_touch() ended the cycle before
+     * returning KB_ACT_SUBMIT, and the caller drained the finalised character
+     * into the queue already -- so by this point the last character typed is
+     * both in g_input and in term_key_pop()'s queue. */
     if (g_inlen == 0u) {
         return;
     }
@@ -428,17 +388,15 @@ void term_frame(void)
          * application strips used to have. */
         display_fill_rect(0, 0, DISP_W, SPEC_Y, TRM_BG);
         draw_header();
-        draw_keyboard();
+    keyboard_draw();
         g_kb_drawn  = 1;
         g_out_dirty = 1;
         g_in_dirty  = 1;
     }
 
-    /* A live key expires on its own, which is what lets two letters from one
-     * key be typed without a different key in between. */
-    if (g_live_row >= 0 && (timer_ticks() - g_live_tick) > CYCLE_TICKS) {
-        settle();               /* the cycle expired; the character stands */
-    }
+    /* [step 354] The module owns the expiry; this file collects what it
+     * finalised. */
+    if (keyboard_tick()) { drain_settled(); g_in_dirty = 1; }
 
     if (g_out_dirty) {
         draw_output();
@@ -488,62 +446,40 @@ void term_touch(uint32_t x, uint32_t y, int down)
         return;                 /* header close is handled before this is called */
     }
 
-    uint32_t r = (y - KB_Y) / KEY_H;
-    uint32_t c = x / KEY_W;
-    if (r >= KEY_ROWS || c >= KEY_COLS) {
-        return;
-    }
+    /* [step 354] The module reads the key; this file applies the edit and keeps
+     * the queue. Every settled character is drained first, because a single
+     * press can both finalise the previous character and begin a new one, and
+     * the queue must not miss either. */
+    int res = keyboard_touch(x, y);
+    if (res == KB_NONE) { return; }
 
-    const char *seq = KEYS[r][c];
+    kb_event_t ev = keyboard_event();
+    drain_settled();
 
-    /* Click on every accepted press.
-     *
-     * This is what the audio was built for. Multi-tap's worst property is that
-     * a press registering is INVISIBLE — UM-NATOS-022 §3.4 notes the press that
-     * "did not register" is usually one that did, which then replaces the
-     * letter you wanted. A click resolves that with feedback that costs none of
-     * the 224 rows every other part of this interface is competing for. */
-    audio_click();
+    switch (ev.action) {
+    case KB_ACT_APPEND:
+        if (g_inlen + 1u >= INPUT_MAX) { return; }  /* full: refuse, not drop */
+        g_input[g_inlen++] = ev.ch;
+        g_input[g_inlen]   = 0;
+        break;
 
-    if (seq[0] == '<' && seq[1] == 0) {
-        commit();
-        if (g_inlen) {
-            g_input[--g_inlen] = 0;
-            g_in_dirty = 1;
-        }
-        return;
-    }
-    if (seq[0] == '>' && seq[1] == 0) {
+    case KB_ACT_REPLACE:
+        if (g_inlen) { g_input[g_inlen - 1u] = ev.ch; }
+        break;
+
+    case KB_ACT_BACKSPACE:
+        /* The module ended the cycle without delivering, so nothing reached the
+         * queue: the character being cycled is the one going away. */
+        if (g_inlen) { g_input[--g_inlen] = 0; }
+        break;
+
+    case KB_ACT_SUBMIT:
         submit();
         return;
+
+    default:
+        break;
     }
 
-    /* Cycling: a repeat tap on the live key replaces the character it just
-     * produced; any other key commits the old one and starts fresh. */
-    int same = (g_live_row == (int)r && g_live_col == (int)c);
-    if (same) {
-        uint32_t n = 0;
-        while (seq[n]) {
-            n++;
-        }
-        g_live_index = (g_live_index + 1u) % n;
-        if (g_inlen) {
-            g_input[g_inlen - 1u] = seq[g_live_index];
-        }
-    } else {
-        /* A different key: whatever was live can no longer change. */
-        settle();
-        if (g_inlen + 1u >= INPUT_MAX) {
-            return;             /* full: refuse rather than silently drop */
-        }
-        g_live_index = 0;
-        g_input[g_inlen++] = seq[0];
-        g_input[g_inlen] = 0;
-        g_live_row = (int)r;
-        g_live_col = (int)c;
-        draw_key(r, c, 1);
-    }
-
-    g_live_tick = timer_ticks();
-    g_in_dirty  = 1;
+    g_in_dirty = 1;
 }

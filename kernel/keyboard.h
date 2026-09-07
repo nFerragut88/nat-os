@@ -42,6 +42,52 @@ enum {
     KB_SUBMIT       /* the terminating key was pressed */
 };
 
+/* [step 353] What the last press actually DID, for apps that own their own text.
+ *
+ * The built-in buffer below is right for a field -- a passphrase, a host name --
+ * and wrong for everything else. `notes` edits a 256-byte document and `term`
+ * keeps a command line AND feeds every settled character to term_key_pop(),
+ * which vm.c and device.c read so bytecode programs can take keystrokes.
+ * Neither can hand its storage to a module with a 64-byte array.
+ *
+ * So the keyboard reports the edit and the app applies it. Same layout, same
+ * cycling, same 800 ms settle; three different owners of three different texts.
+ *
+ * APPEND and REPLACE describe multi-tap: the first press on a key appends its
+ * first letter, a repeat press replaces that letter with the next one. SETTLE
+ * says the live character can no longer change, which is the moment `term` has
+ * always used to push into its queue. */
+enum {
+    KB_ACT_NONE = 0,
+    KB_ACT_APPEND,      /* a new character, `ch`                    */
+    KB_ACT_REPLACE,     /* the last character becomes `ch`          */
+    KB_ACT_SETTLE,      /* `ch` is final and can no longer change   */
+    KB_ACT_BACKSPACE,   /* remove the last character                */
+    KB_ACT_SUBMIT       /* the terminating key                      */
+};
+
+typedef struct {
+    int  action;
+    char ch;
+} kb_event_t;
+
+/* The event produced by the most recent keyboard_touch() or keyboard_tick().
+ * KB_ACT_NONE if that press did nothing. Apps that use keyboard_text() may
+ * ignore this entirely. */
+kb_event_t keyboard_event(void);
+
+/* [step 354] The character that just became FINAL, or 0. Read-and-clear.
+ *
+ * A press can do two things at once -- settling the previous character and
+ * starting a new one -- and a single event field can only report the later of
+ * them. `term` needs both: every settled character goes to term_key_pop(),
+ * which vm.c and device.c read.
+ *
+ * Deleting is NOT settling. Backspace ends the cycle without delivering,
+ * because the character being cycled is the one about to be removed; term's own
+ * code drew that distinction (`commit` vs `settle`) and it belongs here now. */
+char keyboard_settled(void);
+
 /* Empty the buffer and end any live cycle. `submit_label` is the bottom-right
  * key's face — "run" in a shell, "save" in an editor, "join" here. */
 void        keyboard_reset(const char *submit_label);

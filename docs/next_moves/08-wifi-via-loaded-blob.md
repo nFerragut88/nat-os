@@ -19612,3 +19612,71 @@ iram   41 KB free; the instrumentation that 328 could not fit now fits
 heap   33,896 B; the remaining consumers are all justified above
 open   per-task stack sizing (352c); term/notes onto keyboard.c
 ```
+
+---
+
+## step 353-354 — one keyboard, and the debt from 285 closed
+
+`(this commit)`
+
+`term.c`, above its own copy of the cycling logic:
+
+> *"This is a SECOND copy of the note pad's cycling logic ... If a third
+> consumer appears, factor it then."*
+
+One did, at step 285, and `keyboard.c` was written -- but `term` and `notes`
+were not migrated onto it. Three copies where there were two, made worse on
+purpose to keep two working apps off an untested module, and recorded as owed.
+
+### 353. What actually kept it owed
+
+Not caution. **`keyboard.c` owns its text**, in a 64-byte field. That is right
+for a passphrase or a host name and wrong for both existing apps:
+
+- `notes` edits a **256-byte document**
+- `term` keeps a command line **and** feeds every settled character to
+  `term_key_pop()`, which `vm.c` and `device.c` read so bytecode programs can
+  take the keyboard
+
+Neither can hand its storage to a module with a 64-byte array. "Delete two
+copies and wire both apps" was the wrong description of the job, given twice.
+
+So the module reports **what the press meant** -- `APPEND`, `REPLACE`,
+`BACKSPACE`, `SUBMIT` -- and the app applies it to its own text. The layout, the
+cycling and the 800 ms settle stay in one place; three different owners keep
+three different texts.
+
+### 354. The distinction term had and the module did not
+
+`term` drew a line the module lacked:
+
+| | |
+|---|---|
+| `commit()` | end the cycle, deliver **nothing** -- backspace, where the character being cycled is the one about to be deleted |
+| `settle()` | end the cycle and **deliver** -- the character is final and goes to the queue |
+
+And a single press can do **both** at once: finalise the previous character and
+begin a new one. One event field can only report the later of them, so the
+queue would have lost every character typed with another key following it.
+
+`end_cycle(deliver)` carries the distinction, and `keyboard_settled()` is a
+read-and-clear that `term` drains on every press -- before looking at the event,
+because both happened.
+
+### 354a. What changed for the user
+
+`term` and `notes` no longer click. `keyboard.c` answers multi-tap's real
+problem -- a press registering is invisible -- with the **live-key highlight**:
+the key being cycled is drawn blue for as long as another tap can still change
+that character. Which key, and how long left, against a beep that said only that
+something happened.
+
+A flag away if either app wants its click back; the point is that it is now a
+decision made once rather than a behaviour duplicated three times.
+
+### State
+
+```
+works  one keyboard, three apps, each owning its own text
+open   per-task stack sizing (352c); the null-sp fault (351); NatScript
+```

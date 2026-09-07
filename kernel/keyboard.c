@@ -33,6 +33,14 @@ static char        g_text[KB_TEXT_MAX];
 static uint32_t    g_len;
 static const char *g_submit = "ok";
 
+/* [step 353] The last edit, for apps that own their own text. */
+static kb_event_t g_ev;
+static char       g_settled;    /* [step 354] read-and-clear; see keyboard.h */
+
+char keyboard_settled(void) { char c = g_settled; g_settled = 0; return c; }
+static void emit(int action, char ch) { g_ev.action = action; g_ev.ch = ch; }
+kb_event_t keyboard_event(void) { return g_ev; }
+
 static int      g_live_row = -1, g_live_col = -1;
 static uint32_t g_live_index;
 static uint32_t g_live_tick;
@@ -81,15 +89,20 @@ const char *keyboard_text(void) { return g_text; }
 uint32_t    keyboard_len(void)  { return g_len; }
 
 /* The live character can no longer change. */
-static void settle(void)
+/* End the live cycle. `deliver` says whether the character it was cycling is
+ * now FINAL -- true when another key starts, when the timeout expires, or on
+ * submit; false for backspace, where that character is about to be deleted. */
+static void end_cycle(int deliver)
 {
-    if (g_live_row >= 0) {
-        uint32_t r = (uint32_t)g_live_row, c = (uint32_t)g_live_col;
-        g_live_row = -1;
-        g_live_col = -1;
-        draw_key(r, c, 0);
-    }
+    if (g_live_row < 0) { return; }
+    uint32_t r = (uint32_t)g_live_row, c = (uint32_t)g_live_col;
+    g_live_row = -1;
+    g_live_col = -1;
+    if (deliver && g_len) { g_settled = g_text[g_len - 1u]; }
+    draw_key(r, c, 0);
 }
+
+static void settle(void) { end_cycle(1); }
 
 int keyboard_tick(void)
 {
@@ -101,6 +114,7 @@ int keyboard_tick(void)
 
 int keyboard_touch(uint32_t x, uint32_t y)
 {
+    emit(KB_ACT_NONE, 0);
     if (y < KB_TOP || y >= SPEC_Y || x >= DISP_W) { return KB_NONE; }
 
     uint32_t r = (y - KB_TOP) / KB_KEY_H;
@@ -123,12 +137,14 @@ int keyboard_touch(uint32_t x, uint32_t y)
      * becomes a flag rather than a decision made on their behalf. */
 
     if (seq[0] == '<' && seq[1] == 0) {
-        settle();
+        end_cycle(0);           /* deleting is not settling */
         if (g_len) { g_text[--g_len] = 0; }
+        emit(KB_ACT_BACKSPACE, 0);
         return KB_EDIT;
     }
     if (seq[0] == '>' && seq[1] == 0) {
         settle();
+        emit(KB_ACT_SUBMIT, 0);
         return KB_SUBMIT;
     }
 
@@ -138,6 +154,7 @@ int keyboard_touch(uint32_t x, uint32_t y)
         while (seq[n]) { n++; }
         g_live_index = (g_live_index + 1u) % n;
         if (g_len) { g_text[g_len - 1u] = seq[g_live_index]; }
+        emit(KB_ACT_REPLACE, seq[g_live_index]);
     } else {
         settle();
         if (g_len + 1u >= KB_TEXT_MAX) {
@@ -146,6 +163,7 @@ int keyboard_touch(uint32_t x, uint32_t y)
         g_live_index = 0u;
         g_text[g_len++] = seq[0];
         g_text[g_len]   = 0;
+        emit(KB_ACT_APPEND, seq[0]);
         g_live_row = (int)r;
         g_live_col = (int)c;
         draw_key(r, c, 1);

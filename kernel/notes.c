@@ -1,6 +1,7 @@
 /* nat-os — note pad and on-screen keyboard. See notes.h. */
 
 #include "notes.h"
+#include "keyboard.h"
 #include "desktop.h"
 #include "display.h"
 #include "timer.h"
@@ -22,7 +23,7 @@
  * application strips -- see term.c for the same change and app_views_suspend()
  * for what happens to the programs that drew there. */
 #define KEY_H      42u
-#define KB_Y       (SPEC_Y - KEY_ROWS * KEY_H)      /* 288 - 168 = 120 */
+#define KB_Y       KB_TOP    /* [step 353] the shared keyboard owns this */
 
 #define TEXT_X     3u
 #define LINE_H     9u
@@ -74,31 +75,16 @@
 
 /* Letters per key, in tap order. The digit is last, exactly as a phone did it,
  * so a long press-through gives you the number. */
-static const char *const KEYS[KEY_ROWS][KEY_COLS] = {
-    { ".,?!1", "abc2", "def3"  },
-    { "ghi4",  "jkl5", "mno6"  },
-    { "pqrs7", "tuv8", "wxyz9" },
-    { "<",     " 0",   ">"     },   /* delete, space/zero, save */
-};
-
-/* Face labels. Drawn instead of the raw sequence so a key reads as a key
- * rather than as a string of characters. */
-static const char *const FACES[KEY_ROWS][KEY_COLS] = {
-    { "1 .,?!", "2 abc", "3 def"  },
-    { "4 ghi",  "5 jkl", "6 mno"  },
-    { "7 pqrs", "8 tuv", "9 wxyz" },
-    { "del",    "space", "save"   },
-};
-
-/* How long a key stays "live" for cycling. 80 ticks is about 800 ms — long
- * enough to reach the fourth letter of `pqrs` without hurrying, short enough
- * that two different letters from the same key do not need a deliberate wait
- * most of the time. */
-#define CYCLE_TICKS 80u
-
-static int      g_live_row = -1, g_live_col = -1;
-static uint32_t g_live_index;
-static uint32_t g_live_tick;
+/* [step 353] The tables, the cycling state and draw_key/draw_keyboard were
+ * here. They were a copy of term.c's, which said above its own copy: "If a
+ * third consumer appears, factor it then." One did (285), and this is the
+ * migration that was owed from that step.
+ *
+ * What kept it owed is that keyboard.c OWNS its text, in a 64-byte field --
+ * right for a passphrase, wrong for a 256-byte note. Step 353 gave the module
+ * an event API so the app can keep its own buffer and apply what the user did.
+ * The layout, the cycling and the 800 ms settle are the module's; the document
+ * is still this file's. */
 
 static char     g_text[NOTES_MAX];
 static uint32_t g_len;
@@ -129,6 +115,10 @@ void notes_open(void)
     g_was_down   = 0;
     g_view       = VIEW_COMPOSE;
     g_flash_msg  = 0;
+
+    /* [step 353] The module owns the bottom-right key face; this app calls it
+     * "save". */
+    keyboard_reset("save");
 }
 
 /* A word in the header for a couple of seconds — "saved", "full". Transient
@@ -171,37 +161,6 @@ static void draw_header(void)
     }
 }
 
-static void draw_key(uint32_t r, uint32_t c, int live)
-{
-    uint32_t x = c * KEY_W;
-    uint32_t y = KB_Y + r * KEY_H;
-
-    /* A live key — the one currently being cycled — is drawn back-lit, so the
-     * letter about to be replaced by the next tap is visible. Without it,
-     * multi-tap is guesswork about whether the last press registered. */
-    uint16_t bg = live ? LCD_FG : LCD_DIM;
-    uint16_t fg = live ? LCD_BG : LCD_FG;
-
-    display_fill_rect(x + 1u, y + 1u, KEY_W - 2u, KEY_H - 2u, bg);
-
-    const char *label = FACES[r][c];
-    uint32_t tw = 0;
-    for (const char *p = label; *p; p++) {
-        tw += 6u;
-    }
-    uint32_t tx = x + (KEY_W > tw ? (KEY_W - tw) / 2u : 1u);
-    display_text(tx, y + (KEY_H - 8u) / 2u, label, fg, bg, 1u);
-}
-
-static void draw_keyboard(void)
-{
-    display_fill_rect(0, KB_Y, DISP_W, SPEC_Y - KB_Y, LCD_FG);
-    for (uint32_t r = 0; r < KEY_ROWS; r++) {
-        for (uint32_t c = 0; c < KEY_COLS; c++) {
-            draw_key(r, c, 0);
-        }
-    }
-}
 
 /* Redraws the note itself, wrapped. Only the text area, so typing does not
  * repaint the keyboard — twelve keys is twenty-four drawing calls and each one
@@ -270,24 +229,15 @@ static void draw_text(void)
     }
 }
 
-/* Ends the cycle: the character in the buffer is final and the next tap on the
- * same key starts a new one. */
-static void commit(void)
-{
-    if (g_live_row >= 0) {
-        int r = g_live_row, c = g_live_col;
-        g_live_row = g_live_col = -1;
-        display_lock();
-        draw_key((uint32_t)r, (uint32_t)c, 0);
-        display_unlock();
-    }
-}
+/* [step 353] commit() was here: it ended the multi-tap cycle and repainted the
+ * key. Both belong to keyboard.c now -- the module settles on its own timeout
+ * and repaints its own keys. What this file kept is the document. */
 
 void notes_frame(void)
 {
     if (!g_kb_drawn) {
         display_lock();
-        draw_keyboard();
+    keyboard_draw();
         display_unlock();
         g_kb_drawn = 1;
     }
@@ -298,11 +248,8 @@ void notes_frame(void)
         g_text_dirty = 1;
     }
 
-    /* Time out the live key. This is what lets two letters from the same key be
-     * typed in a row: wait, and the next tap starts fresh instead of cycling. */
-    if (g_live_row >= 0 && (timer_ticks() - g_live_tick) > CYCLE_TICKS) {
-        commit();
-    }
+    /* [step 353] The module owns the settle timeout; ask it to run one. */
+    if (keyboard_tick()) { g_text_dirty = 1; }
 
     if (g_text_dirty) {
         display_lock();
@@ -329,7 +276,10 @@ void notes_touch(uint32_t x, uint32_t y, int down)
         /* The close button occupies the right end of the header and is handled
          * by desktop_chrome_touch() before this is ever called. Anything else
          * in the header switches view. */
-        commit();
+        /* [step 353] End any live cycle before the view changes: a letter that
+         * could still be replaced must not be replaceable from the next screen.
+         * keyboard_reset() is the module's way to say "nothing is live". */
+        keyboard_reset("save");
         g_view = (g_view == VIEW_COMPOSE) ? VIEW_INBOX : VIEW_COMPOSE;
         if (g_view == VIEW_INBOX && msg_count()) {
             g_read_index = msg_count() - 1u;    /* newest first */
@@ -357,40 +307,46 @@ void notes_touch(uint32_t x, uint32_t y, int down)
     if (y < KB_Y || y >= SPEC_Y || x >= DISP_W) {
         return;
     }
-    uint32_t r = (y - KB_Y) / KEY_H;
-    uint32_t c = x / KEY_W;
-    if (r >= KEY_ROWS || c >= KEY_COLS) {
-        return;
-    }
+    /* [step 353] The module reads the key; this file applies the edit.
+     *
+     * keyboard.c owns the layout, the multi-tap cycling and the settle timeout,
+     * and reports what the press meant. The 256-byte document stays here,
+     * because a module with a 64-byte field cannot hold it -- which is exactly
+     * why this migration waited from step 285 until the event API existed. */
+    int res = keyboard_touch(x, y);
+    if (res == KB_NONE) { return; }
 
-    const char *seq = KEYS[r][c];
+    kb_event_t ev = keyboard_event();
     g_keys++;
-    audio_click();          /* see term.c: multi-tap needs press feedback */
 
     /* While reading, the letter keys do nothing: an inbox is not an edit box,
      * and a stray tap should not silently start composing over a message the
-     * user is looking at. del/space/save still act, so there is always a way
-     * out. */
-    if (g_view == VIEW_INBOX && seq[0] != '<' && seq[0] != '>') {
+     * user is looking at. Delete and save still act, so there is always a way
+     * out. The module has already cycled its own buffer, which this file does
+     * not read -- ignoring the event is enough. */
+    if (g_view == VIEW_INBOX &&
+        (ev.action == KB_ACT_APPEND || ev.action == KB_ACT_REPLACE)) {
         return;
     }
 
-    /* Delete and clear end any cycle first: they act on the committed text, not
-     * on the character being chosen. */
-    if (seq[0] == '<' && seq[1] == 0) {
-        commit();
-        if (g_len) {
-            g_text[--g_len] = 0;
-            g_text_dirty = 1;
-        }
-        return;
-    }
-    if (seq[0] == '>' && seq[1] == 0) {
-        commit();
-        if (!g_len) {
-            flash_note("empty");
-            return;
-        }
+    switch (ev.action) {
+    case KB_ACT_APPEND:
+        if (g_len + 1u >= NOTES_MAX) { return; }   /* full: refuse, not overwrite */
+        g_text[g_len++] = ev.ch;
+        g_text[g_len]   = 0;
+        g_text_dirty    = 1;
+        break;
+
+    case KB_ACT_REPLACE:
+        if (g_len) { g_text[g_len - 1u] = ev.ch; g_text_dirty = 1; }
+        break;
+
+    case KB_ACT_BACKSPACE:
+        if (g_len) { g_text[--g_len] = 0; g_text_dirty = 1; }
+        break;
+
+    case KB_ACT_SUBMIT:
+        if (!g_len) { flash_note("empty"); return; }
         if (msg_save(g_text) == 0) {
             /* Cleared on success only. A save that failed must not look like
              * one that worked by leaving an empty box behind. */
@@ -401,41 +357,11 @@ void notes_touch(uint32_t x, uint32_t y, int down)
             flash_note("save failed");
         }
         g_text_dirty = 1;
-        return;
+        break;
+
+    default:
+        break;                      /* SETTLE and NONE change no text here */
     }
-
-    /* Same key, still live: advance to the next letter and REPLACE the one
-     * already in the buffer. Wrapping is deliberate — tapping past the end of
-     * `abc2` returns to `a` rather than sticking. */
-    if ((int)r == g_live_row && (int)c == g_live_col) {
-        g_live_index++;
-        if (seq[g_live_index] == 0) {
-            g_live_index = 0;
-        }
-        g_text[g_len - 1u] = seq[g_live_index];
-        g_live_tick  = timer_ticks();
-        g_text_dirty = 1;
-        return;
-    }
-
-    /* A different key: whatever was live is now final. */
-    commit();
-
-    if (g_len + 1u >= NOTES_MAX) {
-        return;                     /* full: refuse rather than overwrite */
-    }
-    g_text[g_len++] = seq[0];
-    g_text[g_len]   = 0;
-
-    g_live_row   = (int)r;
-    g_live_col   = (int)c;
-    g_live_index = 0;
-    g_live_tick  = timer_ticks();
-    g_text_dirty = 1;
-
-    display_lock();
-    draw_key(r, c, 1);
-    display_unlock();
 }
 
 /* ---- the offset this layout tolerates ------------------------------------
