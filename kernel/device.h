@@ -174,6 +174,25 @@ void     device_grant(uint32_t caller, uint32_t mask);
 uint32_t device_perms(uint32_t caller);
 uint32_t device_denials(void);
 
+/* [step 356] Resolve a program's manifest into a permission bitmap.
+ *
+ * The manifest carries NAMES -- "light", "store", "echo" -- because this table
+ * is the authority on which id a name has. An assembler that hard-coded the
+ * mapping would need editing every time a device is added, and would be wrong
+ * quietly until someone noticed.
+ *
+ * Returns the bitmap, or sets *unknown to the index of the first name this
+ * table does not have and returns 0. **A manifest naming a device that does not
+ * exist is a refusal to load, not a silently dropped permission** -- a program
+ * that asked for a sensor and did not get it should stop, not run blind.
+ *
+ * NOT SECURITY on its own, and this header already says why a few lines down:
+ * a grant is only meaningful if the image it applies to cannot be substituted.
+ * This makes permissions DECLARED and CHECKED; signing is what would make them
+ * enforced against a hostile image, and nat-os has no signing. */
+uint32_t    device_perms_from_names(const char *const *names, uint32_t count,
+                                    uint32_t *unknown);
+
 int         device_count(void);
 const char *device_name(uint32_t id);
 int         device_info(uint32_t id, uint32_t *channels, uint32_t *flags);

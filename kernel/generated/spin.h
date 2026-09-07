@@ -14,6 +14,13 @@ static const uint8_t vm_spin[] = {
 
 #define VM_SPIN_LEN 28u
 
+/* [step 356] The manifest: what this program declares it needs.
+ * Names, resolved against the kernel's device table at load time --
+ * see device_perms_from_names(). A name the table does not know is a
+ * refusal to load, not a silently dropped permission. */
+#define VM_SPIN_PERM_COUNT 0u
+#define vm_spin_perms ((const char *const *)0)
+
 #define VM_SPIN_AT_START 0u
 #define VM_SPIN_AT_LOOP 12u
 #define VM_SPIN_AT_COUNTER 24u

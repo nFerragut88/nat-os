@@ -19680,3 +19680,152 @@ decision made once rather than a behaviour duplicated three times.
 works  one keyboard, three apps, each owning its own text
 open   per-task stack sizing (352c); the null-sp fault (351); NatScript
 ```
+
+---
+
+## step 355 — r15 is a stack pointer
+
+*Written at step 356, one commit late. The rule in this repo is that the entry
+ships with the code; commit `d6d9312` shipped without one. Labelled here rather
+than backdated.*
+
+The VM has no frames. Sixteen registers, global, and `CALL` saves only a return
+address — into kernel memory, where no bytecode can reach it. So a compiler has
+nowhere to put a function's locals, and that was the one thing genuinely
+blocking a NatScript compiler.
+
+It took one line:
+
+```c
+vm->reg[15] = size & ~3u;      /* vm_init() */
+```
+
+The reason it could be one line is the part worth keeping. **Every load and
+store is already bounds-checked against the arena in software.** A stack built
+inside the arena is therefore exactly as safe as any other data, and running off
+the end of it is `VM_FAULT_BOUNDS` — the same fault a bad pointer gets, caught
+by machinery that has been there since the VM was written. No new opcode, no
+frame register in hardware, nothing for the VM to understand about frames.
+
+Safe for every program already shipped: none of them uses `r15`, and event
+handlers save and restore all sixteen registers, so the pointer survives a tick
+or a key arriving mid-function.
+
+### 355a. Evidence, not assertion
+
+`tools/app_frame.vasm` calls a function that allocates locals, which calls
+another that allocates its own and writes over the whole of it, and the outer
+one checks on the way out that its locals and `r15` came back intact.
+
+```
+run frame
+frame: PASS locals survived a nested call
+```
+
+The convention could have been written into `docs/vm-abi.md` and believed. This
+log has enough entries about statuses reporting outcomes for work that never
+ran; a convention nothing exercises is the same shape.
+
+---
+
+## step 356 — the image declares, the kernel disposes (VM-07)
+
+Permissions existed. `device_read()` has checked a per-caller bitmap since step
+~120, and `device_grant()` sets it. What did not exist was any way for a
+**program** to say what it wanted: the bitmap was written by hand in the
+kernel's program table, so **the kernel decided what the program needed**. That
+is the wrong way round, and it is exactly why a NatScript `permissions { }`
+block had nowhere to go.
+
+Three pieces, one per layer:
+
+| | |
+|---|---|
+| `tools/vasm.py` | a `.permission <name>` directive. Assembles to nothing — it is a manifest, not code — and is emitted into the generated header |
+| `kernel/device.c` | `device_perms_from_names()`: names in, bitmap out, resolved against the one table that defines the devices |
+| `kernel/shell.c` | `launch_entry()` resolves the manifest **before** `app_start()` |
+
+`tools/app_dev.vasm` declares `.permission light`, `store`, `echo`, and the
+generated header now carries them:
+
+```c
+#define VM_APP_DEV_PERM_COUNT 3u
+static const char *const vm_app_dev_perms[] = { "light", "store", "echo" };
+```
+
+### 356a. An unknown name refuses the launch
+
+`device_perms_from_names()` reports the *index* of a name it could not resolve,
+and `launch_entry()` refuses to start anything:
+
+```
+launch    refused: dev wants a device this board has no name for: baro
+```
+
+The tempting alternative is to drop the unknown permission and start the program
+anyway. That produces a program running blind — reaching for a sensor that
+silently is not there — and this log has spent two reports on what a quiet
+under-delivery costs to diagnose. A refusal is a worse outcome that is much
+cheaper to understand.
+
+### 356b. What the bitmap actually was
+
+The seven `P_*` defines deleted from `kmain.c` were a hand-maintained mirror of
+**device.c's table order**:
+
+```c
+#define P_STORE (1u << 2)      /* because "store" is the third entry */
+```
+
+Nothing checked the two lists against each other. Inserting a device into
+`device.c` above `store` would have silently re-aimed every grant below it at
+different hardware, and every program would have kept running — a program
+holding a grant for `i2c` while its manifest said `store`, with no symptom until
+something wrote to the wrong bus.
+
+That bug never happened. It was available for about two hundred steps.
+
+### 356c. Two launch paths, and the comment that knew
+
+`kmain.c` had its own copy of the launch — own lookup, own `app_start`, own
+`device_grant` — under this:
+
+> *"Same grant the shell performs. The boot path and the shell path must agree,
+> or a program started at boot would behave differently from the same program
+> started by typing its name."*
+
+The comment is correct and the structure could not keep it. **This change was
+about to break it**: the shell resolves a manifest now, and the boot copy would
+have gone on granting a field that no longer exists — caught by the compiler
+this time, which is luck, because the same divergence in behaviour rather than
+in types compiles fine.
+
+`shell_register()` runs before the first boot launch, so `start_program()` is
+four lines calling `shell_launch()`. One launch path, and the comment is a fact
+rather than an intention.
+
+### 356d. And the report says names now
+
+`run dev` printed `perms=0x25`. It prints `perms=light store echo`. A hex
+bitmap can only be checked against `device.c`'s table order, by hand — which is
+the mistake the manifest exists to remove, so the diagnostic should not require
+committing it.
+
+### 356e. What this is not
+
+`device.h` has said it since permissions were written, and it is still true:
+
+> *"A permission grant is only meaningful if the image it applies to cannot be
+> substituted."*
+
+Nothing here is signed. A manifest is what a program **asks** for, and asking is
+not proof. This closes VM-07 — a format the compiler emits and the loader
+reads — and leaves VM-08 exactly where it was.
+
+### State
+
+```
+works  VM-01 02 03 04 05 06 07 -- a compiler has an ABI, a frame and a manifest
+open   VM-08 image identity; VM-09..13 the language itself
+       per-task stack sizing (352c); the null-sp fault (351)
+```

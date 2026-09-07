@@ -10,6 +10,15 @@
 ; do this without the kernel being edited, the table works; if it cannot, the
 ; shape is wrong and better found here than after six more drivers.
 
+; [step 356] The manifest. These lines assemble to nothing: they declare what
+; this program intends to reach, and the kernel decides whether it may. Until
+; now the same three permissions were a hand-written bitmap in kmain.c's program
+; table -- the kernel deciding what the program wanted, which is the wrong way
+; round and the reason a NatScript `permissions { }` block had nowhere to go.
+        .permission light
+        .permission store
+        .permission echo
+
 start:
         ldi     r13, @publish       ; where the reading is published, set once
 

@@ -1,14 +1,14 @@
 # NatVM ABI — frozen
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.0 · 2026-09-07 · Covers `next_moves` VM-01, VM-02, VM-03.
+Revision 1.1 · 2026-09-07 · Covers `next_moves` VM-01 through VM-07.
 
 This document is derived **from `kernel/vm.c` and `kernel/vm.h` as they are**,
 not from the proposal. Where the older documents and the code disagree, the code
 is right and this file follows it.
 
-A compiler may depend on everything in §1–§5. §6 is a convention a compiler must
-adopt and the VM does not enforce. §7 is what is still missing.
+A compiler may depend on everything in §1–§5 and §7. §6 is a convention a compiler
+must adopt and the VM does not enforce. §8 is what is still missing.
 
 ---
 
@@ -181,45 +181,76 @@ Consequences a compiler must respect:
 
 ---
 
-## 7. What is still missing
+## 7. The device manifest — VM-07
+
+A program **declares** the devices it needs; the kernel resolves the declaration
+against its own table at load time. The kernel no longer decides what a program
+wants, which is what made a `permissions { }` block compilable.
+
+In assembly, one directive per device, anywhere in the file:
+
+```
+    .permission light
+    .permission store
+    .permission echo
+```
+
+It assembles to **no bytes**. It is a manifest, not code, and it appears in the
+generated header instead:
+
+```c
+#define VM_APP_DEV_PERM_COUNT 3u
+static const char *const vm_app_dev_perms[] = { "light", "store", "echo" };
+```
+
+The loader resolves it with `device_perms_from_names()` **before** starting
+anything, and:
+
+- a name the device table knows becomes its bit, by lookup — never by position
+- **a name it does not know refuses the launch.** Not a dropped permission: a
+  program reaching for a sensor that is silently not there runs blind, and
+  refusing is the cheaper failure to diagnose
+
+The names are the ones in `device.c`: `light beep store i2c keys echo sd`.
+
+A compiler emits this list from its `permissions` block. There is nothing else
+to encode — no ordering, no bit assignment, no kernel-side table to keep in step.
+
+---
+
+## 8. What is still missing
 
 Everything above can be depended on now. These cannot:
 
-1. **A device manifest** (VM-07). `device_perms(caller)` and a per-caller bitmap
-   exist and `device_read` checks them, but nothing declares what a program
-   wants — the grant is set by the kernel, not by the image. A NatScript
-   `permissions { ... }` block needs a manifest format and a loader that reads
-   it.
-2. **Image identity** (VM-08). `device.h` says it plainly: *"A permission grant
+1. **Image identity** (VM-08). `device.h` says it plainly: *"A permission grant
    is only meaningful if the image it applies to cannot be substituted."*
-   Without signing, permissions are a convenience, not security, and calling
-   them security would be the seventh thing in this project to claim an outcome
-   it had not earned.
-4. **A string type.** `PUTS` takes an arena offset to NUL-terminated bytes;
+   A manifest is what a program **asks** for, and asking is not proof. Without
+   signing, permissions are containment rather than security, and calling them
+   security would be the seventh thing in this project to claim an outcome it
+   had not earned.
+2. **A string type.** `PUTS` takes an arena offset to NUL-terminated bytes;
    `"Scans: " + count` in the proposal implies allocation, and there is no
    allocator inside an arena.
 
 ---
 
-## 8. What this means for NatScript
-
-The sequencing in the proposal is right, and the code says three of its
-prerequisites are closer than the list suggests:
+## 9. What this means for NatScript
 
 | | status |
 |---|---|
 | VM-01 opcode ABI | **done — §2, §3** |
 | VM-02 syscall ABI | **done — §4** |
-| VM-03 frame layout | **done — §6**, `r15` initialised at step 355 and proved by `tools/app_frame.vasm` |
+| VM-03 frame layout | **done — §6**, `r15` initialised at step 355, proved by `tools/app_frame.vasm` |
 | VM-04 nested call/ret | **already works**, 32 deep, faults on underflow |
 | VM-05 event ABI | **done — §5** |
 | VM-06 tick/key delivery | implemented; `app_evt.vasm` exercises both |
-| VM-07 manifest | **missing** |
-| VM-08 permission enforcement | hook exists, manifest does not |
+| VM-07 manifest | **done — §7**, step 356 |
+| VM-08 permission enforcement | enforced from the manifest; **image identity still missing** |
 
-So `when` and `every` have a mechanism today. `device` is a compile-time lookup
-against a table that already exists. What a first NatScript compiler genuinely
-lacks is a manifest format (VM-07) and the stack pointer being initialised.
+So `when` and `every` have a mechanism, `device` is a compile-time lookup
+against a table that already exists, and `permissions` has a format to compile
+into. **Every VM-side prerequisite the proposal listed is now met.** What is
+left is the language: grammar, lexer, parser, and AST to bytecode.
 
 **The honest test remains the one the proposal set**: rewrite `app_dev.vasm` in
 NatScript, and if it is not shorter and clearer than the assembly, the language

@@ -19,14 +19,24 @@ typedef struct {
     uint32_t       arena_bytes;
     uint32_t       publish_off;
 
-    /* Which devices this program may touch: bit N grants device N. Declared
-     * here rather than inside the image so it sits next to the arena size,
-     * where both limits on a program are visible in one place and reviewable
-     * without disassembling anything.
+    /* [step 356] The MANIFEST: names the image itself declares, resolved
+     * against the device table at launch.
      *
-     * DEV_PERM_NONE for a program that has no business with hardware, which is
-     * most of them. Containment, not security -- see device.h. */
-    uint32_t       perms;
+     * This was a hand-written bitmap, with a comment arguing that declaring it
+     * here rather than in the image kept both limits on a program visible in
+     * one place. That was a fair trade when programs were written by hand in
+     * assembly and the table was the only place to put anything -- but it means
+     * THE KERNEL DECIDES WHAT THE PROGRAM WANTS, which is the wrong way round
+     * and is exactly why a NatScript `permissions { }` block had nowhere to go.
+     *
+     * The image declares; the kernel disposes. A name the device table does not
+     * know refuses the launch rather than dropping a permission quietly.
+     *
+     * Still containment rather than security, and device.h says why: a grant is
+     * only meaningful if the image it applies to cannot be substituted, and
+     * nothing here is signed. */
+    const char *const *perm_names;
+    uint32_t           perm_count;
 } shell_program_t;
 
 void shell_register(const shell_program_t *table, int count);

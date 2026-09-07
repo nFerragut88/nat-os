@@ -29,6 +29,13 @@ static const uint8_t vm_app_blit[] = {
 
 #define VM_APP_BLIT_LEN 216u
 
+/* [step 356] The manifest: what this program declares it needs.
+ * Names, resolved against the kernel's device table at load time --
+ * see device_perms_from_names(). A name the table does not know is a
+ * refusal to load, not a silently dropped permission. */
+#define VM_APP_BLIT_PERM_COUNT 0u
+#define vm_app_blit_perms ((const char *const *)0)
+
 #define VM_APP_BLIT_AT_START 0u
 #define VM_APP_BLIT_AT_BUILD 24u
 #define VM_APP_BLIT_AT_LOOP 44u

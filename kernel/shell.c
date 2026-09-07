@@ -321,9 +321,24 @@ static void cmd_progs(void)
  * Both are quiet failures, and the second is the more dangerous. */
 static int launch_entry(const shell_program_t *p)
 {
+    /* [step 356] Resolve the manifest BEFORE starting anything. A program that
+     * asked for a device this board does not have should not run at all: it
+     * would run blind, reaching for a sensor that silently is not there, and
+     * that is worse than refusing. */
+    uint32_t unknown = 0xFFFFFFFFu;
+    uint32_t bits = device_perms_from_names(p->perm_names, p->perm_count, &unknown);
+    if (unknown != 0xFFFFFFFFu) {
+        uart_puts("   launch    refused: ");
+        uart_puts(p->name);
+        uart_puts(" wants a device this board has no name for: ");
+        uart_puts(p->perm_names[unknown]);
+        uart_puts("\n");
+        return -1;
+    }
+
     int id = app_start(p->name, p->img, p->len, p->arena_bytes, p->publish_off);
     if (id >= 0) {
-        device_grant((uint32_t)id, p->perms);
+        device_grant((uint32_t)id, bits);
     }
     return id;
 }
@@ -348,9 +363,19 @@ static void cmd_run(const char *name)
             } else {
                 uart_puts("   started id=");
                 uart_put_dec((unsigned int)id);
-                uart_puts(g_progs[i].perms ? " perms=" : " perms=none\n");
-                if (g_progs[i].perms) {
-                    uart_put_hex(g_progs[i].perms);
+                /* [step 356] The NAMES, not the bitmap this used to print in
+                 * hex. A reader who sees "perms=light store echo" can check it
+                 * against what the program is for; 0x25 could only be checked
+                 * against device.c's table order, by hand, which is the mistake
+                 * the manifest exists to remove. */
+                if (!g_progs[i].perm_count) {
+                    uart_puts(" perms=none\n");
+                } else {
+                    uart_puts(" perms=");
+                    for (uint32_t k = 0u; k < g_progs[i].perm_count; k++) {
+                        if (k) { uart_puts(" "); }
+                        uart_puts(g_progs[i].perm_names[k]);
+                    }
                     uart_puts("\n");
                 }
             }

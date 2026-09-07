@@ -22,6 +22,13 @@ static const uint8_t vm_app_draw[] = {
 
 #define VM_APP_DRAW_LEN 121u
 
+/* [step 356] The manifest: what this program declares it needs.
+ * Names, resolved against the kernel's device table at load time --
+ * see device_perms_from_names(). A name the table does not know is a
+ * refusal to load, not a silently dropped permission. */
+#define VM_APP_DRAW_PERM_COUNT 0u
+#define vm_app_draw_perms ((const char *const *)0)
+
 #define VM_APP_DRAW_AT_START 0u
 #define VM_APP_DRAW_AT_LOOP 44u
 #define VM_APP_DRAW_AT_NAME 116u

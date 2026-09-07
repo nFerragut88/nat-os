@@ -456,6 +456,39 @@ static const device_t *find(uint32_t id)
     return (id < (uint32_t)DEVICE_COUNT) ? &DEVICES[id] : 0;
 }
 
+/* [step 356] See device.h. Names in, bitmap out, and an unknown name is a
+ * refusal rather than a gap. */
+uint32_t device_perms_from_names(const char *const *names, uint32_t count,
+                                 uint32_t *unknown)
+{
+    uint32_t bits = 0u;
+    int      n    = device_count();
+
+    if (unknown) { *unknown = 0xFFFFFFFFu; }
+    if (!names) { return 0u; }
+
+    for (uint32_t i = 0u; i < count; i++) {
+        const char *want = names[i];
+        int found = 0;
+        for (int id = 0; id < n; id++) {
+            const char *have = device_name((uint32_t)id);
+            if (!have) { continue; }
+            uint32_t k = 0u;
+            while (want[k] && have[k] && want[k] == have[k]) { k++; }
+            if (want[k] == 0 && have[k] == 0) {
+                bits |= (1u << id);
+                found = 1;
+                break;
+            }
+        }
+        if (!found) {
+            if (unknown) { *unknown = i; }
+            return 0u;
+        }
+    }
+    return bits;
+}
+
 const char *device_name(uint32_t id)
 {
     const device_t *d = find(id);

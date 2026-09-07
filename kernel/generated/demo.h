@@ -21,6 +21,13 @@ static const uint8_t vm_demo[] = {
 
 #define VM_DEMO_LEN 120u
 
+/* [step 356] The manifest: what this program declares it needs.
+ * Names, resolved against the kernel's device table at load time --
+ * see device_perms_from_names(). A name the table does not know is a
+ * refusal to load, not a silently dropped permission. */
+#define VM_DEMO_PERM_COUNT 0u
+#define vm_demo_perms ((const char *const *)0)
+
 #define VM_DEMO_AT_START 0u
 #define VM_DEMO_AT_LOOP 16u
 #define VM_DEMO_AT_DONE 36u
