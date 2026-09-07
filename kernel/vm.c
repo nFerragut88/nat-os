@@ -154,6 +154,33 @@ int vm_init(vm_t *vm, int arena_id)
     for (int i = 0; i < VM_REGS; i++) {
         vm->reg[i] = 0;
     }
+
+    /* [step 355] r15 is the STACK POINTER, and it starts at the top of the
+     * arena. docs/vm-abi.md section 6 is the convention this makes real.
+     *
+     * The VM has no frames: sixteen registers, global, and CALL saves only a
+     * return address -- into KERNEL memory, where no bytecode can reach it. So
+     * a compiler has nowhere to put a function's locals, which is the one thing
+     * genuinely blocking a NatScript compiler (VM-03).
+     *
+     * It needs no VM change beyond this line. Every load and store is
+     * bounds-checked against the arena in software, so a stack built inside the
+     * arena is exactly as safe as any other data: an overrun past the top is
+     * VM_FAULT_BOUNDS, the same fault a bad pointer gets, and it stops the
+     * program and nothing else.
+     *
+     * Rounded DOWN to a multiple of four because LDW and STW require alignment,
+     * and set to the size rather than size-4 because the convention decrements
+     * before it stores -- `addi r15, r15, -N` then STW at r15+0. A program that
+     * stores at r15 before decrementing is reaching past its own arena, and
+     * should fault.
+     *
+     * Safe for every program shipped today: none of them uses r15, and event
+     * handlers already save and restore all sixteen registers around an
+     * injection, so the stack pointer survives a tick or a key arriving
+     * mid-function. */
+    vm->reg[15] = size & ~3u;
+
     vm->pc = 0;
     vm->call_sp = 0;
     vm->arena = arena_id;

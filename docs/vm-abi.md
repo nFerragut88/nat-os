@@ -68,7 +68,7 @@ instruction *after* the branch.
 | `0x03` | `LDI a, imm16` | zero-extends |
 | `0x04` | `LDIH a, imm16` | sets the high half; `LDI`+`LDIH` builds a 32-bit constant |
 | `0x10`–`0x1c` | `ADD SUB MUL DIV MOD AND OR XOR SHL SHR SAR NOT NEG` | `DIV`/`MOD` by zero → `VM_FAULT_DIV0` |
-| `0x1d` | `ADDI a, b, imm` | |
+| `0x1d` | `ADDI a, imm` | **two operands**: `r[a] += imm`, signed. Not a three-operand add — the first draft of this document got that wrong and the assembler caught it |
 | `0x20`–`0x25` | `SEQ SNE SLT SLTU SLE SLEU` | set `a` to 0 or 1 |
 | `0x30` | `JMP simm` | |
 | `0x31` `0x32` | `BRZ a, simm` `BRNZ a, simm` | |
@@ -157,9 +157,9 @@ arena:  [ code ][ static data ] ........ free ........ [ stack ] arena_len
 Prologue and epilogue are ordinary arithmetic:
 
 ```
-    addi  r15, r15, -N        ; N = frame size in bytes, multiple of 4
+    addi  r15, -N             ; N = frame size in bytes, multiple of 4
     ...                       ; locals at STW/LDW r15 + offset
-    addi  r15, r15, +N
+    addi  r15, +N
     ret
 ```
 
@@ -170,8 +170,14 @@ Consequences a compiler must respect:
 - **The stack and the heap share the arena.** A collision is a program bug the
   VM cannot see — only an overrun past `arena_len` faults. A compiler should
   emit a check, or size frames statically.
-- **`r15` must be initialised** to `arena_len` at entry. Nothing does this today
-  because nothing has needed it.
+- **`r15` is initialised** to `arena_len & ~3` by `vm_init()` (step 355), and
+  **event handlers save and restore all sixteen registers**, so the stack
+  pointer survives a tick or a key arriving mid-function.
+- Proved, not asserted: `tools/app_frame.vasm` calls a function that allocates
+  locals, which calls another that allocates its own and writes over its whole
+  frame, and checks on the way out that the outer locals and the stack pointer
+  are intact. `run frame` prints
+  `frame: PASS locals survived a nested call`.
 
 ---
 
@@ -189,8 +195,6 @@ Everything above can be depended on now. These cannot:
    Without signing, permissions are a convenience, not security, and calling
    them security would be the seventh thing in this project to claim an outcome
    it had not earned.
-3. **`r15` initialisation** and an agreed arena layout (§6) — a one-line kernel
-   change and a compiler convention, but neither exists yet.
 4. **A string type.** `PUTS` takes an arena offset to NUL-terminated bytes;
    `"Scans: " + count` in the proposal implies allocation, and there is no
    allocator inside an arena.
@@ -206,7 +210,7 @@ prerequisites are closer than the list suggests:
 |---|---|
 | VM-01 opcode ABI | **done — §2, §3** |
 | VM-02 syscall ABI | **done — §4** |
-| VM-03 frame layout | **specified — §6**, needs `r15` init only |
+| VM-03 frame layout | **done — §6**, `r15` initialised at step 355 and proved by `tools/app_frame.vasm` |
 | VM-04 nested call/ret | **already works**, 32 deep, faults on underflow |
 | VM-05 event ABI | **done — §5** |
 | VM-06 tick/key delivery | implemented; `app_evt.vasm` exercises both |

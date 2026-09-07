@@ -53,6 +53,7 @@
 #include "generated/app_blit.h"
 #include "generated/app_dev.h"
 #include "generated/app_evt.h"
+#include "generated/app_frame.h"
 #include "generated/app_ping.h"
 #include "generated/app_pong.h"
 #include "uart.h"
@@ -932,6 +933,12 @@ static const shell_program_t PROGRAMS[] = {
      * spin; everything it prints comes from handlers the kernel entered. It
      * needs no device at all -- events arrive without asking. */
     { "evt",     vm_app_evt,   VM_APP_EVT_LEN,   768u, VM_APP_EVT_AT_PUBLISH, DEV_PERM_NONE },
+    /* [step 355] The evidence that a stack frame works. r15 is a stack pointer
+     * now, initialised to the top of the arena, and this program calls a
+     * function that allocates locals, which calls another that allocates its
+     * own, and checks on the way out that nothing was trampled. The convention
+     * is docs/vm-abi.md section 6; this is whether it is true. */
+    { "frame",   vm_app_frame, VM_APP_FRAME_LEN, 512u, 0u, DEV_PERM_NONE },
     { "ping",    vm_app_ping,  VM_APP_PING_LEN,  512u, 0u, DEV_PERM_NONE },
     { "pong",    vm_app_pong,  VM_APP_PONG_LEN,  512u, 0u, DEV_PERM_NONE },
 };
