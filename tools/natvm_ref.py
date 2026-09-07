@@ -40,11 +40,17 @@ def s32(v):
 
 
 def _divmod(x, y):
-    """C semantics: truncation toward zero, which is what the VM's C does."""
-    q = abs(s32(x)) // abs(s32(y))
-    if (s32(x) < 0) != (s32(y) < 0):
-        q = -q
-    return q, s32(x) - q * s32(y)
+    """UNSIGNED, because vm.c holds registers in a uint32_t and writes
+
+        r[a] = r[b] / r[c];
+
+    with no cast. This file had it SIGNED, which is the first real disagreement
+    found between the reference and the kernel -- and it was found on the board,
+    by a program computing (14 - 16) / 3 and getting 1431655764.
+
+    The rule in the header applied without argument: vm.c is right, this file
+    was wrong, and the kernel was not touched."""
+    return x // y, x % y
 
 
 class Halt(Exception):

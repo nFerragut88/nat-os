@@ -1,7 +1,7 @@
 # NatScript — the language, v0
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 0.6 · 2026-09-07 · Covers `next_moves` VM-09 through VM-13.
+Revision 0.7 · 2026-09-07 · Covers `next_moves` VM-09 through VM-13.
 
 NatScript compiles to NatVM bytecode. This document describes **what the
 compiler in `tools/natc.py` actually accepts today**, not what the proposal
@@ -135,6 +135,17 @@ whichever side decided it — so `x = a && b` stores a truth value.
 greater-than opcode and does not need one.
 
 Comparisons are **signed** (`slt`, `sle`). Shifts: `>>` is logical (`shr`).
+
+**`/` and `%` are signed too, and that costs a helper.** The VM's `DIV` and
+`MOD` are *unsigned* — `vm.c` keeps registers in a `uint32_t` and divides them
+with no cast. A language that compared signed, printed signed, and divided
+unsigned would produce `(14 - 16) / 3 == 1431655764`, which is what a program
+on the board actually computed from a fourteen-pixel viewport. So the compiler
+emits a divide helper, truncating toward zero with the remainder taking the sign
+of the dividend, as C does.
+
+`divu(a, b)` and `modu(a, b)` are the raw machine operation, for quantities
+that are not signed integers: an address, a device reading, a pixel.
 
 ### Built-in calls
 

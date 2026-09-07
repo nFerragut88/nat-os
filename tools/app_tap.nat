@@ -1,55 +1,50 @@
 // app_tap -- the first NatScript program with a user interface.
 //
 // Every NatScript program before this one was a serial-console program, on a
-// board whose entire point is a 240x320 panel and a touchscreen. `fill` and
-// `text` were exposed and `touch` was not, so a program could draw something
-// and then had no way to find out whether anybody had touched it.
+// board whose entire point is a panel and a touchscreen. `fill` and `text` were
+// reachable and `touch` was not, so a program could draw something and then had
+// no way to learn whether anybody had touched it.
 //
-// This draws a three-by-three grid, lights the cell you touch, counts the taps
-// and shows the count along the bottom. Coordinates are viewport relative and
-// the kernel clips them, so it neither knows nor cares where on the panel its
-// strip has been put.
+// WHAT AN APPLICATION'S CANVAS ACTUALLY IS, because the first version of this
+// program got it wrong: a horizontal strip, 180 x 14 pixels, at y = 224 + 16*id
+// (kernel/app.h). Not the panel. The kernel owns everything else, including the
+// close button, so that the one control needed to escape a misbehaving program
+// is the one control that program cannot touch.
+//
+// Fourteen pixels tall. So this is a ROW of cells rather than a grid, sized
+// from what the viewport says it is rather than from what the panel is.
 
-let BG    = 0x0000
-let GRID  = 0x39E7
-let INK   = 0xFFFF
-let HIT   = 0x07FF
+let BG   = 0x0000
+let EDGE = 0x39E7
+let INK  = 0xFFFF
+let HIT  = 0x07FF
+
+let CELLS = 6
 
 buf label[16]
 
 let w = screen.width
 let h = screen.height
-let cw = w / 3
-let ch = (h - 16) / 3
+let cw = w / CELLS
 
 let taps = 0
 let lastcell = 0 - 1
 
-func cellx(c) { return (c % 3) * cw }
-func celly(c) { return (c / 3) * ch }
-
-// A cell is drawn inside a one-pixel margin, so the grid lines are the
+// A cell is drawn inside a one-pixel margin, so the dividing lines are the
 // background showing through rather than lines anybody had to draw.
 func cell(c, colour) {
-    screen.fill(cellx(c) + 1, celly(c) + 1, cw - 2, ch - 2, colour)
+    screen.fill(c * cw + 1, 1, cw - 2, h - 2, colour)
 }
 
-// "taps: N", assembled a byte at a time.
+// "N", assembled a byte at a time.
 //
 // THIS IS THE MISSING FEATURE, not a stylistic choice. NatScript has no string
 // type: a literal can be printed and nothing else, and there is no allocator
-// inside an arena to build one in. So a number that has to appear ON THE PANEL
-// -- rather than on the serial line, where `print` handles it -- has to be
-// turned into digits by hand. Nine lines here is what `"taps: " + n` costs
-// today, and it is the clearest argument for §10.3 of docs/natscript.md.
+// inside an arena to build one in. `print` handles a number on the serial line;
+// a number that has to appear ON THE PANEL has to be turned into digits by
+// hand. Eight lines here is what `"" + n` costs today.
 func render(n) {
-    label[0] = 116          // t
-    label[1] = 97           // a
-    label[2] = 112          // p
-    label[3] = 115          // s
-    label[4] = 58           // :
-    label[5] = 32
-    let i = 6
+    let i = 0
     if n >= 100 {
         label[i] = 48 + n / 100
         i = i + 1
@@ -62,29 +57,33 @@ func render(n) {
     label[i + 1] = 0
 }
 
-func status(colour) {
-    screen.fill(0, h - 16, w, 16, BG)
-    screen.text(label, 4, h - 12, colour, BG, 1)
-}
-
-screen.fill(0, 0, w, h, GRID)
+screen.fill(0, 0, w, h, EDGE)
 let i = 0
-while i < 9 {
+while i < CELLS {
     cell(i, BG)
     i = i + 1
 }
 render(0)
-status(INK)
-println("  [tap] touch a cell")
+screen.text(label, 2, 4, INK, BG, 1)
+
+print("  [tap] canvas ")
+print(w)
+print("x")
+print(h)
+println(" -- touch inside the strip, not the desktop")
 
 // The panel is POLLED, not delivered: `touch` is a syscall a program asks, and
 // a key is the only thing the kernel pushes. So the tick handler is the poll --
 // ten times a second, which is faster than a finger and cheap enough to leave
 // the rest of the quantum to everything else.
+//
+// A touch outside this strip never arrives: the kernel translates into viewport
+// coordinates and withholds anything outside, counted as `touch g/w` in the
+// telemetry. 4,277 withheld and 0 given is what tapping the desktop looks like.
 every 100ms {
     if screen.touched() {
-        let c = (screen.y / ch) * 3 + (screen.x / cw)
-        if c < 9 && c != lastcell {
+        let c = screen.x / cw
+        if c < CELLS && c != lastcell {
             if lastcell >= 0 {
                 cell(lastcell, BG)
             }
@@ -92,9 +91,13 @@ every 100ms {
             lastcell = c
             taps = taps + 1
             render(taps)
-            status(HIT)
+            screen.text(label, 2, 4, INK, HIT, 1)
             print("  [tap] cell ")
             print(c)
+            print(" at ")
+            print(screen.x)
+            print(",")
+            print(screen.y)
             print(" taps ")
             println(taps)
         }

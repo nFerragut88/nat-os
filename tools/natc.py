@@ -620,6 +620,7 @@ class Codegen:
         self.devices = []        # declared in `permissions`, resolved at start
         self.needs_putd = False
         self.needs_screen = False
+        self.needs_div = False
         self.funcs = {}
         self.label_n = 0
         self.out = self.body     # where emit() currently writes
@@ -940,6 +941,10 @@ class Codegen:
         self.expr(rhs)
         self.emit("mov     r1, r0")
         self.pop(0)
+        if op in ("/", "%"):
+            self.emit("call    " + ("dv_signed" if op == "/" else "md_signed"))
+            self.needs_div = True
+            return
         self.emit(f"{BINOP[op]:<7} r0, r0, r1")
 
     def shortcircuit(self, node):
@@ -983,6 +988,22 @@ class Codegen:
             self.emit("sys     putd")
             if want_value:
                 self.emit("ldi     r0, 0")
+            return
+
+        if name in ("divu", "modu"):
+            # The raw machine operation. For quantities that are not signed
+            # integers -- an address, a device reading, a pixel -- where the
+            # helper above would be four instructions spent on a sign that
+            # cannot be set.
+            if len(args) != 2:
+                raise NatError(line, f"{name}(a, b) takes two arguments")
+            self.expr(args[0])
+            self.push(0)
+            self.expr(args[1])
+            self.emit("mov     r1, r0")
+            self.pop(0)
+            self.emit("div     r0, r0, r1" if name == "divu"
+                      else "mod     r0, r0, r1")
             return
 
         if name == "word":
@@ -1056,6 +1077,59 @@ class Codegen:
     # -2147483648 negates to itself and prints without its sign. It is the one
     # value that cannot be represented positive, it is recorded here, and a
     # branch for it would cost every other number a comparison.
+    # [step 363] Signed division, found by a program running on the board.
+    #
+    # The VM's DIV and MOD are UNSIGNED: vm.c keeps registers in a uint32_t and
+    # writes `r[a] = r[b] / r[c]` with no cast. But `<` in this language is
+    # `slt`, which is signed, and `print` is signed since step 360. So a
+    # language whose comparisons and output were signed was dividing unsigned,
+    # and `(14 - 16) / 3` came out as 1431655764.
+    #
+    # Nobody would have found that by reading it. app_tap computed a cell height
+    # from a viewport 14 pixels tall, laid out a grid with the result, and the
+    # only symptom was a grid in the wrong place.
+    #
+    # Fixed the same way the print was: a helper, in the compiler, emitted once
+    # and only if used. `divu` and `modu` remain for the unsigned form.
+    DIV_HELPER = [
+        "",
+        "; ---- signed divide and remainder " + "-" * 33,
+        "; r0 / r1 and r0 %% r1, truncating toward zero as C does.",
+        "; The remainder takes the sign of the DIVIDEND, again as C does.",
+        "dv_signed:",
+        "        ldi     r4, 0",
+        "        slt     r2, r0, r4      ; dividend negative?",
+        "        slt     r3, r1, r4      ; divisor negative?",
+        "        xor     r5, r2, r3      ; quotient is negative if exactly one is",
+        "        brz     r2, dv_apos",
+        "        neg     r0, r0",
+        "dv_apos:",
+        "        brz     r3, dv_bpos",
+        "        neg     r1, r1",
+        "dv_bpos:",
+        "        div     r0, r0, r1",
+        "        brz     r5, dv_done",
+        "        neg     r0, r0",
+        "dv_done:",
+        "        ret",
+        "",
+        "md_signed:",
+        "        ldi     r4, 0",
+        "        slt     r2, r0, r4",
+        "        slt     r3, r1, r4",
+        "        brz     r2, md_apos",
+        "        neg     r0, r0",
+        "md_apos:",
+        "        brz     r3, md_bpos",
+        "        neg     r1, r1",
+        "md_bpos:",
+        "        mod     r0, r0, r1",
+        "        brz     r2, md_done    ; the sign follows the dividend",
+        "        neg     r0, r0",
+        "md_done:",
+        "        ret",
+    ]
+
     PUTD_HELPER = [
         "",
         "; ---- print one number, with its sign " + "-" * 30,
@@ -1366,6 +1440,8 @@ class Codegen:
         lines.extend(self.funcs_asm)
         if self.needs_putd:
             lines.extend(self.PUTD_HELPER)
+        if self.needs_div:
+            lines.extend(self.DIV_HELPER)
 
         if self.strings or self.globals or self.bufs or self.devices:
             lines.append("")

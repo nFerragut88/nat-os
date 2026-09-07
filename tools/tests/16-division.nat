@@ -1,0 +1,28 @@
+// The VM's DIV and MOD are UNSIGNED: vm.c keeps registers in a uint32_t and
+// divides them with no cast. But `<` here is `slt`, which is signed, and
+// `print` has been signed since step 360.
+//
+// So the language was comparing and printing signed while dividing unsigned,
+// and `(14 - 16) / 3` came out as 1431655764. A program on the board computed
+// exactly that, from a viewport fourteen pixels tall, and laid out a grid with
+// it. Nobody would have found it by reading.
+//
+// expect: 4 1
+// expect: -4 -1
+// expect: -4 1
+// expect: 4 -1
+// expect: 0 -2
+// expect: 1431655764 2
+print(13 / 3, " ", 13 % 3)
+println("")
+print((0 - 13) / 3, " ", (0 - 13) % 3)
+println("")
+print(13 / (0 - 3), " ", 13 % (0 - 3))
+println("")
+print((0 - 13) / (0 - 3), " ", (0 - 13) % (0 - 3))
+println("")
+print((14 - 16) / 3, " ", (14 - 16) % 3)
+println("")
+// divu/modu are the raw machine operation, for things that are not signed.
+print(divu(14 - 16, 3), " ", modu(14 - 16, 3))
+println("")

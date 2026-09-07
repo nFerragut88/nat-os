@@ -20444,3 +20444,96 @@ works  NatScript draws on the panel; screen.touched() compiles, tested against
 open   STRINGS -- the top gap now that programs draw; the watchdog reset seen
        once and not reproduced; VM-08 image identity; per-task stacks
 ```
+
+---
+
+## step 363 — the board finds a bug in the language, and one in the oracle
+
+Chasing "touch does not work" found that touch works fine, and found two real
+defects on the way.
+
+### 363a. What "nothing works" actually was
+
+An application's canvas is **180 x 14 pixels at y = 224 + 16*id** (`app.h`). Not
+the panel. The kernel owns the rest, including the close button, deliberately:
+the one control needed to escape a misbehaving program is the one control that
+program cannot paint over.
+
+The telemetry said so precisely:
+
+```
+act/tap/open=1/16/8      the desktop registered 16 taps and 8 opens
+zmax=2182                real pressure, far above the threshold
+touch g/w=0/4277         4,277 touches WITHHELD, 0 given
+```
+
+`touch g/w` counts touches **given** to a program and touches **withheld**
+because they landed outside its viewport. 4,277 withheld with the driver
+reporting healthy pressure is not a broken panel; it is somebody tapping the
+desktop while the program lives in a strip fourteen pixels tall.
+
+Later, once aimed lower: `last=3288,2825->7,249` — panel pixel (7, 249), which
+is inside slot 1's strip. Seven pixels above the target. `touch g/w=1/5`, and
+the one given went to `pong`.
+
+**Nothing was broken.** `paint` had been working the whole time, in a sliver.
+
+### 363b. The language was dividing unsigned
+
+`app_tap` was written assuming it owned the screen. Handed a 14-pixel viewport
+it computed `(h - 16) / 3` and got **1431655764**.
+
+`vm.c` keeps registers in a `uint32_t` and writes `r[a] = r[b] / r[c]` with no
+cast, so **DIV and MOD are unsigned**. But `<` compiles to `slt`, which is
+signed, and `print` has been signed since step 360.
+
+**A language that compares signed, prints signed, and divides unsigned.** Both
+halves were written down; nobody had put them next to each other — the same
+shape as the `putd` bug at 360, and again nobody would have found it by reading.
+It took a program on hardware doing arithmetic on a number it had not expected.
+
+Fixed as the print was: helpers in the compiler, emitted once and only if used,
+truncating toward zero with the remainder taking the sign of the dividend, as C
+does. `divu` and `modu` remain for quantities that are genuinely unsigned — an
+address, a device reading, a pixel.
+
+### 363c. And the oracle disagreed with the kernel
+
+`tools/natvm_ref.py` implemented DIV **signed**. So the reference and `vm.c`
+disagreed, which is exactly what its own header warns about and exactly what a
+second implementation of an instruction set does eventually.
+
+The rule applied without argument: **`vm.c` is right, the reference was wrong,
+and the kernel was not touched.** Test 16 pins all four sign quadrants plus the
+unsigned form, so the disagreement cannot come back.
+
+Worth noting what the suite could NOT do here: both sides agreed with each other
+before this, because both were wrong in the same direction is not the case —
+the reference was signed and the kernel unsigned, and no test exercised a
+negative dividend. **A test suite proves what it tests.** The board found this
+one.
+
+### 363d. Two measurement failures, both mine
+
+- Three captures in a row returned empty logs and were read as "the board is
+  silent". A previous capture process was still holding COM5, every open failed
+  with "access denied", and the script swallowed it. It now reports the failure
+  loudly.
+- One report of "the strips have vanished" was wrong: `tap` had been running
+  throughout, and the empty band was the same held-port problem.
+
+That is on top of the known reset-on-open, which is why a command sent three
+seconds after opening the port is lost into a booting board.
+
+**The instrument was broken twice and the system was fine both times.** This log
+has a long record of the opposite mistake; this is the other one.
+
+### State
+
+```
+works  signed / and %, pinned in all four quadrants; app_tap sized from the
+       viewport the kernel actually gives it (180x14)
+open   screen.touched() from NatScript has still not been proved against a
+       finger -- it needs one tap inside y 256..269
+       STRINGS, the top gap; VM-08 image identity; per-task stacks
+```
