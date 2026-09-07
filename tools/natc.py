@@ -605,6 +605,7 @@ class Codegen:
         self.globals = {}
         self.bufs = {}           # name -> size in bytes
         self.devices = []        # declared in `permissions`, resolved at start
+        self.needs_putd = False
         self.funcs = {}
         self.label_n = 0
         self.out = self.body     # where emit() currently writes
@@ -900,6 +901,18 @@ class Codegen:
         # form -- kept as calls rather than a second index syntax because the
         # VM faults a misaligned ldw, and a reader should be able to see where
         # that risk is taken.
+        if name == "printu":
+            # The unsigned form. A device reading, a bitmap, an address: things
+            # that are not signed integers and should not grow a minus sign
+            # because bit 31 happened to be set.
+            if len(args) != 1:
+                raise NatError(line, "printu(value) takes one argument")
+            self.expr(args[0])
+            self.emit("sys     putd")
+            if want_value:
+                self.emit("ldi     r0, 0")
+            return
+
         if name == "word":
             if len(args) != 1:
                 raise NatError(line, "word(address) takes one argument")
@@ -956,6 +969,37 @@ class Codegen:
         for i in reversed(range(len(args))):
             self.pop(i)
 
+    # [step 360] The suite's first case found this: `println(0 - 6)` printed
+    # 4294967290.
+    #
+    # `sys putd` prints UNSIGNED decimal -- vm-abi.md §4 says so -- while every
+    # comparison this language emits is SIGNED (`slt`, `sle`). So the integers
+    # compared as negative printed as four billion, which is a language telling
+    # its user something that is not true about its own arithmetic.
+    #
+    # Fixed in the compiler, not the kernel: a helper that prints the sign and
+    # negates, emitted once and only if a number is ever printed. `printu()`
+    # remains for the unsigned reading a device gives back.
+    #
+    # -2147483648 negates to itself and prints without its sign. It is the one
+    # value that cannot be represented positive, it is recorded here, and a
+    # branch for it would cost every other number a comparison.
+    PUTD_HELPER = [
+        "",
+        "; ---- print one number, with its sign " + "-" * 30,
+        "pd_signed:",
+        "        ldi     r1, 0",
+        "        slt     r1, r0, r1      ; negative?",
+        "        brz     r1, pd_plain",
+        "        mov     r2, r0",
+        "        ldi     r0, 45          ; '-'",
+        "        sys     putc",
+        "        neg     r0, r2",
+        "pd_plain:",
+        "        sys     putd",
+        "        ret",
+    ]
+
     def do_print(self, args, newline, line):
         if not args and not newline:
             raise NatError(line, "print needs something to print")
@@ -967,7 +1011,8 @@ class Codegen:
                 self.emit("sys     puts")
             else:
                 self.expr(a)
-                self.emit("sys     putd")
+                self.emit("call    pd_signed")
+                self.needs_putd = True
         if newline:
             self.emit(f"ldi     r0, @{self.string_label(chr(10))}")
             self.emit("sys     puts")
@@ -1247,6 +1292,8 @@ class Codegen:
             lines.append("        ldi     r0, 0")
             lines.append("        sys     exit")
         lines.extend(self.funcs_asm)
+        if self.needs_putd:
+            lines.extend(self.PUTD_HELPER)
 
         if self.strings or self.globals or self.bufs or self.devices:
             lines.append("")

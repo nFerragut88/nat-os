@@ -1,0 +1,3 @@
+// A tick is 10 ms. Rounding 5ms up silently would be a lie about the period.
+// error: not a whole number of ticks
+every 5ms { println("a") }

@@ -1,0 +1,5 @@
+// vm.c keeps one handler per event, so the second would replace the first and
+// the first would never fire.
+// error: a second `every` block
+every 1s { println("a") }
+every 2s { println("b") }

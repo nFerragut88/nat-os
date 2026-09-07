@@ -1,0 +1,11 @@
+// Byte indexing, word access, and a buffer's value being its arena offset.
+// expect: 222
+// expect: 3
+// expect: 4021141230
+buf b[8]
+buf init = [0xEE, 0xBE, 0xAD, 0xEF]
+b[0] = 222
+b[1] = 3
+println(b[0])
+println(b[1])
+printu(word(init))

@@ -1,0 +1,15 @@
+// when key, driven by the harness feeding two characters. No `every` here, so
+// the program still reaches its wait and the step limit ends it.
+// keys: ab
+// steps: 3000
+// expect: ready
+// expect: got a
+// expect: got b
+let n = 0
+println("ready")
+when key(k) {
+    n = n + 1
+    print("got ")
+    putc(k)
+    println("")
+}

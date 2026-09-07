@@ -1,0 +1,19 @@
+// A return from inside a loop inside a function must still run the epilogue.
+// If it jumps straight out, r15 leaks a frame per call and the harness's
+// stack-pointer check catches it.
+// expect: 4
+// expect: -1
+// expect: 4
+func find(target) {
+    let i = 0
+    while i < 10 {
+        if i * i == target {
+            return i
+        }
+        i = i + 1
+    }
+    return 0 - 1
+}
+println(find(16))
+println(find(17))
+println(find(16))

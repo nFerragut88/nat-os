@@ -1,0 +1,22 @@
+// Devices by name, resolved at run time. The reference table is device.c's
+// order, so light is 0 and echo is 5 -- and nothing in the generated code
+// says so.
+// expect: light is device 0
+// expect: 500
+// expect: echo is device 5
+// expect: roundtrip ok
+permissions { light  echo }
+buf src = [1, 2, 3, 4]
+buf dst[4]
+print("light is device ")
+println(light.id)
+light.read(0)
+println(light.value)
+print("echo is device ")
+println(echo.id)
+if (echo.xfer_out(0, src, 4) && echo.xfer_in(0, dst, 4)
+        && word(src) == word(dst)) {
+    println("roundtrip ok")
+} else {
+    println("roundtrip FAILED")
+}

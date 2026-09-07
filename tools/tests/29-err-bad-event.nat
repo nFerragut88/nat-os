@@ -1,0 +1,4 @@
+// The proposal's `when button.pressed` needs a device that can deliver, and
+// there is not one.
+// error: there is no 'button' event
+when button { println("x") }

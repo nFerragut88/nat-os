@@ -1,0 +1,18 @@
+// A handler calling an ordinary function: the injected call and the program's
+// own calls share one return stack, so this is where a wrong depth would show.
+// keys: xy
+// steps: 4000
+// expect: ready
+// expect: X
+// expect: Y
+func upper(c) {
+    if c >= 97 && c <= 122 {
+        return c - 32
+    }
+    return c
+}
+println("ready")
+when key(k) {
+    putc(upper(k))
+    println("")
+}

@@ -1,0 +1,14 @@
+// A computed index, and an index expression that itself calls something --
+// the address must be the one the index named at the moment it was evaluated.
+// expect: 10 20 30 40
+// expect: 40
+buf b[8]
+func at(i) { return i }
+let i = 0
+while i < 4 {
+    b[at(i)] = (i + 1) * 10
+    i = i + 1
+}
+print(b[0], " ", b[1], " ", b[2], " ", b[3])
+println("")
+println(b[at(3)])

@@ -1,0 +1,7 @@
+// Escapes, and the same literal used twice sharing one label.
+// expect: a	b
+// expect: "quoted"
+// expect: a	b
+print("a\tb\n")
+print("\"quoted\"\n")
+print("a\tb\n")

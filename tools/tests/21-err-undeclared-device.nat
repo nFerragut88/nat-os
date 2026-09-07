@@ -1,0 +1,4 @@
+// A device not in the permissions block is not a name this program can write.
+// error: is not a declared device
+permissions { light }
+println(beep.id)

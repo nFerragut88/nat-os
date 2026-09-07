@@ -1,0 +1,5 @@
+// A string literal has no type and no operations. Using one as a number would
+// otherwise print an arena offset.
+// error: can only be printed
+let x = "hello" + 1
+println(x)

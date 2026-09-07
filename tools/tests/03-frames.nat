@@ -1,0 +1,24 @@
+// Nested frames: the inner call writes over its whole frame, and the outer
+// one's locals must survive. r15 is checked back at the top by the harness.
+// expect: 55
+// expect: 3628800
+func inner(n) {
+    let a = n * 2
+    let b = a + 1
+    return b - a - 1
+}
+func outer(n) {
+    let sum = 0
+    let i = 1
+    while i <= n {
+        sum = sum + i + inner(i)
+        i = i + 1
+    }
+    return sum
+}
+func fact(n) {
+    if n <= 1 { return 1 }
+    return n * fact(n - 1)
+}
+println(outer(10))
+println(fact(10))

@@ -1,0 +1,14 @@
+// Precedence and associativity, which a hand-written expression evaluator gets
+// wrong quietly: the answer is merely a different number.
+// expect: 14
+// expect: 2
+// expect: 20
+// expect: -6
+// expect: 1
+// expect: 7
+println(2 + 3 * 4)
+println(10 / 3 - 1)
+println((2 + 3) * 4)
+println(0 - 6)
+println(7 % 3)
+println(1 << 2 | 3)

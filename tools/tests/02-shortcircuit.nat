@@ -1,0 +1,9 @@
+// The right side must not run when the left decides. If it does, this divides
+// by zero and the program faults rather than printing.
+// expect: 0
+// expect: 1
+// expect: ok
+let z = 0
+println(z != 0 && 100 / z > 0)
+println(z == 0 || 100 / z > 0)
+println("ok")

@@ -97,6 +97,15 @@ New-Item -ItemType Directory -Force -Path $gen | Out-Null
 $natdir = Join-Path $root "build\nat"
 $nat = Get-ChildItem "$root\tools\*.nat" -ErrorAction SilentlyContinue
 if ($nat) {
+    # [step 360] The compiler's own tests, BEFORE anything is compiled with it.
+    # natc.py had no tests at all: every language change could silently break
+    # something that had worked, and the only detector was a person reading
+    # generated assembly. The oracle is tools/natvm_ref.py, which is NOT the
+    # kernel -- it catches natc regressions, not VM disagreements.
+    Write-Host "== testing the NatScript compiler ==" -ForegroundColor Cyan
+    & $python "$root\tools\nattest.py"
+    if ($LASTEXITCODE -ne 0) { throw "nattest failed: not compiling anything with a broken compiler" }
+
     Write-Host "== compiling NatScript ==" -ForegroundColor Cyan
     New-Item -ItemType Directory -Force -Path $natdir | Out-Null
     foreach ($src in $nat) {

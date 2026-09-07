@@ -1,0 +1,17 @@
+// A constant above 16 bits needs ldi + ldih, and emitting one without the
+// other is the mistake vm-abi.md warns a code generator about.
+//
+// The last two lines are the same 32 bits printed both ways: `print` is signed
+// because every comparison this language emits is signed, and `printu` is the
+// raw form a device reading comes back as.
+// expect: 65535
+// expect: 65536
+// expect: 305419896
+// expect: -1
+// expect: 4294967295
+println(65535)
+println(65536)
+println(0x12345678)
+println(0 - 1)
+printu(0 - 1)
+println("")

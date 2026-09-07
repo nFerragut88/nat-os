@@ -1,0 +1,11 @@
+// All six, including the two the VM does not have and the compiler builds by
+// reversing the operands.
+// expect: 1 0 1 0 0 1
+// expect: 1 1 0 0
+// expect: 1 0
+print(1 < 2, " ", 2 < 1, " ", 1 <= 1, " ", 2 <= 1, " ", 1 > 2, " ", 2 > 1)
+println("")
+print(2 >= 1, " ", 1 >= 1, " ", 1 >= 2, " ", 1 == 2)
+println("")
+print(!0, " ", !5)
+println("")

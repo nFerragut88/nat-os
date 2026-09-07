@@ -1,0 +1,10 @@
+// Deep expression nesting, and calls as arguments to calls. Each operator
+// pushes, so this is also a test that the arena stack unwinds exactly.
+// expect: 100
+// expect: 21
+// expect: 1
+func add(a, b) { return a + b }
+func neg(a) { return 0 - a }
+println(((((1 + 2) * 3) + 1) * 5) + 50)
+println(add(add(1, 2), add(add(3, 4), add(5, 6))))
+println(add(neg(5), 6))

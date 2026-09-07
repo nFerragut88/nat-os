@@ -1,0 +1,3 @@
+// error: takes 2 arguments
+func add(a, b) { return a + b }
+println(add(1))

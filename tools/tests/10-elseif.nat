@@ -1,0 +1,26 @@
+// An else-if chain is `else { if ... }`, and a miscompiled one falls through to
+// the wrong arm rather than failing outright -- which is why the expected line
+// below was written by hand, got it wrong, and had to be checked against what
+// classify() actually returns for each number.
+// expect: fizzbuzz 0 0 3 0 5 3 0 0 3 5
+func classify(n) {
+    if n % 15 == 0 {
+        return 15
+    } else if n % 3 == 0 {
+        return 3
+    } else if n % 5 == 0 {
+        return 5
+    }
+    return 0
+}
+let i = 15
+while i <= 25 {
+    if i > 15 { print(" ") }
+    if classify(i) == 15 {
+        print("fizzbuzz")
+    } else {
+        print(classify(i))
+    }
+    i = i + 1
+}
+println("")

@@ -1,7 +1,7 @@
 # NatScript — the language, v0
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 0.3 · 2026-09-07 · Covers `next_moves` VM-09 through VM-13.
+Revision 0.4 · 2026-09-07 · Covers `next_moves` VM-09 through VM-13.
 
 NatScript compiles to NatVM bytecode. This document describes **what the
 compiler in `tools/natc.py` actually accepts today**, not what the proposal
@@ -119,6 +119,15 @@ Loosest to tightest:
 unary -  !
 ```
 
+**`print` is signed.** Every comparison this language emits is signed (`slt`,
+`sle`), so a value that compares as negative must not print as four billion —
+`println(0 - 6)` prints `-6`. `sys putd` is unsigned (`vm-abi.md` §4), so the
+compiler emits a six-instruction helper once per program that needs it. This was
+found by the test suite's first case (§12), not by reading the code.
+
+`-2147483648` is the one value that cannot be negated, and prints without its
+sign. A branch for it would cost every other number a comparison.
+
 `&&` and `||` **short-circuit**, and yield 0 or 1 rather than the value of
 whichever side decided it — so `x = a && b` stores a truth value.
 
@@ -131,7 +140,8 @@ Comparisons are **signed** (`slt`, `sle`). Shifts: `>>` is logical (`shr`).
 
 | | |
 |---|---|
-| `print(...)` | each argument in turn — a string literal as text, anything else as a number |
+| `print(...)` | each argument in turn — a string literal as text, anything else as a **signed** number |
+| `printu(n)` | the same number unsigned. Device readings, bitmaps, addresses |
 | `println(...)` | the same, then a newline. `println("")` is a bare line break |
 | `putc(n)` `exit(n)` `ticks()` `dims()` `fill(x,y,w,h,c)` `text(s,x,y,fg,bg,scale)` | the syscalls of `vm-abi.md` §4 |
 
@@ -433,3 +443,73 @@ feature, and they were copied across by hand.
 
 A language makes the code shorter. It does not make the reasoning shorter, and
 the reasoning is what took the time.
+
+---
+
+## 12. The test suite
+
+`tools/tests/*.nat`, run by `tools/nattest.py`, run by `build.ps1` **before it
+compiles anything with the compiler**. A failure fails the build.
+
+This is the first automated test suite in this project. `natc.py` had none:
+every language change could silently break something that had worked, and the
+only detector was a person reading generated assembly.
+
+A case carries its expectation in a header comment:
+
+```
+// expect: the exact text the program should print
+// arena: 2048          (optional)
+// keys: hi             (optional, fed to `when key`)
+// steps: 40000         (optional instruction limit)
+```
+
+or, for a program that must **not** compile:
+
+```
+// error: some words the compiler's message must contain
+```
+
+**Ten of the twenty-four cases are negative**, and that ratio is deliberate.
+Most of what a compiler owes its user is refusing things clearly: an undeclared
+device, a second `every`, `every 5ms`, a string used as a number, the wrong
+number of arguments. A refusal that happens for the wrong reason is a bug that a
+"does it compile" test cannot see.
+
+Two checks run on **every** case regardless of what it asserts:
+
+- **the stack pointer must come back** to the top of the arena. A frame leaking
+  four bytes per call is invisible in output and fatal in a loop.
+- **the program must not fault.** `BOUNDS`, `ALIGN`, `DIV0`, `CALL_DEPTH` and
+  `RET` all fail the case by name.
+
+### 12.1 The oracle is not the kernel
+
+`tools/natvm_ref.py` is a NatVM on the host, and its header says what it is for
+in its first line: **it is not authoritative — `kernel/vm.c` is.** Its semantics
+were checked against `vm.c` instruction by instruction, and that check is the
+only thing that makes it useful.
+
+It catches **natc** regressions. It cannot catch a disagreement between itself
+and the kernel, and **nothing in the kernel may be changed to make a test here
+pass.** A second implementation of an instruction set is exactly the shape this
+project keeps finding bugs in (§1), and this one is allowed to exist only
+because it is a test oracle rather than a second source of truth.
+
+### 12.2 What it found immediately
+
+The first case, on arithmetic precedence, failed on a line that had nothing to
+do with precedence:
+
+```
+wanted: -6
+got:    4294967290
+```
+
+`println(0 - 6)`. `sys putd` prints unsigned, every comparison the compiler
+emits is signed, and nobody had put those two facts next to each other. The
+language had been telling its user something untrue about its own arithmetic
+since the day it printed a number, and three shipped programs were compiled with
+it. §5 has the fix.
+
+That is the whole argument for the suite, made by the suite, on its first run.

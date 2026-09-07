@@ -20162,3 +20162,106 @@ works  NatScript says everything the VM can do: variables, buffers, functions,
 open   `run hello`, `run devnat`, `run evtnat` on hardware -- three programs
        verified only in a simulator; VM-08 image identity; per-task stacks
 ```
+
+---
+
+## step 360 — the compiler gets tests, and the tests find a lie
+
+`tools/tests/*.nat`, run by `tools/nattest.py`, run by `build.ps1` **before it
+compiles anything with the compiler**. Twenty-four cases; a failure fails the
+build.
+
+**This is the first automated test suite in this project.** `natc.py` had none.
+Three steps of language work had gone in with the only detector being a person
+reading generated assembly, and three programs shipped on that basis.
+
+### 360a. What it found on its first run
+
+The case on arithmetic precedence failed on a line that had nothing to do with
+precedence:
+
+```
+wanted: -6
+got:    4294967290
+```
+
+`println(0 - 6)`.
+
+`sys putd` prints **unsigned** decimal — `vm-abi.md` §4 has always said so.
+Every comparison this compiler emits is **signed** — `slt`, `sle`, because
+that is what the language means by `<`. Both facts were written down. Nobody
+had put them next to each other.
+
+So the language had been telling its user something untrue about its own
+arithmetic since the day it first printed a number, and `hello`, `devnat` and
+`evtnat` were all compiled with it. Nothing looked wrong, because nothing in
+those three programs happens to print a negative.
+
+Fixed in the compiler rather than the kernel: a six-instruction helper emitted
+once per program that prints a number, and `printu()` kept for the unsigned
+reading a device hands back. `-2147483648` cannot be negated and prints without
+its sign; that is recorded rather than branched for.
+
+**That is the whole argument for the suite, made by the suite, on its first
+run.**
+
+### 360b. Ten of the twenty-four cases are refusals
+
+Deliberate ratio. Most of what a compiler owes its user is refusing things
+clearly: an undeclared device, a second `every`, `every 5ms`, a string used as a
+number, five parameters, assigning to a buffer.
+
+And a negative case asserts **which** refusal, not that one happened:
+
+```
+// error: not a whole number of ticks
+```
+
+A program that fails to compile for the wrong reason passes a "does it compile"
+test and fails a user.
+
+### 360c. Two checks that run on every case
+
+Regardless of what a case asserts:
+
+- **`r15` must come back** to the top of the arena. A frame leaking four bytes
+  per call is invisible in output and fatal in a loop, and no single test would
+  have been written for it.
+- **the program must not fault.** `BOUNDS`, `ALIGN`, `DIV0`, `CALL_DEPTH` and
+  `RET` fail the case by name.
+
+The early-return case is there because of the first one: a `return` from inside
+a loop inside a function must still run the epilogue, and a compiler that jumped
+straight out would produce correct output while leaking a frame per call.
+
+### 360d. The oracle is not the kernel, and says so first
+
+`tools/natvm_ref.py` is a NatVM on the host. Its header opens with
+**"NOT AUTHORITATIVE -- kernel/vm.c is"**, and the rest of the paragraph is
+about what that means: it catches **natc** regressions; it cannot catch a
+disagreement between itself and the kernel; and **nothing in the kernel may be
+changed to make a test here pass.**
+
+A second implementation of an instruction set is exactly the shape this project
+keeps finding bugs in — the duplicate launch path at 356, the two encoders
+avoided at 357. This one is allowed to exist only because it is a test oracle
+rather than a second source of truth, and the file has to say so where a reader
+will see it before the code.
+
+Its semantics were checked against `vm.c` instruction by instruction, and that
+check is the only thing making it worth anything.
+
+### 360e. What this does not do
+
+It does not verify the kernel runs these programs. `hello`, `devnat` and
+`evtnat` are still verified only on the host. What changed is that a *future*
+language change now cannot quietly break the twenty-four things that work
+today.
+
+### State
+
+```
+works  24 cases, ten of them refusals, gating every build
+open   `run hello`, `run devnat`, `run evtnat` on hardware -- three programs
+       verified only against a simulator; VM-08 image identity; per-task stacks
+```
