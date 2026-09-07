@@ -825,6 +825,9 @@ static void join(uint32_t i)
          * confirmation to forget to give, and the next boot joins it without
          * being asked. */
         wifiprefs_set_network(g_aps[i].ssid);
+
+        /* [step 349] The link is new; the DHCP client does not know that. */
+        { extern void netif_wifi_dhcp_restart(void); netif_wifi_dhcp_restart(); }
         uint32_t k = 0u;
         for (; k < 32u && g_aps[i].ssid[k]; k++) { g_joined[k] = g_aps[i].ssid[k]; }
         g_joined[k] = 0;

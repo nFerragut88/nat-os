@@ -19355,3 +19355,62 @@ only one every user is guaranteed to see.**
 works  choose once, reboot, connect; forget is permanent; ON/OFF persists
 open   the 313b restructure; the step-319 panic; wifi_leave's outcome unread
 ```
+
+---
+
+## step 349 — DHCP started before there was a link
+
+`(this commit)`
+
+Reported as: no IP, and unable to connect even after forgetting the network and
+re-entering the password.
+
+Step 347 changed when the association happens without changing when the DHCP
+client starts. Until then the bring-up always associated **before**
+`wifi_rx_start()`, so lwIP began discovering on a live link. A board with no
+saved network now associates with an impossible SSID -- deliberately, because
+skipping the association crashes (313) -- and DHCP therefore starts on a station
+that is on no network at all.
+
+Those discovers get nothing. lwIP doubles its backoff each time, so by the
+moment the user picks a network and joins for real, the client is deep in a
+retry schedule and **has no idea the link changed**: the join succeeds and the
+address never arrives.
+
+No link-state callback is wired into this netif, so the join tells lwIP
+directly -- `dhcp_stop` then `dhcp_start`, which forces a discover now rather
+than whenever the backoff happens to expire.
+
+### 349a. The second symptom of one cause
+
+`wifi_rx_start()` starts the netif and DHCP **before there is a connection**,
+and that has now cost:
+
+| step | symptom |
+|---|---|
+| 313 | the board rebooted when the association was skipped |
+| 349 | the address never arrived when the association came later |
+
+Both are patches to consequences. The cause is that bringing up a radio and
+joining a network are one function, and 313b splits them:
+
+```
+bring-up   blob_init, PHY, esp_wifi_init, esp_wifi_start   -- a radio
+join       set_config, connect, wait, THEN rx_start + netif -- a connection
+```
+
+Asked whether that would mean selecting a network on every open: **no.** The
+view would auto-join the preference itself rather than the bring-up doing it,
+and nothing about the user's experience changes. What goes away is a board
+transmitting association requests to a network that does not exist, on every
+boot, to keep a code path happy.
+
+Recorded as capability rather than cleanliness now, which is a correction: it
+was described as the latter one step ago and has since cost a second defect.
+
+### State
+
+```
+works  the whole loop: choose, type once, reboot, connect, forget, repeat
+open   313b, now paid for twice; the step-319 panic; term/notes onto keyboard.c
+```

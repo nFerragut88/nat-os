@@ -198,6 +198,35 @@ uint32_t netif_wifi_report(void)
 /* The bound address, or 0. Pure: netif_wifi_report() also announces the first
  * binding on the UART, and a view that polls it every frame must not be the
  * thing that decides when that announcement happens. */
+/* [step 349] Start DHCP again, because the link has just come up.
+ *
+ * lwIP's DHCP client is started once, by netif_wifi_start(), during the
+ * bring-up. Until step 347 that was always AFTER an association, so it was
+ * discovering on a live link. Now a board with no saved network associates with
+ * an impossible SSID -- deliberately, because skipping the association crashes
+ * (313) -- and DHCP therefore starts on a station that is not on any network.
+ *
+ * Those discovers get nothing and lwIP backs off, doubling its interval. By the
+ * time the user picks a network and joins for real, the client is deep in a
+ * retry schedule and has no idea the link changed: the join succeeds and the
+ * address never arrives. Reported as "no IP, and I can't connect even after
+ * forgetting it and re-entering the password."
+ *
+ * lwIP has no link-state callback wired here, so the join tells it directly.
+ * Stop then start: a fresh discover now, rather than whenever the backoff
+ * happens to expire. */
+void netif_wifi_dhcp_restart(void);
+void netif_wifi_dhcp_restart(void)
+{
+    if (!g_up) { return; }
+    dhcp_stop(&g_netif);
+    if (dhcp_start(&g_netif) != ERR_OK) {
+        uart_puts("   lwip      dhcp restart FAILED\n");
+    } else {
+        uart_puts("   lwip      dhcp restarted after join\n");
+    }
+}
+
 uint32_t netif_wifi_ip(void);
 uint32_t netif_wifi_ip(void)
 {
