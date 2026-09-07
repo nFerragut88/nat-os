@@ -528,6 +528,35 @@ static int do_syscall(vm_t *vm, uint32_t num)
             return 0;
         }
 
+        /* [step 358] The inverse of DEV_OP_NAME. See device.h for why a
+         * compiler cannot be allowed to hard-code an id.
+         *
+         * The name comes out of the arena through vmarg_string, which bounds
+         * it and refuses one that runs off the end unterminated. A name this
+         * board does not have is a REFUSAL -- r0 = 0 -- not a fault: asking
+         * whether a device exists is a legitimate question with a legitimate
+         * negative answer, and a program that faults for asking cannot check. */
+        case DEV_OP_FIND: {
+            char want[DEVICE_NAME_MAX];
+            if (!vmarg_string(vm, vm->reg[1], want, sizeof want)) {
+                return 1;               /* harness recorded the fault */
+            }
+            int n = device_count();
+            for (int id = 0; id < n; id++) {
+                const char *have = device_name((uint32_t)id);
+                if (!have) { continue; }
+                uint32_t k = 0;
+                while (want[k] && have[k] && want[k] == have[k]) { k++; }
+                if (want[k] == 0 && have[k] == 0) {
+                    vm->reg[0] = 1;
+                    vm->reg[1] = (uint32_t)id;
+                    return 0;
+                }
+            }
+            vm->reg[0] = 0;
+            return 0;
+        }
+
         case DEV_OP_READ: {
             /* The id is captured BEFORE r1 is overwritten with the result.
              * Reading it back afterwards asks whether the light LEVEL is a slow

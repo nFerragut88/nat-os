@@ -19939,3 +19939,111 @@ works  a language: variables, functions, recursion, if/else, while, print,
 open   VM-12 arrays and device syntax, which unblocks VM-13, the honest test
        `run hello` on hardware; per-task stack sizing (352c); the null-sp fault
 ```
+
+---
+
+## step 358 — the honest test, taken (VM-12, VM-13)
+
+The proposal set the test for its own language:
+
+> *rewrite `app_dev.vasm` in NatScript, and if it is not shorter and clearer
+> than the assembly, the language has not earned itself.*
+
+`tools/app_devnat.nat` is that rewrite, and both are registered so `run dev` and
+`run devnat` can be compared on the board rather than on the page.
+
+| | assembly | NatScript |
+|---|---|---|
+| lines, excluding comments and blanks | **117** | **37** |
+| bytecode | **583 bytes** | **1,381 bytes** |
+
+**Three times shorter in source, two and a half times larger in bytecode.** Both
+halves are reported because both are true. The bytecode is the price of the
+evaluation model — every operand pushed and popped — and on a board with 4 MB of
+flash and arenas measured in kilobytes, source is the scarce thing. That is a
+judgement about this machine, not a general one.
+
+### 358a. What buffers are
+
+Step 357 said the missing piece was a way to name an arena offset. It turned out
+to need almost no language:
+
+```
+buf namebuf[16]
+buf xfersrc = [0xDE, 0xAD, 0xBE, 0xEF]
+```
+
+**A buffer's value IS its arena offset.** That is the whole of what a pointer is
+here — an integer the VM bounds-checks on every use — which is why one can be
+handed to a device without anything else having to be trusted. `b[i]` is the
+byte at `b + i`, `word(p)`/`setword(p, v)` are the four-byte form, and `puts(p)`
+prints what the kernel wrote there.
+
+No scaling on the index: there is one element type and it is a byte, so a scale
+factor would be a constant 1 that a reader has to verify.
+
+### 358b. The device names could not be compiled in
+
+The interesting constraint, and it came from two steps earlier.
+
+Step 356 moved permissions off a hand-written bitmap **specifically so nothing
+outside `device.c` would depend on that table's order** — a positional bug that
+had been available for two hundred steps. A compiler turning `light.read()` into
+`ldi r1, 0` would put that dependency straight back, and not in one kernel file
+this time: **in every program it ever produced.**
+
+So `DEV_OP_FIND` is the inverse of `DEV_OP_NAME`: a name out of the arena, an id
+back. `natc` emits a startup prologue that resolves each declared name once.
+Inserting a device into `device.c` cannot re-aim anything.
+
+It discloses nothing new — `DEV_OP_COUNT` and `DEV_OP_NAME` already let any
+program walk the whole table, which is exactly what `app_dev` does. This is that
+loop, done once in the kernel, without a string compare in bytecode.
+
+A declared device the board does not have **stops the program** before its first
+statement, the same judgement the loader makes about an unknown permission name.
+
+### 358c. The permissions block became the namespace
+
+Falling out of 358b, and better than what was designed:
+
+```
+permissions { light  store  echo }
+...
+if light.read(0) { println("light = ", light.value) }
+```
+
+**The manifest is also the device namespace.** A device that is not declared is
+not a name the program can write, and using one is a compile error rather than a
+runtime refusal. What a program may reach and what it can say are one list —
+which is what step 356 was arguing for, arrived at from the other end.
+
+### 358d. Every device call evaluates to whether it agreed
+
+`d.read(chan)` yields 1 or 0, and the reading is in `d.value`.
+
+The tempting design is for `read` to yield the reading. That makes a refusal
+indistinguishable from a sensor reporting zero — the exact failure this log has
+spent two reports diagnosing, most memorably a program that announced sixteen
+readings and reported a light level of zero without ever having read anything.
+One store per call to avoid rebuilding that.
+
+### 358e. What the rewrite could not carry
+
+`app_dev.vasm`'s comments. It carries a paragraph about a jump that landed past
+its setup code and silently skipped a slot claim, and another about why sixteen
+readings rather than an endless loop. Those are the most valuable part of that
+file, they are not a language feature, and they were copied across by hand.
+
+A language makes the code shorter. It does not make the reasoning shorter, and
+the reasoning is what took the time.
+
+### State
+
+```
+works  NatScript reaches hardware: buffers, byte and word access, devices by
+       name through the manifest, and app_dev rewritten in a third of the lines
+open   `when` and `every` -- the mechanism has existed since step ~300 and the
+       language still cannot say it; VM-08 image identity; per-task stacks
+       `run devnat` on hardware, next to `run dev`
+```

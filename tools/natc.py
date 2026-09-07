@@ -18,17 +18,25 @@ do something is worse than one that says so:
 
   - integers only. No floats, no fixed point yet, no strings as VALUES --
     a string literal may be printed and nothing else.
-  - no arrays, no buffers, no pointers. So `device` calls that write into the
-    arena (DEV_OP_NAME, the transfer pair) cannot be expressed yet, and
-    app_dev.vasm -- the honest test -- is NOT yet rewritable in NatScript.
+  - buffers are top-level, fixed-size, and indexed by BYTE. No dynamic
+    allocation, no bounds knowledge -- the VM's arena check is the only thing
+    between an index and somebody else's data, and it is enough.
   - four arguments per call, because the ABI passes them in r0..r3.
   - one frame per function, allocated whole on entry, capped by the 255-byte
     ldw/stw offset field.
+  - no block scoping, no `for`, no `break`, no constant folding.
 
-What it does have is the whole vertical slice: variables, functions with
-parameters and locals, recursion, if/else, while, the ordinary operators with
-short-circuit && and ||, print, and the permissions manifest. A program written
-in it compiles, assembles, loads, and runs on the board.
+What it does have is variables, buffers, functions with parameters and locals,
+recursion, if/else, while, the ordinary operators with short-circuit && and ||,
+print, and devices reached by NAME through the permissions manifest. A program
+written in it compiles, assembles, loads, and runs on the board.
+
+DEVICE NAMES ARE RESOLVED AT RUN TIME, not baked in. Step 356 moved permissions
+off a hand-written bitmap so that nothing outside device.c would depend on that
+table's order; a compiler emitting `ldi r1, 0` for `light` would put the
+dependency back, in every generated program. So the permissions block is also
+the device namespace, and each name is looked up once at startup through
+DEV_OP_FIND. What a program may reach and what it can say are one list.
 
 The calling convention is docs/vm-abi.md section 6 exactly, and this compiler is
 its first real user -- which was the point of writing it down.
@@ -40,13 +48,13 @@ import sys
 
 KEYWORDS = {
     "let", "func", "if", "else", "while", "return",
-    "permissions", "true", "false",
+    "permissions", "true", "false", "buf", "device",
 }
 
 # Longest first: '<<' must not lex as '<' '<'.
 PUNCT = [
     "<<", ">>", "<=", ">=", "==", "!=", "&&", "||",
-    "{", "}", "(", ")", ",", ";", "=", "+", "-", "*", "/", "%",
+    "{", "}", "(", ")", "[", "]", ",", ";", ".", "=", "+", "-", "*", "/", "%",
     "&", "|", "^", "<", ">", "!",
 ]
 
@@ -244,6 +252,7 @@ class Parser:
     def parse_program(self):
         perms = []
         funcs = []
+        bufs = []
         body = []
         self.skip_newlines()
         while not self.at("eof"):
@@ -251,10 +260,40 @@ class Parser:
                 perms.extend(self.parse_permissions())
             elif self.at("kw", "func"):
                 funcs.append(self.parse_func())
+            elif self.at("kw", "buf"):
+                bufs.append(self.parse_buf())
             else:
                 body.append(self.parse_statement())
             self.skip_newlines()
-        return perms, funcs, body
+        return perms, funcs, bufs, body
+
+    def parse_buf(self):
+        """buf name[N]        -- N zero bytes
+           buf name = [a, b]  -- those bytes
+
+        Top level only. A buffer is a fixed region of the arena laid out by the
+        assembler, so there is nowhere to put a per-call one; a `buf` inside a
+        function would be a static variable wearing a local's clothes."""
+        line = self.expect("kw", "buf").line
+        name = self.expect("name").value
+        if self.accept("punct", "["):
+            size = self.expect("num").value
+            self.expect("punct", "]")
+            if size <= 0:
+                raise NatError(line, "a buffer needs a size")
+            return ("buf", name, size, None, line)
+        self.expect("punct", "=")
+        self.expect("punct", "[")
+        values = []
+        self.skip_newlines()
+        while not self.at("punct", "]"):
+            values.append(self.expect("num").value)
+            self.accept("punct", ",")
+            self.skip_newlines()
+        self.expect("punct", "]")
+        if not values:
+            raise NatError(line, "an initialised buffer needs at least one byte")
+        return ("buf", name, len(values), values, line)
 
     def parse_permissions(self):
         self.expect("kw", "permissions")
@@ -328,15 +367,17 @@ class Parser:
             self.end_statement()
             return ("return", expr, t.line)
 
-        if t.kind == "name" and self.peek(1).kind == "punct" and \
-                self.peek(1).value == "=":
-            self.next()
-            self.next()
-            expr = self.parse_expr()
-            self.end_statement()
-            return ("assign", t.value, expr, t.line)
-
+        # Assignment is recognised AFTER parsing, not before: the target may be
+        # `name` or `name[i]`, and lookahead that tried to tell them apart from
+        # an expression statement would have to re-implement the expression
+        # grammar to know where the target ended.
         expr = self.parse_expr()
+        if self.accept("punct", "="):
+            rhs = self.parse_expr()
+            self.end_statement()
+            if expr[0] not in ("var", "index"):
+                raise NatError(t.line, "that is not something you can assign to")
+            return ("store", expr, rhs, t.line)
         self.end_statement()
         return ("expr", expr, t.line)
 
@@ -396,7 +437,36 @@ class Parser:
             return ("un", t.value, self.parse_unary(), t.line)
         return self.parse_primary()
 
+    def parse_args(self):
+        self.expect("punct", "(")
+        args = []
+        while not self.at("punct", ")"):
+            args.append(self.parse_expr())
+            if not self.accept("punct", ","):
+                break
+        self.expect("punct", ")")
+        return args
+
     def parse_primary(self):
+        node = self.parse_atom()
+        # Postfix, left to right: a[i], a.b, a.b(args).
+        while True:
+            if self.at("punct", "["):
+                line = self.next().line
+                idx = self.parse_expr()
+                self.expect("punct", "]")
+                node = ("index", node, idx, line)
+            elif self.at("punct", "."):
+                line = self.next().line
+                field = self.expect("name").value
+                if self.at("punct", "("):
+                    node = ("method", node, field, self.parse_args(), line)
+                else:
+                    node = ("prop", node, field, line)
+            else:
+                return node
+
+    def parse_atom(self):
         t = self.next()
 
         if t.kind == "num":
@@ -405,20 +475,15 @@ class Parser:
             return ("str", t.value, t.line)
         if t.kind == "kw" and t.value in ("true", "false"):
             return ("num", 1 if t.value == "true" else 0, t.line)
+        if t.kind == "kw" and t.value == "device":
+            return ("var", "device", t.line)
         if t.kind == "punct" and t.value == "(":
             node = self.parse_expr()
             self.expect("punct", ")")
             return node
         if t.kind == "name":
             if self.at("punct", "("):
-                self.next()
-                args = []
-                while not self.at("punct", ")"):
-                    args.append(self.parse_expr())
-                    if not self.accept("punct", ","):
-                        break
-                self.expect("punct", ")")
-                return ("call", t.value, args, t.line)
+                return ("call", t.value, self.parse_args(), t.line)
             return ("var", t.value, t.line)
 
         got = t.value if t.value is not None else "end of file"
@@ -451,12 +516,33 @@ BINOP = {
 # which is a compiler decision rather than a syscall.
 BUILTIN_SYS = {
     "putc": ("putc", 1, False),
+    "puts": ("puts", 1, False),     # print bytes AT an offset -- see `buf`
     "exit": ("exit", 1, False),
     "ticks": ("ticks", 0, True),
     "dims": ("dims", 0, True),
     "fill": ("fill", 5, False),
     "text": ("text", 6, False),
 }
+
+# [step 358] Device methods. The operation numbers are device.h's DEV_OP_*.
+#
+#   name         op  args (-> r2, r3, r4)      what the call evaluates to
+DEVICE_METHODS = {
+    "read":     (2, ["channel"],                       "value"),
+    "write":    (3, ["channel", "value"],              None),
+    "info":     (4, [],                                "info"),
+    "xfer_out": (5, ["channel", "buffer", "length"],   None),
+    "xfer_in":  (6, ["channel", "buffer", "length"],   None),
+}
+
+# The `device` namespace: the table itself, rather than one entry in it.
+# Arguments start at r1 because there is no id to put there.
+TABLE_METHODS = {
+    "count": (0, [],                          "count"),
+    "name":  (1, ["id", "buffer", "length"],  None),
+}
+
+DEV_OP_FIND = 7
 
 
 class Codegen:
@@ -467,6 +553,8 @@ class Codegen:
         self.data = []
         self.strings = {}
         self.globals = {}
+        self.bufs = {}           # name -> size in bytes
+        self.devices = []        # declared in `permissions`, resolved at start
         self.funcs = {}
         self.label_n = 0
         self.out = self.body     # where emit() currently writes
@@ -535,12 +623,20 @@ class Codegen:
             return ("local", self.locals[name])
         if name in self.globals:
             return ("global", name)
+        if name in self.bufs:
+            return ("buf", name)
         raise NatError(line, f"'{name}' is not defined")
 
     def load_var(self, name, line):
         kind, where = self.resolve(name, line)
         if kind == "local":
             self.emit(f"ldw     r0, r14, {where}")
+        elif kind == "buf":
+            # A buffer's VALUE is its arena offset. That is the whole of what a
+            # pointer is in this language: an integer the VM bounds-checks on
+            # every use, which is why one can be handed to a device without
+            # anything else having to be trusted.
+            self.emit(f"ldi     r0, @b_{where}")
         else:
             self.emit(f"ldi     r1, @g_{where}")
             self.emit("ldw     r0, r1, 0")
@@ -550,6 +646,9 @@ class Codegen:
         kind, where = self.resolve(name, line)
         if kind == "local":
             self.emit(f"stw     r0, r14, {where}")
+        elif kind == "buf":
+            raise NatError(line, f"'{name}' is a buffer; its address is fixed. "
+                                 f"Assign to {name}[i] instead")
         else:
             self.emit(f"ldi     r1, @g_{where}")
             self.emit("stw     r0, r1, 0")
@@ -609,7 +708,99 @@ class Codegen:
             self.call(node, want_value=True)
             return
 
+        if kind == "index":
+            self.address_of(node)
+            self.emit("ldb     r0, r0, 0")
+            return
+
+        if kind == "method":
+            self.method(node)
+            return
+
+        if kind == "prop":
+            self.property_of(node)
+            return
+
         raise NatError(node[-1], f"cannot evaluate {kind}")
+
+    def address_of(self, node):
+        """Leaves the arena address of `base[index]` in r0.
+
+        No scaling: an index is a BYTE offset. There is one element type in
+        this language and it is a byte, so a scale factor would be a constant
+        1 that a reader has to verify. Words go through word()/setword()."""
+        _, base, idx, line = node
+        self.expr(base)
+        self.push(0)
+        self.expr(idx)
+        self.emit("mov     r1, r0")
+        self.pop(0)
+        self.emit("add     r0, r0, r1")
+
+    def device_of(self, node, line):
+        """The device a method or property is reached through."""
+        if node[0] != "var":
+            raise NatError(line, "a device method needs a device name")
+        name = node[1]
+        if name == "device":
+            return "device"
+        if name not in self.devices:
+            raise NatError(line, f"'{name}' is not a declared device. Devices "
+                                 "are the names in the permissions block -- "
+                                 "which is the point: what a program may reach "
+                                 "and what it can NAME are the same list")
+        return name
+
+    def property_of(self, node):
+        _, obj, field, line = node
+        dev = self.device_of(obj, line)
+        if dev == "device":
+            raise NatError(line, "the device table has no properties")
+        slot = {"value": "dv", "flags": "df", "id": "di"}.get(field)
+        if not slot:
+            raise NatError(line, f"a device has value, flags and id, not {field!r}")
+        self.emit(f"ldi     r1, @{slot}_{dev}")
+        self.emit("ldw     r0, r1, 0")
+
+    def method(self, node):
+        _, obj, name, args, line = node
+        dev = self.device_of(obj, line)
+        table = TABLE_METHODS if dev == "device" else DEVICE_METHODS
+        if name not in table:
+            known = ", ".join(sorted(table))
+            raise NatError(line, f"a device has no {name!r}; it has {known}")
+        op, params, result = table[name]
+        if len(args) != len(params):
+            wanted = ", ".join(params) if params else "nothing"
+            raise NatError(line, f"{name} takes {wanted}, given {len(args)}")
+
+        # Arguments are evaluated and stacked BEFORE the operation and the
+        # device id go into r0 and r1, because evaluating one could call
+        # something that uses either.
+        for a in args:
+            self.expr(a)
+            self.push(0)
+
+        first = 1 if dev == "device" else 2
+        self.load_imm(0, op)
+        if dev != "device":
+            self.emit(f"ldi     r1, @di_{dev}")
+            self.emit("ldw     r1, r1, 0")
+        for i in reversed(range(len(args))):
+            self.pop(first + i)
+        self.emit("sys     device")
+
+        # The out-parameters land in registers the next statement would
+        # overwrite, so they are stashed where `dev.value` can read them. The
+        # call itself evaluates to whether the device agreed.
+        if result == "value":
+            self.emit(f"ldi     r2, @dv_{dev}")
+            self.emit("stw     r1, r2, 0")
+        elif result == "info":
+            self.emit(f"ldi     r3, @dv_{dev}")
+            self.emit("stw     r1, r3, 0")
+            self.emit(f"ldi     r3, @df_{dev}")
+            self.emit("stw     r2, r3, 0")
 
     def binary(self, node):
         op, lhs, rhs, line = node[1], node[2], node[3], node[4]
@@ -651,6 +842,29 @@ class Codegen:
 
         if name == "print" or name == "println":
             self.do_print(args, newline=(name == "println"), line=line)
+            if want_value:
+                self.emit("ldi     r0, 0")
+            return
+
+        # Word access. `buf` indexing is by byte, and these are the four-byte
+        # form -- kept as calls rather than a second index syntax because the
+        # VM faults a misaligned ldw, and a reader should be able to see where
+        # that risk is taken.
+        if name == "word":
+            if len(args) != 1:
+                raise NatError(line, "word(address) takes one argument")
+            self.expr(args[0])
+            self.emit("ldw     r0, r0, 0")
+            return
+        if name == "setword":
+            if len(args) != 2:
+                raise NatError(line, "setword(address, value) takes two")
+            self.expr(args[0])
+            self.push(0)
+            self.expr(args[1])
+            self.emit("mov     r1, r0")
+            self.pop(0)
+            self.emit("stw     r1, r0, 0")
             if want_value:
                 self.emit("ldi     r0, 0")
             return
@@ -720,10 +934,21 @@ class Codegen:
             self.store_var(name, line)
             return
 
-        if kind == "assign":
-            _, name, expr, line = node
+        if kind == "store":
+            _, target, expr, line = node
+            if target[0] == "var":
+                self.expr(expr)
+                self.store_var(target[1], line)
+                return
+            # target[0] == "index": the ADDRESS is computed first and the value
+            # second, so a store whose index expression calls something still
+            # writes where the index said at the moment it was evaluated.
+            self.address_of(target)
+            self.push(0)
             self.expr(expr)
-            self.store_var(name, line)
+            self.emit("mov     r1, r0")
+            self.pop(0)
+            self.emit("stb     r1, r0, 0")
             return
 
         if kind == "expr":
@@ -830,15 +1055,55 @@ class Codegen:
         self.locals = None
         self.func_name = None
 
-    def compile(self, perms, funcs, body):
+    def resolve_devices(self):
+        """Turns each declared permission name into an id, at startup.
+
+        A compiler that emitted `ldi r1, 0` for `light` would hard-code
+        device.c's TABLE ORDER into every generated program -- the exact
+        coupling step 356 removed from the kernel, put back one layer out. So
+        the ids are looked up by NAME at run time, through DEV_OP_FIND.
+
+        A declared device this board does not have STOPS the program. It is the
+        same judgement the loader makes about an unknown permission name, for
+        the same reason: a program reaching for hardware that is not there runs
+        blind, and blind is worse than stopped."""
+        if not self.devices:
+            return
+        self.comment("[startup] resolve declared devices by name, not by index")
+        for d in self.devices:
+            missing = self.new_label(f"no_{d}")
+            found = self.new_label(f"got_{d}")
+            self.load_imm(0, DEV_OP_FIND)
+            self.emit(f"ldi     r1, @dn_{d}")
+            self.emit("sys     device")
+            self.emit(f"brnz    r0, {found}")
+            self.emit(f"ldi     r0, @{self.string_label('  [natc] no such device: ')}")
+            self.emit("sys     puts")
+            self.emit(f"ldi     r0, @dn_{d}")
+            self.emit("sys     puts")
+            self.emit(f"ldi     r0, @{self.string_label(chr(10))}")
+            self.emit("sys     puts")
+            self.emit("ldi     r0, 1")
+            self.emit("sys     exit")
+            self.label(found)
+            self.emit(f"ldi     r2, @di_{d}")
+            self.emit("stw     r1, r2, 0")
+
+    def compile(self, perms, funcs, bufs, body):
         for f in funcs:
             if f[1] in self.funcs:
                 raise NatError(f[4], f"'{f[1]}' is defined twice")
             self.funcs[f[1]] = len(f[2])
+        for b in bufs:
+            if b[1] in self.bufs:
+                raise NatError(b[4], f"'{b[1]}' is declared twice")
+            self.bufs[b[1]] = (b[2], b[3])
+        self.devices = list(perms)
 
         # Top level runs with no frame: r14 is left as vm_init found it and no
         # local can be declared, so `let` at the top level is a global.
         self.out = self.body
+        self.resolve_devices()
         for s in body:
             self.statement(s)
 
@@ -864,13 +1129,37 @@ class Codegen:
         lines.append("        sys     exit")
         lines.extend(self.funcs_asm)
 
-        if self.strings or self.globals:
+        if self.strings or self.globals or self.bufs or self.devices:
             lines.append("")
             lines.append("; ---- data " + "-" * 60)
             lines.append("        .align  4")
         for name in self.globals:
             lines.append(f"g_{name}:")
             lines.append("        .word   0")
+        for d in self.devices:
+            # id, last value, last flags -- one word each, per declared device.
+            lines.append(f"di_{d}:")
+            lines.append("        .word   0")
+            lines.append(f"dv_{d}:")
+            lines.append("        .word   0")
+            lines.append(f"df_{d}:")
+            lines.append("        .word   0")
+        for name, (size, values) in self.bufs.items():
+            # Aligned even though indexing is by byte: a buffer is what gets
+            # handed to word()/setword() and to a device transfer, and an
+            # unaligned one would fault on the first ldw with nothing in the
+            # source to suggest why.
+            lines.append("        .align  4")
+            lines.append(f"b_{name}:")
+            if values is None:
+                lines.append(f"        .space  {size}")
+            else:
+                body = ", ".join(f"0x{v & 0xFF:02x}" for v in values)
+                lines.append(f"        .byte   {body}")
+        lines.append("        .align  4")
+        for d in self.devices:
+            lines.append(f"dn_{d}:")
+            lines.append(f'        .string "{d}"')
         for text, label in self.strings.items():
             lines.append(f"{label}:")
             lines.append(f'        .string "{escape(text)}"')
@@ -898,8 +1187,8 @@ def escape(text):
 
 
 def compile_source(text, source_name):
-    perms, funcs, body = Parser(lex(text)).parse_program()
-    return Codegen(source_name).compile(perms, funcs, body)
+    perms, funcs, bufs, body = Parser(lex(text)).parse_program()
+    return Codegen(source_name).compile(perms, funcs, bufs, body)
 
 
 def main():

@@ -1,15 +1,15 @@
 # NatScript — the language, v0
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 0.1 · 2026-09-07 · Covers `next_moves` VM-09, VM-10, VM-11.
+Revision 0.2 · 2026-09-07 · Covers `next_moves` VM-09 through VM-13.
 
 NatScript compiles to NatVM bytecode. This document describes **what the
 compiler in `tools/natc.py` actually accepts today**, not what the proposal
-imagines. Where the two differ, §7 says so by name.
+imagines. Where the two differ, §9 says so by name.
 
 The proposal's own §15 warned against designing syntax before the ABI was
 written down. The ABI is now written down and frozen — `docs/vm-abi.md`,
-revision 1.1 — so this is the step after that warning, not around it.
+revision 1.2 — so this is the step after that warning, not around it.
 
 ---
 
@@ -79,7 +79,8 @@ is lying to them. `true` and `false` are 1 and 0.
 and no operations. Using one where a number is expected is a compile error
 rather than an address quietly printed as a number.
 
-There are no arrays, no buffers, no pointers, and no structs. §7.
+There are no structs. Fixed-size byte buffers, and an arena offset as the
+only kind of pointer, are §7.
 
 ---
 
@@ -98,7 +99,7 @@ Zero is false and everything else is true; there is no separate boolean type.
 
 Redeclaring a name in the same function is an error. There is **no block
 scoping**: a `let` inside an `if` is visible for the rest of the function. That
-is a simplification, not a design, and §7 lists it.
+is a simplification, not a design, and §9 lists it.
 
 ---
 
@@ -206,53 +207,146 @@ gets 3 KB for a 1,738-byte image.
 
 ---
 
-## 7. What v0 does not have
+## 7. Buffers, and what a pointer is here
 
-Named rather than discovered:
+```
+buf namebuf[16]                          // sixteen zero bytes
+buf xfersrc = [0xDE, 0xAD, 0xBE, 0xEF]   // those four
+```
 
-1. **No arrays, buffers, or pointers.** This is the big one. `device` operations
-   that write into the arena — `DEV_OP_NAME`, the transfer pair — take an arena
-   offset, and NatScript has no way to name one. **So `app_dev.vasm` is not yet
-   rewritable in NatScript**, and the proposal's honest test is not yet
-   available. That is the next piece of work, not a footnote.
-2. **No `device`, `when`, or `every` syntax.** The VM has the mechanisms —
-   `sys device`, `sys event`, and a manifest — and the language does not reach
-   them yet. `when` and `every` are compilable the moment there is something for
-   a handler to do.
-3. **No block scoping**, and no shadowing.
-4. **No `for`, no `break`, no `continue`, no `else` on a `while`.**
-5. **Strings are literals only.** `"Scans: " + count` from the proposal needs an
-   allocator inside an arena, which does not exist.
-6. **No constant folding.** `2 * 3` emits a multiply.
+Top level only, fixed size, laid out by the assembler. There is nowhere to put a
+per-call buffer — a `buf` inside a function would be a static wearing a local's
+clothes.
 
----
-
-## 8. Evidence
-
-`tools/app_hello.nat` is the first nat-os program nobody wrote in assembly:
-recursion (`fib`), a `while` loop with a remainder (`gcd`), nested frames,
-`else if` chains, and a short-circuit `&&` whose right side would divide by zero
-if it were evaluated.
-
-Checked in a host simulator of the ABI before it was flashed — 14,518
-instructions, every value correct, and `r15` back at the top of the arena where
-it started, which is the frame convention balancing across nine levels of
-recursion. **A simulator is not the kernel**; `run hello` on the board is the
-reading that counts.
-
----
-
-## 9. Where this sits
+**A buffer's value is its arena offset**, and that is the whole of what a
+pointer is in this language: an integer the VM bounds-checks on every use. It is
+why one can be handed to a device without anything else having to be trusted.
 
 | | |
 |---|---|
-| VM-09 grammar | **this document** |
-| VM-10 lexer, parser | `tools/natc.py`, §2–§5 |
-| VM-11 AST to bytecode | `tools/natc.py`, §6 |
-| VM-12 arrays, device syntax | **not started** — §7.1, §7.2 |
-| VM-13 the honest test | **blocked on VM-12** |
+| `b[i]` | the byte at `b + i`. **The index is a byte offset**; there is one element type and it is a byte, so a scale factor would be a constant `1` a reader has to verify |
+| `b[i] = v` | stores a byte |
+| `word(p)` | the four bytes at `p`. A misaligned `p` faults |
+| `setword(p, v)` | stores four bytes |
+| `puts(p)` | prints NUL-terminated bytes at `p` — how a name written by the kernel gets read back |
 
-The proposal set the test and it still stands: **rewrite `app_dev.vasm` in
-NatScript, and if it is not shorter and clearer than the assembly, the language
-has not earned itself.** v0 cannot attempt it. That is stated here rather than
-left for a reader to discover.
+Buffers are 4-aligned even though indexing is by byte, because a buffer is what
+gets handed to `word()` and to a device transfer, and an unaligned one would
+fault on the first `ldw` with nothing in the source to suggest why.
+
+Indexing is **not** bounds-checked by the compiler. `b[99]` on a 16-byte buffer
+compiles, and reads whatever is 99 bytes along — until it leaves the arena,
+where `VM_FAULT_BOUNDS` stops the program and nothing else. That is the same
+guarantee every other memory access in this system has.
+
+---
+
+## 8. Devices
+
+The `permissions` block is **both** the manifest the kernel resolves at load
+time **and** the device namespace of the program. What a program may reach and
+what it can name are one list, and using a device that is not declared is a
+compile error rather than a runtime refusal.
+
+```
+permissions {
+    light
+    store
+    echo
+}
+
+if light.read(0) {
+    println("light = ", light.value)
+}
+```
+
+| | |
+|---|---|
+| `d.read(chan)` | → 1 if the device answered. The reading is `d.value` |
+| `d.write(chan, value)` | → 1 if it took it |
+| `d.info()` | → 1; channels in `d.value`, flags in `d.flags` |
+| `d.xfer_out(chan, buf, len)` | arena → device |
+| `d.xfer_in(chan, buf, len)` | device → arena |
+| `d.id` | the resolved device number |
+| `device.count()` | → how many devices exist |
+| `device.name(id, buf, len)` | → 1; writes the name into `buf` |
+
+**Every device call evaluates to whether the device agreed**, and the
+out-parameters are stashed where `d.value` and `d.flags` can read them. The
+alternative — having `read` evaluate to the reading — makes a refusal
+indistinguishable from a sensor reporting zero, which is the failure mode this
+project has spent two reports diagnosing.
+
+### 8.1 Names are resolved at run time, not compiled in
+
+A compiler that turned `light` into `ldi r1, 0` would hard-code `device.c`'s
+**table order** into every generated program. Step 356 removed exactly that
+coupling from the kernel; putting it back one layer out, multiplied by every
+program ever compiled, would be worse than where it started.
+
+So `natc` emits a startup prologue that looks each declared name up through
+`DEV_OP_FIND`, and stores the id. Inserting a device into `device.c` cannot
+re-aim anything.
+
+**A declared device this board does not have stops the program**, before its
+first statement:
+
+```
+  [natc] no such device: baro
+```
+
+Same judgement the loader makes about an unknown permission name, for the same
+reason: a program reaching for hardware that is not there runs blind.
+
+---
+
+## 9. What v0 still does not have
+
+1. **No `when` or `every`.** `sys event` exists and `app_evt.vasm` exercises it;
+   the language does not reach it yet. This is the next piece of work and it is
+   the one the proposal cared most about.
+2. **No block scoping**, and no shadowing.
+3. **No `for`, no `break`, no `continue`.**
+4. **Strings are literals only.** `"Scans: " + count` needs an allocator inside
+   an arena, which does not exist.
+5. **No constant folding.** `2 * 3` emits a multiply.
+6. **No compile-time bounds checking** on buffer indices — §7.
+
+---
+
+## 10. The honest test, taken
+
+The proposal set it:
+
+> *rewrite `app_dev.vasm` in NatScript, and if it is not shorter and clearer
+> than the assembly, the language has not earned itself.*
+
+`tools/app_devnat.nat` is that rewrite. Both are registered, so `run dev` and
+`run devnat` can be compared on the board rather than on the page.
+
+| | assembly | NatScript |
+|---|---|---|
+| lines, excluding comments and blanks | **117** | **37** |
+| bytecode | **583 bytes** | **1,381 bytes** |
+
+**Three times shorter in source, and two and a half times larger in bytecode.**
+Both halves of that are the point.
+
+The source result is the language earning itself: the enumeration loop is four
+lines instead of a register-allocated counter, a comparison, a branch and a
+manual increment; the transfer round trip is one `if` with a short-circuited
+`&&` instead of two branches to a shared failure label.
+
+The bytecode result is the price of §6's evaluation model — every operand
+pushed and popped — and it is reported here rather than left for someone to
+find with `ls`. On a board with 4 MB of flash and per-program arenas measured in
+kilobytes, source size is the scarce thing and bytecode is not. That is a
+judgement about this machine, not a general one.
+
+### 10.1 What the rewrite could not carry over
+
+The assembly's comments. `app_dev.vasm` carries a paragraph about a jump that
+landed past its setup code and silently skipped a slot claim, and another about
+why sixteen readings rather than an endless loop. Those are the most valuable
+part of that file and they are not a language feature; they were copied across
+by hand.

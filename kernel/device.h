@@ -72,6 +72,24 @@
 #define DEV_OP_XFER_OUT 5u  /* arena -> device */
 #define DEV_OP_XFER_IN  6u  /* device -> arena */
 
+/* [step 358] Name -> id, the inverse of DEV_OP_NAME.
+ *
+ * WHY A COMPILER NEEDS THIS. Step 356 moved permissions from a hand-written
+ * bitmap to names the image declares, precisely so nothing outside device.c
+ * would depend on this table's ORDER. A compiler that turned `light.read()`
+ * into `ldi r1, 0` would put that dependency straight back -- in every
+ * generated program rather than in one kernel file -- and inserting a device
+ * would silently re-aim it.
+ *
+ * So NatScript resolves its device names at STARTUP, through this, and a board
+ * without the device refuses at the point of use rather than reading somebody
+ * else's hardware.
+ *
+ * It discloses nothing new: DEV_OP_COUNT and DEV_OP_NAME already let any
+ * program walk the whole table, which is exactly what app_dev does. This is
+ * that loop, done once in the kernel, without a string compare in bytecode. */
+#define DEV_OP_FIND  7u     /* r1=off of a name       -> r0 = ok, r1 = id      */
+
 /* Ceiling on one transfer, and it is deliberately small.
  *
  * Every byte crosses a kernel bounce buffer (see below), so this is DRAM that

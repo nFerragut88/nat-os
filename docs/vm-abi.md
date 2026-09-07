@@ -1,7 +1,7 @@
 # NatVM ABI — frozen
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 1.1 · 2026-09-07 · Covers `next_moves` VM-01 through VM-07.
+Revision 1.2 · 2026-09-07 · Covers `next_moves` VM-01 through VM-08.
 
 This document is derived **from `kernel/vm.c` and `kernel/vm.h` as they are**,
 not from the proposal. Where the older documents and the code disagree, the code
@@ -100,7 +100,7 @@ Thirty-five in total. An unknown opcode is `VM_FAULT_OPCODE`.
 | `0x09` | `BLIT` | `r0`=offset of RGB565 pixels `r1`=x `r2`=y `r3`=w `r4`=h |
 | `0x0a` | `SEND` | `r0`=destination id `r1`=arena offset `r2`=length |
 | `0x0b` | `RECV` | `r0`=arena offset `r1`=buffer size |
-| `0x0c` | `DEVICE` | `r0`=operation (`DEV_OP_*`), args in `r1`–`r3` |
+| `0x0c` | `DEVICE` | `r0`=operation (`DEV_OP_*`), args in `r1`–`r4` — the transfer pair uses `r4` for the length |
 | `0x0d` | `EVENT` | `r0`=event id, `r1`=handler code offset (0 unregisters), `r2`=interval |
 
 A syscall number outside this table is `VM_FAULT_SYSCALL`.
@@ -222,6 +222,14 @@ anything, and:
 
 The names are the ones in `device.c`: `light beep store i2c keys echo sd`.
 
+**[step 358] `DEV_OP_FIND` (7) is the name-to-id lookup a compiler needs**: r1 is
+the arena offset of a NUL-terminated name, and it answers r0 = found, r1 = id.
+A compiler that emitted a literal id would hard-code `device.c`'s table order
+into every program it ever produced -- the coupling this manifest exists to
+remove -- so NatScript resolves its declared names through this at startup.
+It discloses nothing new: `DEV_OP_COUNT` and `DEV_OP_NAME` already let any
+program walk the whole table.
+
 A compiler emits this list from its `permissions` block. There is nothing else
 to encode — no ordering, no bit assignment, no kernel-side table to keep in step.
 
@@ -256,7 +264,8 @@ Everything above can be depended on now. These cannot:
 | VM-07 manifest | **done — §7**, step 356 |
 | VM-08 permission enforcement | enforced from the manifest; **image identity still missing** |
 | VM-09..11 grammar, parser, codegen | **done — `tools/natc.py`, `docs/natscript.md`**, step 357 |
-| VM-12 arrays and device syntax | **not started**, and it blocks the honest test |
+| VM-12 buffers and device syntax | **done — `natscript.md` §7, §8**, step 358 |
+| VM-13 the honest test | **taken — `natscript.md` §10**: 117 lines of assembly became 37 |
 
 So `when` and `every` have a mechanism, `device` is a compile-time lookup
 against a table that already exists, and `permissions` has a format to compile

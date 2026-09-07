@@ -1,0 +1,91 @@
+// app_devnat -- app_dev.vasm, rewritten in NatScript.
+//
+// This is the test the NatScript proposal set for itself:
+//
+//     "rewrite app_dev.vasm in NatScript, and if it is not shorter and clearer
+//      than the assembly, the language has not earned itself."
+//
+// Both programs are registered, so `run dev` and `run devnat` can be compared
+// on the board rather than on the page. They do the same four things: enumerate
+// the device table, claim a persistent store slot, round-trip a bulk transfer
+// through the loopback device, and read the light sensor a bounded number of
+// times, publishing the last reading where `ps` can see it.
+//
+// The permissions block is not decoration. These three names are the manifest
+// the kernel resolves at load time, AND the only device names this program can
+// use -- what it may reach and what it can say are the same list.
+
+permissions {
+    light
+    store
+    echo
+}
+
+buf namebuf[16]
+buf xfersrc = [0xDE, 0xAD, 0xBE, 0xEF]
+buf xferdst[4]
+
+// Where the last reading is published. The kernel reads this word directly out
+// of the arena, so `ps` can show it without the program being asked.
+let publish = 0
+
+// ---- the device table ------------------------------------------------------
+
+let count = device.count()
+println("  [devnat] device table: ", count, " entries")
+
+let id = 0
+while id < count {
+    device.name(id, namebuf, 16)
+    print("  [devnat] ", id, " = ")
+    puts(namebuf)
+    println("")
+    id = id + 1
+}
+
+// ---- claim a persistent slot -----------------------------------------------
+//
+// ONCE, not per reading. Slots are banked by caller, so this lands in this
+// program's own bank and cannot touch the one the shell writes. Once, because
+// a slot write marks the record dirty and the kernel saves it periodically: a
+// program storing a value that changed every loop would erase a flash sector a
+// minute forever, which is how a part rated for a hundred thousand cycles gets
+// spent by a program that thought it was being helpful.
+
+store.write(0, 777)
+
+// ---- out of the arena, through a device, and back in -----------------------
+//
+// `echo` is a loopback that exists so this can be proved on a bare board: the
+// only other transfer-capable device is the I2C bus, and with nothing plugged
+// into the header the whole path would ship having exercised nothing but its
+// refusal case.
+//
+// The destination is a DIFFERENT buffer from the source, so a transfer that
+// quietly did nothing would fail the comparison rather than pass it.
+
+if (echo.xfer_out(0, xfersrc, 4) && echo.xfer_in(0, xferdst, 4)
+        && word(xfersrc) == word(xferdst)) {
+    println("  [devnat] bulk transfer round trip OK (arena -> echo -> arena)")
+} else {
+    println("  [devnat] bulk transfer FAILED")
+}
+
+// ---- read the light sensor, a bounded number of times ----------------------
+//
+// Sixteen readings and then out of the way. A refusal is retried rather than
+// fatal: `light` is DEV_F_SLOW, so a read can decline when the driver is busy,
+// and that is not the same thing as the sensor being absent.
+
+let left = 16
+let last = 0
+while left > 0 {
+    if light.read(0) {
+        last = light.value
+        publish = last
+        println("  [devnat] light = ", last)
+        left = left - 1
+    }
+}
+
+println("  [devnat] 16 readings taken, exiting. last light = ", last)
