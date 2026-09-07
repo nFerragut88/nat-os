@@ -450,10 +450,29 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
         uart_puts("   (authmode 0 = OPEN, 3 = WPA2_PSK)\n");
     }
 
-    /* [step 222] The data path, after the association. */
-    wifiapp_note("  starting the data path");
-    wifi_rx_start(e->reg_rxcb, e->free_rx_buffer, e->wifi_promiscuous,
-                  e->internal_tx);
+    /* [step 350] The data path belongs to the JOIN, not the bring-up.
+     *
+     * This is 313b. wifi_bringup() was doing two jobs welded together -- turn
+     * the radio on, and get onto a network -- and the second half of the second
+     * job starts lwIP and broadcasts a DHCP discover, which only means anything
+     * on a station that has associated.
+     *
+     * Every workaround since has been holding that seam shut. Step 313 skipped
+     * the association and the board REBOOTED, because this line still ran on a
+     * station that never tried. Step 347 associated with an impossible SSID to
+     * keep the sequence intact, and DHCP then started on a dead link, backed
+     * off, and a later real join got no address (349).
+     *
+     * With this moved, "radio on, not connected" becomes a state the system can
+     * actually be in -- which is what a view that lists networks needs -- and
+     * DHCP only ever runs on a link that exists.
+     *
+     * The shell path is unchanged: it does not set g_bringup_noconnect, so it
+     * still associates and starts the data path exactly as before. */
+    if (!g_bringup_noconnect) {
+        wifiapp_note("  starting the data path");
+        wifi_data_path_start();
+    }
 
 
     /* [step 209] TRANSMIT. One call; the frame and the loop are in

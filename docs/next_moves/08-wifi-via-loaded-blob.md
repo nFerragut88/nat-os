@@ -19414,3 +19414,68 @@ was described as the latter one step ago and has since cost a second defect.
 works  the whole loop: choose, type once, reboot, connect, forget, repeat
 open   313b, now paid for twice; the step-319 panic; term/notes onto keyboard.c
 ```
+
+---
+
+## step 350 — 313b: a radio, and then a connection
+
+`(this commit)`
+
+`wifi_bringup()` did two jobs welded together:
+
+```
+turn the radio on     blob_init, PHY, esp_wifi_init, esp_wifi_start
+get onto a network    associate -> start the netif -> start DHCP
+```
+
+The second half of the second job only means anything on a station that has
+associated -- DHCP is a broadcast conversation, and nobody hears it otherwise.
+So "radio on, not connected" was not a state this system could be in, and that
+is exactly the state a view which LISTS networks needs while the user chooses.
+
+Every workaround since was holding that seam shut:
+
+| step | what was tried | what happened |
+|---|---|---|
+| 313 | skip the association | the DHCP broadcast still ran on a station that never tried. **The board rebooted.** |
+| 347 | associate with an impossible SSID | sequence intact, but DHCP started on a dead link and backed off |
+| 349 | restart DHCP after a real join | worked; a patch on a patch |
+
+Moved: the bring-up brings up a radio, and `join_named()` associates, waits, and
+**then** starts the data path.
+
+### 350a. Idempotence is the whole difficulty
+
+The bring-up ran the data path once by construction. A join can happen many
+times, and `netif_wifi_start()` calls `lwip_init()` and `netif_add()`, which
+must not run twice. `wifi_data_path_start()` brings lwIP up on the first call
+and restarts DHCP on every later one -- which is what a second join means
+anyway (349).
+
+### 350b. One join, two callers
+
+A tap on a row and the automatic join of the remembered network must do the same
+things in the same order, so they are the same function. The view auto-joins the
+preference itself now; the bring-up no longer does it behind the view's back,
+which is what lets the bring-up stop associating when there is nothing to
+associate with.
+
+The shell path is untouched -- it does not set `g_bringup_noconnect`, so
+`wifiinit start` associates and starts the data path exactly as before.
+
+### 350c. What this removes rather than works around
+
+- a board with no saved network no longer transmits association requests to
+  `nat-os-no-such-network` on every boot
+- DHCP never runs on a link that does not exist
+- 82 lines of `join()` and a helper whose last caller went with the sweep timing
+
+Called "cleanliness, not capability" at step 349 and corrected in the same step.
+It was capability: two defects came from that seam and neither is reachable now.
+
+### State
+
+```
+works  radio up -> auto-join the remembered network -> address; or scan and pick
+open   the step-319 panic; term/notes onto keyboard.c; memory headroom
+```

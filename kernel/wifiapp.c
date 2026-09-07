@@ -256,15 +256,6 @@ static void draw_row(uint32_t i)
     put(DISP_W - 26u, y + 12u, g_aps[i].auth ? "wpa" : "open", dm, bg);
 }
 
-/* Two decimal digits into a caller's buffer, returning where it stopped.
- * There is no snprintf here and this view should not be the thing that adds
- * one. */
-static uint32_t num(char *b, uint32_t at, uint32_t v)
-{
-    if (v >= 10u) { b[at++] = (char)('0' + (v / 10u) % 10u); }
-    b[at++] = (char)('0' + v % 10u);
-    return at;
-}
 
 /* [step 348] Is there anything to forget about this row?
  *
@@ -675,7 +666,11 @@ static void start_radio(void)
          * driver's own five-second sweep would gather evidence the user is
          * about to gather again. */
         extern void wifi_bringup_quick(int on);
+        extern void wifi_bringup_noconnect(int on);
         wifi_bringup_quick(1);
+        /* [step 350] A RADIO, not a connection. Joining is this view's job --
+         * it auto-joins the preference below the moment the radio is up. */
+        wifi_bringup_noconnect(1);
         /* [step 313] wifi_bringup_noconnect(1) WAS HERE and it crashed the
          * board. Skipping the association leaves everything after it --
          * prof_authmode, and wifi_rx_start() which TRANSMITS a DHCP discover --
@@ -760,84 +755,67 @@ static void job_join(void)
  * BLOCKING, and the status bar is painted before it starts. PBKDF2 at 4096
  * iterations measures ~15 s on this part; a view that redrew afterwards would
  * look like a hang for the whole of it. */
+/* [step 350] The join, by name. Two callers: a tap on a row, and the automatic
+ * join of the remembered network once the radio is up. Both must do the same
+ * things in the same order, so there is one of them. */
+static void join_named(const char *ssid, const char *pass)
+{
+    extern void wifi_join_ssid_pass(const char *s, const char *p);
+    extern int  wifi_joined(void);
+    extern void wifi_data_path_start(void);
+
+    if (!blob_ready()) { g_state = ST_NORADIO; g_dirty++; return; }
+
+    g_state = ST_JOINING;
+    LOGS("joining ", ssid);
+    g_dirty++;
+
+    wifi_join_ssid_pass(ssid, (pass && pass[0]) ? pass : 0);
+
+    LOG("associating, waiting for the AP");
+    for (uint32_t w = 0u; w < 1000u && !wifi_joined(); w++) { task_sleep(1u); }
+
+    if (!wifi_joined()) {
+        LOG("join FAILED -- no connect callback");
+        g_state = ST_FAILED;
+        g_dirty++;
+        return;
+    }
+
+    LOG("joined -- starting the network");
+    /* [step 350] NOW the data path, on a link that exists. */
+    wifi_data_path_start();
+
+    { extern uint32_t g_wpa_disc_cb; g_disc_at_join = g_wpa_disc_cb; }
+    uint32_t k = 0u;
+    for (; k < 32u && ssid[k]; k++) { g_joined[k] = ssid[k]; }
+    g_joined[k] = 0;
+    wifiprefs_set_network(ssid);
+    g_state = ST_JOINED;
+    g_dirty++;
+}
+
+/* The remembered network, joined without being asked. */
+static void job_autojoin(void)
+{
+    static char pass[WIFICRED_PASS_MAX];
+    const char *pref = wifiprefs_network();
+    if (!pref || !pref[0]) { return; }
+    pass[0] = 0;
+    (void)wificred_get(pref, pass, sizeof pass);
+    join_named(pref, pass);
+}
+
+/* [step 350] A tap on a row. The passphrase comes from what the user typed, or
+ * from the store if this network is already known. Everything else is
+ * join_named(). */
 static void join(uint32_t i)
 {
-    extern void wifi_join_ssid_pass(const char *ssid, const char *pass);
-    extern int  wifi_joined(void);
-
     if (i >= g_count) { return; }
     if (!blob_ready()) { g_state = ST_NORADIO; g_dirty++; return; }
 
-    g_state = ST_DERIVING;      /* the display task is already painting this */
-    LOGS("joining ", g_aps[i].ssid);
-    LOG("looking for a saved key");
-
-    wifi_join_ssid_pass(g_aps[i].ssid, g_pass[0] ? g_pass : 0);
-
-    /* [step 317] WAIT. The connect is asynchronous.
-     *
-     * wifi_join_ssid_pass() returns as soon as blob_call(wifi_connect) does --
-     * the association and the four-way handshake have not happened yet.
-     * wifi_joined() reads g_wpa_conn_cb, the supplicant's connected callback,
-     * which fires when they have. Testing it immediately asks whether something
-     * has finished at the moment it was started.
-     *
-     * That race has been here since step 278 and was hidden by the fifteen
-     * seconds of PBKDF2 sitting inside the call. Step 315 cached the PMK, the
-     * fifteen seconds went, and the race started losing every time: "join
-     * failed", and then a scan immediately afterwards finds the network --
-     * because the association had in fact succeeded a moment after the view
-     * declared it hadn't.
-     *
-     * An accidental delay is not a wait. This is the wait.
-     *
-     * Ten seconds: a four-way handshake on an access point that is present and
-     * answering takes well under one. Sleeping is correct here rather than
-     * spinning -- the association is driven by the blob's own task and its
-     * interrupts, so this task has nothing to contribute but patience. */
-    g_state = ST_JOINING;
-    LOG("associating, waiting for the AP");
-    g_dirty++;
-    for (uint32_t w = 0u; w < 1000u && !wifi_joined(); w++) {
-        task_sleep(1u);
-    }
-
-    {   /* [step 318] What the handshake actually did. pmk/step/m1/m3/micbad/why
-         * distinguish every way a WPA2 join can fail -- a wrong key fails the
-         * MIC, a missing message stalls at a step, a refused association never
-         * reaches m1 at all. Guessing between those has cost enough today. */
-        extern void wpa_hs_report(void);
-        extern uint32_t g_wpa_conn_cb, g_wpa_disc_cb, g_wpa_disc_reason;
-        extern int g_used_cached;
-        uart_puts("  JOIN ");
-        uart_puts(g_aps[i].ssid);
-        uart_puts(" conn="); uart_put_dec(g_wpa_conn_cb);
-        uart_puts(" disc="); uart_put_dec(g_wpa_disc_cb);
-        uart_puts(" why=");  uart_put_dec(g_wpa_disc_reason);
-        uart_puts(" cached="); uart_put_dec((unsigned int)g_used_cached);
-        wpa_hs_report();
-        uart_puts("\n");
-    }
-
-    if (wifi_joined()) {
-        LOG("joined -- waiting for an address");
-        /* [step 341] Choosing a network IS preferring it. There is no second
-         * confirmation to forget to give, and the next boot joins it without
-         * being asked. */
-        wifiprefs_set_network(g_aps[i].ssid);
-
-        /* [step 349] The link is new; the DHCP client does not know that. */
-        { extern void netif_wifi_dhcp_restart(void); netif_wifi_dhcp_restart(); }
-        uint32_t k = 0u;
-        for (; k < 32u && g_aps[i].ssid[k]; k++) { g_joined[k] = g_aps[i].ssid[k]; }
-        g_joined[k] = 0;
-        { extern uint32_t g_wpa_disc_cb; g_disc_at_join = g_wpa_disc_cb; }
-        g_state = ST_JOINED;
-    } else {
-        LOG("join FAILED -- no connect callback");
-        g_state = ST_FAILED;
-    }
-    g_dirty++;
+    if (!g_pass[0]) { (void)wificred_get(g_aps[i].ssid, g_pass, sizeof g_pass); }
+    join_named(g_aps[i].ssid, g_pass[0] ? g_pass : 0);
 }
 
 /* Run a requested bring-up. Called from the NET TASK, not the touch task.
@@ -971,6 +949,22 @@ static void view_settle(void)
                 for (k = 0u; k < 32u && n[k]; k++) { g_joined[k] = n[k]; }
                 g_joined[k] = 0;
             }
+        }
+    }
+
+    /* [step 350] The radio is up and we are not on anything: join the network
+     * the user chose, if they have chosen one. The bring-up used to do this;
+     * now the view does, which is what lets the bring-up stop pretending to
+     * associate when there is nothing to associate with. */
+    if (!job_busy() && blob_ready() && !wifi_joined()) {
+        const char *pref = wifiprefs_network();
+        static char probe[WIFICRED_PASS_MAX];
+        if (pref && pref[0] && wificred_get(pref, probe, sizeof probe)) {
+            g_state = ST_JOINING;
+            (void)job_submit(job_autojoin, "joining");
+            g_full = 1;
+            g_dirty++;
+            return;
         }
     }
 

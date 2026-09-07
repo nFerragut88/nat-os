@@ -2599,6 +2599,30 @@ void wifi_try_connect(uint32_t cfg_fn, uint32_t conn_fn)
  * nothing either way. */
 void wifi_dhcp_discover(uint32_t tx_fn);
 uint32_t g_internal_tx_fn;
+/* [step 350] Start the data path: the RX callback, the netif, DHCP.
+ *
+ * IDEMPOTENT, and that is the whole difficulty of moving it here. The bring-up
+ * ran it once by construction; a join can happen many times, and
+ * netif_wifi_start() calls lwip_init() and netif_add(), which must not run
+ * twice. The first call brings lwIP up; every later one restarts DHCP, because
+ * what a second join means is a new link needing a new lease (349). */
+void wifi_data_path_start(void);
+void wifi_data_path_start(void)
+{
+    static int started;
+    const struct blob_entry *e = blob_map();
+    if (!e || !blob_ready()) { return; }
+
+    if (!started) {
+        started = 1;
+        wifi_rx_start(e->reg_rxcb, e->free_rx_buffer, e->wifi_promiscuous,
+                      e->internal_tx);
+    } else {
+        extern void netif_wifi_dhcp_restart(void);
+        netif_wifi_dhcp_restart();
+    }
+}
+
 void wifi_rx_report(void);
 void wifi_rx_start(uint32_t reg_fn, uint32_t free_fn, uint32_t promisc_fn,
                    uint32_t tx_fn);
