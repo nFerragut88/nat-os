@@ -15,6 +15,7 @@ extern uint32_t wincollide_bad(void);
 #include "console.h"
 #include "app.h"
 #include "heap.h"
+#include "arena.h"   /* [step 364] arena_count, ARENA_MAX -- see cmd_run */
 #include "raycast.h"
 #include "critical.h"
 #include "timer.h"
@@ -359,7 +360,37 @@ static void cmd_run(const char *name)
         if (str_eq(g_progs[i].name, name)) {
             int id = launch_entry(&g_progs[i]);
             if (id < 0) {
-                uart_puts("   cannot start: no free slot or no memory\n");
+                /* [step 364] This used to say "no free slot or no memory" and
+                 * leave the reader to guess which. It cost a session: the heap
+                 * had 28 KB free and a 28 KB largest block, and the actual
+                 * cause was that every arena was taken -- but the message named
+                 * memory first, so memory is what got investigated, and an
+                 * application's arena was trimmed and reflashed for nothing.
+                 *
+                 * A diagnostic that lists its own possible causes without
+                 * saying which one happened is worse than one that says less.
+                 * It reads as information and spends the reader's time. */
+                uint32_t used = arena_count();
+                uart_puts("   cannot start ");
+                uart_puts(name);
+                uart_puts(": ");
+                if (used >= ARENA_MAX) {
+                    uart_puts("every arena is in use. ");
+                    uart_put_dec(used);
+                    uart_puts(" of ");
+                    uart_put_dec((unsigned int)ARENA_MAX);
+                    uart_puts(", and the kernel holds one of them for its own"
+                              " VM task, so at most ");
+                    uart_put_dec((unsigned int)ARENA_MAX - 1u);
+                    uart_puts(" programs run at once.\n");
+                    uart_puts("   `ps` names them; `kill <id>` frees one.\n");
+                } else {
+                    uart_puts("the heap could not find ");
+                    uart_put_dec(g_progs[i].arena_bytes);
+                    uart_puts(" bytes; ");
+                    uart_put_dec(heap_free_bytes());
+                    uart_puts(" free.\n");
+                }
             } else {
                 uart_puts("   started id=");
                 uart_put_dec((unsigned int)id);

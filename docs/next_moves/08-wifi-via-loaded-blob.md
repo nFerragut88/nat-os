@@ -20537,3 +20537,73 @@ open   screen.touched() from NatScript has still not been proved against a
        finger -- it needs one tap inside y 256..269
        STRINGS, the top gap; VM-08 image identity; per-task stacks
 ```
+
+---
+
+## step 364 — a diagnostic that named two causes and would not say which
+
+`run paint` failed. The message was:
+
+```
+   cannot start: no free slot or no memory
+```
+
+The heap had **28,728 bytes free with a 28,728-byte largest block**. It was
+never memory. Every arena was in use.
+
+**But memory was named first, so memory is what got investigated** — an
+application's arena was trimmed from 4 KB to 3 KB and the board reflashed, for
+nothing. Only after that did `run counter`, a 512-byte program, fail the same
+way and rule the whole theory out.
+
+### 364a. What was actually true
+
+`ARENA_MAX` is 4, and `kmain.c:2029` takes one at boot for the kernel's own VM
+task and never releases it. So **three arenas exist for applications, ever** —
+and `ping` and `pong` start at boot and never exit.
+
+That leaves exactly **one** slot. Whatever is in it is the only program the
+board can run. `kill <id>` frees it; that is the whole answer.
+
+### 364b. The fix is the message
+
+```
+   cannot start paint: every arena is in use. 4 of 4, and the kernel holds one
+   of them for its own VM task, so at most 3 programs run at once.
+   `ps` names them; `kill <id>` frees one.
+```
+
+or, when it genuinely is memory, the two numbers that decide it:
+
+```
+   cannot start paint: the heap could not find 512 bytes; 208 free.
+```
+
+**A diagnostic that lists its own possible causes without saying which one
+happened is worse than one that says less.** It reads as information, and it
+spends the reader's time on whichever branch it happened to mention first.
+
+This log has a long record of statuses reporting an outcome for work that never
+ran. This is a nearer relative than it looks: not a false claim, but a true
+statement carrying no information, worn as though it did.
+
+### 364c. What was NOT changed
+
+`ARENA_MAX` stays at 4, and `ping`/`pong` still take two of the three
+application slots for an IPC self-test that has passed since step ~90. Both are
+worth revisiting and both change what the board does at boot, which is not a
+decision to make while chasing something else.
+
+The `tap` arena stays at the trimmed 3 KB. The trim was the wrong fix for this
+problem, but 2,503 bytes of image in a 4 KB arena was slack either way, and
+arena sizes in `kmain.c` are hand-written and unchecked against the image the
+compiler produced — `natc` knows both numbers and nothing carries them across.
+
+### State
+
+```
+works  paint, tap, and every other program -- one at a time, which is the real
+       limit and now the message says so
+open   ARENA_MAX and the two boot programs holding two of three slots;
+       screen.touched() against a finger; STRINGS; VM-08; per-task stacks
+```

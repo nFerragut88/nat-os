@@ -984,10 +984,17 @@ static const shell_program_t PROGRAMS[] = {
      * was not, so a program could draw something and then had no way to learn
      * whether anybody had touched it.
      *
-     * 4 KB because the image alone is 3.1 KB -- the price of the evaluation
-     * model on a program with this many expressions, and visible here rather
-     * than in a footnote. */
-    { "tap",     vm_app_tap,   VM_APP_TAP_LEN,   4096u, VM_APP_TAP_AT_G_TAPS,
+     * [step 364] 3 KB, was 4. The image is 2,503 bytes and the program makes no
+     * nested calls deeper than two, so 4 KB was a guess with 1.6 KB of slack in
+     * it -- and that slack was enough to make `run paint` fail with "no free
+     * slot or no memory" while a slot was free. A program that is merely
+     * generous with its arena starves the next one, and on this board the next
+     * one is the whole rest of the desktop.
+     *
+     * Arena sizes in this table are hand-written and unchecked against the
+     * image the compiler produced. natc knows both numbers; nothing carries
+     * them across. */
+    { "tap",     vm_app_tap,   VM_APP_TAP_LEN,   3072u, VM_APP_TAP_AT_G_TAPS,
       vm_app_tap_perms, VM_APP_TAP_PERM_COUNT },
     { "ping",    vm_app_ping,  VM_APP_PING_LEN,  512u, 0u, vm_app_ping_perms, VM_APP_PING_PERM_COUNT },
     { "pong",    vm_app_pong,  VM_APP_PONG_LEN,  512u, 0u, vm_app_pong_perms, VM_APP_PONG_PERM_COUNT },
