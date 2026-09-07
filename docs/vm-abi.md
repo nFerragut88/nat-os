@@ -1,0 +1,222 @@
+# NatVM ABI — frozen
+
+**Used Medias LLC — Embedded Systems Division**
+Revision 1.0 · 2026-09-07 · Covers `next_moves` VM-01, VM-02, VM-03.
+
+This document is derived **from `kernel/vm.c` and `kernel/vm.h` as they are**,
+not from the proposal. Where the older documents and the code disagree, the code
+is right and this file follows it.
+
+A compiler may depend on everything in §1–§5. §6 is a convention a compiler must
+adopt and the VM does not enforce. §7 is what is still missing.
+
+---
+
+## 1. Machine model
+
+| | |
+|---|---|
+| registers | **16**, `r0`–`r15`, 32-bit, **global** — no hardware frame |
+| instruction | **4 bytes**, fixed |
+| `pc` | **byte offset into the arena**, must be 4-aligned |
+| memory | one **arena** per program, holding **code and data together** |
+| return addresses | **kernel memory**, `vm->call[32]` — *not* in the arena |
+| call depth | **32** (`VM_CALL_DEPTH`); exceeding it faults |
+| arithmetic | integer only. **No floating point** — fixed-point by convention |
+
+Two properties matter to a compiler more than the instruction set:
+
+**Every load and store is bounds-checked against the arena, in software.** A
+runaway pointer faults the program and nothing else. This is what makes a stack
+convention safe to invent in the compiler (§6) — the VM will catch an overrun
+even though it knows nothing about frames.
+
+**Return addresses are not reachable by the program.** They live in kernel
+memory, so no bytecode can forge or corrupt one. A compiler cannot implement
+closures or coroutines by manipulating them, and does not need to defend them.
+
+---
+
+## 2. Instruction encoding
+
+```
+byte 0   opcode
+byte 1   a     destination register, or the only operand
+byte 2   b     source register, or immediate low byte
+byte 3   c     source register / offset, or immediate high byte
+```
+
+**R-format** reads `a`, `b`, `c` as register indices.
+**I-format** reads `a` as a register and `(b, c)` as a little-endian 16-bit
+immediate.
+
+A register index of 16 or more is `VM_FAULT_REG`, not a masked index: silently
+truncating turns a producer bug into wrong answers rather than a diagnosed stop.
+
+Branch and call immediates are **signed, in instructions**, relative to the
+instruction *after* the branch.
+
+---
+
+## 3. Opcodes
+
+| | | |
+|---|---|---|
+| `0x00` | `HALT` | stop, status in `r0` |
+| `0x01` | `NOP` | |
+| `0x02` | `MOV a, b` | |
+| `0x03` | `LDI a, imm16` | zero-extends |
+| `0x04` | `LDIH a, imm16` | sets the high half; `LDI`+`LDIH` builds a 32-bit constant |
+| `0x10`–`0x1c` | `ADD SUB MUL DIV MOD AND OR XOR SHL SHR SAR NOT NEG` | `DIV`/`MOD` by zero → `VM_FAULT_DIV0` |
+| `0x1d` | `ADDI a, b, imm` | |
+| `0x20`–`0x25` | `SEQ SNE SLT SLTU SLE SLEU` | set `a` to 0 or 1 |
+| `0x30` | `JMP simm` | |
+| `0x31` `0x32` | `BRZ a, simm` `BRNZ a, simm` | |
+| `0x33` | `CALL simm` | pushes the return address to **kernel** memory |
+| `0x34` | `RET` | underflow → `VM_FAULT_RET` |
+| `0x40` `0x41` | `LDW a, b, off` `LDB` | bounds-checked; `LDW` must be 4-aligned |
+| `0x42` `0x43` | `STW a, b, off` `STB` | bounds-checked |
+| `0x50` | `SYS n` | §4 |
+
+Thirty-five in total. An unknown opcode is `VM_FAULT_OPCODE`.
+
+---
+
+## 4. Syscalls — `SYS n`
+
+**Register-positional.** This is the part a compiler must encode exactly.
+
+| | | |
+|---|---|---|
+| `0x00` | `EXIT` | `r0` = status |
+| `0x01` | `PUTC` | `r0` = character |
+| `0x02` | `PUTS` | `r0` = arena offset of a NUL-terminated string |
+| `0x03` | `PUTD` | `r0` = value, printed unsigned decimal |
+| `0x04` | `TICKS` | → `r0` = `timer_ticks()` |
+| `0x05` | `FILL` | `r0`=x `r1`=y `r2`=w `r3`=h `r4`=colour |
+| `0x06` | `TEXT` | `r0`=str offset `r1`=x `r2`=y `r3`=fg `r4`=bg `r5`=scale |
+| `0x07` | `DIMS` | → `r0` = (width << 16) \| height |
+| `0x08` | `TOUCH` | → `r0`=touched `r1`=x `r2`=y, **viewport-relative** |
+| `0x09` | `BLIT` | `r0`=offset of RGB565 pixels `r1`=x `r2`=y `r3`=w `r4`=h |
+| `0x0a` | `SEND` | `r0`=destination id `r1`=arena offset `r2`=length |
+| `0x0b` | `RECV` | `r0`=arena offset `r1`=buffer size |
+| `0x0c` | `DEVICE` | `r0`=operation (`DEV_OP_*`), args in `r1`–`r3` |
+| `0x0d` | `EVENT` | `r0`=event id, `r1`=handler code offset (0 unregisters), `r2`=interval |
+
+A syscall number outside this table is `VM_FAULT_SYSCALL`.
+
+Coordinates passed to `FILL`, `TEXT` and `BLIT` are **viewport-relative** and
+clipped by the kernel. A program cannot draw outside its strip; it does not need
+to know where its strip is.
+
+---
+
+## 5. Events and faults
+
+```
+VM_EVT_TICK = 0     periodic, r2 = interval in ticks
+VM_EVT_KEY  = 1     a key from the terminal queue
+```
+
+`sys event` registers a handler at a code offset. The kernel calls into it by
+pushing a return address and setting `pc`; the handler **returns like any other
+function**, and the kernel detects the exit by the return stack coming back to
+the depth it had before the injection — no marker, no cooperation required.
+
+This is the mechanism `when` and `every` compile to.
+
+**Faults**, all of which stop the program and never the kernel:
+`NONE OPCODE REG PC ALIGN BOUNDS DIV0 CALL_DEPTH RET STRING SYSCALL`.
+
+---
+
+## 6. The frame convention — VM-03
+
+**The VM has no frames.** Sixteen registers, global, and `CALL` saves only a
+return address. A compiler must therefore define where locals live, and this is
+that definition.
+
+The important discovery: **this needs no VM change.** The arena is
+bounds-checked on every access, so a stack built inside it is as safe as any
+other data — an overrun faults the program exactly like a bad pointer.
+
+```
+arena:  [ code ][ static data ] ........ free ........ [ stack ] arena_len
+                                                        ^
+                                         r15 (SP) grows DOWN
+```
+
+| register | role |
+|---|---|
+| `r0`–`r3` | arguments, and `r0` is the return value |
+| `r4`–`r11` | **caller-saved** scratch |
+| `r12`–`r13` | reserved |
+| `r14` | frame pointer (optional; a compiler with fixed frames may skip it) |
+| `r15` | **stack pointer** — byte offset into the arena, 4-aligned |
+
+Prologue and epilogue are ordinary arithmetic:
+
+```
+    addi  r15, r15, -N        ; N = frame size in bytes, multiple of 4
+    ...                       ; locals at STW/LDW r15 + offset
+    addi  r15, r15, +N
+    ret
+```
+
+Consequences a compiler must respect:
+
+- **Nesting is capped at 32.** `VM_CALL_DEPTH` is a kernel array; recursion
+  deeper than that is `VM_FAULT_CALL_DEPTH`, not a stack overflow.
+- **The stack and the heap share the arena.** A collision is a program bug the
+  VM cannot see — only an overrun past `arena_len` faults. A compiler should
+  emit a check, or size frames statically.
+- **`r15` must be initialised** to `arena_len` at entry. Nothing does this today
+  because nothing has needed it.
+
+---
+
+## 7. What is still missing
+
+Everything above can be depended on now. These cannot:
+
+1. **A device manifest** (VM-07). `device_perms(caller)` and a per-caller bitmap
+   exist and `device_read` checks them, but nothing declares what a program
+   wants — the grant is set by the kernel, not by the image. A NatScript
+   `permissions { ... }` block needs a manifest format and a loader that reads
+   it.
+2. **Image identity** (VM-08). `device.h` says it plainly: *"A permission grant
+   is only meaningful if the image it applies to cannot be substituted."*
+   Without signing, permissions are a convenience, not security, and calling
+   them security would be the seventh thing in this project to claim an outcome
+   it had not earned.
+3. **`r15` initialisation** and an agreed arena layout (§6) — a one-line kernel
+   change and a compiler convention, but neither exists yet.
+4. **A string type.** `PUTS` takes an arena offset to NUL-terminated bytes;
+   `"Scans: " + count` in the proposal implies allocation, and there is no
+   allocator inside an arena.
+
+---
+
+## 8. What this means for NatScript
+
+The sequencing in the proposal is right, and the code says three of its
+prerequisites are closer than the list suggests:
+
+| | status |
+|---|---|
+| VM-01 opcode ABI | **done — §2, §3** |
+| VM-02 syscall ABI | **done — §4** |
+| VM-03 frame layout | **specified — §6**, needs `r15` init only |
+| VM-04 nested call/ret | **already works**, 32 deep, faults on underflow |
+| VM-05 event ABI | **done — §5** |
+| VM-06 tick/key delivery | implemented; `app_evt.vasm` exercises both |
+| VM-07 manifest | **missing** |
+| VM-08 permission enforcement | hook exists, manifest does not |
+
+So `when` and `every` have a mechanism today. `device` is a compile-time lookup
+against a table that already exists. What a first NatScript compiler genuinely
+lacks is a manifest format (VM-07) and the stack pointer being initialised.
+
+**The honest test remains the one the proposal set**: rewrite `app_dev.vasm` in
+NatScript, and if it is not shorter and clearer than the assembly, the language
+has not earned itself.
