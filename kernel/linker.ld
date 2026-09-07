@@ -209,6 +209,11 @@ SECTIONS
        * narrowed to "the flash DRIVER must not live on the bus"). Moved to make
        * room for a receive ring that can hold a standard frame. */
       *wpareport.c.o(.literal .literal.* .text .text.*)
+      /* [step 341] The touch calibration UI. It draws and it reads the panel;
+       * it reaches flash only through store.c, which stays in iram -- and step
+       * 316 established that callers are irrelevant, only the driver executing
+       * while the bus is taken matters. Moved to make room for wifiprefs. */
+      *calib.c.o(.literal .literal.* .text .text.*)
 
     /* [step 278] notes.c and term.c join it, for the same reason and with the
      * same evidence: both are views entered from the launcher, both run only

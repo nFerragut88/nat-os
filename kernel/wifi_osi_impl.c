@@ -2419,9 +2419,32 @@ void wifi_join_ssid(const char *ssid)
 void wifi_leave(void);
 void wifi_leave(void)
 {
+    extern void wifiapp_note(const char *msg);
+
     const struct blob_entry *e = blob_map();
-    if (!e || !blob_ready() || !e->wifi_disconnect) { return; }
-    (void)blob_call(e->wifi_disconnect, 0u, 0u, 0u, 0u);
+    if (!e || !blob_ready()) { wifiapp_note("leave: no radio"); return; }
+
+    /* [step 346] Report, do not return silently.
+     *
+     * This had a bare `if (!e->wifi_disconnect) return;`. If that entry is not
+     * populated, leaving a network is a no-op that looks exactly like leaving a
+     * network -- and g_wpa_conn_cb was being cleared regardless, so the VIEW
+     * believed the station had gone while the radio stayed associated.
+     *
+     * Reported precisely: forget asked for a password again, and the browser
+     * still fetched google.com. The credential was gone and the connection was
+     * not, which is the worst of both -- an interface that has forgotten a
+     * network it is still using. */
+    if (!e->wifi_disconnect) {
+        wifiapp_note("leave: blob has no disconnect");
+        return;
+    }
+
+    {
+        uint32_t rc = blob_call(e->wifi_disconnect, 0u, 0u, 0u, 0u);
+        wifiapp_note(rc == 0u ? "leave: disconnected"
+                              : "leave: disconnect REFUSED");
+    }
 
     /* The supplicant's connected flag is what wifi_joined() reads, and nothing
      * else clears it. A disconnect this code asked for is not a failure to be
@@ -2460,6 +2483,54 @@ void wifi_try_connect(uint32_t cfg_fn, uint32_t conn_fn)
 #ifdef WIFI_STA_PASS
     static const char pass[] = WIFI_STA_PASS;
 #endif
+
+    /* [step 341] The network the USER chose, if they have chosen one.
+     *
+     * This has associated with WIFI_STA_SSID since step 218 -- correct for the
+     * board this was developed on, and wrong for anybody else's. A user who
+     * picks a network from the list and types its passphrase has said which
+     * network they want; making them say it again after every reboot is asking
+     * a question that has already been answered.
+     *
+     * The compiled-in pair remains the fallback, so a board with no saved
+     * credential behaves exactly as it always has. */
+    {
+        extern const char *wifiprefs_network(void);
+        extern int  wifiprefs_chosen(void);
+        extern int  wificred_get(const char *ssid, char *pass, uint32_t max);
+        static char pref_pass[64];
+        const char *pref = wifiprefs_network();
+
+        /* [step 347] The user has chosen, and there is nothing to join.
+         *
+         * The compiled-in pair is a FACTORY DEFAULT -- right for a board nobody
+         * has configured, wrong the moment somebody has. Without this, a
+         * forgotten network was rejoined from the binary on the next boot, so
+         * "forget" meant "until you reboot".
+         *
+         * Associating with an impossible SSID rather than skipping the
+         * association: step 313 skipped it and crashed the board, because
+         * everything after this line -- prof_authmode, and wifi_rx_start, which
+         * TRANSMITS a DHCP discover -- assumes a station that at least tried.
+         * The attempt fails, nothing is joined, and the sequence stays whole.
+         * The default value of WIFI_STA_SSID when no secrets header exists is
+         * "nat-os-no-such-network", so this is the codebase's own idea. */
+        if (wifiprefs_chosen() && (!pref || !pref[0] ||
+                                   !wificred_get(pref, pref_pass, sizeof pref_pass))) {
+            uart_puts("   assoc     no saved network; built-in retired\n");
+            wifi_join_ssid_pass("nat-os-no-such-network", "0123456789abcdef");
+            return;
+        }
+
+        if (pref && pref[0] && wificred_get(pref, pref_pass, sizeof pref_pass)) {
+            extern void wifi_join_ssid_pass(const char *s, const char *p);
+            uart_puts("   assoc     preferred network ");
+            uart_puts(pref);
+            uart_puts("\n");
+            wifi_join_ssid_pass(pref, pref_pass);
+            return;
+        }
+    }
 
     if (!cfg_fn || !conn_fn) {
         uart_puts("   assoc     : blob entry lacks set_config/connect\n");

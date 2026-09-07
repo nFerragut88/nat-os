@@ -1832,6 +1832,7 @@ void kmain(void)
         extern void pmkcache_prime(void);
         wificred_prime();
         pmkcache_prime();       /* [step 315] same rule: flash, before the radio */
+        { extern void wifiprefs_prime(void); wifiprefs_prime(); }
     }
 
     int found = (store_load() == 0);

@@ -19269,3 +19269,89 @@ open   the bring-up still auto-joins the compiled-in network (312/313b)
        50% ping loss seen once, unexplained; the step-319 panic
        the 8-char guard and cal are in; term/notes onto keyboard.c
 ```
+
+---
+
+## step 341-348 — choose once, and the six states of a new board
+
+`(this commit)`
+
+Asked for: select a network, enter a password once, auto-connect afterwards, and
+be able to turn the radio off to save RAM.
+
+### 341. wifiprefs, and the network the user chose
+
+Own flash sector at 0x204000, holding the preferred SSID and an enabled flag --
+own sector for the reason store.c taught twice: extending a versioned record
+discards every existing one, and the credentials next door were typed on a
+multi-tap keyboard.
+
+`wifi_try_connect()` has associated with `WIFI_STA_SSID` since step 218. It
+prefers the user's network now; the compiled-in pair stays as the factory
+default. A successful join records the preference, because **choosing is
+preferring** and a second confirmation is a second thing to forget.
+
+`calib.c` moved to irom to make room -- it draws and reads the panel and reaches
+flash only through store.c, which stays in iram (316's narrowed rule).
+
+### 342-343. The list a connected board shows
+
+Joined means no sweep (293), so the list was empty and nothing could be
+selected -- **the one state where a user most wants to change their mind offered
+no way to do it.** The connected network is now a row, built from what is
+already known.
+
+Then: still empty. The row came from the preference or `g_joined`, and **both
+are empty on a board that auto-connected from the binary** -- neither the view's
+join nor its preference had ever run. Falls back to `WIFI_STA_SSID`, which is
+what it actually connected to.
+
+### 344, 346. Forget has to mean leave
+
+`forget` removed the passphrase and the derived key and left the association
+running: the board kept using a network it had forgotten, which the user found
+by browsing the internet on it.
+
+Then `wifi_leave()` turned out to have a silent `return` when the blob's
+`_disconnect` entry is missing -- **while clearing the connected flag anyway**,
+so the view reported a disconnect that may never have happened. It reports which
+outcome now. Seventh instance in this project of a status claiming work that
+never ran, and the first with the proof one line above it.
+
+### 347. Forget has to survive a reboot
+
+The compiled-in credentials rejoined the forgotten network on the next boot, so
+`forget` meant *until you reboot*. They are a **factory default**: right for a
+board nobody has configured, wrong the moment somebody has. A `chosen` flag
+retires them, set by a join or a forget.
+
+**Not by skipping the association** -- step 313 skipped it and crashed the
+board, because `wifi_rx_start()` transmits a DHCP discover and assumes a station
+that at least tried. It associates with an impossible SSID instead, which is the
+codebase's own idea: `WIFI_STA_SSID` defaults to `nat-os-no-such-network`.
+
+### 348. And the deadlock that closed the loop
+
+`forget` required a **saved passphrase**. A board auto-connecting from the
+binary has none -- so no button, so `chosen` could never be set, so it rejoined
+from the binary forever. **The most ordinary board there is could not be
+reconfigured at all.**
+
+What is being forgotten is the connection. The passphrase is a detail of how it
+was made, and on that board there never was one.
+
+### 348a. The pattern
+
+Six defects, and every one lives in a state a NEW board occupies: no preference
+yet, no passphrase yet, connected and therefore not scanning, connected without
+having been asked. The happy path worked from the first flash.
+
+**A default is not the absence of configuration. It is a configuration, and the
+only one every user is guaranteed to see.**
+
+### State
+
+```
+works  choose once, reboot, connect; forget is permanent; ON/OFF persists
+open   the 313b restructure; the step-319 panic; wifi_leave's outcome unread
+```

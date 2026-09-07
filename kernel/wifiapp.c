@@ -9,6 +9,7 @@
 #include "wifi_secrets.h"
 #include "keyboard.h"
 #include "wificred.h"
+#include "wifiprefs.h"
 #include "job.h"
 #include "task.h"
 #include "uart.h"
@@ -265,6 +266,24 @@ static uint32_t num(char *b, uint32_t at, uint32_t v)
     return at;
 }
 
+/* [step 348] Is there anything to forget about this row?
+ *
+ * A saved passphrase, OR the fact that we are currently on it. The button used
+ * to require the first alone, and that produced a deadlock on the most ordinary
+ * board there is: one auto-connecting from the credentials compiled into
+ * wifi_secrets.h has NO stored passphrase, so no button appeared, so `chosen`
+ * could never be set, so it rejoined from the binary on every boot -- for good.
+ *
+ * What the user is forgetting is the CONNECTION. The passphrase is a detail of
+ * how it was made, and on this board there was never one to begin with. */
+static int can_forget(int row)
+{
+    extern int wifi_joined(void);
+    if (row < 0 || (uint32_t)row >= g_count) { return 0; }
+    if (wificred_has(g_aps[row].ssid))       { return 1; }
+    return (g_state == ST_JOINED) && wifi_joined();
+}
+
 static void draw_status(void)
 {
     display_fill_rect(0, STAT_Y, DISP_W, STAT_H, BG);
@@ -307,7 +326,10 @@ static void draw_status(void)
     const char *msg;
     uint16_t    col;
     switch (g_state) {
-    case ST_NORADIO:  msg = "starting";                 col = BUSY; break;
+    /* [step 341] Off by choice reads differently from off by accident. */
+    case ST_NORADIO:  msg = wifiprefs_enabled() ? "starting"
+                                                : "wifi is off -- tap ON";
+                      col = wifiprefs_enabled() ? BUSY : DIM;           break;
     case ST_STARTING: msg = "looking for networks";     col = BUSY; break;
     case ST_NOSTART:  msg = "radio did not start";      col = BAD;  break;
     case ST_SCANNING: msg = "looking for networks";     col = BUSY; break;
@@ -318,6 +340,23 @@ static void draw_status(void)
     case ST_FAILED:   msg = "join failed";              col = BAD;  break;
     default:          msg = "tap a network to join";    col = DIM;  break;
     }
+    /* [step 345] A selected row says what the next tap will do.
+     *
+     * Reported as "the forget option doesn't show when it's selected, it just
+     * goes to entering a password". That IS the behaviour -- after a forget
+     * there is no saved passphrase, so there is nothing to forget and the next
+     * tap must ask for one -- but nothing on screen said so, and a control that
+     * silently disappears is indistinguishable from one that is broken.
+     *
+     * The selection now names its own consequence, which is also the only
+     * indication anywhere that this list takes two taps. */
+    if (g_sel >= 0 && (uint32_t)g_sel < g_count &&
+        (g_state == ST_IDLE || g_state == ST_JOINED || g_state == ST_FAILED)) {
+        msg = wificred_has(g_aps[g_sel].ssid) ? "tap again to join"
+                                              : "again: add password";
+        col = FG;
+    }
+
     put(4u, STAT_Y + 8u, msg, col, BG);
 
     /* One button, whose meaning follows the radio: there is nothing to scan
@@ -351,10 +390,20 @@ static void draw_status(void)
      * to correct a wrong passphrase, or to hand the board to a different
      * network with the same name. Without it the store could be taught and
      * never untaught. */
-    if (g_sel >= 0 && (uint32_t)g_sel < g_count &&
-        wificred_has(g_aps[g_sel].ssid)) {
-        display_fill_rect(DISP_W - 66u, STAT_Y + 3u, 62u, 28u, COLOR_RED);
-        put(DISP_W - 60u, STAT_Y + 14u, "forget", FG, COLOR_RED);
+    /* [step 341] The radio switch. Always present, because "is the wifi on" is
+     * a question the user is entitled to answer at any moment -- unlike
+     * `forget`, which only means something when a saved network is selected. */
+    {
+        int on = wifiprefs_enabled();
+        display_fill_rect(DISP_W - 52u, STAT_Y + 3u, 48u, 28u,
+                          on ? COLOR_GREEN : COLOR_GREY);
+        put(DISP_W - 40u, STAT_Y + 14u, on ? "ON" : "OFF", COLOR_BLACK,
+            on ? COLOR_GREEN : COLOR_GREY);
+    }
+
+    if (can_forget(g_sel)) {
+        display_fill_rect(DISP_W - 118u, STAT_Y + 3u, 62u, 28u, COLOR_RED);
+        put(DISP_W - 112u, STAT_Y + 14u, "forget", FG, COLOR_RED);
     }
 }
 
@@ -772,6 +821,10 @@ static void join(uint32_t i)
 
     if (wifi_joined()) {
         LOG("joined -- waiting for an address");
+        /* [step 341] Choosing a network IS preferring it. There is no second
+         * confirmation to forget to give, and the next boot joins it without
+         * being asked. */
+        wifiprefs_set_network(g_aps[i].ssid);
         uint32_t k = 0u;
         for (; k < 32u && g_aps[i].ssid[k]; k++) { g_joined[k] = g_aps[i].ssid[k]; }
         g_joined[k] = 0;
@@ -869,6 +922,55 @@ static void view_settle(void)
     else if (wifi_joined()) { g_state = ST_JOINED;   }
     else                    { g_state = ST_IDLE;     }
 
+    /* [step 342] The connected network belongs IN the list.
+     *
+     * Reported as: it auto-connected, and there is no way to forget the
+     * network. Both halves are this view working as designed and the design
+     * being wrong. Joined means no sweep (293: scanning retunes the radio off
+     * the access point), so the list is empty; `forget` only appears for a
+     * SELECTED network, and nothing can be selected from an empty list.
+     *
+     * So the one state in which a user most wants to change their mind about a
+     * network is the one state that offered no way to do it.
+     *
+     * The network we are on is known without scanning for it -- it is the
+     * preference that was just used to join. One row, from what we already
+     * know, and everything else in the view works on it: select it, see its
+     * green dot, forget it, join it again. */
+    if (wifi_joined() && g_count == 0u) {
+        /* [step 343] Three sources, because a join can happen three ways.
+         *
+         * wifiprefs_network() is set when a join succeeds THROUGH THIS VIEW.
+         * g_joined is set by join(). Neither runs when the bring-up associates
+         * on its own with the compiled-in network -- which is exactly what a
+         * board that has never been told a preference does.
+         *
+         * So on the most ordinary board there is, both were empty: joined means
+         * no sweep, and no name means no row, and the list stayed empty
+         * forever with nothing to select and nothing to forget. Reported as
+         * "still no networks listed", and it was neither the flash nor the
+         * radio -- the image on the board verified byte for byte. */
+        const char *n = wifiprefs_network();
+        if (!n || !n[0]) { n = g_joined; }
+        if (!n || !n[0]) { n = WIFI_STA_SSID; }
+        if (n && n[0]) {
+            uint32_t k = 0u;
+            for (; k < 32u && n[k]; k++) { g_aps[0].ssid[k] = n[k]; }
+            g_aps[0].ssid[k] = 0;
+            g_aps[0].rssi = -50;        /* connected; strength unmeasured */
+            g_aps[0].ch   = 0u;
+            g_aps[0].auth = 1u;
+            g_count = 1u;
+
+            /* The status line names it too -- an auto-join happens inside the
+             * bring-up, so join() never ran and never filled this in. */
+            if (!g_joined[0]) {
+                for (k = 0u; k < 32u && n[k]; k++) { g_joined[k] = n[k]; }
+                g_joined[k] = 0;
+            }
+        }
+    }
+
     /* Sweep when there is a radio, nothing is connected and the list is empty.
      * NOT while joined: scanning retunes the radio off the access point and
      * drops the connection (293). */
@@ -903,6 +1005,15 @@ void wifiapp_open(void)
     /* No radio? Ask for one; opening this view IS the request (308). The
      * bring-up calls view_settle() when it finishes, so the view lands where a
      * reopen would have put it. */
+    if (!wifiprefs_enabled()) {
+        /* [step 341] Off by choice. Nothing is started, so the driver never
+         * allocates -- which is the whole of what "disabled" saves. */
+        g_state = ST_NORADIO;
+        g_full  = 1;
+        g_dirty++;
+        return;
+    }
+
     if (!job_busy() && !blob_ready()) {
         LOG("no radio -- starting one");
         (void)job_submit(start_radio, "starting radio");
@@ -1064,10 +1175,28 @@ void wifiapp_touch(uint32_t x, uint32_t y, int down)
     }
 
 
-    /* [step 296] forget, checked before the scan/start button beside it. */
-    if (y >= STAT_Y && x >= DISP_W - 66u &&
-        g_sel >= 0 && (uint32_t)g_sel < g_count &&
-        wificred_has(g_aps[g_sel].ssid)) {
+    /* [step 341] The radio switch, checked first: rightmost, and the only
+     * control that is always live. */
+    if (y >= STAT_Y && x >= DISP_W - 52u) {
+        int on = !wifiprefs_enabled();
+        wifiprefs_set_enabled(on);
+        if (!on) {
+            extern void wifi_leave(void);
+            extern int  wifi_joined(void);
+            if (wifi_joined()) { wifi_leave(); }
+            LOG("wifi off (memory returns on reboot)");
+        } else {
+            LOG("wifi on");
+        }
+        g_count = 0u;
+        g_sel   = -1;
+        view_settle();
+        return;
+    }
+
+    /* [step 296] forget, beside the switch. */
+    if (y >= STAT_Y && x >= DISP_W - 118u && x < DISP_W - 52u &&
+        can_forget(g_sel)) {
         {   /* [step 315] The cached PMK was derived FROM this passphrase.
              * Leaving it behind would make a re-entered password appear to be
              * ignored -- the cache would answer with the key from the old
@@ -1076,6 +1205,49 @@ void wifiapp_touch(uint32_t x, uint32_t y, int down)
             pmkcache_forget(g_aps[g_sel].ssid);
         }
         (void)wificred_forget(g_aps[g_sel].ssid);
+
+        /* [step 344] Forgetting a network means LEAVING it.
+         *
+         * Reported exactly: "when I clicked forget, I can still access the
+         * internet on such network". The key was gone and the association was
+         * not, so the only evidence anything had happened was being asked for a
+         * password the next time -- while the board carried on using the
+         * connection it had supposedly forgotten.
+         *
+         * Three things have to go, and until now only the first did:
+         *   the passphrase   wificred_forget
+         *   the derived key  pmkcache_forget (315c)
+         *   the preference   or the next boot rejoins it without being asked
+         * and then the association itself, because a credential store is not
+         * what keeps a station on a network -- the radio is. */
+        {
+            extern const char *wifiprefs_network(void);
+            extern void        wifiprefs_set_network(const char *ssid);
+            extern void        wifi_leave(void);
+            extern int         wifi_joined(void);
+
+            const char *pref = wifiprefs_network();
+            uint32_t k = 0u;
+            while (k < 32u && pref[k] && pref[k] == g_aps[g_sel].ssid[k]) { k++; }
+            if (pref[k] == g_aps[g_sel].ssid[k]) { wifiprefs_set_network(""); }
+
+            /* [step 347] Forgetting is choosing too. Without this the built-in
+             * credentials rejoin the very network just forgotten, on the next
+             * boot, and "forget" means "until you reboot". */
+            { extern void wifiprefs_set_chosen(void); wifiprefs_set_chosen(); }
+
+            if (wifi_joined()) {
+                LOGS("left ", g_aps[g_sel].ssid);
+                wifi_leave();
+            }
+        }
+
+        /* The list is now a list of networks we are not on. Rebuild it. */
+        g_count = 0u;
+        g_sel   = -1;
+        view_settle();
+        g_dirty++;
+        return;
         g_dirty++;
         return;                 /* the dot goes; a double tap now asks */
     }
