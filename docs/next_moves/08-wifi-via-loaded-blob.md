@@ -20955,3 +20955,107 @@ open   APP_MAX pinned at 4 by the strip geometry (224..288 at 16 per slot)
        ping's hardcoded peer id (368b)
        VM-08 image identity; per-task stacks (352c); the null-sp fault (351)
 ```
+
+---
+
+## step 369 — an application can own the screen, and the `else` that broke it
+
+*Written at step 370, one commit late. The rule here is that the entry ships
+with the code; `55e4246` shipped without one because the command that wrote it
+failed to parse and nothing checked. Labelled rather than backdated, the same
+way 355 was.*
+
+A VM program's canvas was **180 x 14**. It is now **240 x 202** when the program
+is the one you are looking at — nineteen times the area, and the reason every
+NatScript program until now was really a serial-console program with a status
+line.
+
+```
++----------------------------+
+| paint                  [X] |  kernel chrome, 22 rows, out of reach
+|                            |
+|      the program's canvas  |
++----------------------------+
+| ping   running       [x]   |  the strips still exist
++----------------------------+
+```
+
+Tapping a program icon hands it the region. `run` from the shell still gives a
+strip — verified: `[tap] canvas 180x14`.
+
+### 369a. The safety property is the top 22 rows
+
+The program's viewport begins at `APP_FULL_Y0`, so **it cannot paint the bar
+above it**, and `desktop_chrome_touch()` checks that button before anything
+else. A program that hangs, fills its canvas, or draws a convincing fake of the
+bar somewhere inside its region still cannot take the real one away.
+
+That is the argument `app.h` already makes about the strips' close button —
+*"the one control the user needs in order to escape a misbehaving program is the
+one control that program cannot touch"* — applied to a region nineteen times the
+size. The rule scaled; only the numbers changed.
+
+### 369b. `else { raycast_frame(); }`
+
+Reported as: **"why is paint opening up 3D view? a bit strange"**.
+
+```c
+if      (desktop_active()) desktop_frame();
+else if (desktop_notes())  notes_frame();
+...
+else                       raycast_frame();      /* <- */
+```
+
+That final `else` was correct for as long as `MODE_3D` was the only mode not
+named above it. It is not a branch; it is **a claim that no seventh mode will
+ever exist**, and it was wrong within an hour of one being added.
+
+The chain names `desktop_3d()` now and has **no `else`**. A mode added later and
+forgotten here shows a stale region — a visible bug — rather than inheriting the
+raycaster, which looks like a feature misbehaving.
+
+The same assumption sat in the touch path: `if (down && !desktop_active())`
+steered the raycaster from any touch in the top 224 rows of *any* view.
+Invisible while nothing else used that region, wrong the moment something did.
+
+**Both were "everything else" standing in for "the one other thing"** — the same
+defect as 367's `ARENA_MAX 4`, which stated a quantity where a relationship was
+meant, and 356's permission bitmap, which mirrored a table order by hand. A
+default that encodes today's census is wrong on the day the census changes.
+
+### 369c. Ownership has to be given back
+
+| | |
+|---|---|
+| the X | `app_view_focus(-1)`, back to the launcher |
+| the program exits, faults, or is killed | `retire()` drops the focus; `desktop_chrome()` notices and returns to the launcher |
+| another view opens | the close path already gave the band back at 277 |
+
+`apply_view()` is one function deciding what viewport a program should have,
+because three call sites deciding it independently is how a program ends up
+drawing in two places or in none.
+
+### 369d. Verified, and what it cost
+
+Flashed and confirmed: the paint icon hands paint the region, bar and X above
+it, raycaster out of the way.
+
+Five flash attempts before that had failed with *"Could not open COM5, the port
+doesn't exist"* seconds after a check that had just seen the port — so the
+report *"paint is still opening the 3D view"* was made against an image that did
+not contain the fix, and saying so was the only useful answer at that moment.
+
+Then the retry loop ran the flash **eight times**, because its success check
+matched the wrong output line. It succeeded on the first attempt; the other
+seven were redundant writes to a part with a finite erase count. Harmless at
+this scale, and exactly the sort of thing that is not harmless at another.
+
+### State
+
+```
+works  an application owns 240x202 when focused, with the way out outside its
+       reach; every mode in the display loop named rather than assumed
+open   no NatScript program has an ICON, so none of them can reach this --
+       they are shell-launched, which still means a strip
+       APP_MAX 4; VM-08 image identity; per-task stacks (352c)
+```
