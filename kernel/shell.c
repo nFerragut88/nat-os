@@ -320,12 +320,42 @@ static void cmd_progs(void)
  * WITHOUT granting would produce one that silently cannot reach hardware, and a
  * path that granted the wrong entry would hand it somebody else's capabilities.
  * Both are quiet failures, and the second is the more dangerous. */
+/* [step 371] Two of launch_entry()'s failures print their own reason, and the
+ * caller must not print a second one over the top.
+ *
+ * Found the way these always are: `run tamper` correctly refused with "does not
+ * match the manifest it was built with", and cmd_run then added "the heap could
+ * not find 512 bytes" -- false, and the FIRST thing a reader would act on.
+ *
+ * Step 364 fixed exactly this shape three steps ago. It came back because
+ * cmd_run enumerates the reasons a launch can fail, and this change added a
+ * third without telling it. A function that lists its caller's failure modes is
+ * wrong every time one is added; the fix is for the failure to say whether it
+ * has already spoken. */
+#define LAUNCH_EXPLAINED (-2)
+
 static int launch_entry(const shell_program_t *p)
 {
     /* [step 356] Resolve the manifest BEFORE starting anything. A program that
      * asked for a device this board does not have should not run at all: it
      * would run blind, reaching for a sensor that silently is not there, and
      * that is worse than refusing. */
+    /* [step 371] The manifest is checked against the bytes it was written for,
+     * BEFORE the names are resolved and long before anything is granted. A
+     * program whose image and manifest have drifted apart is a program about
+     * to run under permissions that were reviewed for different code. */
+    uint32_t have = app_image_id(p->img, p->len, p->perm_names, p->perm_count);
+    if (have != p->image_id) {
+        uart_puts("   launch    refused: ");
+        uart_puts(p->name);
+        uart_puts(" does not match the manifest it was built with (id ");
+        uart_put_hex(have);
+        uart_puts(", expected ");
+        uart_put_hex(p->image_id);
+        uart_puts(")\n");
+        return LAUNCH_EXPLAINED;
+    }
+
     uint32_t unknown = 0xFFFFFFFFu;
     uint32_t bits = device_perms_from_names(p->perm_names, p->perm_count, &unknown);
     if (unknown != 0xFFFFFFFFu) {
@@ -359,6 +389,9 @@ static void cmd_run(const char *name)
     for (int i = 0; i < g_prog_count; i++) {
         if (str_eq(g_progs[i].name, name)) {
             int id = launch_entry(&g_progs[i]);
+            if (id == LAUNCH_EXPLAINED) {
+                return;                 /* it said why; do not guess over it */
+            }
             if (id < 0) {
                 /* [step 364] This used to say "no free slot or no memory" and
                  * leave the reader to guess which. It cost a session: the heap

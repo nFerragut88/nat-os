@@ -374,6 +374,32 @@ def emit_header(data, name, labels, source, permissions=None):
         lines.append(f"#define {name}_perms ((const char *const *)0)")
     lines.append("")
 
+    # [step 371] The image id: FNV-1a over the bytes AND the manifest.
+    #
+    # NOT A SIGNATURE, and the difference matters. This lives in the same
+    # kernel image as the bytes it describes, so anyone able to reflash the
+    # board rewrites both -- see device.h, which has said exactly that since
+    # permissions were written.
+    #
+    # What it does catch is DRIFT: a stale generated header, a program table
+    # entry pointing at another program's array, a manifest edited without
+    # rebuilding the image it grants for. Those are mechanical failures with no
+    # attacker in them, and they are the ones that actually happen.
+    h = 2166136261
+    for b in data:
+        h = ((h ^ b) * 16777619) & 0xFFFFFFFF
+    for pname in perms:          # not `name`: that is the PROGRAM's name, and
+        # shadowing it here emitted LIGHT_ID for a program called meter.
+        for ch in pname.encode("utf-8") + bytes([0]):
+            h = ((h ^ ch) * 16777619) & 0xFFFFFFFF
+    lines += [
+        "/* [step 371] Image id: FNV-1a over the bytes above AND the manifest.",
+        " * A checksum that detects drift, not a signature that resists anyone:",
+        " * it sits in the image it describes. See device.h. */",
+        f"#define {name.upper()}_ID 0x{h:08x}u",
+        "",
+    ]
+
     for label, off in sorted(labels.items(), key=lambda kv: kv[1]):
         lines.append(f"#define {name.upper()}_AT_{label.upper()} {off}u")
     lines += ["", "#endif", ""]

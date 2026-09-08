@@ -21150,3 +21150,94 @@ works  NatScript -> icon -> full screen -> a sensor, with no kernel change
 open   APP_MAX 4; VM-08 image identity; per-task stacks (352c); ping's
        hardcoded peer id (368b); the null-sp fault (351)
 ```
+
+---
+
+## step 371 — VM-08, and the part of it that cannot be built here
+
+`device.h` has carried the same sentence since permissions were written:
+
+> *"A permission grant is only meaningful if the image it applies to cannot be
+> swapped for another, and nat-os has no image identity."*
+
+**A content hash cannot deliver that, and this step does not claim to.**
+
+Programs are `static const uint8_t` arrays **inside the kernel image**. A hash
+stored in that same image is rewritten by anyone who can rewrite the program it
+describes. What the sentence requires is a root of trust the attacker cannot
+reach: ESP32 secure boot with a key burned into **eFuses** — one-time
+programmable, unrecoverable if wrong, and not something to do to somebody's only
+board while passing through.
+
+So VM-08 as written stays open, and the header now says why rather than saying
+nothing.
+
+### 371a. What was built instead, and what it is worth
+
+The narrower property, which is real: **the manifest is bound to the bytes it
+was written for.**
+
+`vasm` computes FNV-1a over each image *and* its permission names and emits
+`VM_APP_X_ID`. `launch_entry()` recomputes and compares **before** resolving
+names and long before granting anything.
+
+That catches a stale generated header, a table entry pointing at another
+program's array, and a manifest edited without rebuilding the image it grants
+for. Mechanical failures, no attacker in any of them — and each one would let a
+program run under permissions that were reviewed for different code.
+
+It also becomes load-bearing the moment a program arrives from anywhere but the
+kernel image: flash, a card, a network. Nothing does yet.
+
+**FNV-1a rather than something stronger, deliberately.** A 32-bit checksum is
+the right size for detecting drift and the wrong size for resisting an
+adversary. Reaching for SHA-256 here would dress a drift check as a signature,
+which is the exact failure this log has spent two reports on.
+
+### 371b. `run tamper` is refused, permanently
+
+A table entry with `counter`'s image and `squares`' id:
+
+```
+> run counter
+   started id=0 perms=none
+> run tamper
+   launch    refused: tamper does not match the manifest it was built with
+                      (id 0xa68614fb, expected 0x23068aee)
+> run meter
+   started id=1 perms=light
+```
+
+It is a permanent entry, not a test that ran once. If `run tamper` ever starts,
+the check has stopped working and every other id in the table is decoration.
+
+### 371c. And step 364's bug came straight back
+
+The first run printed **two** reasons:
+
+```
+refused: tamper does not match the manifest it was built with (...)
+cannot start tamper: the heap could not find 512 bytes; 3232
+```
+
+The second is false, and it is the first thing a reader would act on.
+
+Step 364 fixed exactly this shape — a diagnostic naming a cause it had not
+established — **three steps ago**. It returned because `cmd_run` *enumerates*
+the reasons a launch can fail, and this change added a third without telling it.
+
+**A function that lists its caller's failure modes is wrong every time one is
+added.** So the failure now says whether it has already spoken
+(`LAUNCH_EXPLAINED`) and the caller stays quiet, instead of the caller keeping a
+list it cannot keep current. Same correction as 367's `ARENA_MAX`: replace a
+restated fact with a relationship.
+
+### State
+
+```
+works  every image bound to its manifest, checked before any grant, with a
+       permanent entry that must always be refused
+open   VM-08 PROPER -- needs secure boot and eFuses; deliberately not done
+       APP_MAX 4; per-task stacks (352c); ping's peer id (368b); the null-sp
+       fault (351)
+```

@@ -36,6 +36,11 @@ static const uint8_t vm_app_blit[] = {
 #define VM_APP_BLIT_PERM_COUNT 0u
 #define vm_app_blit_perms ((const char *const *)0)
 
+/* [step 371] Image id: FNV-1a over the bytes above AND the manifest.
+ * A checksum that detects drift, not a signature that resists anyone:
+ * it sits in the image it describes. See device.h. */
+#define VM_APP_BLIT_ID 0x2e0e0b9bu
+
 #define VM_APP_BLIT_AT_START 0u
 #define VM_APP_BLIT_AT_BUILD 24u
 #define VM_APP_BLIT_AT_LOOP 44u

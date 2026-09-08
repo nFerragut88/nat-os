@@ -198,6 +198,11 @@ static const uint8_t vm_app_tap[] = {
 #define VM_APP_TAP_PERM_COUNT 0u
 #define vm_app_tap_perms ((const char *const *)0)
 
+/* [step 371] Image id: FNV-1a over the bytes above AND the manifest.
+ * A checksum that detects drift, not a signature that resists anyone:
+ * it sits in the image it describes. See device.h. */
+#define VM_APP_TAP_ID 0x6372bd86u
+
 #define VM_APP_TAP_AT_START 0u
 #define VM_APP_TAP_AT_L1_WHILE 316u
 #define VM_APP_TAP_AT_L2_ENDWHILE 448u

@@ -100,6 +100,25 @@ void        app_views_suspend(int on);
  * strip, which is why `ps` and the band still work while one is focused. */
 #define APP_FULL_Y0  22u
 
+/* [step 371] FNV-1a over an image AND its manifest, recomputed at load and
+ * compared with what the assembler wrote down.
+ *
+ * WHAT THIS IS NOT. It is not a signature and it is not the image identity
+ * device.h asks for. The id lives in the same kernel image as the bytes it
+ * describes, so anybody able to reflash the board rewrites both -- which is
+ * exactly the sentence device.h has carried since permissions were written.
+ *
+ * WHAT IT IS. A binding between a manifest and the bytes it was granted for. A
+ * stale generated header, a table entry pointing at another program's array, a
+ * manifest edited without rebuilding -- those are mechanical failures with no
+ * attacker in them, and they are the ones that actually happen. They are also
+ * the ones that would let a program run under somebody else's permissions.
+ *
+ * It becomes load-bearing the moment a program comes from anywhere other than
+ * the kernel image: flash, a card, a network. Nothing does yet. */
+uint32_t    app_image_id(const uint8_t *img, uint32_t len,
+                         const char *const *perms, uint32_t nperms);
+
 void        app_view_focus(int id);
 int         app_view_focused(void);
 

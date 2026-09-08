@@ -35,6 +35,11 @@ typedef struct {
      * Still containment rather than security, and device.h says why: a grant is
      * only meaningful if the image it applies to cannot be substituted, and
      * nothing here is signed. */
+    /* [step 371] What the assembler computed over the image AND the manifest.
+     * Recomputed at launch; a mismatch refuses. See app.h for why this is a
+     * drift check and not a signature. */
+    uint32_t           image_id;
+
     const char *const *perm_names;
     uint32_t           perm_count;
 } shell_program_t;

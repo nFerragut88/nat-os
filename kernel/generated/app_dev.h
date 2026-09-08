@@ -67,6 +67,11 @@ static const uint8_t vm_app_dev[] = {
 #define VM_APP_DEV_PERM_COUNT 3u
 static const char *const vm_app_dev_perms[] = { "light", "store", "echo" };
 
+/* [step 371] Image id: FNV-1a over the bytes above AND the manifest.
+ * A checksum that detects drift, not a signature that resists anyone:
+ * it sits in the image it describes. See device.h. */
+#define VM_APP_DEV_ID 0x30d6a26cu
+
 #define VM_APP_DEV_AT_START 0u
 #define VM_APP_DEV_AT_NAMES 44u
 #define VM_APP_DEV_AT_SETUP 124u

@@ -33,6 +33,30 @@ static app_t g_apps[APP_MAX];
  * restores the viewport and the next frame they paint puts them back. */
 static int g_views_suspended;
 
+/* [step 371] See app.h for what this is and, more importantly, what it is not.
+ *
+ * FNV-1a rather than anything stronger, deliberately. A 32-bit checksum is the
+ * right size for detecting drift and the wrong size for resisting an
+ * adversary -- and using SHA-256 here would imply a claim this cannot back,
+ * which is the failure this project has spent two reports on. */
+uint32_t app_image_id(const uint8_t *img, uint32_t len,
+                      const char *const *perms, uint32_t nperms)
+{
+    uint32_t h = 2166136261u;
+    for (uint32_t i = 0; i < len; i++) {
+        h = (h ^ img[i]) * 16777619u;
+    }
+    for (uint32_t i = 0; i < nperms; i++) {
+        const char *p = perms ? perms[i] : 0;
+        if (!p) { continue; }
+        uint32_t k = 0;
+        while (p[k]) { h = (h ^ (uint8_t)p[k]) * 16777619u; k++; }
+        h = (h ^ 0u) * 16777619u;      /* the terminator, so "ab","c" differs
+                                        * from "a","bc" */
+    }
+    return h;
+}
+
 /* [step 369] Which application, if any, holds the main region. */
 static int g_focused = -1;
 

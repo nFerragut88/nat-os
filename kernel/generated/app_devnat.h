@@ -137,6 +137,11 @@ static const uint8_t vm_app_devnat[] = {
 #define VM_APP_DEVNAT_PERM_COUNT 3u
 static const char *const vm_app_devnat_perms[] = { "light", "store", "echo" };
 
+/* [step 371] Image id: FNV-1a over the bytes above AND the manifest.
+ * A checksum that detects drift, not a signature that resists anyone:
+ * it sits in the image it describes. See device.h. */
+#define VM_APP_DEVNAT_ID 0xdc89ff23u
+
 #define VM_APP_DEVNAT_AT_START 0u
 #define VM_APP_DEVNAT_AT_L2_GOT_LIGHT 48u
 #define VM_APP_DEVNAT_AT_L4_GOT_STORE 104u

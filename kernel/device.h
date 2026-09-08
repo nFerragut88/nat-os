@@ -180,7 +180,8 @@ void device_init(void);
  * never meant to, and make the intended capability surface explicit and
  * reviewable next to each program's arena size. That is worth having on its
  * own. It must not be described as security in any report until image identity
- * exists.
+ * exists -- and the content hash added at step 371 is NOT that, for the reason
+ * given above: it sits in the image it describes.
  *
  * A refusal is NOT a fault, for the same reason a bad channel is not: asking
  * for something you were not granted is legal, and a program that cannot

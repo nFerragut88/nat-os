@@ -921,13 +921,13 @@ static const shell_program_t PROGRAMS[] = {
      * through the device table, so most of these hold nothing -- which is the
      * point: a program that was never considered gets no hardware rather than
      * all of it. */
-    { "counter", vm_app_a,     VM_APP_A_LEN,     512u, VM_APP_A_AT_COUNTER, vm_app_a_perms, VM_APP_A_PERM_COUNT },
-    { "squares", vm_app_b,     VM_APP_B_LEN,     512u, VM_APP_B_AT_SQUARE, vm_app_b_perms, VM_APP_B_PERM_COUNT },
-    { "rogue",   vm_app_rogue, VM_APP_ROGUE_LEN, 256u, VM_APP_ROGUE_AT_COUNTER, vm_app_rogue_perms, VM_APP_ROGUE_PERM_COUNT },
-    { "draw",    vm_app_draw,  VM_APP_DRAW_LEN,  512u, VM_APP_DRAW_AT_NAME, vm_app_draw_perms, VM_APP_DRAW_PERM_COUNT },
-    { "gfxrogue", vm_app_gfx_rogue, VM_APP_GFX_ROGUE_LEN, 256u, 0u, vm_app_gfx_rogue_perms, VM_APP_GFX_ROGUE_PERM_COUNT },
-    { "paint",   vm_app_paint, VM_APP_PAINT_LEN, 512u, 0u, vm_app_paint_perms, VM_APP_PAINT_PERM_COUNT },
-    { "blit",    vm_app_blit,  VM_APP_BLIT_LEN,  512u, 0u, vm_app_blit_perms, VM_APP_BLIT_PERM_COUNT },
+    { "counter", vm_app_a,     VM_APP_A_LEN,     512u, VM_APP_A_AT_COUNTER, VM_APP_A_ID, vm_app_a_perms, VM_APP_A_PERM_COUNT },
+    { "squares", vm_app_b,     VM_APP_B_LEN,     512u, VM_APP_B_AT_SQUARE, VM_APP_B_ID, vm_app_b_perms, VM_APP_B_PERM_COUNT },
+    { "rogue",   vm_app_rogue, VM_APP_ROGUE_LEN, 256u, VM_APP_ROGUE_AT_COUNTER, VM_APP_ROGUE_ID, vm_app_rogue_perms, VM_APP_ROGUE_PERM_COUNT },
+    { "draw",    vm_app_draw,  VM_APP_DRAW_LEN,  512u, VM_APP_DRAW_AT_NAME, VM_APP_DRAW_ID, vm_app_draw_perms, VM_APP_DRAW_PERM_COUNT },
+    { "gfxrogue", vm_app_gfx_rogue, VM_APP_GFX_ROGUE_LEN, 256u, 0u, VM_APP_GFX_ROGUE_ID, vm_app_gfx_rogue_perms, VM_APP_GFX_ROGUE_PERM_COUNT },
+    { "paint",   vm_app_paint, VM_APP_PAINT_LEN, 512u, 0u, VM_APP_PAINT_ID, vm_app_paint_perms, VM_APP_PAINT_PERM_COUNT },
+    { "blit",    vm_app_blit,  VM_APP_BLIT_LEN,  512u, 0u, VM_APP_BLIT_ID, vm_app_blit_perms, VM_APP_BLIT_PERM_COUNT },
     /* The first program that reaches a peripheral. Its arena is larger because
      * it holds a name buffer the kernel writes into. It enumerates the whole
      * table, reads the light sensor, claims a store slot and round-trips a
@@ -937,17 +937,17 @@ static const shell_program_t PROGRAMS[] = {
      * now three .permission lines in app_dev.vasm. The image declares; the
      * kernel resolves and disposes. */
     { "dev",     vm_app_dev,   VM_APP_DEV_LEN,   768u, VM_APP_DEV_AT_PUBLISH,
-      vm_app_dev_perms, VM_APP_DEV_PERM_COUNT },
+      VM_APP_DEV_ID, vm_app_dev_perms, VM_APP_DEV_PERM_COUNT },
     /* The first program the kernel can call into. Its main flow is an empty
      * spin; everything it prints comes from handlers the kernel entered. It
      * needs no device at all -- events arrive without asking. */
-    { "evt",     vm_app_evt,   VM_APP_EVT_LEN,   768u, VM_APP_EVT_AT_PUBLISH, vm_app_evt_perms, VM_APP_EVT_PERM_COUNT },
+    { "evt",     vm_app_evt,   VM_APP_EVT_LEN,   768u, VM_APP_EVT_AT_PUBLISH, VM_APP_EVT_ID, vm_app_evt_perms, VM_APP_EVT_PERM_COUNT },
     /* [step 355] The evidence that a stack frame works. r15 is a stack pointer
      * now, initialised to the top of the arena, and this program calls a
      * function that allocates locals, which calls another that allocates its
      * own, and checks on the way out that nothing was trampled. The convention
      * is docs/vm-abi.md section 6; this is whether it is true. */
-    { "frame",   vm_app_frame, VM_APP_FRAME_LEN, 512u, 0u, vm_app_frame_perms, VM_APP_FRAME_PERM_COUNT },
+    { "frame",   vm_app_frame, VM_APP_FRAME_LEN, 512u, 0u, VM_APP_FRAME_ID, vm_app_frame_perms, VM_APP_FRAME_PERM_COUNT },
     /* [step 357] The first program in this table that nobody wrote in
      * assembly. tools/app_hello.nat is NatScript; natc compiles it to the same
      * assembly every other entry is written in, and vasm assembles that.
@@ -958,7 +958,7 @@ static const shell_program_t PROGRAMS[] = {
      * the image share the arena (vm-abi.md section 6) and nothing but
      * VM_FAULT_BOUNDS stands between them. */
     { "hello",   vm_app_hello, VM_APP_HELLO_LEN, 3072u, 0u,
-      vm_app_hello_perms, VM_APP_HELLO_PERM_COUNT },
+      VM_APP_HELLO_ID, vm_app_hello_perms, VM_APP_HELLO_PERM_COUNT },
     /* [step 358] app_dev, rewritten in NatScript -- the test the proposal set
      * for the language. It is registered ALONGSIDE `dev` rather than replacing
      * it, because "shorter and clearer" is a claim to be checked by running
@@ -969,7 +969,7 @@ static const shell_program_t PROGRAMS[] = {
      * what it can say are one list. */
     { "devnat",  vm_app_devnat, VM_APP_DEVNAT_LEN, 2048u,
       VM_APP_DEVNAT_AT_G_PUBLISH,
-      vm_app_devnat_perms, VM_APP_DEVNAT_PERM_COUNT },
+      VM_APP_DEVNAT_ID, vm_app_devnat_perms, VM_APP_DEVNAT_PERM_COUNT },
     /* [step 359] app_evt, rewritten in NatScript. The VM has been able to call
      * INTO a program since events were added; `when` and `every` are the two
      * pieces of syntax the proposal cared most about, and until now the
@@ -979,7 +979,7 @@ static const shell_program_t PROGRAMS[] = {
      * wait and everything it prints is printed by code the kernel entered. */
     { "evtnat",  vm_app_evtnat, VM_APP_EVTNAT_LEN, 1024u,
       VM_APP_EVTNAT_AT_G_PUBLISH,
-      vm_app_evtnat_perms, VM_APP_EVTNAT_PERM_COUNT },
+      VM_APP_EVTNAT_ID, vm_app_evtnat_perms, VM_APP_EVTNAT_PERM_COUNT },
     /* [step 362] The first NatScript program with a user interface. Every one
      * before it was a serial-console program on a board whose entire point is
      * a panel and a touchscreen: `fill` and `text` were reachable and `touch`
@@ -997,9 +997,9 @@ static const shell_program_t PROGRAMS[] = {
      * image the compiler produced. natc knows both numbers; nothing carries
      * them across. */
     { "tap",     vm_app_tap,   VM_APP_TAP_LEN,   3072u, VM_APP_TAP_AT_G_TAPS,
-      vm_app_tap_perms, VM_APP_TAP_PERM_COUNT },
+      VM_APP_TAP_ID, vm_app_tap_perms, VM_APP_TAP_PERM_COUNT },
     { "str",     vm_app_str,   VM_APP_STR_LEN,   1024u, 0u,
-      vm_app_str_perms, VM_APP_STR_PERM_COUNT },
+      VM_APP_STR_ID, vm_app_str_perms, VM_APP_STR_PERM_COUNT },
     /* [step 370] The first NatScript program with an icon, and the first that
      * is an application rather than a demonstration of a mechanism. It reads
      * the light sensor, draws a sweeping trace of what it read, and prints the
@@ -1009,9 +1009,22 @@ static const shell_program_t PROGRAMS[] = {
      * `light` is its only permission and it is declared in the .nat source;
      * the manifest here comes from that, not from a bitmap written by hand. */
     { "meter",   vm_app_meter, VM_APP_METER_LEN, 3072u, 0u,
-      vm_app_meter_perms, VM_APP_METER_PERM_COUNT },
-    { "ping",    vm_app_ping,  VM_APP_PING_LEN,  512u, 0u, vm_app_ping_perms, VM_APP_PING_PERM_COUNT },
-    { "pong",    vm_app_pong,  VM_APP_PONG_LEN,  512u, 0u, vm_app_pong_perms, VM_APP_PONG_PERM_COUNT },
+      VM_APP_METER_ID, vm_app_meter_perms, VM_APP_METER_PERM_COUNT },
+    /* [step 371] A DELIBERATELY WRONG ENTRY, kept so the check can be seen to
+     * bite rather than asserted to.
+     *
+     * Same image and same manifest as `counter`, with the id from `squares`.
+     * That is precisely the drift this exists to catch: a table entry whose
+     * recorded identity belongs to different bytes, which is one editing slip
+     * away from a program running under permissions reviewed for other code.
+     *
+     * `run tamper` must always refuse. If it ever starts, the check has
+     * stopped working and every other entry's id is decoration -- which is why
+     * this is a permanent table entry and not a test that ran once. */
+    { "tamper",  vm_app_a,     VM_APP_A_LEN,     512u, VM_APP_A_AT_COUNTER,
+      VM_APP_B_ID, vm_app_a_perms, VM_APP_A_PERM_COUNT },
+    { "ping",    vm_app_ping,  VM_APP_PING_LEN,  512u, 0u, VM_APP_PING_ID, vm_app_ping_perms, VM_APP_PING_PERM_COUNT },
+    { "pong",    vm_app_pong,  VM_APP_PONG_LEN,  512u, 0u, VM_APP_PONG_ID, vm_app_pong_perms, VM_APP_PONG_PERM_COUNT },
 };
 #define PROGRAM_COUNT ((int)(sizeof PROGRAMS / sizeof PROGRAMS[0]))
 
