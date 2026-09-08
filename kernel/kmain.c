@@ -1414,9 +1414,19 @@ static void task_display(void)
             wifiapp_frame();
         } else if (desktop_web()) {
             browser_frame();
-        } else {
+        } else if (desktop_3d()) {
             raycast_frame();
         }
+        /* [step 369] No `else`. This chain used to end `else { raycast_frame();
+         * }`, which was right while MODE_3D was the only mode not named above
+         * -- and made the 3D view render over a program's region the moment a
+         * seventh mode existed. The symptom was "why is the paint app opening
+         * the 3D view".
+         *
+         * MODE_APP draws nothing here on purpose: the program owns its region
+         * and paints it on its own schedule. A mode added later and forgotten
+         * here now shows a stale region, which is a visible bug, rather than
+         * inheriting the raycaster, which looks like a feature misbehaving. */
 
         /* Close buttons last, so they sit over whatever drew beneath them. */
         desktop_chrome();
@@ -1611,9 +1621,12 @@ latch:
         }
 
         if (down && !desktop_active()) {
-            /* Steer only from touches in the view itself, so the application
-             * strips below keep their own input. */
-            if (t.y < RAY_VIEW_H && !g_touch_events_off) {
+            /* [step 369] Steering is the RAYCASTER's, so it is asked for by
+             * name here too. `!desktop_active()` meant "any view", and in a
+             * program's region every touch in the top 224 rows was also being
+             * read as a turn -- invisible, because nothing was steering, and
+             * wrong the moment anything was. */
+            if (desktop_3d() && t.y < RAY_VIEW_H && !g_touch_events_off) {
                 if (t.x < RAY_VIEW_W / 3u) {
                     raycast_turn(-2);
                 } else if (t.x > (RAY_VIEW_W * 2u) / 3u) {

@@ -149,6 +149,8 @@ static const desk_icon_t ICONS[COLS * ROWS] = {
 #define MODE_TERM     3
 #define MODE_WIFI     4
 #define MODE_WEB      5
+#define MODE_APP      6    /* [step 369] a VM program owns the region */
+static int      g_app_bar;         /* the focused program's bar needs drawing */
 static int      g_mode = MODE_LAUNCHER;
 #define g_active (g_mode == MODE_LAUNCHER)
 static int      g_sel = 0;              /* cell under the cursor */
@@ -186,6 +188,8 @@ int      desktop_notes(void)  { return g_mode == MODE_NOTES; }
 int      desktop_term(void)   { return g_mode == MODE_TERM; }
 int      desktop_wifi(void)   { return g_mode == MODE_WIFI; }
 int      desktop_web(void)    { return g_mode == MODE_WEB; }
+int      desktop_app(void)    { return g_mode == MODE_APP; }
+int      desktop_3d(void)     { return g_mode == MODE_3D; }
 
 void desktop_invalidate(void) { g_dirty = 1; }
 
@@ -355,6 +359,44 @@ void desktop_chrome(void)
      * paint its close buttons over the bottom row of keys. */
     if (desktop_term() || desktop_notes() || desktop_wifi() || desktop_web()) { return; }
 
+    /* [step 369] The bar above a focused program: its name, and the way out.
+     *
+     * THIS IS THE SAFETY PROPERTY, not decoration. The program's viewport
+     * starts at APP_FULL_Y0, so it cannot paint these rows -- and
+     * desktop_chrome_touch() checks this button before anything else. A
+     * program that hangs, fills the screen, or draws a convincing fake of this
+     * bar somewhere else still cannot take the real one away.
+     *
+     * Drawn on demand rather than every frame: 240x22 of SPI per frame to
+     * repaint something that does not change would cost more than the program
+     * underneath it. */
+    if (desktop_app()) {
+        /* [step 369] The program that owned the region has stopped -- it
+         * exited, faulted, or was killed from the shell. Without this the
+         * desktop sits on a canvas nobody owns, showing whatever the program
+         * painted last, and the only way back is a button over a dead screen.
+         *
+         * app_view_focus() drops the focus when a program retires, so this is
+         * the one place that has to notice. */
+        if (app_view_focused() < 0) {
+            g_mode  = MODE_LAUNCHER;
+            g_dirty = 1;
+            app_views_suspend(0);
+            return;
+        }
+        if (g_app_bar) {
+            g_app_bar = 0;
+            int id = app_view_focused();
+            display_fill_rect(0, 0, DISP_W, APP_FULL_Y0, COLOR_BLACK);
+            if (id >= 0) {
+                display_text(4, 7, app_name(id), COLOR_WHITE, COLOR_BLACK, 1u);
+            }
+            draw_close(DISP_W - 22u, 0u, 22u, 22u, COLOR_RED);
+        }
+        /* The strips below keep being drawn: `ps`, the other programs and
+         * their close buttons are how you reach anything else. */
+    }
+
     /* The strips are BELOW a full-width view, and that is load-bearing.
      *
      * APP_VIEW_Y0 is 224 and RAY_VIEW_H is 224, so slot 0 begins exactly where
@@ -477,6 +519,8 @@ int desktop_chrome_touch(uint32_t x, uint32_t y)
      * suppressed, and the only way out went with it. */
     if (!g_active && x >= DISP_W - 22u && y < 22u) {
         g_mode  = MODE_LAUNCHER;    /* leave whichever view is open */
+        app_view_focus(-1);         /* [step 369] and give the region back */
+        g_app_bar = 0;
         app_views_suspend(0);       /* [step 277] give the band back */
         band_clear();
         g_dirty  = 1;
@@ -604,7 +648,25 @@ static void open_selected(void)
         return;
     }
 
-    g_msg_ok = (shell_launch(ic->prog) >= 0);
+    /* [step 369] A program icon hands the program THE REGION, not a strip.
+     *
+     * 240x202 instead of 180x14 -- nineteen times the canvas, and the reason
+     * every VM program until now was really a serial-console program with a
+     * status line. The strips still exist and everything else keeps one; this
+     * is about which program you are looking at.
+     *
+     * The top APP_FULL_Y0 rows stay the kernel's, so the close button is
+     * outside the program's reach. Same argument the strip design makes about
+     * its own close button, applied to a region nineteen times the size. */
+    int started = shell_launch(ic->prog);
+    g_msg_ok = (started >= 0);
+    if (started >= 0) {
+        app_view_focus(started);
+        g_mode    = MODE_APP;
+        g_app_bar = 1;
+        g_msg_sel = -1;
+        display_fill_rect(0, 0, DISP_W, DESK_H, COLOR_BLACK);
+    }
     g_dirty  = 1;
 }
 

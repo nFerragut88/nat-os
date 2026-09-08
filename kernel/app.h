@@ -88,6 +88,21 @@ void app_tick(uint32_t quantum);
  * program. */
 void        app_views_suspend(int on);
 
+/* [step 369] Give one application the main region instead of its strip, or
+ * take it back with id = -1.
+ *
+ * The canvas is DISP_W x (DESK_H - APP_FULL_Y0): the top rows stay the
+ * kernel's, so the control that closes the program is outside the program's
+ * reach. That is the same argument the strip design makes about its close
+ * button, applied to a region nineteen times the size.
+ *
+ * Only one application can hold it. Every other running program keeps its
+ * strip, which is why `ps` and the band still work while one is focused. */
+#define APP_FULL_Y0  22u
+
+void        app_view_focus(int id);
+int         app_view_focused(void);
+
 int         app_state(int id);
 const char *app_state_name(int id);
 const char *app_name(int id);

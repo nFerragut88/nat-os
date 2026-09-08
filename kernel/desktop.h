@@ -83,6 +83,22 @@ int  desktop_notes(void);
  * desktop_notes(): kmain routes touches to the app rather than the launcher. */
 int  desktop_term(void);
 
+/* [step 369] A VM program owns the main region: the launcher is not drawing,
+ * and the program cannot reach the top APP_FULL_Y0 rows, where the way out
+ * is. */
+int  desktop_app(void);
+
+/* [step 369] The raycaster's mode, asked for by NAME.
+ *
+ * The display loop used to end `else { raycast_frame(); }` -- a catch-all that
+ * was correct while MODE_3D was the only mode not listed above it. Adding a
+ * seventh mode made the 3D view render over a program's region, and the report
+ * was "why is the paint app opening the 3D view".
+ *
+ * A branch that means "everything else" is a claim that nothing else will ever
+ * be added. */
+int  desktop_3d(void);
+
 /* Force the launcher on or off without touching the glass. Exists so the
  * renderer can be measured from the console: with the launcher active the
  * raycaster does not run at all, and its timers read zero. */

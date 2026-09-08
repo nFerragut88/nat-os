@@ -6,6 +6,7 @@
 #include "device.h"
 #include "ipc.h"
 #include "display.h"
+#include "desktop.h"   /* [step 369] DESK_H -- the region a focused app gets */
 #include "uart.h"
 #include "vm.h"
 
@@ -32,20 +33,53 @@ static app_t g_apps[APP_MAX];
  * restores the viewport and the next frame they paint puts them back. */
 static int g_views_suspended;
 
+/* [step 369] Which application, if any, holds the main region. */
+static int g_focused = -1;
+
+/* The viewport a program should have right now, given who is focused and
+ * whether the band is suspended. One function, because three call sites
+ * deciding this independently is how a program ends up drawing in two places
+ * or in none. */
+static void apply_view(int id)
+{
+    if (g_apps[id].state != APP_RUNNING) { return; }
+    if (id == g_focused) {
+        vm_set_viewport(&g_apps[id].vm, 0u, APP_FULL_Y0,
+                        DISP_W, DESK_H - APP_FULL_Y0);
+        return;
+    }
+    if (g_views_suspended) {
+        vm_set_viewport(&g_apps[id].vm, 0u, 0u, 0u, 0u);
+        return;
+    }
+    vm_set_viewport(&g_apps[id].vm, 0u,
+                    APP_VIEW_Y0 + (uint32_t)id * APP_VIEW_PITCH,
+                    APP_VIEW_W, APP_VIEW_H);
+}
+
 void app_views_suspend(int on);
 void app_views_suspend(int on)
 {
     g_views_suspended = on ? 1 : 0;
     for (int id = 0; id < APP_MAX; id++) {
-        if (g_apps[id].state != APP_RUNNING) { continue; }
-        if (g_views_suspended) {
-            vm_set_viewport(&g_apps[id].vm, 0u, 0u, 0u, 0u);
-        } else {
-            vm_set_viewport(&g_apps[id].vm, 0u,
-                            APP_VIEW_Y0 + (uint32_t)id * APP_VIEW_PITCH,
-                            APP_VIEW_W, APP_VIEW_H);
-        }
+        apply_view(id);
     }
+}
+
+int app_view_focused(void) { return g_focused; }
+
+void app_view_focus(int id)
+{
+    /* A program that is not running cannot hold the region -- otherwise
+     * closing one by exiting would leave the desktop showing a strip nobody
+     * owns and no way to get the region back. */
+    if (id >= 0 && (id >= APP_MAX || g_apps[id].state != APP_RUNNING)) {
+        id = -1;
+    }
+    int was = g_focused;
+    g_focused = id;
+    if (was >= 0 && was < APP_MAX) { apply_view(was); }
+    if (id  >= 0)                  { apply_view(id);  }
 }
 
 /* The strip geometry now lives in app.h, because the close button has to agree
@@ -57,6 +91,12 @@ void app_views_suspend(int on)
  * copies of a release is three chances to leak one. */
 static void retire(app_t *a, app_state_t why)
 {
+    /* [step 369] A program that held the main region must not keep it once it
+     * has stopped: the desktop would be showing a canvas nobody owns, with the
+     * way back drawn by whoever painted last. */
+    if (g_focused >= 0 && &g_apps[g_focused] == a) {
+        g_focused = -1;
+    }
     if (a->arena >= 0) {
         arena_destroy(a->arena);
         a->arena = -1;
@@ -122,11 +162,6 @@ int app_start(const char *name, const uint8_t *img, uint32_t len,
          * the application: a program can ask how large its canvas is, but the
          * only coordinates it can express are inside it. Same property as its
          * arena, applied to pixels. */
-        vm_set_viewport(&a->vm, 0u, APP_VIEW_Y0 + (uint32_t)id * APP_VIEW_PITCH,
-                        APP_VIEW_W, APP_VIEW_H);
-        /* [step 277] A program started while the shell is open must not paint
-         * over its keyboard either. */
-        if (g_views_suspended) { vm_set_viewport(&a->vm, 0u, 0u, 0u, 0u); }
         vm_set_app_id(&a->vm, id);
 
         /* A fresh application must not inherit mail addressed to whoever held
@@ -139,6 +174,13 @@ int app_start(const char *name, const uint8_t *img, uint32_t len,
         a->base        = base;
         a->bytes       = arena_bytes;
         a->publish_off = publish_off;
+
+        /* [step 369] AFTER the state is set, and through the one function that
+         * decides this -- so a program started while the shell is open (277)
+         * or while another holds the main region gets the same answer as one
+         * already running. apply_view() reads the state, so calling it any
+         * earlier would silently do nothing. */
+        apply_view(id);
         return id;
     }
 
