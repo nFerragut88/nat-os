@@ -1,0 +1,94 @@
+// app_fetch -- a NatScript program that uses the network.
+//
+// The language and the network stack were built separately and had never met.
+// This is the first program written in NatScript that reaches off the board.
+//
+// It needed NO compiler change. `net` is a device.c table entry (step 387), so
+// the permissions block makes the name available and net.read / net.xfer_out /
+// net.xfer_in are the generic device methods the language already emits. That
+// is the argument device.h has made since the table was written: anything new
+// is a device, not a syscall.
+
+permissions {
+    net
+}
+
+buf request[32]
+buf chunk[64]
+
+// "example.com/" -- host, then path from the first slash. Written a byte at a
+// time because format() builds text and this is a literal; a string literal
+// cannot be handed to a device, only printed.
+request[0] = 101    // e
+request[1] = 120    // x
+request[2] = 97     // a
+request[3] = 109    // m
+request[4] = 112    // p
+request[5] = 108    // l
+request[6] = 101    // e
+request[7] = 46     // .
+request[8] = 99     // c
+request[9] = 111    // o
+request[10] = 109   // m
+request[11] = 47    // /
+request[12] = 0
+
+println("  [fetch] asking for example.com/")
+
+if !net.xfer_out(0, request, 12) {
+    println("  [fetch] refused -- a fetch is already in flight")
+    exit(1)
+}
+
+// Poll rather than block. `net` is DEV_F_SLOW so each read ends this program's
+// slice, which is the point: a fetch is DNS, a TCP handshake and a round trip
+// over the air, and none of that should be charged to an instruction quantum.
+//
+// 4 is WEB_DONE, 5 is WEB_FAILED -- webfetch.h.
+// The ceiling is large because each poll is a SLOW device read, which ends
+// this program's slice -- so six hundred of them is a second or two of wall
+// clock, not a timeout. The first version used 600 and reported "gave up in
+// state 3" on a fetch that was still perfectly healthy: the request had gone
+// out and the reply had not come back yet.
+let state = 0
+let spins = 0
+while state < 4 && spins < 40000 {
+    net.read(0)
+    state = net.value
+    spins = spins + 1
+}
+
+if state != 4 {
+    print("  [fetch] gave up in state ")
+    print(state)
+    print(" after ")
+    print(spins)
+    println(" polls")
+    exit(1)
+}
+
+net.read(1)
+let code = net.value
+net.read(2)
+let length = net.value
+
+print("  [fetch] HTTP ")
+print(code)
+print(", ")
+print(length)
+println(" bytes")
+
+// The body, one 64-byte block at a time. DEVICE_XFER_MAX is the ceiling on a
+// single transfer -- every byte crosses a kernel bounce buffer, so it is DRAM
+// that exists whether or not anything transfers.
+let block = 0
+let shown = 0
+while shown < length && block < 4 {
+    if net.xfer_in(block, chunk, 64) {
+        puts(chunk)
+    }
+    shown = shown + 64
+    block = block + 1
+}
+println("")
+println("  [fetch] done")

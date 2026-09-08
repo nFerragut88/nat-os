@@ -60,6 +60,7 @@
 #include "generated/app_tap.h"    /* [step 362] NatScript with a UI */
 #include "generated/app_str.h"    /* [step 366] strings, on the board */
 #include "generated/app_meter.h"  /* [step 370] NatScript with an icon */
+#include "generated/app_fetch.h"  /* [step 387] NatScript on the network */
 #include "generated/app_ping.h"
 #include "generated/app_pong.h"
 #include "uart.h"
@@ -1010,6 +1011,12 @@ static const shell_program_t PROGRAMS[] = {
      * the manifest here comes from that, not from a bitmap written by hand. */
     { "meter",   vm_app_meter, VM_APP_METER_LEN, 3072u, 0u,
       VM_APP_METER_ID, vm_app_meter_perms, VM_APP_METER_PERM_COUNT },
+    /* [step 387] The first NatScript program to reach off the board. Its only
+     * permission is `net`, declared in the .nat source and resolved by name --
+     * and the language needed no change to use it, because the network is a
+     * device.c table entry rather than a syscall. */
+    { "fetch",   vm_app_fetch, VM_APP_FETCH_LEN, 3072u, 0u,
+      VM_APP_FETCH_ID, vm_app_fetch_perms, VM_APP_FETCH_PERM_COUNT },
     /* [step 371] A DELIBERATELY WRONG ENTRY, kept so the check can be seen to
      * bite rather than asserted to.
      *

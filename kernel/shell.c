@@ -2084,8 +2084,22 @@ static void execute(char *line)
             for (uint32_t w = 0u; w < 1000u && !wifi_joined(); w++) {
                 task_sleep(1u);
             }
-            uart_puts(wifi_joined() ? "   associated\n"
-                                    : "   no connect callback\n");
+            /* [step 387] AND the data path, which associating does not start.
+             *
+             * The first version stopped at "associated" and looked right: the
+             * handshake completed and `wpa` reported everything green. Nothing
+             * had lwIP though -- no netif, no DHCP, no handover -- so the net
+             * task never took the ring and a program's fetch was never
+             * serviced. Step 350 split these two on purpose (a radio is not a
+             * connection); a diagnostic join that does only half of what the
+             * app does is measuring a different thing. */
+            if (wifi_joined()) {
+                extern void wifi_data_path_start(void);
+                wifi_data_path_start();
+                uart_puts("   associated; data path started\n");
+            } else {
+                uart_puts("   no connect callback\n");
+            }
         }
     }
     else if (str_eq(line, "wpa")) {

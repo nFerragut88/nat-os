@@ -29,6 +29,7 @@
 
 extern void     netif_wifi_input(const uint8_t *frame, uint32_t len);
 extern void     netif_wifi_tick(void);
+extern void     netdev_service(void);   /* [step 387] see netdev.c */
 extern uint32_t netif_wifi_report(void);
 extern void     netif_wifi_stats(void);
 extern void     tcpsrv_report(void);
@@ -423,6 +424,18 @@ void net_service_once(void)
     if (g_use_lwip) {
         netif_wifi_tick();
         (void)netif_wifi_report();
+        /* [step 387] AND here.
+         *
+         * The first version of this hooked only net_poll_for()'s loop, which
+         * owns the ring for the first sixty seconds and then hands over. A
+         * program's fetch therefore worked for a minute after boot and never
+         * again -- and the symptom was a fetch that stayed in state 0 forever
+         * with nothing to say why, because netdev_service() was simply not
+         * being called.
+         *
+         * Two loops drain this ring at different times in the board's life.
+         * Anything that must run for the whole of it belongs in both. */
+        netdev_service();
     }
 }
 
@@ -486,6 +499,12 @@ void net_poll_for(uint32_t ticks)
         if (g_use_lwip) {
             netif_wifi_tick();
             (void)netif_wifi_report();
+            /* [step 387] A program's fetch, started and driven HERE.
+             *
+             * netdev.c records the request on the caller's task and this picks
+             * it up, because webfetch.h requires the net task and a device
+             * callback runs wherever the caller does. */
+            netdev_service();
         }
         /* A silent minute is indistinguishable from a hang. Say something. */
         uint32_t el = timer_ticks() - t0;

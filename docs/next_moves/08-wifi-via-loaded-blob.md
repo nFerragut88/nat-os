@@ -22376,3 +22376,82 @@ works  every WPA primitive observed running from flash; a shell path to a
 open   VM-08 proper (eFuses); APP_MAX 4; per-task stacks (352c); the null-sp
        fault (351)
 ```
+
+---
+
+## step 387 — a NatScript program on the network
+
+```
+   netdev    fetch example.com/  started
+   netdev    done
+  [fetch] asking for example.com/
+  [fetch] HTTP 200, 767 bytes
+  [fetch] done
+```
+
+`tools/app_fetch.nat` is a program written in NatScript that fetches a web page.
+The language and the network stack were built in separate arcs of this log and
+had never met.
+
+### 387a. The network is a device, and that is why the compiler did not change
+
+`device.h` has said it since the table was written: *"Anything new is a device.h
+table entry reached through `sys device`, not a thirteenth mnemonic here and a
+fourteenth case in vm.c."*
+
+So `net` is a row in `DEVICES[]`. The consequence is the whole point:
+**NatScript needed no change at all.** `permissions { net }` makes the name
+available (356, 358), and `net.read`, `net.xfer_out` and `net.xfer_in` are the
+generic device methods the language already emitted. The board reported
+`started id=0 perms=net` on the first run.
+
+The protocol is three read channels and transfers both ways:
+
+| | |
+|---|---|
+| `net.xfer_out(0, request, len)` | `"host/path"` — starts a fetch |
+| `net.read(0)` | state: 0 idle … 4 done, 5 failed |
+| `net.read(1)` / `net.read(2)` | HTTP code, body length |
+| `net.xfer_in(block, buf, 64)` | the body, `DEVICE_XFER_MAX` at a time |
+
+`net` is appended to the table, never inserted: ids are positional there, and
+everything outside resolves by name only because nothing has moved.
+
+### 387b. The handoff, because a device callback runs on the wrong task
+
+`webfetch.h` requires the net task — the raw lwIP API is not thread safe under
+`NO_SYS=1`. A device callback runs on the **caller's** task, which for a VM
+program is the app host.
+
+So `netdev_xfer_out()` records the request and `netdev_service()` picks it up
+from the net task's own loop. Same shape as `job.h`, for the same reason.
+
+### 387c. Three wrong versions, and each was silent in a different way
+
+| symptom | cause |
+|---|---|
+| `gave up in state 0`, twice | `netdev_service()` was hooked into `net_poll_for()`'s loop only. That owns the ring for sixty seconds and then **hands over**; the net task calls `net_service_once()`, which had no such call. A fetch worked for a minute after boot and never again |
+| `state 0`, still, with the service now in both loops | `wifijoin` associated and never called `wifi_data_path_start()`. Step 350 split those on purpose — a radio is not a connection — so there was no netif, no DHCP, no handover, and the net task never took the ring |
+| `gave up in state 3 after 600 polls` | not a failure. Each poll is a **slow** device read that ends the program's slice, so six hundred is a second or two of wall clock. The request had gone out and the reply had not come back yet |
+
+None of those printed anything. The first two were found by adding a line that
+says what `netdev_service()` picked up and what `webfetch_start()` returned; the
+third by reading the number rather than the word "gave up".
+
+### 387d. And the seventh instrument
+
+A failed fetch reported `5` to the program and nothing else. `webfetch_status()`
+has always returned *"a short line naming what happened"* and nothing outside
+the browser view had ever read it.
+
+It is printed now on completion. The run above ends `netdev done`; a failure
+will say which of DNS, connect, or the request it was.
+
+### State
+
+```
+works  NatScript reaches the network: HTTP 200 from example.com, 767 bytes,
+       with `net` declared as a permission and resolved by name
+open   the body is read but not shown -- app_fetch prints four blocks and the
+       page is longer; VM-08 proper; APP_MAX 4; per-task stacks (352c)
+```
