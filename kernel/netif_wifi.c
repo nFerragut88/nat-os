@@ -258,4 +258,36 @@ void netif_wifi_stats(void)
     uart_puts("  eapol@netif ");
     uart_put_dec(g_lwip_eapol);
     uart_puts("\n");
+
+    /* [step 381] What lwIP's DHCP client is ACTUALLY doing.
+     *
+     * Nothing has ever reported this. The `dhcp offer/ack 0/0` in net.c's line
+     * comes from the hand-written parser, which has not run since step 233 put
+     * lwIP in charge -- so it has read 0/0 for a hundred and fifty steps
+     * regardless of what DHCP did, and every reading of "no offer arrived" was
+     * a reading of a counter that could not have moved.
+     *
+     * `state` is lwIP's own dhcp_state_enum_t: 0 OFF, 1 REQUESTING, 2 INIT,
+     * 3 REBOOTING, 4 REBINDING, 5 RENEWING, 6 SELECTING, 7 INFORMING,
+     * 8 CHECKING, 10 BOUND, 12 BACKING_OFF. `tries` is how many times it has
+     * retransmitted without an answer -- the number that separates "nobody
+     * answered" from "we never asked". */
+    {
+        struct dhcp *d = netif_dhcp_data(&g_netif);
+        uart_puts("   dhcp      state ");
+        if (!d) {
+            uart_puts("none (client not started)");
+        } else {
+            uart_put_dec(d->state);
+            uart_puts(" tries ");
+            uart_put_dec(d->tries);
+        }
+        uart_puts("  addr ");
+        uint32_t ip = g_up ? ip4_addr_get_u32(netif_ip4_addr(&g_netif)) : 0u;
+        for (uint32_t i = 0u; i < 4u; i++) {
+            uart_put_dec((ip >> (8u * i)) & 0xFFu);
+            if (i != 3u) { uart_putc('.'); }
+        }
+        uart_puts("\n");
+    }
 }

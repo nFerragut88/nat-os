@@ -21958,3 +21958,84 @@ works  the four-way handshake completes, from flash: rx=2 m1=1 m3=1 done=1
 open   DHCP gets no offer on a working encrypted link
        PBKDF2 from flash (377a); VM-08 proper; APP_MAX 4; per-task stacks
 ```
+
+---
+
+## step 381 — DHCP was never broken; the counter watching it was dead
+
+```
+dhcp      state 8  tries 2  addr 0.0.0.0        <- CHECKING, ARP-probing
+dhcp      state 10 tries 0  addr 192.168.1.140  <- BOUND
+4way pmk=1 step=6 rx=2 m1=1 m3=1 done=1
+lwip      rx 4 -> 56 -> 216   tx 4 -> 10
+```
+
+**The board associates, completes the four-way handshake, binds a DHCP address
+and passes traffic.**
+
+### 381a. The counter that could not move
+
+`dhcp offer/ack 0/0`, `arp 0->0`, `icmp 0->0` — every one of them is incremented
+inside net.c's **hand-written** packet parser, which has not run since step 233
+set `g_use_lwip = 1` and gave lwIP the stack.
+
+They have read zero for roughly a hundred and fifty steps **regardless of what
+DHCP did**, and 380d read them as "an encrypted link that gets no DHCP
+response". The link was getting DHCP responses the whole time. Nothing was
+counting them.
+
+lwIP's own client keeps the answer in `netif_dhcp_data(netif)->state`, and
+nothing had ever printed it.
+
+### 381b. And the first reading of the real state was still too early
+
+With the state finally visible, the first sample said:
+
+```
+dhcp      state 8  tries 2  addr 0.0.0.0
+```
+
+`DHCP_STATE_CHECKING` is not a failure. It is the ARP probe lwIP sends to make
+sure nobody else holds the offered address, and it resolves into `BOUND` a
+moment later — which the second sample shows, with **192.168.1.140**.
+
+So the first honest instrument still produced a wrong conclusion, because it was
+read **once**, from a report that fires around bring-up and not again. Sampling
+it three times is what turned "stuck at 8" into "8 then 10".
+
+**This is the same error as 378's heap figure**, in a different subsystem, four
+steps later: a number read at one moment and reported as a property of the
+system. `wpa` now prints the network side too, so the state can be asked for
+repeatedly rather than caught in passing.
+
+### 381c. What the session actually found, in order
+
+| read as | was |
+|---|---|
+| "join failed" | a supply that could not hold the radio up (376) |
+| "no EAPOL — m1=0" | a counter incremented only in passive mode, behind a PMK test that discarded frames silently (380) |
+| "no DHCP offer" | a counter in a parser that has not run since step 233 (381a) |
+| "stuck in CHECKING" | one sample of a transient state, taken once (381b) |
+
+**Four readings, four instruments, and the system was doing the right thing in
+three of them.** The one genuine fault was physical.
+
+### 381d. What remains genuinely unknown
+
+The failing runs were real: `pmk=0 rx=0` appeared twice, and in those runs no
+EAPOL reached the handler at all. What varies between a run that sets the PMK
+and one that does not has not been established — the successful runs and the
+failed ones differ in whether the radio had been up for a previous session, and
+that is one observation each (379b).
+
+PBKDF2 from flash is still uncovered (377a): every successful run used a cached
+PMK.
+
+### State
+
+```
+works  associate, four-way handshake, DHCP bind, traffic -- 192.168.1.140, on
+       the -WiFi image with the crypto executing from flash
+open   why some joins leave pmk=0 with no EAPOL at all (379b, 381d)
+       PBKDF2 from flash; the dead counters in net.c's parser; VM-08 proper
+```

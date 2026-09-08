@@ -2075,6 +2075,13 @@ static void execute(char *line)
         wifi_prof_report();
         wpa_cb_report();
         wpa_hs_report();
+        {   /* [step 381] The network side too. lwIP's DHCP state was
+             * reported only from net.c's periodic line, which fires once
+             * around bring-up -- so it could be read at the moment DHCP
+             * started and never again. */
+            extern void netif_wifi_stats(void);
+            netif_wifi_stats();
+        }
     }
     else if (str_eq(line, "wifiopen")) {
         /* [step 376] The wifi app, from here. It is the only path that brings
