@@ -21241,3 +21241,69 @@ open   VM-08 PROPER -- needs secure boot and eFuses; deliberately not done
        APP_MAX 4; per-task stacks (352c); ping's peer id (368b); the null-sp
        fault (351)
 ```
+
+---
+
+## step 372 — a tool for the thing that keeps going wrong
+
+UM-NATOS-058 §7 and UM-NATOS-059 §7 record **seven rounds of work lost to broken
+measurement rather than to a broken system**, and 059 says plainly that this is
+now the dominant failure mode of the work.
+
+Recording it twice and changing nothing would be the third time.
+
+`tools/board.py` is the change. Every guarantee in it is one of the failures
+from those two lists:
+
+| the failure | what the tool does |
+|---|---|
+| three empty logs read as *"the board is silent"* while a stale process held COM5 | an open failure is loud, exits non-zero, and **names the process holding the port** |
+| a command typed 3 s after opening, into a booting board, and lost | **probes for the prompt** and reports how long it took |
+| a dropped link throwing away everything already captured | keeps it, with `[board] link lost` where it happened |
+| a retry loop flashing **eight times** after succeeding once | matches esptool's own `flash verified: 3 segments`, and prints the attempt count |
+| a build error retried five times as though it were a link error | stops on `compile failed` / `nattest failed` and says which it was |
+
+### 372a. The tool was wrong on its first run
+
+Its `await_shell()` waited for the boot banner, on the theory that opening the
+port always resets the board.
+
+**It does not always.** Against a board that was already up, it waited the full
+45 seconds for a line printed minutes earlier, then sent the commands anyway and
+they worked. Correct output, and a false explanation attached to it.
+
+So it probes instead: send a newline, look for the prompt the shell echoes. That
+works whether the board just reset or has been running for an hour, and a
+newline typed into a booting board is lost like any other character, which costs
+nothing.
+
+```
+[board] shell answered after 12s
+0   counter   running
+1   meter     running
+refused: tamper does not match the manifest it was built with
+```
+
+**The tool written to stop measurement lying had a wrong assumption in it on its
+first run.** That is not an argument against the tool; it is the argument for
+running it before trusting it, which is the same discipline the rest of this log
+applies to the kernel.
+
+### 372b. What it does not fix
+
+The USB link itself. The board still drops off the bus — `VID_0000&PID_0002`,
+*"Device Descriptor Request Failed"*, which is enumeration failing at the
+physical level. `board.py` reports that clearly and tells the reader where to
+look; it cannot make a marginal cable work.
+
+Nor does it stop a person from believing a stale reading. Nothing can. What it
+removes is the class where the *instrument* was silent about its own failure.
+
+### State
+
+```
+works  one committed tool for flashing and driving the board, whose every
+       guarantee is a failure this log actually had
+open   VM-08 proper (eFuses); APP_MAX 4; ping's peer id (368b); per-task
+       stacks (352c); the null-sp fault (351)
+```
