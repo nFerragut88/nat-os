@@ -21483,3 +21483,62 @@ open   THE CRYPTO FROM FLASH IS UNVERIFIED -- needs one real join
        VM-08 proper (eFuses); APP_MAX 4; ping's peer id (368b); per-task
        stacks (352c); the null-sp fault (351)
 ```
+
+---
+
+## step 375 — the log only one person could read
+
+Two joins failed on the `-WiFi` image. Four minutes and 91 KB of serial were
+captured across them, and **not one line came from the code that knew why**.
+
+`wifiapp.c`'s `logln()` writes into an on-screen ring buffer and stops there.
+UM-NATOS-055 §7 credits that log with naming three defects *"without a capture,
+a reset or a theory"*, which is true and is why it exists — the panel is the
+right place for it when the person holding the board is the one debugging.
+
+It also meant the most informative diagnostic in this system was readable by
+exactly one observer, and not the one with the serial cable. The failure had to
+be guessed at from heap arithmetic instead.
+
+Four lines. Every `LOG`, `LOGV`, `LOGS` and `wifiapp_note` now also goes out as
+`  [wifi] ...`.
+
+**A diagnostic only one observer can read is half a diagnostic.**
+
+### 375a. And watching resets the thing being watched
+
+The second capture came back with `rst:0x1 (POWERON_RESET)` at the top and no
+wifi output at all: opening the port reset the board, and the join that was
+being attempted went with it.
+
+That is not new — UM-NATOS-017 §5 is the story of learning it twice, and
+`board.py` already accounts for it when *sending* commands. What it does not
+account for is **watching**, where the reset destroys the state the watch
+exists to observe.
+
+The sequence that works is: start watching, let the board boot, and only then do
+the thing. Recorded here because two of the three captures in this step were
+spent discovering it again.
+
+### 375b. Where the join stands
+
+Unknown, honestly. Two hypotheses, and the mirror above exists to tell them
+apart:
+
+| | |
+|---|---|
+| the crypto placement | 374 moved SHA-1, AES and PBKDF2 to flash. If that is wrong the PMK is garbage and the handshake times out — historically reason 15 |
+| the heap | this build has **16,168 bytes**. Step 333 records the driver failing to allocate at **27,320** |
+
+The second needs no change of mine to be true and is the more likely, and if it
+is, `g_stacks` is 26,624 bytes of it: thirteen tasks at 2 KB each, against a
+measured peak of 828.
+
+### State
+
+```
+works  -WiFi links and boots; the wifi app's log reaches the serial line
+open   THE JOIN FAILS, cause not yet established -- one capture, correctly
+       sequenced, will say which of the two it is
+       VM-08 proper (eFuses); APP_MAX 4; per-task stacks (352c)
+```

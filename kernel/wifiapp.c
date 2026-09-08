@@ -202,6 +202,23 @@ static void logln(const char *a, const char *b, uint32_t v, int has_v)
     d[k] = 0;
     g_log_n++;
     g_dirty++;
+
+    /* [step 375] And to the serial line.
+     *
+     * This log was written for the panel, and UM-NATOS-055 §7 credits it with
+     * naming three defects without a capture, a reset or a theory. That is
+     * true and it is why it exists.
+     *
+     * It also means the most informative diagnostic this system has was
+     * invisible to anything but a person looking at a 240x320 screen. A join
+     * failed twice on the -WiFi image, 91 KB of serial was captured across four
+     * minutes, and not one line of it came from the code that knew why -- so
+     * the failure had to be guessed at from heap arithmetic.
+     *
+     * A diagnostic only one observer can read is half a diagnostic. */
+    uart_puts("  [wifi] ");
+    uart_puts(d);
+    uart_puts("\n");
 }
 
 void wifiapp_note(const char *msg);
