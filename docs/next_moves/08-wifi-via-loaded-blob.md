@@ -20785,3 +20785,92 @@ open   ARENA_MAX 4 with the kernel holding one, and ping/pong holding two of
        the three that remain -- one application at a time, in practice
        VM-08 image identity; per-task stacks (352c); the null-sp fault (351)
 ```
+
+---
+
+## step 367 — the kernel was renting an application's room
+
+`ARENA_MAX` was **4**. So was `APP_MAX`. They read as "one arena per
+application" and they were not: `kmain.c` takes an arena at boot for the
+kernel's own VM task and never releases it.
+
+So four arenas meant **three applications** — and `ping` and `pong` start at
+boot and never exit, which left exactly **one**. `run paint` while anything else
+ran reported *"no free slot or no memory"* with 28,728 bytes of heap free.
+
+**Nobody chose that.** Two independent limits happened to be the same number and
+one of them silently had a tenant.
+
+```c
+#define ARENA_MAX (APP_MAX + 1)
+```
+
+### 367a. The +1 is the whole fix, and the assert is what keeps it
+
+```c
+_Static_assert(ARENA_MAX >= APP_MAX + 1,
+               "ARENA_MAX must leave room for the kernel's own VM arena on top "
+               "of one per application, or a program cannot start while the "
+               "kernel holds one");
+```
+
+The bare 4 was not wrong so much as **unexplained**: it stated a quantity where
+a relationship was meant. Raising `APP_MAX` later would have quietly restored
+the same shortage, and the symptom would again have been a launch failure with
+plenty of memory.
+
+This is the same defect as step 356's permission bitmap, which mirrored
+`device.c`'s table order by hand with nothing checking the two lists against
+each other. **A number that has to agree with another number, and does not say
+so, eventually disagrees.**
+
+### 367b. What it costs
+
+One `arena_t` — a base and a length, eight bytes of static DRAM. Arenas
+themselves are `heap_alloc`ed and only exist while a program does.
+
+### 367c. What it does NOT fix
+
+`APP_MAX` stays at 4, and it is pinned by geometry rather than by memory:
+
+```c
+_Static_assert(SPEC_Y >= APP_VIEW_Y0 + APP_MAX * APP_VIEW_PITCH, ...);
+```
+
+224 to 288 is 64 pixels at 16 per strip — **exactly four**. More applications
+would need a shorter strip or the band taking space from the spectrum bar, and
+a 14-pixel strip is already one line of text.
+
+`ping` and `pong` still hold two of those four for an IPC self-test that has
+passed since step ~90. With the kernel out of the way that now leaves **two**
+free rather than one, which is what the report was about, but it is still two
+slots spent proving something already proven. Changing what starts at boot is a
+decision about what the board is, not a bug fix, and it is not being made in
+passing.
+
+### 367d. Read off the board
+
+```
+   id  name        state     arena     insns      published
+   0   ping   running   512 B   1079077   2624003
+   1   pong   running   512 B      6204   6556163
+   2   tap   running  3072 B    604809         0
+   3   paint  running  512 B      68011    458832
+```
+
+**All four application slots occupied at once**, which had not been possible
+since the kernel's VM task started taking one of the four arenas. `tap` and
+`paint` running together is the case that started this.
+
+The entry above was written claiming only the arithmetic, because the board had
+dropped off USB before it could be flashed. It is a reading now.
+
+### State
+
+```
+works  ARENA_MAX is a relationship rather than a coincidence, and an assert
+       holds it
+open   verify two programs at once on hardware; APP_MAX pinned at 4 by the
+       strip geometry; ping/pong holding two of the four
+       VM-08 image identity; per-task stacks (352c); the null-sp fault (351)
+```

@@ -20,8 +20,25 @@
 #define NATOS_ARENA_H
 
 #include <stdint.h>
+#include "app.h"                /* APP_MAX -- see the count below */
 
-#define ARENA_MAX 4
+/* [step 367] APP_MAX + 1, and the +1 is the point.
+ *
+ * This was a bare 4, the same number as APP_MAX, which read as "one arena per
+ * application" and was not. kmain.c takes one at boot for the kernel's own VM
+ * task and never releases it, so four arenas meant THREE applications -- and
+ * with ping and pong starting at boot and never exiting, exactly one slot was
+ * left. `run paint` while anything else ran reported "no free slot or no
+ * memory" with 28 KB of heap free.
+ *
+ * Nobody chose that. Two independent limits happened to be the same number and
+ * one of them silently had a tenant.
+ *
+ * The kernel's arena is not an application's, so it gets its own room. The
+ * assert below is what keeps this true: raising APP_MAX without raising this
+ * would quietly go back to an application being unable to start while the
+ * kernel holds one. */
+#define ARENA_MAX (APP_MAX + 1)
 
 /* Returns an id >= 0, or -1 if no slot is free or the heap cannot satisfy the
  * request. Contents are zeroed: an application must not be able to read

@@ -9,6 +9,14 @@ typedef struct {
 } arena_t;
 
 static arena_t  g_arenas[ARENA_MAX];
+
+/* [step 367] The relationship arena.h describes, enforced rather than trusted.
+ * Every application may hold one arena at once, and the kernel's VM task holds
+ * one more that is never freed. */
+_Static_assert(ARENA_MAX >= APP_MAX + 1,
+               "ARENA_MAX must leave room for the kernel's own VM arena on top "
+               "of one per application, or a program cannot start while the "
+               "kernel holds one");
 static uint32_t g_committed;
 static uint32_t g_rejects;
 
