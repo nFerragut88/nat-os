@@ -22176,3 +22176,67 @@ open   a `cached=0` reading to replace 383a's argument with a measurement
        the dead counters in net.c's parser; VM-08 proper; APP_MAX 4;
        per-task stacks (352c); the null-sp fault (351)
 ```
+
+---
+
+## step 384 — a zero that could not become anything else
+
+```
+before   net frames 0 dropped 0  dhcp offer/ack 0/0  arp 0->0  icmp 0->0  [no IP]
+after    net frames 0 dropped 0  (lwIP owns the stack; the hand-written
+                                  parser's dhcp/arp/icmp counters are inactive)
+         lwip rx 173 drop 0  tx 10 err 0
+         dhcp state 10 tries 0  addr 192.168.1.140
+```
+
+`g_use_lwip` is set to 1 where it is defined and **nothing anywhere clears
+it** — `grep` finds no assignment of 0 in the tree. So the hand-written packet
+parser, and every counter it feeds, has been unreachable since step 233 gave
+lwIP the stack.
+
+`dhcp offer/ack`, `arp`, `icmp` and `g_have_ip` have therefore read zero for a
+hundred and fifty steps **regardless of what the network did**.
+
+### 384a. What that cost, on one day
+
+- **380d** read `dhcp offer/ack 0/0` as *"an encrypted link that completes its
+  handshake and gets no DHCP response"* and named it the next problem.
+- **381** withdrew it: lwIP had bound `192.168.1.140` the whole time, and
+  nothing was counting.
+
+That is a wrong conclusion, published, from a number that could not have moved.
+
+**A zero that cannot become anything else is not a measurement**, and printing
+it beside real ones lends it their credibility. `net frames`/`dropped` stay —
+`net_rx_enqueue()` still runs and they describe it.
+
+### 384b. Not deleted, and why
+
+The parser itself is ~200 lines of unreachable code, and deleting it is the
+obvious follow-up. It is not being done in the same step as a fix to the wifi
+stack that is finally working end to end: this change cannot alter behaviour
+(it removes prints), and that one could.
+
+Recorded as available with the evidence attached, which is the difference
+between a decision deferred and a thing forgotten.
+
+### 384c. The fifth and sixth in a series
+
+This is the sixth instrument in two days found to report something true and
+narrower than what it was read as — after the panel-only log (375), the silent
+wait (379), the passive-only `m1` (380), `dhcp state` sampled once (381b), and
+`g_used_cached` printed nowhere (383).
+
+The common shape is not dishonesty. Each one answered a *question nobody was
+asking* and was read as answering the one that mattered. The correction is the
+same every time: **check where a counter is incremented, and whether that code
+still runs, before believing what it says.**
+
+### State
+
+```
+works  the net report prints only counters that can move; wifi end to end,
+       192.168.1.140, handshake done, micbad=0
+open   delete the unreachable parser (384b); a cached=0 reading (383b);
+       VM-08 proper; APP_MAX 4; per-task stacks; the null-sp fault
+```

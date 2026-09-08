@@ -522,10 +522,32 @@ void net_poll_for(uint32_t ticks)
 void net_report(void);
 void net_report(void)
 {
+    /* [step 384] The hand-written parser's counters are NOT printed while lwIP
+     * owns the stack, and that is a bug fix rather than tidying.
+     *
+     * `g_use_lwip` is set to 1 where it is defined and nothing anywhere clears
+     * it, so dhcp offer/ack, arp, icmp and g_have_ip all belong to code that
+     * has not run since step 233. They read zero regardless of what the
+     * network does.
+     *
+     * They cost two wrong conclusions in one day: step 380 read
+     * `dhcp offer/ack 0/0` as "an encrypted link that gets no DHCP response",
+     * and 381 had to withdraw it after finding lwIP had bound an address the
+     * whole time. A zero that cannot become anything else is not a
+     * measurement, and printing it beside real ones lends it their credibility.
+     *
+     * The ring counters stay: net_rx_enqueue() still runs, and frames/dropped
+     * describe it. */
     uart_puts("   net       frames ");
     uart_put_dec(g_net_frames);
     uart_puts("  dropped ");
     uart_put_dec(g_net_dropped);
+    if (g_use_lwip) {
+        uart_puts("  (lwIP owns the stack; the hand-written parser's "
+                  "dhcp/arp/icmp counters are inactive)\n");
+        netif_wifi_stats();
+        return;
+    }
     uart_puts("  dhcp offer/ack ");
     uart_put_dec(g_net_dhcp_offer);
     uart_puts("/");
@@ -539,5 +561,4 @@ void net_report(void)
     uart_puts("->");
     uart_put_dec(g_net_icmp_rep);
     uart_puts(g_have_ip ? "  [have IP]\n" : "  [no IP]\n");
-    if (g_use_lwip) { netif_wifi_stats(); }
 }
