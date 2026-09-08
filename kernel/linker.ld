@@ -283,6 +283,15 @@ SECTIONS
        * a time. */
       *ipc.c.o(.literal .literal.* .text .text.*)
 
+      /* [step 380] The wifi bring-up configuration, 3,519 bytes.
+       *
+       * Runs on the net task through the job system, calls into the blob under
+       * a mutex, and registers no interrupt handler -- the same three checks
+       * every entry above had to pass. Added because 27 bytes of new
+       * diagnostic pushed iram over again, which is the standing condition of
+       * this build rather than a surprise. */
+      *wifi_init_cfg.c.o(.literal .literal.* .text .text.*)
+
     /* [step 278] notes.c and term.c join it, for the same reason and with the
      * same evidence: both are views entered from the launcher, both run only
      * while a human is looking at them, and neither is referenced by anything

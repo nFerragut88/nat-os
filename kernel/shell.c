@@ -2054,6 +2054,28 @@ static void execute(char *line)
             uart_puts("   3D view open\n");
         }
     }
+    else if (str_eq(line, "wpa")) {
+        /* [step 380] The supplicant's state, ON DEMAND.
+         *
+         * Both of these already existed and were printed only from the
+         * BRING-UP path -- so every reading of "did it associate" and "does the
+         * driver know this is RSN" was taken before the join that would answer
+         * them. A capture showed `wpa conn=0 disc=0` and `authmode 0 is_rsn 0`
+         * while the view was simultaneously reporting a successful join, and
+         * the two are not in conflict: they were measured minutes apart, at
+         * the wrong end of the thing being measured.
+         *
+         * Step 244 eliminated "the driver thinks this is an open network" on
+         * the strength of `authmode 5 is_rsn 1`. That reading came from the
+         * same pre-join moment. Whether it still holds AFTER a join has never
+         * been asked, because until now it could not be. */
+        extern void wpa_cb_report(void);
+        extern void wpa_hs_report(void);
+        extern void wifi_prof_report(void);
+        wifi_prof_report();
+        wpa_cb_report();
+        wpa_hs_report();
+    }
     else if (str_eq(line, "wifiopen")) {
         /* [step 376] The wifi app, from here. It is the only path that brings
          * the radio all the way up, so it is the only way to exercise the WPA

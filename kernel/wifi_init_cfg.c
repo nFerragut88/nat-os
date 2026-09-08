@@ -113,6 +113,31 @@ void wifi_start_enable(int on);
  * ESP_ERR_NO_MEM. The build that failed was the honest one. */
 int g_bringup_quick;
 int g_bringup_noconnect;
+/* [step 380] The driver's own view of what it is connecting TO, on demand.
+ *
+ * This was inline in the bring-up, so every reading of it was taken BEFORE the
+ * join it describes. Step 244 eliminated "the driver thinks this is an open
+ * network" on the strength of `authmode 5 is_rsn 1` -- read at that same
+ * pre-join moment. Whether it still holds once a station has associated had
+ * never been asked, because until now it could not be. */
+void wifi_prof_report(void);
+void wifi_prof_report(void)
+{
+    const struct blob_entry *e = blob_map();
+    if (!e || !blob_ready() || !e->prof_authmode) {
+        uart_puts("   prof      unavailable (no blob entry)");
+        uart_puts("\n");
+        return;
+    }
+    uart_puts("   prof      authmode ");
+    uart_put_dec(blob_call(e->prof_authmode, 0u, 0u, 0u, 0u));
+    uart_puts("  is_rsn ");
+    uart_put_dec(e->prof_is_rsn ? blob_call(e->prof_is_rsn, 0u,0u,0u,0u) : 9u);
+    uart_puts("   (authmode 0 = OPEN, 3 = WPA2_PSK)");
+    uart_puts("\n");
+}
+
+
 void wifi_bringup_noconnect(int on);
 void wifi_bringup_noconnect(int on) { g_bringup_noconnect = on; }
 
@@ -442,13 +467,7 @@ uint32_t wifi_bringup(const struct blob_entry *e, int want_null)
         }
         uart_puts("\n");
     }
-    if (e->prof_authmode) {
-        uart_puts("   prof      authmode ");
-        uart_put_dec(blob_call(e->prof_authmode, 0u, 0u, 0u, 0u));
-        uart_puts("  is_rsn ");
-        uart_put_dec(e->prof_is_rsn ? blob_call(e->prof_is_rsn, 0u,0u,0u,0u) : 9u);
-        uart_puts("   (authmode 0 = OPEN, 3 = WPA2_PSK)\n");
-    }
+    wifi_prof_report();
 
     /* [step 350] The data path belongs to the JOIN, not the bring-up.
      *

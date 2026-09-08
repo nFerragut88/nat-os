@@ -262,8 +262,27 @@ int wpa_sta_rx_eapol_impl(u8 *src, u8 *buf, u32 len);
  * in advance. */
 uint32_t g_hs_passive;
 
+/* [step 380] Frames that reached this function, counted before ANY test.
+ *
+ * g_hs_msg1 was incremented only in passive mode, and in active mode the very
+ * next line returns without counting when the PMK is missing. So `m1=0` has
+ * never meant "the access point sent nothing" -- it has meant "nothing arrived
+ * WITH a PMK already in place", and those are different claims.
+ *
+ * Steps 241 through 245 read m1=0 as the former and built two hypotheses on
+ * it. A capture on 2026-09-08 showed `4way pmk=0 ... m1=0` together: the PMK
+ * was absent, so every frame that did arrive would have been dropped here
+ * silently, and the counter could not have told anyone.
+ *
+ * g_hs_rx counts arrivals. m1 keeps its old meaning. If rx climbs while m1
+ * stays at zero, the frames are arriving and this file is discarding them --
+ * which is a completely different problem from the one this project has been
+ * chasing for forty steps. */
+uint32_t g_hs_rx;
+
 int wpa_sta_rx_eapol_impl(u8 *src, u8 *buf, u32 len)
 {
+    g_hs_rx++;                       /* BEFORE every test, including the PMK */
     if (g_hs_passive) {
         g_hs_msg1++;                 /* it ARRIVED, and that is the result */
         g_hs_last_keyinfo = 0xEEEEu;   /* marker: passive, not decoded */

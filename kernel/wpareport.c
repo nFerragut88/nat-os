@@ -70,6 +70,13 @@ void wpa_hs_report(void)
         uart_puts(" step=");
         uart_put_dec(g_hs_step);
     }
+    {   /* [step 380] Arrivals, counted before the PMK test that used to
+         * discard them silently. rx > 0 with m1 = 0 means the frames are
+         * coming and being dropped here. */
+        extern uint32_t g_hs_rx;
+        uart_puts(" rx=");
+        uart_put_dec(g_hs_rx);
+    }
     uart_puts(" m1=");
     uart_put_dec(g_hs_msg1);
     uart_puts(" m3=");

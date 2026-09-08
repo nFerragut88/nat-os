@@ -21869,3 +21869,92 @@ open   THE MISSING EAPOL M1 -- pre-existing, steps 241-245, still unexplained
        joining on a stale radio vs a freshly started one (379b), one observation
        each; PBKDF2 from flash (377a); VM-08 proper; APP_MAX 4
 ```
+
+---
+
+## step 380 — `m1=0` never meant what forty steps read it as
+
+```
+4way pmk=1 step=6 rx=2 m1=1 m3=1 done=1 micbad=0 why=0
+```
+
+**The four-way handshake completes.** Message one and message three received,
+MIC verified, pairwise and group keys installed, `step=6` is `auth_done`.
+
+### 380a. The counter that could not say what it was asked
+
+`wpa_sta_rx_eapol_impl()` began:
+
+```c
+if (g_hs_passive) { g_hs_msg1++; ... return 0; }
+if (!g_hs_have_pmk || !buf || len < O_KD) { return 0; }   /* silent */
+```
+
+`g_hs_msg1` is incremented **only in passive mode**. In normal operation the
+next line returns without counting when the PMK is absent.
+
+So **`m1=0` has never meant "the access point sent nothing"**. It has meant
+*"nothing arrived while a PMK was already in place"*, and those are different
+claims about different halves of the system.
+
+Steps 241–245 read it as the first and built two hypotheses on it. Step 246 read
+it as the first and concluded the station never associated. A capture this
+session showed `4way pmk=0 ... m1=0` **together** — the PMK was absent, so any
+frame that did arrive was discarded on the line after the counter it never
+reached.
+
+`g_hs_rx` now counts arrivals **before every test, including the PMK one**. On
+the next run it read **2**.
+
+### 380b. What that makes true
+
+| | |
+|---|---|
+| the station associates | `wpa conn=1 disc=0 cbreason=none`, post-join |
+| the driver knows it is RSN | `prof authmode 5 is_rsn 1`, post-join |
+| EAPOL arrives | `rx=2` |
+| the handshake completes | `m1=1 m3=1 done=1 micbad=0` |
+
+Both of those first two readings had only ever been taken **during bring-up**,
+before the join they describe — which is why `authmode 0 is_rsn 0` and `wpa
+conn=0` appeared in the same capture as a successful join and looked like a
+contradiction. They were measured at the wrong end of the thing being measured.
+`wpa` is a shell command now, so they can be asked for when the answer matters.
+
+### 380c. And 377's open question is closed
+
+`micbad=0` with `m3=1` means the MIC on message three verified, which requires
+`sha1_prf` to have produced the correct PTK and `hmac_sha1` the correct MIC —
+both executing **from flash** since 374. `done=1` means `aes_unwrap` produced a
+usable group key from the same place.
+
+Still not covered: **PBKDF2**, which only runs on a cache miss. 377a stands.
+
+### 380d. What is still broken
+
+```
+dhcp offer/ack 0/0    ip=0
+```
+
+An encrypted link that completes its handshake and gets no DHCP response. That
+is a *new* problem — or rather, the problem that was underneath the one everyone
+was looking at. It is smaller than the last one and it is measurable.
+
+### 380e. The pattern, for the third time today
+
+375: a log only the panel could read. 379: a bounded wait that said nothing
+until it was over. 380: a counter that answered a question nobody was asking.
+
+**Three instruments in one day that were not lying, exactly — each reported
+something true and narrower than what it was read as.** The correction is the
+same every time: count the thing at the point where it happens, before any test
+that could discard it.
+
+### State
+
+```
+works  the four-way handshake completes, from flash: rx=2 m1=1 m3=1 done=1
+       micbad=0, with the station associated and RSN-aware
+open   DHCP gets no offer on a working encrypted link
+       PBKDF2 from flash (377a); VM-08 proper; APP_MAX 4; per-task stacks
+```
