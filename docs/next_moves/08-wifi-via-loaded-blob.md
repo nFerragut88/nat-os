@@ -20607,3 +20607,85 @@ works  paint, tap, and every other program -- one at a time, which is the real
 open   ARENA_MAX and the two boot programs holding two of three slots;
        screen.touched() against a finger; STRINGS; VM-08; per-task stacks
 ```
+
+---
+
+## step 365 — touched
+
+```
+[tap] cell 0 at 12,3 taps 1
+[tap] cell 1 at 36,3 taps 2
+[tap] cell 2 at 71,1 taps 3
+[tap] cell 0 at 0,1 taps 4
+[tap] cell 1 at 30,4 taps 5
+[tap] cell 2 at 68,6 taps 6
+[tap] cell 3 at 101,12 taps 7
+[tap] cell 0 at 0,13 taps 8
+```
+
+A program written in NatScript, drawing on the panel and responding to a finger.
+Twenty touches delivered (`touch g/w=20/40`), four cells, the counter climbing,
+the digits rendered a byte at a time because the language has no strings.
+
+That closes the last unproven claim in the NatScript line: **every piece of the
+language has now run on the hardware it was written for.**
+
+### 365a. Three things this one line of output confirms
+
+Every coordinate is **viewport relative** — x from 0 to 157, y from 0 to 13,
+inside a strip beginning at panel y=256. The program never learns where its
+strip is, and the forty withheld touches are the ones outside it. The isolation
+the whole system exists for, working on a program the kernel has never seen.
+
+The cell arithmetic is **the signed-division fix from 363 doing real work**:
+`cw` is `180 / 6`, and `screen.x / cw` maps 12, 36, 71 and 101 onto cells 0, 1,
+2 and 3. The bug that started as a wrong grid is the code that proves the fix.
+
+And `render()` drew those digits, which is nine lines of byte stores standing in
+for `"" + n`. **Strings remain the top gap**, argued for by the program that
+needed them.
+
+### 365b. The shell suspends every viewport, on purpose
+
+Reported as *"it was kinda working but then it randomly opened the shell"*.
+
+`app.c` sets every running program's viewport to `(0, 0, 0, 0)` while the shell
+view is up. `vm.c` can never report `inside` for a zero-area viewport, so a
+program keeps running and goes deaf. A program must not paint over the keyboard,
+or over the control that closes it — step 277's rule, still holding.
+
+The touch that did it was at panel `(232, 0)`: the top-right of the icon grid,
+nowhere near the strip. Closing the shell restores every viewport.
+
+### 365c. What it cost to get here
+
+Two useful findings and four wasted rounds, which is worth writing down together
+because the ratio is the lesson.
+
+Found: an application's canvas is 180x14, not the panel (363a); the language
+divided unsigned while comparing and printing signed (363b); the reference
+interpreter disagreed with the kernel (363c); and `run` reported two possible
+causes without saying which, sending the whole investigation at the wrong one
+(364).
+
+Wasted: three captures read as "the board is silent" when a stale process held
+COM5 and the script swallowed the error; one claim that the app strips had
+vanished when the program had been running the whole time; one reflash trimming
+an arena that was never the problem; and one capture whose command was typed
+into a board that was still booting.
+
+**Every one of those was the instrument, not the system.** The board was working
+in all four cases. This log has a long record of the opposite error — believing
+an instrument that was reporting an outcome for work that never ran — and the
+correction for both is the same: measure the measurer first.
+
+### State
+
+```
+works  NatScript: variables, buffers, functions, recursion, devices by name,
+       when/every, and a program drawn on the panel and touched by hand
+open   STRINGS, the top gap, argued for by app_tap's render()
+       ARENA_MAX 4 with the kernel holding one, and ping/pong holding two of
+       the three that remain -- one application at a time, in practice
+       VM-08 image identity; per-task stacks (352c); the null-sp fault (351)
+```

@@ -1,7 +1,7 @@
 # NatScript — the language, v0
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 0.7 · 2026-09-07 · Covers `next_moves` VM-09 through VM-13.
+Revision 0.8 · 2026-09-07 · Covers `next_moves` VM-09 through VM-13.
 
 NatScript compiles to NatVM bytecode. This document describes **what the
 compiler in `tools/natc.py` actually accepts today**, not what the proposal
@@ -373,6 +373,32 @@ every 100ms {
 
 Ten times a second is faster than a finger and leaves the rest of the quantum to
 everything else.
+
+### 9.4 Proved against a finger, 2026-09-07
+
+```
+[tap] cell 0 at 12,3 taps 1
+[tap] cell 1 at 36,3 taps 2
+[tap] cell 2 at 71,1 taps 3
+[tap] cell 3 at 101,12 taps 7
+[tap] cell 0 at 0,13 taps 8
+```
+
+`tools/app_tap.nat` on the board, touched by hand. Twenty touches delivered
+(`touch g/w=20/40`), four different cells, the counter climbing, and the digits
+drawn on the panel by `render()`.
+
+Every coordinate is **viewport relative**: x from 0 to 157 and y from 0 to 13,
+inside a strip that begins at panel y=256. The program never learns where its
+strip is, and the forty withheld touches are the ones that landed outside it.
+
+The cell arithmetic is the signed-division fix (§5) doing real work: `cw` is
+`180 / 6`, and `screen.x / cw` maps 12, 36, 71 and 101 to cells 0, 1, 2 and 3.
+
+**Opening the shell stops all of this**, on purpose. `app.c` sets every running
+program's viewport to `(0, 0, 0, 0)` while the shell view is up, so no touch can
+be inside one — a program must not paint over the keyboard, or over the control
+that closes it. Closing the shell restores every strip.
 
 ---
 
