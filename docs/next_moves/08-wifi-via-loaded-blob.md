@@ -21307,3 +21307,77 @@ works  one committed tool for flashing and driving the board, whose every
 open   VM-08 proper (eFuses); APP_MAX 4; ping's peer id (368b); per-task
        stacks (352c); the null-sp fault (351)
 ```
+
+---
+
+## step 373 — the front door, and what updating it found
+
+The README had **zero** mentions of NatScript, `natc`, the manifest, or
+permissions. The most significant thing built in twenty steps was invisible to
+anyone arriving at the repository.
+
+It was also wrong about what it did describe:
+
+| it said | it is |
+|---|---|
+| 12 syscalls | **14** |
+| image 37,248 bytes | **235,600** |
+| ~145 KB of DRAM left for applications | **29,240 bytes of heap at boot** |
+| 21 engineering reports | **59** |
+
+None of those were lies when written. Every one is a **census defect** in the
+sense of UM-NATOS-059 §3: a count, correct on the day, hardened into prose and
+never rechecked. The README is the same failure mode as `ARENA_MAX 4`, in
+English.
+
+Now measured rather than remembered — the numbers above came from `nm`, the
+build, `mem` on the board, and `ls`, and the language example in it was put
+through `natc` rather than written from memory.
+
+### 373a. `-WiFi` does not link
+
+The finding, and the reason updating a README was worth a step.
+
+Writing *"Networking: WPA2-PSK, DHCP, DNS, TCP/HTTP"* into the table required
+checking whether it is in the build. It is not — and enabling it fails:
+
+```
+region `iram' overflowed by 10551 bytes
+region `dram' overflowed by 27828 bytes
+```
+
+The networking is **real**: UM-NATOS-054 to 057 record it verified from another
+machine, `HTTP 200`, ping, the board's MAC in the router's ARP table. It is also
+**not in the image anybody builds**, and has not been for some time.
+
+The README now says both things in the same paragraph, because a table row
+reading "Networking: WPA2-PSK, DHCP, DNS, TCP/HTTP" with no caveat would be the
+most misleading sentence in the repository.
+
+Note what changed and what did not: step 352 reclaimed 41 KB of iram, which is
+why the overflow is 10 KB rather than 50. The **dram** overflow of 27,828 bytes
+is the harder half — the vendor blob wants a 32 KB DRAM window and the heap is
+what is left over.
+
+### 373b. What a README owes
+
+Two rules, applied here:
+
+**Every number is measured at the time of writing.** Not one of them was carried
+over.
+
+**Every claim says where it is not true.** The networking row has its caveat
+inline. `natvm_ref.py` is described as a test oracle and explicitly not
+authoritative. `run tamper` is documented as a thing that must always be
+refused, so a reader who sees it start knows something is broken.
+
+### State
+
+```
+works  a front door that matches the system, with the numbers taken rather
+       than remembered
+open   -WiFi DOES NOT LINK: iram +10,551, dram +27,828. The stack is verified
+       and unbuildable, which is the largest single gap in the project
+       VM-08 proper (eFuses); APP_MAX 4; ping's peer id (368b); per-task
+       stacks (352c); the null-sp fault (351)
+```

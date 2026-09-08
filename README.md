@@ -21,15 +21,63 @@ project code.
 |---|---|
 | **Scheduling** | Preemptive, priority with ageing so no ready task waits more than ~600 ms, blocking, sleeping, priority inheritance |
 | **Memory** | Bump-and-free heap, per-application arenas, bounds-checked at every access |
-| **Applications** | Register-based bytecode VM, 35 opcodes, 12 syscalls; faults contained, runaway programs bounded |
+| **Applications** | Register-based bytecode VM, 35 opcodes, 14 syscalls; faults contained, runaway programs bounded |
+| **A language** | **NatScript** — compiler, 27-case test suite, host reference VM. Variables, functions, recursion, buffers, strings, devices by name, `when`/`every` |
+| **Devices** | A device table reached by NAME, with a per-program manifest the image declares and the loader resolves |
 | **Display** | ILI9341 over SPI2 with DMA; per-application viewports that cannot be escaped |
 | **Input** | XPT2046 touch, gated on PENIRQ *and* pressure, confined per application |
-| **UI** | Touch launcher — icon grid, cursor, double-tap to start a program |
+| **UI** | Touch launcher; a program can own the main 240x202 region, with the way out drawn where it cannot reach |
 | **Graphics** | Raycast 3D view at 16 fps, optional framebuffer |
-| **Storage** | Flash record surviving power cycles; microSD read over SPI |
+| **Storage** | Flash records surviving power cycles; microSD read over SPI |
+| **Networking** | WPA2-PSK, DHCP, a DNS resolver and a TCP/HTTP client — see the caveat below |
 | **Failure** | Stack guards enforced per switch, hang detector, panic to serial *and* flash *and* the panel |
 
-Image: 37,248 bytes. Roughly 145 KB of the 180 KB DRAM is left for applications.
+Image: 235,600 bytes. Heap at boot: 29,240 bytes, all of it in one block.
+
+**The networking is real and is not in the default build.** It was verified from
+another machine — `HTTP 200`, ping, the board's MAC in the router's ARP table —
+but it lives behind `-WiFi`, and **`-WiFi` does not currently link**: iram
+overflows by 10,551 bytes and dram by 27,828. Everything else in this table is
+in the image you get from `.\build.ps1`. See UM-NATOS-054 to 057 for how the
+stack was built and where its memory went.
+
+## Writing a program
+
+Applications are bytecode. They can be written in assembly (`tools/*.vasm`) or
+in NatScript (`tools/*.nat`), which compiles to that assembly and then through
+the same assembler — one encoder of the instruction set, not two.
+
+```
+permissions { light }
+
+buf line[32]
+
+let peak = 1
+
+every 100ms {
+    if light.read(0) {
+        let v = light.value
+        if v > peak { peak = v }
+        format(line, "light ", v, "   peak ", peak)
+        screen.text(line, 2, 4, 0xFFFF, 0x0000, 1)
+    }
+}
+```
+
+That is most of `tools/app_meter.nat`, which runs full-screen from an icon on
+the board. Three properties are worth knowing before reading further:
+
+- **`permissions` is the manifest and the device namespace.** A device that is
+  not declared is not a name the program can write — a compile error, not a
+  runtime refusal. The names are resolved to device ids **at load, by name**, so
+  no program contains a device index.
+- **Every load and store is bounds-checked**, and a buffer's value is simply its
+  arena offset. That is the whole of what a pointer is here.
+- **Coordinates are viewport-relative and clipped by the kernel.** A program
+  cannot draw outside its region and cannot discover where its region is.
+
+`docs/natscript.md` is the language reference; `docs/vm-abi.md` is the frozen
+instruction and syscall ABI a compiler may depend on.
 
 ## Two decisions that shape everything
 
@@ -59,32 +107,55 @@ package directory and nothing else.
 .\build.ps1 -Flash -Monitor -Port COM5   # build, flash, attach monitor
 ```
 
+The build compiles `tools/*.nat` with `tools/natc.py`, assembles the result and
+every `tools/*.vasm` with `tools/vasm.py`, and runs the compiler's own test
+suite **before** using it — a failing suite fails the build.
+
 The bootloader and partition table come from `vendor/`; pass `-Vendor <path>` to
 use your own. See `vendor/README.md` for what they are and how to rebuild them.
 
-Boot output is best captured with the port opened *before* reset — the kernel
-prints within milliseconds of the jump, and attaching afterwards loses the
-banner. Note that opening a serial port on Windows asserts DTR, which resets the
-board; deassert `dtr` and `rts` *before* `open()`. UM-NATOS-017 §5 is the story
-of learning that twice.
+### Talking to the board
+
+```
+python tools/board.py ports
+python tools/board.py flash
+python tools/board.py run "ps" "run meter"
+python tools/board.py watch 60
+```
+
+Use this rather than a serial monitor for anything you intend to believe.
+Opening the port usually resets the board, so a command sent too early is simply
+lost; `board.py` probes for the prompt first, keeps what it captured if the link
+drops, names the process holding the port when it cannot open it, and treats
+esptool's own verification line as the only evidence of a successful flash.
+
+Every one of those behaviours exists because its absence once cost a day —
+UM-NATOS-059 §7 is the list, and `tools/board.py`'s own header repeats it.
 
 ## Shell
 
 Over serial at 115200:
 
 ```
-fb [on|off]   framebuffer for the 3D view      sd            probe the microSD card
-ps            list applications                sdread <lba>  dump one 512 B block
-progs         list loadable programs           taps          recent touch presses
-run <name>    start a program                  stacks        per-task stack headroom
-kill <id>     stop an application              3d            switch launcher / 3D view
-mem           heap statistics                  hang          wedge the kernel (watchdog resets)
-help          this                             fault         illegal instruction (panics)
-                                               smash         break a stack guard (panics)
+ps            list applications                mem           heap statistics
+progs         list loadable programs           stacks        per-task stack headroom
+run <name>    start a program                  taps          recent touch presses
+kill <id>     stop an application              sd            probe the microSD card
+light         read the light sensor            sdread <lba>  dump one 512 B block
+dev <id> <ch> read a device                    3d            switch launcher / 3D view
+fb [on|off]   framebuffer for the 3D view      help          this
+              hang / fault / smash             break the kernel, on purpose
 ```
+
+`help` lists the rest; there are considerably more, most of them bring-up
+instruments for one driver or another.
 
 The last three exist on purpose. A recovery path that has never been observed to
 fire is confidence without evidence.
+
+`run tamper` exists on purpose too, and must always be **refused**: it is a
+program table entry carrying one program's image and another's identity, kept so
+the manifest check is seen to work rather than assumed to.
 
 ## Layout
 
@@ -94,20 +165,32 @@ kernel/
   task.c timer.c      scheduler, context switch, tick
   heap.c arena.c      allocator and per-application arenas
   vm.c app.c ipc.c    bytecode interpreter, application lifecycle, messaging
+  device.c            the device table programs reach by name
   display.c raycast.c ILI9341 driver, 3D renderer
-  touch.c desktop.c   XPT2046, touch launcher
+  touch.c desktop.c   XPT2046, touch launcher, full-screen application regions
+  keyboard.c term.c   the on-screen keyboard and the terminal that uses it
+  net.c wifi_*.c      WPA2 supplicant, driver shim and network path (-WiFi only)
   flash.c store.c sd.c persistence and removable storage
   mutex.c critical.h  locking
   panic.c watchdog.c  failure handling
-  linker.ld           memory map
+  generated/          bytecode headers — build products, not sources
+  linker.ld           memory map, and which objects live in flash rather than RAM
 docs/                 engineering reports — see docs/README.md
-tools/                host-side bytecode assembler and program sources
+  natscript.md        the language reference
+  vm-abi.md           the frozen instruction and syscall ABI
+tools/
+  natc.py             the NatScript compiler
+  vasm.py             the assembler both paths go through
+  nattest.py tests/   the compiler's test suite, run by the build
+  natvm_ref.py        a host NatVM used as a test oracle — NOT authoritative
+  board.py            flashing and talking to the board
+  *.nat *.vasm        the programs themselves
 vendor/               the two borrowed binaries
 ```
 
 ## Documentation
 
-`docs/` holds 21 engineering reports. Start with `docs/README.md` for the index
+`docs/` holds 59 engineering reports. Start with `docs/README.md` for the index
 and reading order.
 
 They are written to be read by someone picking the project up cold, and they
