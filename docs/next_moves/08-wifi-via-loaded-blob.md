@@ -22113,3 +22113,66 @@ works  the join installs the PMK itself; two consecutive joins in one session
 open   a test that isolates 382 rather than being consistent with it
        PBKDF2 from flash; the dead counters in net.c's parser; VM-08 proper
 ```
+
+---
+
+## step 383 — PBKDF2 from flash, established but not read
+
+377a has been open since the crypto moved to irom at 374: every successful join
+had used a **cached** PMK, so the four thousand rounds of PBKDF2 had never once
+executed from flash.
+
+The network was forgotten and the passphrase typed again. Two joins followed,
+both complete:
+
+```
+4way pmk=1 step=6 rx=4 m1=2 m3=2 done=2 micbad=0
+dhcp      state 10 tries 0  addr 192.168.1.140
+```
+
+### 383a. Why that closes it, and how
+
+`forget` calls **`pmkcache_forget(ssid)`** — wifiapp.c:1236, and its own comment
+lists the three things it drops: the preference, the passphrase, and *the
+derived key*. So the join that followed could not have hit the cache. It missed,
+`wpa_hs_derive_pmk()` ran, and PBKDF2 executed the four thousand rounds from
+irom.
+
+`micbad=0` with `m3=1` then says the derived key was **correct**: a wrong PMK
+gives a wrong PTK, a wrong MIC on message three, and a handshake that stops
+there. It completed twice and DHCP bound.
+
+**So the crypto placement from 374 is verified in full** — SHA-1, HMAC-SHA1,
+AES key unwrap (380c) and now PBKDF2, all executing from flash.
+
+### 383b. Established by argument, not by instrument
+
+The chain above is sound and it is **not a reading**. Nothing printed "this PMK
+was derived"; it was inferred from what `forget` does.
+
+`g_used_cached` has been set on every join since step 318 and printed nowhere.
+It is in the report now — `cached=0` derived, `cached=1` from the cache — and
+the very next join read:
+
+```
+4way pmk=1 step=6 cached=1 rx=2 m1=1 m3=1 done=1 micbad=0
+```
+
+`cached=1`, because the derivation had already happened and re-populated the
+cache. **The instrument arrived one join too late to witness the thing it was
+added for.** It will answer directly the next time a network is forgotten, and
+the claim above stands on the argument until then.
+
+That is the fifth instrument in two days found to know something it did not
+say — after the panel-only log (375), the silent wait (379), the passive-only
+`m1` counter (380), and net.c's dead DHCP counters (381).
+
+### State
+
+```
+works  every WPA primitive verified executing from flash: PBKDF2, SHA-1,
+       HMAC-SHA1, AES unwrap. Associate, handshake, DHCP bind, traffic.
+open   a `cached=0` reading to replace 383a's argument with a measurement
+       the dead counters in net.c's parser; VM-08 proper; APP_MAX 4;
+       per-task stacks (352c); the null-sp fault (351)
+```

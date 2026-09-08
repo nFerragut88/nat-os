@@ -70,6 +70,19 @@ void wpa_hs_report(void)
         uart_puts(" step=");
         uart_put_dec(g_hs_step);
     }
+    {   /* [step 383] Where this PMK came from.
+         *
+         * g_used_cached has been set on every join since step 318 and printed
+         * nowhere. Whether PBKDF2 actually ran -- the four thousand rounds
+         * moved to flash at 374 -- had to be argued from "the network was
+         * forgotten, and forget calls pmkcache_forget". That argument is
+         * sound and it is not a reading.
+         *
+         * 0 = derived here, 1 = came from the cache. */
+        extern int g_used_cached;
+        uart_puts(" cached=");
+        uart_put_dec((unsigned int)g_used_cached);
+    }
     {   /* [step 380] Arrivals, counted before the PMK test that used to
          * discard them silently. rx > 0 with m1 = 0 means the frames are
          * coming and being dropped here. */
