@@ -36,25 +36,19 @@ func cell(c, colour) {
     screen.fill(c * cw + 1, 1, cw - 2, h - 2, colour)
 }
 
-// "N", assembled a byte at a time.
+// [step 366] This was nine lines of byte stores:
 //
-// THIS IS THE MISSING FEATURE, not a stylistic choice. NatScript has no string
-// type: a literal can be printed and nothing else, and there is no allocator
-// inside an arena to build one in. `print` handles a number on the serial line;
-// a number that has to appear ON THE PANEL has to be turned into digits by
-// hand. Eight lines here is what `"" + n` costs today.
+//     label[0] = 116          // t
+//     label[1] = 97           // a
+//     ...
+//     label[i] = 48 + n % 10
+//
+// It was written that way because NatScript had no strings, and it was the
+// argument for adding them. `format` writes into a buffer this program
+// declared, and the compiler passes that buffer's size as a hard limit -- so
+// the text is truncated if it does not fit, and never runs past the end.
 func render(n) {
-    let i = 0
-    if n >= 100 {
-        label[i] = 48 + n / 100
-        i = i + 1
-    }
-    if n >= 10 {
-        label[i] = 48 + (n / 10) % 10
-        i = i + 1
-    }
-    label[i] = 48 + n % 10
-    label[i + 1] = 0
+    format(label, "taps ", n)
 }
 
 screen.fill(0, 0, w, h, EDGE)

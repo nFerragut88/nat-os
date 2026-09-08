@@ -16,8 +16,9 @@ earns trust it has not yet been given.
 WHAT THIS VERSION IS NOT, stated first because a language that quietly cannot
 do something is worse than one that says so:
 
-  - integers only. No floats, no fixed point yet, no strings as VALUES --
-    a string literal may be printed and nothing else.
+  - integers only. No floats and no fixed point yet.
+  - text lives in a `buf` and is built with format(); there are no
+    string-valued expressions, because there is no allocator inside an arena.
   - buffers are top-level, fixed-size, and indexed by BYTE. No dynamic
     allocation, no bounds knowledge -- the VM's arena check is the only thing
     between an index and somebody else's data, and it is enough.
@@ -621,6 +622,8 @@ class Codegen:
         self.needs_putd = False
         self.needs_screen = False
         self.needs_div = False
+        self.needs_fmt = False
+        self.needs_strlen = False
         self.funcs = {}
         self.label_n = 0
         self.out = self.body     # where emit() currently writes
@@ -990,6 +993,18 @@ class Codegen:
                 self.emit("ldi     r0, 0")
             return
 
+        if name == "format":
+            self.do_format(args, line, want_value)
+            return
+
+        if name == "strlen":
+            if len(args) != 1:
+                raise NatError(line, "strlen(string) takes one argument")
+            self.expr(args[0])
+            self.emit("call    sl_len")
+            self.needs_fmt = True
+            return
+
         if name in ("divu", "modu"):
             # The raw machine operation. For quantities that are not signed
             # integers -- an address, a device reading, a pixel -- where the
@@ -1130,6 +1145,97 @@ class Codegen:
         "        ret",
     ]
 
+    # [step 366] Strings, without an allocator.
+    #
+    # THE CONSTRAINT: there is no heap inside an arena and there is not going to
+    # be one. An arena is a fixed span the VM bounds-checks; adding a allocator
+    # inside it would mean a second memory manager, in bytecode, on a machine
+    # with 3 KB per program.
+    #
+    # WHY `"taps: " + n` WAS REJECTED. It reads well and it is what the proposal
+    # asked for, and it needs somewhere to put the result. The only somewhere
+    # available is a buffer the compiler picks -- which means two such
+    # expressions live at once quietly share storage, and the failure is a
+    # string that changes under you with nothing in the source to suggest why.
+    # This project has spent two reports on things that were quietly not what
+    # they claimed.
+    #
+    # So the destination is written down: `format(line, "taps: ", n)`. The
+    # compiler knows how big `line` is, passes that as a hard limit, and the
+    # helpers below stop at it. A format that does not fit is TRUNCATED and
+    # still NUL-terminated -- never an overrun, because the one thing worse
+    # than a short string is a program that writes past its buffer and gets
+    # away with it until it does not.
+    FMT_HELPER = [
+        "",
+        "; ---- string building " + "-" * 45,
+        "; fs_copy: r0 = write pos, r1 = source, r2 = last writable byte.",
+        ";          Returns the new write position in r0.",
+        "fs_copy:",
+        "        ldb     r3, r1, 0",
+        "        brz     r3, fs_done     ; source exhausted",
+        "        slt     r4, r0, r2",
+        "        brz     r4, fs_done     ; no room; truncate rather than run on",
+        "        stb     r3, r0, 0",
+        "        addi    r0, 1",
+        "        addi    r1, 1",
+        "        jmp     fs_copy",
+        "fs_done:",
+        "        ret",
+        "",
+        "; fn_num: r0 = write pos, r1 = value (signed), r2 = last writable byte.",
+        ";         Digits are produced least-significant first into fmt_tmp and",
+        ";         copied back in reverse, because there is nowhere else to put",
+        ";         them and reversing in the destination would need the length",
+        ";         before it was known.",
+        "fn_num:",
+        "        ldi     r5, 0",
+        "        slt     r5, r1, r5",
+        "        brz     r5, fn_pos",
+        "        slt     r4, r0, r2",
+        "        brz     r4, fn_fin",
+        "        ldi     r3, 45          ; '-'",
+        "        stb     r3, r0, 0",
+        "        addi    r0, 1",
+        "        neg     r1, r1",
+        "fn_pos:",
+        "        ldi     r6, @fmt_tmp",
+        "        ldi     r7, 10",
+        "fn_dig:",
+        "        mod     r3, r1, r7",
+        "        addi    r3, 48",
+        "        stb     r3, r6, 0",
+        "        addi    r6, 1",
+        "        div     r1, r1, r7",
+        "        brnz    r1, fn_dig",
+        "        ldi     r8, @fmt_tmp",
+        "fn_out:",
+        "        addi    r6, -1",
+        "        ldb     r3, r6, 0",
+        "        slt     r4, r0, r2",
+        "        brz     r4, fn_fin",
+        "        stb     r3, r0, 0",
+        "        addi    r0, 1",
+        "        sne     r4, r6, r8",
+        "        brnz    r4, fn_out",
+        "fn_fin:",
+        "        ret",
+        "",
+        "; sl_len: r0 = string -> r0 = bytes before the terminator.",
+        "sl_len:",
+        "        mov     r1, r0",
+        "        ldi     r2, 0",
+        "sl_loop:",
+        "        ldb     r3, r1, 0",
+        "        brz     r3, sl_done",
+        "        addi    r1, 1",
+        "        addi    r2, 1",
+        "        jmp     sl_loop",
+        "sl_done:",
+        "        mov     r0, r2",
+        "        ret",
+    ]
+
     PUTD_HELPER = [
         "",
         "; ---- print one number, with its sign " + "-" * 30,
@@ -1145,6 +1251,57 @@ class Codegen:
         "        sys     putd",
         "        ret",
     ]
+
+    def do_format(self, args, line, want_value):
+        """format(buffer, ...) -- writes literals and numbers into `buffer`.
+
+        The destination must be a declared `buf`, because the compiler has to
+        know how big it is: the limit is not something the program passes and
+        could get wrong, it is the size written in the declaration."""
+        if not args:
+            raise NatError(line, "format(buffer, ...) needs a destination")
+        dest = args[0]
+        if dest[0] != "var" or dest[1] not in self.bufs:
+            raise NatError(line, "the first argument to format must be a "
+                                 "declared buffer -- the compiler passes its "
+                                 "size as the limit, so it has to be one it "
+                                 "can see the declaration of")
+        name = dest[1]
+        size = self.bufs[name][0]
+        if size < 2:
+            raise NatError(line, f"'{name}' has no room for a string and its "
+                                 "terminator")
+        self.needs_fmt = True
+
+        # The last byte a helper may write. One short of the end, because the
+        # terminator goes after it and a NUL outside the buffer would be the
+        # overrun this design exists to prevent.
+        def limit():
+            self.emit(f"ldi     r2, @b_{name}")
+            self.emit(f"addi    r2, {size - 1}")
+
+        self.emit(f"ldi     r0, @b_{name}")
+        for a in args[1:]:
+            if a[0] == "str":
+                if a[1] == "":
+                    continue
+                self.emit(f"ldi     r1, @{self.string_label(a[1])}")
+                limit()
+                self.emit("call    fs_copy")
+            else:
+                self.push(0)                 # the write position
+                self.expr(a)
+                self.emit("mov     r1, r0")
+                self.pop(0)
+                limit()
+                self.emit("call    fn_num")
+        self.emit("ldi     r1, 0")
+        self.emit("stb     r1, r0, 0")       # always terminated
+        if want_value:
+            # The length written, which is what a caller would otherwise have
+            # to compute with strlen over what it just built.
+            self.emit(f"ldi     r1, @b_{name}")
+            self.emit("sub     r0, r0, r1")
 
     def do_print(self, args, newline, line):
         if not args and not newline:
@@ -1442,6 +1599,8 @@ class Codegen:
             lines.extend(self.PUTD_HELPER)
         if self.needs_div:
             lines.extend(self.DIV_HELPER)
+        if self.needs_fmt:
+            lines.extend(self.FMT_HELPER)
 
         if self.strings or self.globals or self.bufs or self.devices:
             lines.append("")
@@ -1462,6 +1621,10 @@ class Codegen:
             lines.append("        .word   0")
             lines.append(f"df_{d}:")
             lines.append("        .word   0")
+        if self.needs_fmt:
+            lines.append("        .align  4")
+            lines.append("fmt_tmp:")
+            lines.append("        .space  12")   # ten digits, a sign, slack
         for name, (size, values) in self.bufs.items():
             # Aligned even though indexing is by byte: a buffer is what gets
             # handed to word()/setword() and to a device transfer, and an

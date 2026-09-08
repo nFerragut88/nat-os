@@ -1,0 +1,14 @@
+// A one-shot check that format() works on the board, printed to the serial
+// line so it needs no finger.
+buf line[24]
+buf tiny[6]
+format(line, "taps ", 42)
+puts(line)
+println("")
+format(line, "x=", 0 - 7, " y=", 13)
+puts(line)
+println("")
+println(strlen(line))
+format(tiny, "abcdefghij")
+puts(tiny)
+println("")

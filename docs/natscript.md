@@ -1,11 +1,11 @@
 # NatScript — the language, v0
 
 **Used Medias LLC — Embedded Systems Division**
-Revision 0.8 · 2026-09-07 · Covers `next_moves` VM-09 through VM-13.
+Revision 0.9 · 2026-09-07 · Covers `next_moves` VM-09 through VM-13.
 
 NatScript compiles to NatVM bytecode. This document describes **what the
 compiler in `tools/natc.py` actually accepts today**, not what the proposal
-imagines. Where the two differ, §11 says so by name.
+imagines. Where the two differ, §12 says so by name.
 
 The proposal's own §15 warned against designing syntax before the ABI was
 written down. The ABI is now written down and frozen — `docs/vm-abi.md`,
@@ -75,9 +75,10 @@ Comments: `//`, `--`, `#` to end of line, and `/* */` across lines.
 point, and a language that lets someone write `0.5` without saying what it costs
 is lying to them. `true` and `false` are 1 and 0.
 
-**A string literal can be printed and nothing else.** It has no type, no length,
-and no operations. Using one where a number is expected is a compile error
-rather than an address quietly printed as a number.
+**A string literal is not a value.** It can be printed, or written into a
+buffer with `format` (§8) — using one where a number is expected is a compile
+error rather than an address quietly printed as a number. Text a program builds
+lives in a `buf`, because there is no allocator inside an arena.
 
 There are no structs. Fixed-size byte buffers, and an arena offset as the
 only kind of pointer, are §7.
@@ -101,7 +102,7 @@ Zero is false and everything else is true; there is no separate boolean type.
 
 Redeclaring a name in the same function is an error. There is **no block
 scoping**: a `let` inside an `if` is visible for the rest of the function. That
-is a simplification, not a design, and §11 lists it.
+is a simplification, not a design, and §12 lists it.
 
 ---
 
@@ -264,7 +265,69 @@ guarantee every other memory access in this system has.
 
 ---
 
-## 8. Devices
+## 8. Strings
+
+There is **no allocator inside an arena**, and there is not going to be one. An
+arena is a fixed span the VM bounds-checks; a heap inside it would be a second
+memory manager, written in bytecode, on a machine with 3 KB per program.
+
+So a string is **bytes in a buffer you declared** (§7), and `format` writes into
+one:
+
+```
+buf line[32]
+
+format(line, "taps ", n)        // -> "taps 42"
+screen.text(line, 2, 4, INK, BG, 1)
+puts(line)
+println(strlen(line))
+```
+
+`format(dest, ...)` takes a `buf` and any mix of string literals and numeric
+expressions. Numbers are written **signed**, matching `print` (§5). It evaluates
+to the number of bytes written.
+
+### 8.1 Why `"taps: " + n` was rejected
+
+It reads better and it is what the proposal asked for. It also needs somewhere
+to put the result, and the only somewhere available is a buffer the compiler
+picks — so two such expressions live at once would quietly share storage, and
+the symptom is a string that changes under you with nothing in the source to
+explain it.
+
+Naming the destination costs one argument and removes the whole class.
+
+### 8.2 The limit is the declaration, not an argument
+
+The compiler passes `dest`'s **declared size** as a hard limit. It is not a
+number the program supplies and could get wrong.
+
+**A format that does not fit is truncated, and stays NUL-terminated.** Never an
+overrun — the one thing worse than a short string is a program that writes past
+its buffer and gets away with it until it does not.
+
+```
+buf small[8]
+format(small, "abcdefghijklmnop")
+puts(small)                       // abcdefg
+```
+
+The first argument must be a buffer the compiler can see the declaration of.
+An expression that merely evaluates to an address is refused, because then the
+size would be a guess.
+
+### 8.3 What is still not here
+
+No string comparison, no substring, no concatenation of two buffers, and no
+string-valued expressions or returns. `strlen(p)` reads a NUL-terminated string
+anywhere in the arena — including one the kernel wrote, which is how
+`device.name()` is read back.
+
+`-2147483648` prints without its sign, for the reason §5 gives.
+
+---
+
+## 9. Devices
 
 The `permissions` block is **both** the manifest the kernel resolves at load
 time **and** the device namespace of the program. What a program may reach and
@@ -300,7 +363,7 @@ alternative — having `read` evaluate to the reading — makes a refusal
 indistinguishable from a sensor reporting zero, which is the failure mode this
 project has spent two reports diagnosing.
 
-### 8.1 Names are resolved at run time, not compiled in
+### 9.1 Names are resolved at run time, not compiled in
 
 A compiler that turned `light` into `ldi r1, 0` would hard-code `device.c`'s
 **table order** into every generated program. Step 356 removed exactly that
@@ -323,7 +386,7 @@ reason: a program reaching for hardware that is not there runs blind.
 
 ---
 
-## 9. The screen
+## 10. The screen
 
 Until step 362 NatScript could compute, print, and reach a device — which made
 it a language for writing **serial console programs**, on a board whose entire
@@ -344,13 +407,13 @@ somebody else's hardware: coordinates are viewport-relative, the kernel clips
 them, and a program cannot draw outside its strip or learn where that strip
 sits on the panel.
 
-### 9.1 `touched()` reports whether, separately from where
+### 10.1 `touched()` reports whether, separately from where
 
 Same rule as `d.read()` in §8: a call that must be able to say **no** cannot
 also be the coordinate. `screen.touched()` evaluates to 1 or 0 and stashes the
 point in `screen.x` and `screen.y`.
 
-### 9.2 `width` and `height` ask, every time
+### 10.2 `width` and `height` ask, every time
 
 They are properties rather than something a `screen.size()` call leaves behind.
 A `size()` that had to be called first would give **0** to anyone who forgot it,
@@ -359,7 +422,7 @@ This started as a `size()` and was deleted.
 
 Both come from `sys dims`, which reports the **viewport**, not the panel.
 
-### 9.3 The panel is polled; only keys are delivered
+### 10.3 The panel is polled; only keys are delivered
 
 `touch` is a syscall a program asks. The kernel pushes a key (§10) and nothing
 else. So a program that wants to feel touches polls, and the natural place to
@@ -374,7 +437,7 @@ every 100ms {
 Ten times a second is faster than a finger and leaves the rest of the quantum to
 everything else.
 
-### 9.4 Proved against a finger, 2026-09-07
+### 10.4 Proved against a finger, 2026-09-07
 
 ```
 [tap] cell 0 at 12,3 taps 1
@@ -402,7 +465,7 @@ that closes it. Closing the shell restores every strip.
 
 ---
 
-## 10. `when` and `every`
+## 11. `when` and `every`
 
 The two pieces of syntax the proposal cared most about, and the last thing the
 VM could do that the language could not say.
@@ -424,7 +487,7 @@ Top level only. A handler is entered by the **kernel**, so it has no caller to
 be nested inside; one declared within a function would be registered or not
 depending on whether that function happened to run.
 
-### 10.1 Durations
+### 11.1 Durations
 
 A tick is **10 ms** (`kmain.c`, `TICK_INTERVAL_CYCLES`), and has been real time
 rather than a yield counter since the `timer_isr` fix.
@@ -440,13 +503,13 @@ rather than a yield counter since the `timer_isr` fix.
 rounding it to 10 ms silently would be a lie about the period the program asked
 for. The error says what a tick is.
 
-### 10.2 One handler per event
+### 11.2 One handler per event
 
 `vm.c` keeps a single handler offset per event id, so a second `every` block
 would **replace** the first and the first would never fire. That is a compile
 error naming the line of the block it would have displaced.
 
-### 10.3 Handlers arm after the top level, and then the program waits
+### 11.3 Handlers arm after the top level, and then the program waits
 
 The top-level statements are setup. When they finish, the handlers are
 registered, and the main flow becomes a one-instruction wait.
@@ -462,7 +525,7 @@ existed; it is stated here rather than left to be discovered in a disassembly.
 **A program with a handler does not exit.** `exit(0)` still works if that is
 what is wanted.
 
-### 10.4 A refused registration stops the program
+### 11.4 A refused registration stops the program
 
 `sys event` refuses rather than faulting when the VM will not take a handler.
 The generated code checks, and stops:
@@ -477,26 +540,15 @@ to diagnose and the check costs two instructions.
 
 ---
 
-## 11. What v0 still does not have
+## 12. What v0 still does not have
 
 1. **No block scoping**, and no shadowing.
 2. **No `for`, no `break`, no `continue`.**
-3. **Strings are literals only, and this is now the biggest gap.** `"Scans: " +
-   count` needs an allocator inside an arena, and there is not one. A literal
-   can be printed; a number can be printed; a number that has to appear **on the
-   panel** rather than on the serial line has to be turned into digits by hand:
-
-   ```
-   func render(n) {
-       label[0] = 116          // t
-       ...
-       label[i] = 48 + n % 10
-   }
-   ```
-
-   Nine lines in `tools/app_tap.nat` are what `"taps: " + n` costs today. It did
-   not matter while every program printed to a terminal; it matters the moment
-   one draws.
+3. **No string-valued expressions.** `format` (§8) builds text into a buffer
+   you named, and that covers what `"Scans: " + count` was for, but a function
+   still cannot return a string and two buffers cannot be compared or joined.
+   The missing piece is an allocator, and §8 says why there is not going to be
+   one.
 4. **No constant folding.** `2 * 3` emits a multiply.
 5. **No compile-time bounds checking** on buffer indices — §7.
 6. **Two event sources**, tick and key, because that is what the VM has.
@@ -504,7 +556,7 @@ to diagnose and the check costs two instructions.
 
 ---
 
-## 12. The honest test, taken
+## 13. The honest test, taken
 
 The proposal set it:
 
@@ -537,7 +589,7 @@ find with `ls`. On a board with 4 MB of flash and per-program arenas measured in
 kilobytes, source size is the scarce thing and bytecode is not. That is a
 judgement about this machine, not a general one.
 
-### 12.2 Run on the board, 2026-09-07
+### 13.2 Run on the board, 2026-09-07
 
 The comparison was made on the hardware rather than on the page. Both programs
 were flashed and run from the shell over the serial link.
@@ -573,7 +625,7 @@ second, counting up while the main flow sat in its wait.
 evidence that it agrees with `vm.c` on anything that matters. It is still not
 the kernel and still not authoritative.
 
-### 12.1 What the rewrites could not carry over
+### 13.1 What the rewrites could not carry over
 
 The assembly's comments. `app_dev.vasm` carries a paragraph about a jump that
 landed past its setup code and silently skipped a slot claim; `app_evt.vasm`
@@ -586,7 +638,7 @@ the reasoning is what took the time.
 
 ---
 
-## 13. The test suite
+## 14. The test suite
 
 `tools/tests/*.nat`, run by `tools/nattest.py`, run by `build.ps1` **before it
 compiles anything with the compiler**. A failure fails the build.
@@ -623,7 +675,7 @@ Two checks run on **every** case regardless of what it asserts:
 - **the program must not fault.** `BOUNDS`, `ALIGN`, `DIV0`, `CALL_DEPTH` and
   `RET` all fail the case by name.
 
-### 13.1 The oracle is not the kernel
+### 14.1 The oracle is not the kernel
 
 `tools/natvm_ref.py` is a NatVM on the host, and its header says what it is for
 in its first line: **it is not authoritative — `kernel/vm.c` is.** Its semantics
@@ -636,7 +688,7 @@ pass.** A second implementation of an instruction set is exactly the shape this
 project keeps finding bugs in (§1), and this one is allowed to exist only
 because it is a test oracle rather than a second source of truth.
 
-### 13.2 What it found immediately
+### 14.2 What it found immediately
 
 The first case, on arithmetic precedence, failed on a line that had nothing to
 do with precedence:

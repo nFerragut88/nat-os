@@ -20689,3 +20689,99 @@ open   STRINGS, the top gap, argued for by app_tap's render()
        the three that remain -- one application at a time, in practice
        VM-08 image identity; per-task stacks (352c); the null-sp fault (351)
 ```
+
+---
+
+## step 366 — strings, without an allocator
+
+The top of the gap list since 362, argued for by the program that needed them.
+`app_tap`'s renderer was nine lines of byte stores:
+
+```
+label[0] = 116          // t
+label[1] = 97           // a
+...
+label[i] = 48 + n % 10
+```
+
+It is now one:
+
+```
+format(label, "taps ", n)
+```
+
+On the board:
+
+```
+> run str
+taps 42
+x=-7 y=13
+9
+abcde
+```
+
+### 366a. The constraint decides the design
+
+**There is no allocator inside an arena, and there is not going to be one.** An
+arena is a fixed span the VM bounds-checks; a heap inside it would be a second
+memory manager, written in bytecode, on a machine with 3 KB per program.
+
+So a string is bytes in a buffer the program declared, and `format` writes into
+one. Literals and numbers, numbers signed to match `print`, and the call
+evaluates to the length written.
+
+### 366b. Why `"taps: " + n` was rejected
+
+It reads better and it is exactly what the proposal asked for.
+
+It also needs somewhere to put the result, and the only somewhere available is a
+buffer the compiler picks. Two such expressions live at once would quietly share
+it, and the symptom is a string that changes under you with nothing in the
+source to explain why.
+
+**Naming the destination costs one argument and removes the whole class.** This
+project has spent two reports on quantities that were quietly not what they
+claimed; a hidden shared buffer is that shape.
+
+### 366c. The limit is the declaration
+
+The compiler passes the destination's **declared size** as the limit. It is not
+a number the program supplies and could get wrong, and the first argument must
+be a `buf` the compiler can see the declaration of — an expression that merely
+evaluates to an address is refused, because then the size would be a guess.
+
+A format that does not fit is **truncated and still terminated**:
+
+```
+buf small[8]
+format(small, "abcdefghijklmnop")     ->  abcdefg
+```
+
+Never an overrun. The one thing worse than a short string is a program that
+writes past its buffer and gets away with it until it does not.
+
+### 366d. It made the program smaller as well as shorter
+
+`app_tap`: **2,503 -> 2,149 bytes**. Nine lines of open-coded byte stores and
+digit arithmetic cost more bytecode than a call to a shared helper, so the
+readable version is also the smaller one. That is not usually how this trade
+goes and it is worth recording that here it did.
+
+### 366e. What is still missing
+
+No string comparison, no substring, no joining two buffers, and no
+string-valued expressions or returns — a function cannot return text. All of
+that needs the allocator that §8 explains is not coming.
+
+`strlen(p)` reads a NUL-terminated string anywhere in the arena, including one
+the kernel wrote, which is how `device.name()` is read back.
+
+### State
+
+```
+works  format() and strlen(), verified on the board, truncation included;
+       app_tap's renderer is one line and the program is 354 bytes smaller
+open   ARENA_MAX 4 with the kernel holding one, and ping/pong holding two of
+       the three that remain -- one application at a time, in practice
+       VM-08 image identity; per-task stacks (352c); the null-sp fault (351)
+```

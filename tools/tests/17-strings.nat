@@ -1,0 +1,27 @@
+// Strings without an allocator: format() writes into a buffer the program
+// declared, and the compiler passes that buffer's size as a hard limit.
+//
+// The last case is the one that matters. `line` holds 8 bytes, so 7 characters
+// and a terminator, and the text asked for is longer. It TRUNCATES and stays
+// terminated -- never an overrun.
+// expect: taps: 42
+// expect: 8
+// expect: -7 and 0
+// expect: abcdefg
+// expect: 7
+buf line[32]
+buf small[8]
+
+format(line, "taps: ", 42)
+puts(line)
+println("")
+println(strlen(line))
+
+format(line, 0 - 7, " and ", 0)
+puts(line)
+println("")
+
+format(small, "abcdefghijklmnop")
+puts(small)
+println("")
+println(strlen(small))

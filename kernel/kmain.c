@@ -58,6 +58,7 @@
 #include "generated/app_devnat.h" /* [step 358] app_dev, in NatScript */
 #include "generated/app_evtnat.h" /* [step 359] app_evt, in NatScript */
 #include "generated/app_tap.h"    /* [step 362] NatScript with a UI */
+#include "generated/app_str.h"    /* [step 366] strings, on the board */
 #include "generated/app_ping.h"
 #include "generated/app_pong.h"
 #include "uart.h"
@@ -996,6 +997,8 @@ static const shell_program_t PROGRAMS[] = {
      * them across. */
     { "tap",     vm_app_tap,   VM_APP_TAP_LEN,   3072u, VM_APP_TAP_AT_G_TAPS,
       vm_app_tap_perms, VM_APP_TAP_PERM_COUNT },
+    { "str",     vm_app_str,   VM_APP_STR_LEN,   1024u, 0u,
+      vm_app_str_perms, VM_APP_STR_PERM_COUNT },
     { "ping",    vm_app_ping,  VM_APP_PING_LEN,  512u, 0u, vm_app_ping_perms, VM_APP_PING_PERM_COUNT },
     { "pong",    vm_app_pong,  VM_APP_PONG_LEN,  512u, 0u, vm_app_pong_perms, VM_APP_PONG_PERM_COUNT },
 };
