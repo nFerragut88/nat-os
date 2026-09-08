@@ -790,7 +790,24 @@ static void join_named(const char *ssid, const char *pass)
     wifi_join_ssid_pass(ssid, (pass && pass[0]) ? pass : 0);
 
     LOG("associating, waiting for the AP");
-    for (uint32_t w = 0u; w < 1000u && !wifi_joined(); w++) { task_sleep(1u); }
+
+    /* [step 379] The wait reports itself.
+     *
+     * This loop is bounded at 1000 ticks -- ten seconds -- and must end by
+     * logging either "joined" or "join FAILED". A capture watched it emit
+     * NEITHER across 117 seconds while the kernel stayed alive, every task
+     * READY and fault=none. A bounded loop that outlives its own bound by a
+     * factor of ten is the interesting kind of impossible, and the log said
+     * nothing about it because nothing in it spoke until it was over.
+     *
+     * So it counts out loud, and says which way it left. A silent wait is not
+     * a measurement of anything. */
+    uint32_t w = 0u;
+    for (; w < 1000u && !wifi_joined(); w++) {
+        if (w && (w % 200u) == 0u) { LOGV("still associating, tick", w); }
+        task_sleep(1u);
+    }
+    LOGV(wifi_joined() ? "AP answered after ticks" : "gave up after ticks", w);
 
     if (!wifi_joined()) {
         LOG("join FAILED -- no connect callback");

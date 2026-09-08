@@ -21762,3 +21762,110 @@ works  board.py finds the port and says which; the -WiFi image has 32,856 bytes
 open   PBKDF2 from flash (377a); VM-08 proper (eFuses); APP_MAX 4; per-task
        stacks (352c); the null-sp fault (351)
 ```
+
+---
+
+## step 379 — the wait counts out loud, and names what is actually wrong
+
+Reported as *"wifi is failing to connect now"*.
+
+### 379a. A bounded loop that outlived its bound
+
+The first capture showed the app reaching
+
+```
+[wifi] view opened
+[wifi] joining ivory-billed
+[wifi] associating, waiting for the AP
+```
+
+and then **nothing at all for 117 seconds** — while the kernel stayed alive,
+`fault=none`, `states=1111111` (every task READY, nothing blocked).
+
+That loop is `for (w = 0; w < 1000 && !wifi_joined(); w++) task_sleep(1)`. A
+thousand ticks is ten seconds, and `wifi_joined()` is a read of one variable —
+it cannot block. A bounded wait outliving its bound by a factor of ten is the
+interesting kind of impossible, **and the log said nothing about it because
+nothing in it spoke until it was over.**
+
+So it counts:
+
+```
+if (w && (w % 200u) == 0u) { LOGV("still associating, tick", w); }
+...
+LOGV(wifi_joined() ? "AP answered after ticks" : "gave up after ticks", w);
+```
+
+A silent wait is not a measurement of anything.
+
+### 379b. What the counting found
+
+```
+[wifi] AP answered after ticks 2
+[wifi] joined -- starting the network
+```
+
+**Two ticks.** Twenty milliseconds. The association is not slow and never was.
+
+The difference between the two runs is the line that is missing from the first:
+
+| failing | working |
+|---|---|
+| `view opened` | `view opened` |
+| — | `no radio -- starting one` … the whole bring-up |
+| `joining ivory-billed` | `joining ivory-billed` |
+| `associating, waiting for the AP` | `associating, waiting for the AP` |
+| *(silence)* | `AP answered after ticks 2` |
+
+The failing run joined on a radio that had **already been up for a long
+session**. The working one brought the radio up first. One observation of each,
+so that is a lead and not a conclusion.
+
+### 379c. And the real failure is older than any of this
+
+The successful join does not get an address:
+
+```
+netif up, mtu 1500, starting DHCP
+dhcp      DISCOVER 291 B  tx rc 0x0
+dhcp offer/ack 0/0   arp 0->0
+4way pmk=0 step=0 m1=0 m3=0
+eapol@netif 0
+```
+
+184 seconds after joining. DISCOVER goes out, nothing comes back, and the
+reason is one line lower: **`m1=0`. No EAPOL message 1 ever arrives, so the
+four-way handshake never starts, so there is no PTK and no GTK and no data can
+pass.**
+
+That is not new and it is not mine. `docs/next_moves/08` steps 241–245 are
+titled *"two hypotheses for the missing EAPOL, both disproved"*, and the same
+`m1=0` appears at line 14098 of this log. The station associates and the AP
+never sends M1.
+
+**What is new is that it is now legible in twenty seconds** rather than
+inferred, because the app's log reaches the serial line (375) and the wait
+reports itself (379a).
+
+### 379d. What this does and does not say about 374
+
+It leaves 377 standing. That step's claim was about the run that got **a green
+IP** — an address requires data, data requires the PTK and GTK, and those
+require `sha1_prf`, `hmac_sha1` and `aes_unwrap` to have produced correct
+output from flash. That reasoning is unaffected by a later run where the
+handshake never began.
+
+It does sharpen one thing: **`wifi_joined()` means associated, not
+handshaken.** The view says "joined -- starting the network" on the strength of
+the connect callback alone, and this capture is what that looks like when the
+handshake then never happens. A status that means less than it says, which is
+the shape this log has recorded seven times.
+
+### State
+
+```
+works  the association wait reports itself; the failure is legible from serial
+open   THE MISSING EAPOL M1 -- pre-existing, steps 241-245, still unexplained
+       joining on a stale radio vs a freshly started one (379b), one observation
+       each; PBKDF2 from flash (377a); VM-08 proper; APP_MAX 4
+```
