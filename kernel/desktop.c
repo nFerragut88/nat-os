@@ -136,7 +136,12 @@ static const desk_icon_t ICONS[COLS * ROWS] = {
     { "paint",    "paint",    COLOR_MAGENTA, DESK_ACTION_NONE },
     { "notes",    0,          COLOR_WHITE,   DESK_ACTION_NOTES },
     { "ping",     "ping",     COLOR_CYAN,    DESK_ACTION_NONE },
-    { "pong",     "pong",     COLOR_GREEN,   DESK_ACTION_NONE },
+    /* [step 370] Was "pong". Both halves of the IPC demonstration stopped
+     * starting at boot at 368, and `run pong` still launches it from the
+     * shell -- what it no longer has is a place on a grid that holds nine
+     * things, on a board whose whole point is now that you can write one of
+     * these yourself. `meter` is that: NatScript, an icon, and the region. */
+    { "meter",    "meter",    COLOR_GREEN,   DESK_ACTION_NONE },
     { "rogue",    "gfxrogue", COLOR_YELLOW,  DESK_ACTION_NONE },
     { "3D view",  0,          COLOR_RED,     DESK_ACTION_3D   },
 };

@@ -59,6 +59,7 @@
 #include "generated/app_evtnat.h" /* [step 359] app_evt, in NatScript */
 #include "generated/app_tap.h"    /* [step 362] NatScript with a UI */
 #include "generated/app_str.h"    /* [step 366] strings, on the board */
+#include "generated/app_meter.h"  /* [step 370] NatScript with an icon */
 #include "generated/app_ping.h"
 #include "generated/app_pong.h"
 #include "uart.h"
@@ -999,6 +1000,16 @@ static const shell_program_t PROGRAMS[] = {
       vm_app_tap_perms, VM_APP_TAP_PERM_COUNT },
     { "str",     vm_app_str,   VM_APP_STR_LEN,   1024u, 0u,
       vm_app_str_perms, VM_APP_STR_PERM_COUNT },
+    /* [step 370] The first NatScript program with an icon, and the first that
+     * is an application rather than a demonstration of a mechanism. It reads
+     * the light sensor, draws a sweeping trace of what it read, and prints the
+     * number -- on the 240x202 region 369 made available, which no NatScript
+     * program could reach because none of them had an icon.
+     *
+     * `light` is its only permission and it is declared in the .nat source;
+     * the manifest here comes from that, not from a bitmap written by hand. */
+    { "meter",   vm_app_meter, VM_APP_METER_LEN, 3072u, 0u,
+      vm_app_meter_perms, VM_APP_METER_PERM_COUNT },
     { "ping",    vm_app_ping,  VM_APP_PING_LEN,  512u, 0u, vm_app_ping_perms, VM_APP_PING_PERM_COUNT },
     { "pong",    vm_app_pong,  VM_APP_PONG_LEN,  512u, 0u, vm_app_pong_perms, VM_APP_PONG_PERM_COUNT },
 };

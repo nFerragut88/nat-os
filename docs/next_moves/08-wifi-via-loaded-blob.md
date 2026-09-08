@@ -21059,3 +21059,81 @@ open   no NatScript program has an ICON, so none of them can reach this --
        they are shell-launched, which still means a strip
        APP_MAX 4; VM-08 image identity; per-task stacks (352c)
 ```
+
+---
+
+## step 370 — a program you could have written, on the screen
+
+`tools/app_meter.nat` is 90 lines of NatScript. It reads the light sensor ten
+times a second, sweeps a trace of what it read across a 240 x 202 canvas, and
+prints the number.
+
+It is the first thing on this board that is an **application** rather than a
+demonstration of a mechanism, and the first NatScript program that can reach the
+full-screen region at all — because full-screen is the icon path (369) and no
+NatScript program had an icon.
+
+```
+started id=0 perms=light
+```
+
+That line is the manifest of 356 resolving a name from the `.nat` source to a
+device id at load, with no number written anywhere.
+
+### 370a. What it took
+
+Everything the language has picked up since 355, and nothing else:
+
+| | |
+|---|---|
+| `permissions { light }` | the manifest, and the device namespace — 356, 358 |
+| `every 100ms` | the poll. `light` is `DEV_F_SLOW`, so a read ends the slice — 359 |
+| `format(line, "light ", v, ...)` | the readout — 366 |
+| `v * GH / peak` | **signed** division — the fix the board itself found at 363 |
+| `screen.fill` on 240x202 | the region — 369 |
+
+No kernel change. That is the claim the whole arc was for: a program written in
+a language, compiled on the host, loaded into a bounds-checked arena, granted
+one device by name, drawing on a region it cannot escape.
+
+### 370b. Two decisions inside the program
+
+**The scale is discovered, not assumed.** Nobody knows what an LDR reads in
+somebody's room. `peak` grows to fit and the trace rescales, because a fixed
+divisor either flattens the trace against the floor or clips it against the
+ceiling — and which of those you get depends on the weather.
+
+**The trace sweeps rather than scrolls.** Scrolling means keeping the history
+and redrawing it every frame. Sweeping means clearing one column and drawing
+one, which on a panel driven over SPI is the difference between a smooth trace
+and a visible repaint. The readout above it redraws at 2 Hz rather than 10 for
+the same reason: it costs a full-width fill, and the trace is the thing that has
+to be smooth.
+
+### 370c. `pong` lost an icon, not its existence
+
+The grid holds nine and cannot grow: `DESK_H` is 224, and a fourth row of icons
+does not fit. So an application with an icon costs another one its place.
+
+`ping` and `pong` are the IPC demonstration. Both stopped starting at boot at
+368, `run pong` still launches it, and what it no longer has is a place on a
+grid of nine — on a board whose point is now that you can write one of these
+yourself. Reversible in one line of `desktop.c`.
+
+### 370d. What is proved and what is not
+
+Proved on hardware: the icon launches it, it takes the region, the trace moves,
+and the manifest resolved `light` by name.
+
+Not proved: that the sweep is correct at the wrap, that `peak` never divides by
+zero in practice (it is initialised to 1 and only grows, so it cannot — that one
+is an argument, not a reading), and that the readout is legible at 2 Hz rather
+than distracting.
+
+### State
+
+```
+works  NatScript -> icon -> full screen -> a sensor, with no kernel change
+open   APP_MAX 4; VM-08 image identity; per-task stacks (352c); ping's
+       hardcoded peer id (368b); the null-sp fault (351)
+```

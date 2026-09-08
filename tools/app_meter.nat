@@ -1,0 +1,91 @@
+// app_meter -- a live light meter, written in NatScript.
+//
+// The first program on this board that is a real application rather than a
+// demonstration of a mechanism: it reads a sensor, draws a scrolling trace of
+// what it read, and tells you the number. It exists because the language and
+// the full-screen region were built separately and had never met -- every
+// NatScript program before this one was launched from the shell, which means a
+// 180x14 strip, so none of them could reach the canvas that makes an
+// application worth writing.
+//
+// It uses everything the language has: a declared permission resolved to a
+// device by name, `every` for the poll, `format` for the readout, screen.fill
+// for the trace, and signed arithmetic for the scaling.
+//
+// The trace sweeps like an oscilloscope rather than scrolling. Scrolling would
+// need the whole history kept and redrawn every frame; a sweep needs one column
+// cleared and one column drawn, which on a panel driven over SPI is the
+// difference between a smooth trace and a visible repaint.
+
+permissions {
+    light
+}
+
+buf line[32]
+
+let BG    = 0x0000
+let INK   = 0xFFFF
+let BAR   = 0x07E0      // green
+let AHEAD = 0x39E7      // the erase head, one column in front of the trace
+
+let W   = screen.width
+let H   = screen.height
+let TOP = 18            // the readout band; the trace has the rest
+let GH  = H - TOP
+
+let x    = 0
+let peak = 1            // never zero: it is a divisor
+let n    = 0
+
+// One column of the trace. Cleared first, because a shorter bar than last time
+// would otherwise leave the taller one's tip behind.
+func bar(col, v) {
+    screen.fill(col, TOP, 1, GH, BG)
+    let h = v * GH / peak
+    if h > GH {
+        h = GH
+    }
+    if h > 0 {
+        screen.fill(col, TOP + GH - h, 1, h, BAR)
+    }
+}
+
+screen.fill(0, 0, W, H, BG)
+format(line, "light -- waiting")
+screen.text(line, 2, 4, INK, BG, 1)
+print("  [meter] canvas ")
+print(W)
+print("x")
+println(H)
+
+// Ten samples a second. `light` is DEV_F_SLOW, so each read ends this program's
+// slice -- which is the point of it being slow: a syscall costing milliseconds
+// must not be charged to the instruction quantum.
+every 100ms {
+    if light.read(0) {
+        let v = light.value
+
+        // The scale is discovered rather than assumed. Nobody knows what this
+        // LDR reads in this room, and a fixed divisor would either flatten the
+        // trace against the floor or clip it against the ceiling.
+        if v > peak {
+            peak = v
+        }
+
+        bar(x, v)
+        screen.fill(x + 1, TOP, 1, GH, AHEAD)
+        x = x + 1
+        if x >= W {
+            x = 0
+        }
+
+        // The readout costs a full-width repaint, so it happens at 2 Hz rather
+        // than 10. The trace is the thing that has to be smooth.
+        n = n + 1
+        if n % 5 == 0 {
+            format(line, "light ", v, "   peak ", peak)
+            screen.fill(0, 0, W, 16, BG)
+            screen.text(line, 2, 4, INK, BG, 1)
+        }
+    }
+}
