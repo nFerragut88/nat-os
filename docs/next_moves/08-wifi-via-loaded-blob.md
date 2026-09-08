@@ -21621,3 +21621,68 @@ open   THE RADIO KILLS THE USB LINK on this supply -- everything downstream of
        the WPA crypto from flash, unverified for the same reason
        VM-08 proper (eFuses); APP_MAX 4; per-task stacks (352c)
 ```
+
+---
+
+## step 377 — the crypto works from flash
+
+A green IP, auto-joined from saved credentials, on the `-WiFi` image with the
+WPA crypto executing from irom.
+
+That settles 374's open question, and it settles more of it than "it joined"
+suggests. The four-way handshake in `vendor/windowed/wpa_hs.c` calls, on **every**
+association regardless of whether a PMK was cached:
+
+```
+wpa_hs.c:133   sha1_prf(g_pmk, 32, "Pairwise key expansion", ..., g_ptk, 48)
+wpa_hs.c:164   hmac_sha1(KCK, 16, e, total, mic)
+wpa_hs.c:189   aes_unwrap(KEK, 16, ..., kd, plain)
+wpa_hs.c:302   hmac_sha1(KCK, 16, buf, total, want)
+```
+
+SHA-1, HMAC-SHA1 and AES key unwrap — all in the files 374 moved to flash. A
+wrong PTK gives a wrong MIC and the AP drops the association; a wrong unwrap
+gives a garbage group key and no traffic passes. **An address from DHCP means
+all three ran correctly from the instruction cache.**
+
+### 377a. What is still not verified, precisely
+
+**PBKDF2.** `wifi_osi_impl.c` checks `pmkcache_get()` first and only derives when
+it misses, and this join did not ask for a passphrase — so the PMK came from the
+cache and the four thousand rounds did not run.
+
+`sha1-pbkdf2.c` sits in the same linker block as the primitives that did run,
+and it calls the same `sha1_vector` that `sha1_prf` does, so the argument that it
+is fine is a good one. It is still an argument. A join on a network with no
+cached PMK is the reading.
+
+### 377b. And the supply was the whole of the other problem
+
+376 recorded two bring-ups killing the USB link, the board going silent, and the
+inference — from the CH340 disappearing rather than the ESP32 rebooting — that
+this was **supply, not software**. Changing the connection made the radio come up
+and stay up.
+
+So the sequence that produced "join failed" was:
+
+| | |
+|---|---|
+| 374 | fixed the build, and introduced a real unknown (crypto in flash) |
+| — | a supply that could not hold the radio up |
+| 375 | the app's own log went only to the panel, so the failure was invisible |
+| 376 | `wifiopen` reached the app without a finger, and the link died at the same instant twice |
+
+**Three of those four were instruments rather than the system**, which is the
+pattern UM-NATOS-059 §7 named. The one real code risk — the crypto placement —
+turned out to be fine, and could not be checked until the other three were out
+of the way.
+
+### State
+
+```
+works  -WiFi links, boots, associates and gets an address, with SHA-1,
+       HMAC-SHA1 and AES key unwrap all executing from flash
+open   PBKDF2 from flash, unverified: this join used a cached PMK
+       VM-08 proper (eFuses); APP_MAX 4; per-task stacks (352c); the null-sp
+       fault (351); ping's peer id (368b)
+```
