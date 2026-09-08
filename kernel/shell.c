@@ -2054,6 +2054,40 @@ static void execute(char *line)
             uart_puts("   3D view open\n");
         }
     }
+    else if (str_eq(line, "wifijoin")) {
+        /* [step 386] Join with the compiled-in credentials, from the shell.
+         *
+         * The wifi app is the only path that performs a full join, and typing a
+         * passphrase on a multi-tap keyboard is the one step nothing here can
+         * automate -- so verifying anything that only happens on a CACHE MISS
+         * has needed a person, twice, and both windows closed empty.
+         *
+         * wifi_secrets.h is gitignored and already holds a network this board
+         * has joined. Using it costs nothing and prints nothing: the SSID is
+         * echoed because the log is useless without it, the passphrase is not.
+         *
+         * This deliberately does NOT touch wifiprefs. It is a diagnostic join,
+         * not a choice by the user, and it must not overwrite what they chose
+         * (347). */
+        extern void wifi_join_ssid_pass(const char *s, const char *p);
+        extern const char *wifi_sta_ssid(void);
+        extern const char *wifi_sta_pass(void);
+        extern int wifi_joined(void);
+        const char *ss = wifi_sta_ssid();
+        if (!blob_ready()) {
+            uart_puts("   no radio -- run wifiopen first\n");
+        } else {
+            uart_puts("   joining ");
+            uart_puts(ss ? ss : "(none)");
+            uart_puts(" with the compiled-in passphrase\n");
+            wifi_join_ssid_pass(ss, wifi_sta_pass());
+            for (uint32_t w = 0u; w < 1000u && !wifi_joined(); w++) {
+                task_sleep(1u);
+            }
+            uart_puts(wifi_joined() ? "   associated\n"
+                                    : "   no connect callback\n");
+        }
+    }
     else if (str_eq(line, "wpa")) {
         /* [step 380] The supplicant's state, ON DEMAND.
          *

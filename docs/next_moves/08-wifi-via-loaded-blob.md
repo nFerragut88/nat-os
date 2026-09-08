@@ -22311,3 +22311,68 @@ works  wifi end to end on an image 2,432 bytes smaller, with 532 bytes of
 open   a cached=0 reading (383b); VM-08 proper; APP_MAX 4; per-task stacks
        (352c); the null-sp fault (351)
 ```
+
+---
+
+## step 386 — `cached=0`
+
+```
+   joining ivory-billed with the compiled-in passphrase
+   associated
+4way pmk=1 step=6 cached=0 rx=2 m1=1 m3=1 done=1 micbad=0
+```
+
+**`cached=0` means the PMK was derived, not fetched.** PBKDF2 ran its four
+thousand rounds of SHA-1 — from flash, where 374 put it — and `micbad=0` with
+`m3=1` says the key it produced was correct, because a wrong PMK gives a wrong
+PTK, a wrong MIC on message three, and a handshake that stops there.
+
+377a has been open since 374 and 383b downgraded it to *established by argument*.
+It is a measurement now. **Every WPA primitive in this system has been observed
+executing from irom: PBKDF2, SHA-1, HMAC-SHA1 and AES key unwrap.**
+
+### 386a. Why it took four attempts
+
+The derivation only happens on a **cache miss**, which only happens after a
+network is forgotten, and the join that follows needs a passphrase typed on a
+multi-tap keyboard. That is the one step nothing here can automate, and asking
+for it produced three empty capture windows across two days.
+
+`wifijoin` closes that: it joins with the credentials in `wifi_secrets.h`, which
+is gitignored and already holds a network this board has used. The SSID is
+echoed because a log without it is useless; the passphrase is not printed.
+
+It deliberately does **not** touch `wifiprefs`. It is a diagnostic join, not a
+choice by the user, and step 347 is what happens when those are confused.
+
+### 386b. The first two attempts said `no radio`
+
+`wifiopen` starts the bring-up as a **job**; it does not finish before the
+command returns. Ninety seconds was not enough, and each `board.py run` opens
+the port, which resets the board and discards whatever the previous invocation
+had brought up.
+
+So the sequence that works is one session, one open, and a wait long enough for
+the radio: `wifiopen` → 150 s → `wifijoin` → `wpa`.
+
+That is 375a's rule again — **watching resets the thing being watched** — in its
+third costume. It is now written down in three places.
+
+### 386c. What this closes
+
+| | |
+|---|---|
+| 374 | crypto moved to flash, unverified |
+| 377 | SHA-1, HMAC-SHA1, AES unwrap verified by a green IP |
+| 380c | the same, verified directly by `micbad=0` |
+| 383a | PBKDF2 established by argument from what `forget` does |
+| **386** | **PBKDF2 measured: `cached=0` with a completed handshake** |
+
+### State
+
+```
+works  every WPA primitive observed running from flash; a shell path to a
+       cache-miss join, so this is repeatable without a keyboard
+open   VM-08 proper (eFuses); APP_MAX 4; per-task stacks (352c); the null-sp
+       fault (351)
+```
