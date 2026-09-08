@@ -1021,28 +1021,13 @@ static int str_same(const char *a, const char *b)
  * a hard-coded [4] silently became gfxrogue instead of paint, and the symptom
  * was a screen flickering red and white with no obvious connection to the
  * indexing. A name cannot drift when the table is reordered. */
-static int start_program(const char *name)
-{
-    /* [step 356] Delegates. This used to be a second copy of the launch: its
-     * own lookup, its own app_start, its own device_grant, under a comment
-     * saying "the boot path and the shell path must agree, or a program started
-     * at boot would behave differently from the same program started by typing
-     * its name."
-     *
-     * That agreement was a promise two copies had to keep by hand, and VM-07
-     * was about to make them disagree -- the shell resolves a manifest now, and
-     * this copy would still have been granting a bitmap that no longer exists.
-     *
-     * shell_register() runs before the first call here, so there is one launch
-     * path, and the comment above is a fact rather than an intention. */
-    int id = shell_launch(name);
-    if (id < 0) {
-        uart_puts("  [boot] could not start: ");
-        uart_puts(name);
-        uart_puts("\n");
-    }
-    return id;
-}
+/* [step 368] start_program() lived here and is gone with its last caller.
+ *
+ * Step 356 had already reduced it to four lines delegating to
+ * shell_launch(), because a second copy of the launch was about to
+ * disagree with the shell about permissions. With ping and pong no longer
+ * starting at boot there is no boot launch at all, and a wrapper kept for
+ * a caller that no longer exists is the next thing to drift. */
 
 
 static void m5_selftest(void)
@@ -2044,14 +2029,30 @@ void kmain(void)
     uart_put_dec(VM_SPIN_LEN);
     uart_puts(" B\n");
 
-    /* Start the two well-behaved applications for the live system. The rogue is
-     * left for the operator to launch from the shell — it is a demonstration,
-     * not something that should be running by default. */
+    /* [step 368] ping and pong NO LONGER START AT BOOT.
+     *
+     * They are an IPC demonstration -- one sends a counter to the other,
+     * forever -- and it has passed since step ~90. What it cost was two of the
+     * four application slots, permanently, on a board that has four. With the
+     * kernel's own arena accounted for at 367 that left two for the user; with
+     * these gone it is four.
+     *
+     * "Well-behaved applications for the live system" was the old reason, from
+     * when nothing else ran and an empty strip band looked broken. There are
+     * eighteen programs now and a desktop to launch them from.
+     *
+     * They stay REGISTERED: `run ping`, `run pong`, and the two desktop icons
+     * all still work. What changed is that the board no longer decides for you.
+     *
+     * ONE CAVEAT, because it is a real coupling and hiding it would be worse
+     * than the slots: ping sends to application id 1, written into its
+     * bytecode (`ldi r0, 1` in app_ping.vasm). Slots are handed out
+     * lowest-free-first, so on a fresh board `run ping` then `run pong` still
+     * puts them in 0 and 1 and the demo works. Started in the other order, or
+     * with something else already running, ping addresses whatever holds slot
+     * 1 -- and `sys send` to a slot that is not pong is refused rather than
+     * misdelivered, so it degrades to silence rather than to nonsense. */
     shell_register(PROGRAMS, PROGRAM_COUNT);
-    /* Order matters: ping addresses application 1, so pong must take that
-     * slot. Slots are handed out lowest-free-first. */
-    start_program("ping");
-    start_program("pong");
 
     /* Checked, because the unchecked version cost this kernel its idle task.
      * task_create() returns -1 when the table is full, kmain made nine calls

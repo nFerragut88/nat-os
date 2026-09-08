@@ -20874,3 +20874,84 @@ open   verify two programs at once on hardware; APP_MAX pinned at 4 by the
        strip geometry; ping/pong holding two of the four
        VM-08 image identity; per-task stacks (352c); the null-sp fault (351)
 ```
+
+---
+
+## step 368 — ping and pong stop starting at boot
+
+They are an IPC demonstration: one sends a counter to the other, forever. It has
+passed since step ~90, and it cost **two of the four application slots,
+permanently**, on a board that has four.
+
+With the kernel's own arena accounted for at 367 that left two for the user.
+With these gone it is four:
+
+```
+> run tap        started id=2
+> run paint      started id=3
+> ps
+   0   tap    running  3072 B      (from an earlier launch)
+   1   paint  running   512 B
+   2   tap    running  3072 B
+   3   paint  running   512 B
+```
+
+**Two independent instances of the same program, each in its own arena**, which
+was not something anybody set out to demonstrate and is a fair test of the
+isolation.
+
+The fifth was refused, correctly and legibly, by step 364's message:
+
+```
+cannot start evtnat: every arena is in use. 5 of 5, and the kernel holds one
+of them for its own VM task, so at most 4 programs run at once.
+```
+
+### 368a. The old reason had expired
+
+The comment said *"the two well-behaved applications for the live system"* --
+from when nothing else ran and an empty strip band looked broken. There are
+eighteen registered programs now and a desktop to launch them from.
+
+They stay **registered**: `run ping`, `run pong`, and both desktop icons still
+work. What changed is that the board no longer decides for you.
+
+### 368b. One coupling, named rather than hidden
+
+`ping` sends to application id **1**, written into its bytecode
+(`ldi r0, 1` in `app_ping.vasm`). Slots are handed out lowest-free-first, so on
+a fresh board `run ping` then `run pong` still lands them in 0 and 1 and the
+demo works.
+
+Started in the other order, or with something else already running, `ping`
+addresses whatever holds slot 1. `sys send` to a slot that is not `pong` is
+**refused rather than misdelivered**, so it degrades to silence rather than to
+nonsense — but it is a hardcoded peer id and it is now reachable in a way it was
+not when the boot path guaranteed the order.
+
+### 368c. The telemetry's IPC counters now read zero
+
+`ipc s/d/r=0/0/0` at boot, where it used to climb immediately. Nothing is
+broken; nothing is sending. Worth writing down because a counter that used to
+move and now does not is exactly the shape of a regression, and the next person
+to notice it should find this line rather than start a hunt.
+
+### 368d. And the boot launcher went with its caller
+
+`start_program()` had already been reduced at 356 to four lines delegating to
+`shell_launch()`, because a second copy of the launch was about to disagree with
+the shell about permissions. With nothing starting at boot there is no boot
+launch at all.
+
+A wrapper kept for a caller that no longer exists is the next thing to drift, so
+it is deleted rather than left with a comment explaining that nothing calls it.
+
+### State
+
+```
+works  four application slots, all usable, none spent by default; two
+       instances of one program coexisting in separate arenas
+open   APP_MAX pinned at 4 by the strip geometry (224..288 at 16 per slot)
+       ping's hardcoded peer id (368b)
+       VM-08 image identity; per-task stacks (352c); the null-sp fault (351)
+```
