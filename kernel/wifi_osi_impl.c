@@ -2376,6 +2376,14 @@ void wifi_join_ssid(const char *ssid)
             (void)blob_call((uint32_t)&wpa_hs_derive_pmk, 0u, 0u, 0u, 0u);
             if (g_hs_pmk_ready) { (void)pmkcache_put(g_join_ssid, g_hs_pmk); }
         }
+
+        /* [step 382] Install it now rather than waiting for the driver to call
+         * wpa_hs_arm(). See wifi_glue.c: that callback is the only thing that
+         * ever set g_hs_have_pmk, the driver makes it on a FRESH association,
+         * and a join onto an already-associated radio does not produce one --
+         * leaving every EAPOL frame to be dropped by the PMK test. */
+        extern void wpa_hs_install_pmk(void);
+        (void)blob_call((uint32_t)&wpa_hs_install_pmk, 0u, 0u, 0u, 0u);
     }
 
     /* The station config: SSID at +0 and password at +32, the two fields step

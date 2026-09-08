@@ -989,6 +989,29 @@ void wpa_hs_arm(void *bssid)
     wpa_hs_set_addrs((const unsigned char *)bssid, own);
 }
 
+/* [step 382] Install the PMK from the JOIN, not only from the driver.
+ *
+ * wpa_hs_arm() above is the only thing that ever called wpa_hs_set_pmk(), and
+ * the DRIVER calls wpa_hs_arm -- from wpa_sta_connect, on a fresh association.
+ * A join that does not produce a fresh association therefore never installs
+ * the key, `g_hs_have_pmk` stays zero, and wpa_sta_rx_eapol_impl() discards
+ * every frame on its second line.
+ *
+ * Measured: joins from a cold boot show `pmk=1 rx=2 m1=1 done=1`; joins onto a
+ * radio that had been up for a previous session show `pmk=0 rx=0`. Same code,
+ * same credentials, and the difference is whether the driver ran its connect
+ * path again.
+ *
+ * The join now installs it itself. Additive: wpa_hs_arm still does exactly
+ * what it did, so a fresh association is unaffected, and this closes the case
+ * where it never runs. Windowed, reached from call0 through blob_call -- the
+ * rule step 292 cost a crash to learn. */
+void wpa_hs_install_pmk(void);
+void wpa_hs_install_pmk(void)
+{
+    if (g_hs_pmk_ready) { wpa_hs_set_pmk(g_hs_pmk); }
+}
+
 /* [step 243] Derive the PMK once, at bring-up, off the driver's connect path.
  * Windowed because the crypto is; reached from call0 through blob_call with no
  * arguments, the same way the self-test is. */

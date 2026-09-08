@@ -22039,3 +22039,77 @@ works  associate, four-way handshake, DHCP bind, traffic -- 192.168.1.140, on
 open   why some joins leave pmk=0 with no EAPOL at all (379b, 381d)
        PBKDF2 from flash; the dead counters in net.c's parser; VM-08 proper
 ```
+
+---
+
+## step 382 — the PMK was installed by the driver, or not at all
+
+`g_hs_have_pmk` gates every EAPOL frame:
+
+```c
+if (!g_hs_have_pmk || !buf || len < O_KD) { return 0; }   /* silent */
+```
+
+The only thing that ever set it was `wpa_hs_set_pmk()`, and the only caller of
+that was `wpa_hs_arm()` — **which the driver calls**, from `wpa_sta_connect`, on
+a fresh association.
+
+So a join that does not produce a fresh association never installs the key, and
+every frame the access point sends is discarded on that line.
+
+That is the whole of 379b and 381d:
+
+| | |
+|---|---|
+| join from a cold boot | driver runs its connect path → `arm` → `pmk=1 rx=2 m1=1 done=1` |
+| join onto a radio already up | no fresh connect → no `arm` → `pmk=0 rx=0` |
+
+Same code, same credentials, same access point. The difference was whether the
+driver happened to call back.
+
+### 382a. The fix is additive
+
+`wpa_hs_install_pmk()` — windowed, reached through `blob_call` for the reason
+step 292 cost a crash to learn — installs the key at the end of the join's own
+PMK block, cache hit or fresh derivation alike.
+
+`wpa_hs_arm()` is untouched and still does exactly what it did, so a fresh
+association behaves as before. This closes the case where it never runs.
+
+### 382b. What the run shows, and what it does not
+
+```
+after join 1:  4way pmk=1 step=6 rx=2 m1=1 m3=1 done=1   dhcp 8 -> 10, 192.168.1.140
+after join 2:  4way pmk=1 step=6 rx=2 m1=1 m3=1 done=1   dhcp 10,     192.168.1.140
+```
+
+The second join is the case that previously produced `pmk=0 rx=0`. It now
+reports the key installed and the address held.
+
+**It does not isolate the fix.** `rx` stayed at 2 across both joins, which says
+no second EAPOL exchange happened — so the second join did not re-associate,
+and the state shown after it may simply be the first join's, carried over. The
+run is *consistent* with the fix and does not prove it.
+
+What would isolate it: clearing `g_hs_have_pmk` immediately before a join and
+checking it is set afterwards without the driver having called `arm`. That is a
+test to write, not a reading taken.
+
+The mechanism, though, is not in doubt — it is three lines of code with one
+caller, and the caller is the driver.
+
+### 382c. Still uncovered
+
+**PBKDF2 from flash** (377a). Every successful join in this session used a
+cached PMK, so the four thousand rounds moved to irom at 374 have still never
+executed. Forgetting the network in the wifi app forces a derivation and would
+close it.
+
+### State
+
+```
+works  the join installs the PMK itself; two consecutive joins in one session
+       both report the key present and the address held
+open   a test that isolates 382 rather than being consistent with it
+       PBKDF2 from flash; the dead counters in net.c's parser; VM-08 proper
+```
