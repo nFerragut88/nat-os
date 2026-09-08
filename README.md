@@ -32,7 +32,14 @@ project code.
 | **Networking** | WPA2-PSK, DHCP, a DNS resolver and a TCP/HTTP client — see the caveat below |
 | **Failure** | Stack guards enforced per switch, hang detector, panic to serial *and* flash *and* the panel |
 
-Image: 235,600 bytes. Heap at boot: 29,240 bytes, all of it in one block.
+Image: 235,600 bytes. The `-WiFi` image measures **32,856 bytes of heap free in a
+single block** on a clean boot; the default build has more, and that figure has
+not been re-measured since step 374 returned 48 KB of static DRAM.
+
+Numbers here are measurements of a stated moment, not properties of a build.
+Step 378 in `docs/next_moves/08` is what happened when that distinction was
+skipped: a heap read off a board mid-experiment was published three times and
+steered two steps of investigation down a hypothesis that was never live.
 
 **The networking is real and is not in the default build.** It was verified from
 another machine — `HTTP 200`, ping, the board's MAC in the router's ARP table —
@@ -104,9 +111,15 @@ package directory and nothing else.
 
 ```powershell
 .\build.ps1                              # build
-.\build.ps1 -Flash -Port COM5            # build and flash
-.\build.ps1 -Flash -Monitor -Port COM5   # build, flash, attach monitor
+.\build.ps1 -Flash -Port COM6            # build and flash
+.\build.ps1 -Flash -Monitor -Port COM6   # build, flash, attach monitor
+.\build.ps1 -WiFi -Flash -Port COM6      # with the networking stack
 ```
+
+`python tools/board.py flash` does the same thing and finds the port itself,
+which matters more than it sounds: the board changes COM number when it changes
+socket, and a hardcoded one produces "the port doesn't exist" for a board that
+is plugged in and working.
 
 The build compiles `tools/*.nat` with `tools/natc.py`, assembles the result and
 every `tools/*.vasm` with `tools/vasm.py`, and runs the compiler's own test
