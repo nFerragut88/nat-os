@@ -21122,8 +21122,21 @@ yourself. Reversible in one line of `desktop.c`.
 
 ### 370d. What is proved and what is not
 
-Proved on hardware: the icon launches it, it takes the region, the trace moves,
-and the manifest resolved `light` by name.
+Proved on hardware. The program was asked to print its own canvas, so this is a
+measurement rather than an inference from the constants:
+
+```
+act/tap/open=0/2/1          the icon was tapped and one view opened
+[meter] canvas 240x202      what screen.width/height actually returned
+started id=0 perms=light    the manifest resolved by name
+```
+
+`240x202` is `DISP_W` by `DESK_H - APP_FULL_Y0` — the region 369 defined,
+reported back by a NatScript program that asked the kernel rather than being
+told. The same program printed `180x14` when launched from the shell an hour
+earlier, which is the other half of the same check.
+
+And the trace moves.
 
 Not proved: that the sweep is correct at the wrap, that `peak` never divides by
 zero in practice (it is initialised to 1 and only grows, so it cannot — that one
