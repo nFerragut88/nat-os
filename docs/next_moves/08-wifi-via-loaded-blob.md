@@ -22240,3 +22240,74 @@ works  the net report prints only counters that can move; wifi end to end,
 open   delete the unreachable parser (384b); a cached=0 reading (383b);
        VM-08 proper; APP_MAX 4; per-task stacks; the null-sp fault
 ```
+
+---
+
+## step 385 — the compiler deletes the dead path
+
+```
+              .text   .bss     total
+net.c.o  before 4,007  5,390    9,401
+         after  1,201  4,858    6,059
+image    302,048 -> 299,616
+```
+
+One word:
+
+```c
+static const uint32_t g_use_lwip = 1u;      /* was: uint32_t g_use_lwip = 1u; */
+```
+
+### 385a. Why a constant rather than a deletion
+
+384 established that the hand-written parser has been unreachable since step
+233: `g_use_lwip` is set to 1 where it is defined, nothing in the tree assigns
+it, and nothing outside `net.c` even names it. The obvious follow-up was to
+delete the two hundred lines beneath it.
+
+**Hand-deleting two hundred lines out of a network stack that started working
+this week is exactly the change that should not be made in passing.** The
+compiler can do it instead, and it does it correctly by construction: with the
+flag `const`, every `if (g_use_lwip)` folds and the dead half is dropped.
+
+That trades a risky edit for a proof. It also leaves the source reading as the
+two-path design it is, and anyone who genuinely wants the fallback has to change
+a constant deliberately — which is the honest price of reviving something that
+has not run in a hundred and fifty steps.
+
+**384 stopped the dead counters being printed. This stops them existing:** 532
+bytes of `.bss` went with them, straight back to the heap the WiFi driver
+allocates from.
+
+### 385b. Verified, not assumed
+
+Flashed, and the whole path re-run because this removed code from the receive
+side:
+
+```
+[wifi] AP answered after ticks 2
+4way pmk=1 step=6 cached=1 rx=2 m1=1 m3=1 done=1 micbad=0
+dhcp      state 10 tries 0  addr 192.168.1.140
+lwip      rx 188 drop 0  tx 10
+```
+
+Associate, handshake, bind, traffic. Unchanged.
+
+### 385c. What is left of the pattern
+
+Six instruments in two days reported something true and narrower than it was
+read as. Two steps have now acted on the sixth: 384 stopped it lying, 385 stopped
+it costing anything.
+
+The remaining example of the same shape is `g_used_cached`, which is now printed
+(383) but has yet to be *read* as `cached=0` — the one number that would replace
+383a's argument with a measurement.
+
+### State
+
+```
+works  wifi end to end on an image 2,432 bytes smaller, with 532 bytes of
+       static DRAM returned; the unreachable path is gone from the binary
+open   a cached=0 reading (383b); VM-08 proper; APP_MAX 4; per-task stacks
+       (352c); the null-sp fault (351)
+```

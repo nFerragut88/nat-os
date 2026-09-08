@@ -112,8 +112,25 @@ static uint32_t g_tx_fn;
  * client is code somebody else has already debugged. The hand-written path
  * stays because it is what proved the data path works at all, and because a
  * fallback that has been seen to work is worth keeping while the new thing is
- * being trusted. */
-uint32_t g_use_lwip = 1u;
+ * being trusted.
+ *
+ * [step 385] `static const`, was a plain mutable global.
+ *
+ * Nothing in the tree ever assigned it -- no `g_use_lwip = 0` exists anywhere,
+ * and nothing outside this file even names it. So the fallback has been
+ * unreachable since step 233, while the compiler had to keep emitting it
+ * because a non-const global might be written by anyone.
+ *
+ * Making the fact structural does three things at once. The compiler folds
+ * every `if (g_use_lwip)` and drops the dead half, which is a deletion nobody
+ * has to get right by hand -- and hand-deleting two hundred lines out of a
+ * working network stack is exactly the change that should not be made on a
+ * Sunday. The source keeps reading as the two-path design it is. And anyone
+ * who genuinely wants the fallback has to change a constant on purpose, which
+ * is the honest cost of reviving it.
+ *
+ * 384 stopped the dead counters being PRINTED. This stops them existing. */
+static const uint32_t g_use_lwip = 1u;
 
 /* Counters -- the report is the result. */
 uint32_t g_net_arp_req, g_net_arp_rep, g_net_icmp_req, g_net_icmp_rep;
