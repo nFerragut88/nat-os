@@ -88,6 +88,10 @@ int  desktop_term(void);
  * is. */
 int  desktop_app(void);
 
+/* [step 376] Open the wifi view the way the icon does. For driving a join from
+ * the shell, because the app is the only path that performs a full bring-up. */
+void desktop_open_wifi(void);
+
 /* [step 369] The raycaster's mode, asked for by NAME.
  *
  * The display loop used to end `else { raycast_frame(); }` -- a catch-all that

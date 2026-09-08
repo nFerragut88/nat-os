@@ -21542,3 +21542,82 @@ open   THE JOIN FAILS, cause not yet established -- one capture, correctly
        sequenced, will say which of the two it is
        VM-08 proper (eFuses); APP_MAX 4; per-task stacks (352c)
 ```
+
+---
+
+## step 376 — the radio takes the USB link with it
+
+`wifiopen` opens the wifi view from the shell, exactly as the icon does. Three
+join attempts had been spent asking a person to tap an icon while a capture ran,
+and all three came back empty — twice the port open reset the board and took the
+attempt with it, once the window closed first. The app is the only path that
+performs a full bring-up, so it was the only way to reach the crypto, and it
+could not be reached without a finger.
+
+Then it produced the actual finding.
+
+### 376a. Two bring-up paths, one symptom
+
+```
+>>> wifiinit
+[board] link lost: GetOverlappedResult failed (PermissionError 13)
+
+>>> wifiopen
+[board] link lost: GetOverlappedResult failed (PermissionError 13)
+```
+
+**Both times the serial link died at the moment the radio came up**, and
+afterwards the port re-enumerated while the board emitted nothing at all — 0
+bytes across a 25-second watch.
+
+The board was not lost. `esptool` reached it immediately:
+
+```
+Chip is ESP32-D0WD-V3 (revision v3.1)
+MAC: 5c:01:3b:50:3f:64
+== flash verified: 3 segments ==
+```
+
+and a reflash brought it back.
+
+### 376b. What that points at, and what it does not establish
+
+`GetOverlappedResult` failing with *access denied* is a **USB-level** failure:
+the CH340 went away. A hung ESP32 does not make a separate USB-serial chip
+disappear — that chip is powered from the same USB supply, and the radio
+transmitting is by far the largest current step this board makes.
+
+Against a session in which USB enumeration failed repeatedly on its own
+(`VID_0000&PID_0002`, *Device Descriptor Request Failed*), the reading that fits
+everything is **supply**, not software.
+
+**Not established**, and worth saying flatly:
+
+- no brownout reset cause was ever observed — the board went *silent*, it did
+  not reboot, so this is inference from the shape of the failure rather than
+  from a reset register
+- whether the WPA crypto works from flash (374) is **still unknown**. The one
+  path that would answer it is the one that kills the link
+
+So the join failure has an explanation that requires none of my changes to be
+wrong, and I cannot yet rule out that one of them is.
+
+### 376c. What this costs
+
+The board is back on the default build and usable. `.\build.ps1 -WiFi -Flash`
+returns to the networking image whenever there is a supply that can hold it up —
+a powered hub, a different cable, or the board's own barrel jack if it has one.
+
+Until then the `-WiFi` work is: **links, boots, initialises the PHY, and cannot
+be exercised further on this connection.**
+
+### State
+
+```
+works  -WiFi links and boots; `wifiopen` reaches the app from the shell; the
+       app's log reaches serial
+open   THE RADIO KILLS THE USB LINK on this supply -- everything downstream of
+       bring-up is unmeasurable until that is resolved
+       the WPA crypto from flash, unverified for the same reason
+       VM-08 proper (eFuses); APP_MAX 4; per-task stacks (352c)
+```

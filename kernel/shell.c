@@ -2054,6 +2054,13 @@ static void execute(char *line)
             uart_puts("   3D view open\n");
         }
     }
+    else if (str_eq(line, "wifiopen")) {
+        /* [step 376] The wifi app, from here. It is the only path that brings
+         * the radio all the way up, so it is the only way to exercise the WPA
+         * crypto -- and until now it needed somebody to tap an icon. */
+        desktop_open_wifi();
+        uart_puts("   wifi view open; it auto-joins if a network was saved\n");
+    }
     else if (str_eq(line, "camfreeze")) {
         raycast_cam_freeze(!str_eq(arg, "off"));
         uart_puts(raycast_cam_frozen()

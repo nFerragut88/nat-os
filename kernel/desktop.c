@@ -188,6 +188,24 @@ static int      g_msg_sel = -1;
 static int      g_msg_ok;
 static uint32_t g_msg_tick;
 
+/* [step 376] Open the wifi view from the shell, exactly as the icon does.
+ *
+ * Three join attempts were spent asking a person to tap an icon while a capture
+ * ran, and all three came back empty: twice the port open reset the board and
+ * took the attempt with it, once the window closed first. The wifi app is the
+ * only path that performs a full bring-up, so it was also the only way to
+ * exercise the crypto -- and it could not be reached without a finger.
+ *
+ * Mirrors the DESK_ACTION_WIFI branch line for line, including the band
+ * suspend, for the reason `view3d` gives about itself: a diagnostic that opens
+ * a view differently from the real thing is measuring a different bug. */
+void desktop_open_wifi(void)
+{
+    g_mode = MODE_WIFI;
+    app_views_suspend(1);
+    wifiapp_open();
+}
+
 int      desktop_active(void) { return g_mode == MODE_LAUNCHER; }
 int      desktop_notes(void)  { return g_mode == MODE_NOTES; }
 int      desktop_term(void)   { return g_mode == MODE_TERM; }
