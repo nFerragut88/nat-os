@@ -31,10 +31,12 @@ WHAT THIS GUARANTEES, because each one is a failure listed above:
      attempt count so a silent retry storm cannot hide.
   5. It names the stale process holding the port instead of reporting a
      mysterious PermissionError.
+  6. It FINDS the port rather than assuming one, and prints which it chose --
+     the board moves between USB sockets and a hardcoded COM5 does not.
 
 Usage:
     python tools/board.py ports
-    python tools/board.py flash [--port COM5] [--tries 5]
+    python tools/board.py flash [--port COM6] [--tries 5]
     python tools/board.py run  "ps" "run meter"  [--wait 12]
     python tools/board.py watch 120
 """
@@ -66,6 +68,43 @@ FLASH_OK = "flash verified: 3 segments"
 
 def ports():
     return [(p.device, p.description) for p in list_ports.comports()]
+
+
+def pick_port(explicit):
+    """The board moves between USB ports; a hardcoded COM5 does not.
+
+    [step 378] Every command here defaulted to COM5, which was right until the
+    board was plugged in somewhere else and then produced "the port doesn't
+    exist" for a board sitting on COM6. That is UM-NATOS-059 section 3's census
+    defect in another costume: a fact that was true when written, hardened into
+    a default, and never rechecked.
+
+    So: an explicit --port always wins. Otherwise, if exactly one serial port
+    looks like a USB-serial adapter, use it and SAY SO -- silently picking a
+    port would be worse than the constant, because the reader could no longer
+    tell which board answered. If there are several, refuse and list them
+    rather than guess."""
+    if explicit:
+        return explicit
+    found = ports()
+    if not found:
+        print("board: no serial ports at all. The board is not connected, or "
+              "USB enumeration failed -- check Device Manager for an 'Unknown "
+              "USB Device (Device Descriptor Request Failed)'.", file=sys.stderr)
+        sys.exit(2)
+    likely = [d for d, desc in found
+              if "CH340" in desc.upper() or "USB-SERIAL" in desc.upper()
+              or "CP210" in desc.upper() or "UART" in desc.upper()]
+    if len(likely) == 1:
+        print("board: using %s" % likely[0], file=sys.stderr)
+        return likely[0]
+    if len(found) == 1:
+        print("board: using %s" % found[0][0], file=sys.stderr)
+        return found[0][0]
+    print("board: several ports; say which with --port:", file=sys.stderr)
+    for d, desc in found:
+        print("   %s  %s" % (d, desc), file=sys.stderr)
+    sys.exit(2)
 
 
 def holder(port):
@@ -209,7 +248,8 @@ def cmd_flash(args):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--port", default="COM5")
+    ap.add_argument("--port", default=None,
+                    help="serial port; auto-detected when omitted")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("ports")
@@ -225,6 +265,8 @@ def main():
     w.add_argument("seconds", type=float)
 
     args = ap.parse_args()
+    if args.cmd != "ports":
+        args.port = pick_port(args.port)
     if args.cmd == "ports":
         p = ports()
         print("\n".join("%s  %s" % pd for pd in p) if p else "no serial ports")

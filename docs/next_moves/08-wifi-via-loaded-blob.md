@@ -21474,6 +21474,13 @@ the placement rule and not a reading.
 Heap with `-WiFi`: **16,168 bytes**, against 29,240 without. The blob's DRAM
 window is most of the difference.
 
+> **[step 378] That figure is wrong.** It was read off a board that had already
+> been through radio bring-ups, so the driver's allocations were counted as
+> unavailable. On a clean boot the `-WiFi` image has **32,856 bytes free in a
+> single block** — *more* than the 29,240 the pre-374 default build had, because
+> 374 returned 48 KB of static DRAM. It was published here, in the commit
+> message and in the README before anybody measured it fresh.
+
 ### State
 
 ```
@@ -21528,7 +21535,7 @@ apart:
 | | |
 |---|---|
 | the crypto placement | 374 moved SHA-1, AES and PBKDF2 to flash. If that is wrong the PMK is garbage and the handshake times out — historically reason 15 |
-| the heap | this build has **16,168 bytes**. Step 333 records the driver failing to allocate at **27,320** |
+| the heap | this build has **16,168 bytes**. Step 333 records the driver failing to allocate at **27,320** — *and this reading was wrong; see 378* |
 
 The second needs no change of mine to be true and is the more likely, and if it
 is, `g_stacks` is 26,624 bytes of it: thirteen tasks at 2 KB each, against a
@@ -21685,4 +21692,73 @@ works  -WiFi links, boots, associates and gets an address, with SHA-1,
 open   PBKDF2 from flash, unverified: this join used a cached PMK
        VM-08 proper (eFuses); APP_MAX 4; per-task stacks (352c); the null-sp
        fault (351); ping's peer id (368b)
+```
+
+---
+
+## step 378 — the port moved, and a number I published was wrong
+
+The board went to a different USB socket and came up as **COM6**. `board.py`
+defaulted every command to `COM5` and reported *"the port doesn't exist"* for a
+board that was plugged in and working.
+
+That is UM-NATOS-059 §3's census defect wearing another costume: a fact that was
+true when written, hardened into a default, never rechecked — in the tool
+written to stop measurement lying, three steps after writing it.
+
+It finds the port now. An explicit `--port` still wins; otherwise a single
+USB-serial adapter is chosen **and named**:
+
+```
+board: using COM6
+```
+
+Naming it matters. Silently picking would be worse than the constant, because a
+reader could no longer tell which board answered. Several candidates and it
+refuses and lists them rather than guessing.
+
+### 378a. And the heap figure in 374 was wrong
+
+While confirming which image was on the board:
+
+```
+phyinit   rc=0
+table     118 entries, version 8, magic 0xdeadbeaf
+heap free=32856 largest=32856 blocks=2
+```
+
+Step 374 published **16,168 bytes** — in the log, in its commit message, and in
+the README. On a clean boot the `-WiFi` image has **32,856 bytes free in a single
+block**, which is *more* than the 29,240 the pre-374 default build had, because
+374 returned 48 KB of static DRAM.
+
+The 16,168 was read off a board that had already been through two radio
+bring-ups. The driver's allocations were still outstanding, and a number taken
+mid-experiment was reported as a property of the build.
+
+**It also fed a wrong hypothesis.** 375 and 376 both list "the heap is too
+small — step 333 records the driver failing at 27,320" as the leading
+explanation for the join failure. 32,856 is comfortably above that line, so
+that hypothesis was never live. The actual cause was the supply (376), and the
+crypto placement was fine (377).
+
+Two corrections in one measurement: the README, and a theory that had been
+steering the investigation.
+
+### 378b. The rule this keeps proving
+
+`blocks=2` is the tell, and it is the sort of thing a reading gives you and a
+memory does not. A boot heap has almost nothing allocated; a heap measured after
+work has been done has whatever that work left behind.
+
+**A number is a measurement of a moment, not a property of a build**, unless the
+moment is stated. 374 did not state it.
+
+### State
+
+```
+works  board.py finds the port and says which; the -WiFi image has 32,856 bytes
+       of heap at boot, more than the default build had before 374
+open   PBKDF2 from flash (377a); VM-08 proper (eFuses); APP_MAX 4; per-task
+       stacks (352c); the null-sp fault (351)
 ```

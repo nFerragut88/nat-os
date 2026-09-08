@@ -36,8 +36,8 @@ Image: 235,600 bytes. Heap at boot: 29,240 bytes, all of it in one block.
 
 **The networking is real and is not in the default build.** It was verified from
 another machine — `HTTP 200`, ping, the board's MAC in the router's ARP table —
-and it lives behind `-WiFi`, which produces a 301 KB image with 16 KB of heap
-rather than 29 KB. Everything else in this table is in the image you get from
+and it lives behind `-WiFi`, which produces a 301 KB image with 32,856 bytes of
+heap at boot. Everything else in this table is in the image you get from
 `.\build.ps1`. See UM-NATOS-054 to 057 for how the stack was built and where its
 memory went, and step 374 in `docs/next_moves/08` for what had to move to make
 that build link again.
