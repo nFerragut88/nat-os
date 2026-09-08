@@ -25,6 +25,8 @@
  */
 
 #include "appcpu.h"
+#include "heap.h"    /* [step 374] the capture buffers are allocated on arm */
+#include "uart.h"
 #include <stdint.h>
 
 #define REG(a) (*(volatile uint32_t *)(a))
@@ -66,8 +68,26 @@ volatile uint32_t g_appcpu_run;        /* core 0 arms and disarms        */
 #define I2C_HOST_BASE  0x3FF4E000u
 #define I2C_WORDS      5u
 
-uint32_t g_i2c_val[APPCPU_CAP_MAX];
-uint32_t g_i2c_ts[APPCPU_CAP_MAX];
+/* [step 374] The capture buffers are allocated when ARMED, not at link time.
+ *
+ * As static arrays these cost 49,152 bytes of DRAM for an instrument that is
+ * off in every boot nobody is debugging the radio in -- and they are why the
+ * -WiFi build did not link: dram overflowed by 27,828 bytes, and this was 48 KB
+ * of it.
+ *
+ * appcpu.h records the same failure happening once already: at 8192 entries the
+ * arrays pushed _bss_end past _heap_end, heap_init() saw an inverted range and
+ * returned a zero-byte heap, and a self-test faulted on an arena base that had
+ * never existed. The fix then was to shrink them. The fix now is to stop paying
+ * for them when they are not in use, which keeps the instrument at full size
+ * for the one job it exists to do.
+ *
+ * CORE 1 WRITES THESE. appcpu_main() runs on the other CPU with no lock, so the
+ * pointers are only ever installed while g_appcpu_run is 0 -- disarm first,
+ * then free -- and the capture loop reads them once per iteration through a
+ * volatile pointer rather than caching them. */
+uint32_t *volatile g_i2c_val;
+uint32_t *volatile g_i2c_ts;
 volatile uint32_t g_i2c_n;
 
 static inline uint32_t ccount_now(void)
@@ -93,12 +113,17 @@ void appcpu_main(void)
         if (!g_appcpu_run) {
             continue;
         }
+        uint32_t *vals = g_i2c_val;
+        uint32_t *tss  = g_i2c_ts;
+        if (!vals || !tss) {
+            continue;               /* armed flag set before the buffers were */
+        }
         for (uint32_t w = 0; w < I2C_WORDS; w++) {
             uint32_t v = reg[w];
             if (v != last[w]) {
                 if (g_i2c_n < APPCPU_CAP_MAX) {
-                    g_i2c_val[g_i2c_n] = v;
-                    g_i2c_ts[g_i2c_n]  = ccount_now();
+                    vals[g_i2c_n] = v;
+                    tss[g_i2c_n]  = ccount_now();
                     g_i2c_n++;
                 }
                 last[w] = v;
@@ -142,7 +167,53 @@ int appcpu_start(void)
 
 uint32_t appcpu_alive(void)  { return g_appcpu_alive; }
 uint32_t appcpu_spins(void)  { return g_appcpu_spins; }
-void     appcpu_arm(int on)  { g_i2c_n = on ? 0u : g_i2c_n; g_appcpu_run = on ? 1u : 0u; }
+/* [step 374] Arming allocates; disarming frees. The order matters in both
+ * directions because core 1 is reading these without a lock:
+ *
+ *   arming    buffers first, THEN the run flag
+ *   disarming run flag first, THEN the buffers
+ *
+ * The capture loop also refuses to run on a null pointer, so a failed
+ * allocation disarms rather than faulting the other CPU -- and says so, because
+ * an instrument that quietly recorded nothing would be worse than one that
+ * refused. */
+void appcpu_arm(int on)
+{
+    if (!on) {
+        g_appcpu_run = 0u;
+        uint32_t *v = g_i2c_val, *t = g_i2c_ts;
+        g_i2c_val = 0; g_i2c_ts = 0;
+        if (v) { heap_free(v); }
+        if (t) { heap_free(t); }
+        return;
+    }
+    if (g_appcpu_run) { return; }               /* already capturing */
+
+    uint32_t bytes = APPCPU_CAP_MAX * (uint32_t)sizeof(uint32_t);
+    uint32_t *v = (uint32_t *)heap_alloc(bytes);
+    uint32_t *t = (uint32_t *)heap_alloc(bytes);
+    if (!v || !t) {
+        if (v) { heap_free(v); }
+        if (t) { heap_free(t); }
+        uart_puts("   appcpu: no room to arm the capture (needs 2 x ");
+        uart_put_dec(bytes);
+        uart_puts(" bytes)\n");
+        return;
+    }
+    g_i2c_n   = 0u;
+    g_i2c_val = v;
+    g_i2c_ts  = t;
+    g_appcpu_run = 1u;
+}
+
 uint32_t appcpu_cap_count(void) { return g_i2c_n; }
-uint32_t appcpu_cap_val(uint32_t i) { return i < g_i2c_n ? g_i2c_val[i] : 0u; }
-uint32_t appcpu_cap_ts(uint32_t i)  { return i < g_i2c_n ? g_i2c_ts[i]  : 0u; }
+uint32_t appcpu_cap_val(uint32_t i)
+{
+    uint32_t *v = g_i2c_val;
+    return (v && i < g_i2c_n) ? v[i] : 0u;
+}
+uint32_t appcpu_cap_ts(uint32_t i)
+{
+    uint32_t *t = g_i2c_ts;
+    return (t && i < g_i2c_n) ? t[i] : 0u;
+}

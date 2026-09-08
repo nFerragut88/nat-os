@@ -21381,3 +21381,105 @@ open   -WiFi DOES NOT LINK: iram +10,551, dram +27,828. The stack is verified
        VM-08 proper (eFuses); APP_MAX 4; ping's peer id (368b); per-task
        stacks (352c); the null-sp fault (351)
 ```
+
+---
+
+## step 374 — `-WiFi` links again
+
+```
+before   iram overflowed by 10,551 bytes    dram overflowed by 27,828
+after    links; image 301,136 bytes
+```
+
+The networking has been verified from another machine — `HTTP 200`, ping, the
+board's MAC in a router's ARP table — and has not been in a buildable image for
+some time. 373 found that while updating the README; this fixes it.
+
+### 374a. The DRAM half: 48 KB paid for an instrument that was off
+
+`g_i2c_val` and `g_i2c_ts` in `appcpu.c` are the regi2c capture: two 6,144-entry
+arrays core 1 fills while watching the PHY's analog bus. **49,152 bytes of
+static DRAM**, and 27,828 of the overflow.
+
+They are not dead code — a shell command dumps them, and `appcpu.h` records the
+sizing being done carefully after an earlier version at 8192 entries pushed
+`_bss_end` past `_heap_end`, gave `heap_init()` an inverted range, and faulted a
+self-test on an arena base that never existed.
+
+So the fix is not to delete them. **They are allocated when armed and freed when
+disarmed**, which keeps the instrument at full size for the one job it exists to
+do and costs nothing in every boot nobody is debugging the radio in.
+
+Core 1 writes them with no lock, so the ordering is the whole of the care:
+
+| | |
+|---|---|
+| arming | buffers first, **then** the run flag |
+| disarming | run flag first, **then** the buffers |
+
+and the capture loop reads both pointers through `volatile` once per iteration
+and refuses to run on a null, so a failed allocation disarms rather than
+faulting the other CPU.
+
+### 374b. The iram half: 16 KB moved, by the rule from 352
+
+The rule that survived step 352 is narrow: **the flash driver must not live on
+the flash bus**, and an interrupt handler must not either. Everything else may
+be fetched through the cache.
+
+| moved | why it was safe |
+|---|---|
+| the WPA crypto — SHA-1, AES, PBKDF2, the unwrap | runs on the net task during association. 4,096 rounds of PBKDF2 is why a join takes fifteen seconds; none of it is an ISR |
+| `netif_wifi.c`, `tcpsrv.c` | the lwIP block already named `netif_wifi_input()` as running on the net task — the file was held in iram by nothing but not having been listed |
+| `ipc.c` | reached only from `sys send` / `sys recv` on an application task |
+
+Listed **one file at a time**, not as `*wpa*.o`. `wpa_cb.o` and `wpa_hs.o` are
+deliberately not moved: the blob calls those, and what context it calls them
+from is not something this project has established. A wildcard would have swept
+them in on the strength of their names.
+
+### 374c. The five kilobytes not taken
+
+`wifimac.c` was the obvious candidate: 5,359 bytes, and 66 references, **all of
+them from `shell.c`**. Bring-up instrumentation, apparently reachable only by
+typing a command.
+
+It also contains `wifimac_isr()`, routed through `intr_route()`.
+
+**An interrupt handler executing from flash is the one placement this kernel
+cannot survive** — the cache may be unavailable exactly when the handler is
+entered. Checked before moving, and the check is why `ipc.c`'s 531 bytes were
+taken instead of `wifimac.c`'s five kilobytes.
+
+### 374d. What is verified and what is not
+
+Verified on the board with the `-WiFi` image flashed:
+
+```
+phyinit   rc=1
+base mac  : 5c:01:3b:50:3f:64
+osi table : 118 words, no null slots
+fault=none
+```
+
+It links, it boots, the PHY initialises, and the MAC is the same one that
+appeared in a router's ARP table when the stack last worked.
+
+**Not verified: the WPA crypto running from flash.** That is the risk this
+change introduces, and `wifiinit` does not reach it — the crypto self-test runs
+inside the wifi app's bring-up, behind a real join. Until somebody joins a
+network on this image, "the crypto still works from irom" is an argument from
+the placement rule and not a reading.
+
+Heap with `-WiFi`: **16,168 bytes**, against 29,240 without. The blob's DRAM
+window is most of the difference.
+
+### State
+
+```
+works  -WiFi links, boots and initialises the radio for the first time in
+       many steps; 48 KB of DRAM returned when the capture is disarmed
+open   THE CRYPTO FROM FLASH IS UNVERIFIED -- needs one real join
+       VM-08 proper (eFuses); APP_MAX 4; ping's peer id (368b); per-task
+       stacks (352c); the null-sp fault (351)
+```

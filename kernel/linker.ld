@@ -229,6 +229,60 @@ SECTIONS
        * lwIP cannot be executing while the bus is taken. */
       *lwip_*.c.o(.literal .literal.* .text .text.*)
 
+      /* [step 374] The WPA crypto, 12,648 bytes, for the same reason and by the
+       * same rule.
+       *
+       * PBKDF2, SHA-1, AES and the key-wrap unwrap run on the NET TASK during
+       * association -- four thousand rounds of it, which is why a join takes
+       * fifteen seconds. None of it is reachable from an interrupt handler and
+       * none of it touches the flash bus.
+       *
+       * It is compiled WINDOWED rather than call0 (see build.ps1), and that is
+       * orthogonal to where it lives: the ABI decides how it is called, the
+       * linker decides where it is fetched from.
+       *
+       * Listed one file at a time rather than as *wpa*.o, deliberately.
+       * wpa_cb.o and wpa_hs.o are NOT here: the blob calls those, and what
+       * context the blob calls them from is not something this project has
+       * established. A wildcard would have swept them in on the strength of
+       * their names. */
+      *wpa_sha1-internal.c.o(.literal .literal.* .text .text.*)
+      *wpa_sha1.c.o(.literal .literal.* .text .text.*)
+      *wpa_sha1-pbkdf2.c.o(.literal .literal.* .text .text.*)
+      *wpa_sha1-prf.c.o(.literal .literal.* .text .text.*)
+      *wpa_aes-internal.c.o(.literal .literal.* .text .text.*)
+      *wpa_aes-internal-dec.c.o(.literal .literal.* .text .text.*)
+      *wpa_aes-unwrap.c.o(.literal .literal.* .text .text.*)
+      *wpatest.c.o(.literal .literal.* .text .text.*)
+      *wpatest.o(.literal .literal.* .text .text.*)
+
+      /* [step 374] The netif glue and the TCP server, 3,225 bytes.
+       *
+       * The lwIP block above already names netif_wifi_input() as running on the
+       * net task from the drain loop -- so the file it lives in was being held
+       * in iram by nothing but not having been listed. tcpsrv is reached from
+       * lwIP's accept and receive callbacks, which are the same task.
+       *
+       * This is the last of what can move under the rule. What remains in iram
+       * is the scheduler, the vectors, the flash driver, the display DMA path,
+       * panic, and the OSI shim the blob calls from a context this project has
+       * not established -- and the last of those is where the next 8 KB is, for
+       * anyone willing to establish it. */
+      *netif_wifi.c.o(.literal .literal.* .text .text.*)
+      *tcpsrv.c.o(.literal .literal.* .text .text.*)
+
+      /* [step 374] The last 435 bytes, and the smallest thing that could
+       * supply them: program-to-program messaging, reached only from `sys send`
+       * and `sys recv` on an application task.
+       *
+       * The obvious candidate was wifimac.c, five kilobytes and called from
+       * nothing but shell commands. It also contains wifimac_isr(), routed
+       * through intr_route() -- an interrupt handler executing from flash is
+       * the one placement this kernel actually cannot survive. Checked rather
+       * than assumed, which is the whole of why this file lists objects one at
+       * a time. */
+      *ipc.c.o(.literal .literal.* .text .text.*)
+
     /* [step 278] notes.c and term.c join it, for the same reason and with the
      * same evidence: both are views entered from the launcher, both run only
      * while a human is looking at them, and neither is referenced by anything
