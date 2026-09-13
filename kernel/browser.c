@@ -171,6 +171,70 @@ static int follow(const char *href)
     return 1;
 }
 
+/* [step 394] "host", "host/path", or either with a scheme on the front.
+ *
+ * ONE splitter, used by the on-screen editor AND by the `weburl` shell command,
+ * because two of them would drift and the drift would only show on whichever
+ * one the person typing was not using.
+ *
+ * http:// is accepted and stripped rather than refused -- a person typing a URL
+ * types the whole thing, and refusing the half that is obviously correct is a
+ * worse answer than ignoring it. https:// is accepted and STRIPPED TOO, and
+ * that deserves saying out loud: the page will be fetched over plain HTTP on
+ * port 80 regardless. There is no TLS here (webfetch.h has the arithmetic), so
+ * the alternative to stripping it is refusing every URL anybody copies out of a
+ * browser. What the site does with a plain request is then the site's answer --
+ * usually a 301, which this view renders as readable prose.
+ */
+static void set_url(const char *t)
+{
+    uint32_t i = 0u;
+
+    /* skip a scheme if one was typed */
+    if (t[0] == 'h' && t[1] == 't' && t[2] == 't' && t[3] == 'p') {
+        uint32_t k = (t[4] == 's') ? 5u : 4u;
+        if (t[k] == ':' && t[k + 1u] == '/' && t[k + 2u] == '/') { i = k + 3u; }
+    }
+
+    uint32_t h = 0u;
+    while (t[i] && t[i] != '/' && h + 1u < WEB_HOST_MAX) { g_host[h++] = t[i++]; }
+    g_host[h] = 0;
+
+    uint32_t p = 0u;
+    if (!t[i]) { g_path[p++] = '/'; }
+    while (t[i] && p + 1u < WEB_HOST_MAX) { g_path[p++] = t[i++]; }
+    g_path[p] = 0;
+}
+
+/* [step 394] Set the address from the shell and fetch it.
+ *
+ * The panel's keyboard is multi-tap on a resistive screen: "neverssl.com" is
+ * thirty-odd presses, and a path is more. That is a fine way to type one URL
+ * and a bad way to try six. This is the same splitter and the same fetch the
+ * go button uses -- standing rule 3 -- so the two cannot disagree.
+ */
+void browser_goto(const char *url);
+void browser_goto(const char *url)
+{
+    set_url(url);
+    g_scroll     = 0u;
+    g_sel        = -1;
+    g_want_fetch = 1;           /* the NET task performs it, never this one */
+    g_full       = 1;
+    g_dirty++;
+}
+
+const char *browser_where(void);
+const char *browser_where(void)
+{
+    static char shown[WEB_HOST_MAX * 2u];
+    uint32_t k = 0u;
+    for (uint32_t i = 0u; g_host[i] && k + 1u < sizeof shown; i++) { shown[k++] = g_host[i]; }
+    for (uint32_t i = 0u; g_path[i] && k + 1u < sizeof shown; i++) { shown[k++] = g_path[i]; }
+    shown[k] = 0;
+    return shown;
+}
+
 /* ---- the page ------------------------------------------------------------ */
 
 /* [step 390] The page, as words.
@@ -415,8 +479,13 @@ static void draw_url(uint16_t bg)
      * the old 26x14 was in either direction. */
     display_fill_rect(DISP_W - 96u, URL_Y + 2u, 46u, URL_H - 4u, COLOR_BLUE);
     put(DISP_W - 79u, URL_Y + 12u, "go", FG, COLOR_BLUE);
-    display_fill_rect(DISP_W - 48u, URL_Y + 2u, 46u, URL_H - 4u, FIELD);
-    put(DISP_W - 34u, URL_Y + 12u, "ed", FG, FIELD);
+    /* [step 395] "raw", was "ed". The field itself is the editor now, and the
+     * raw toggle had to come off the header where it was a trap. Lit when it is
+     * on, because a mode you cannot see you are in is how this was reported as
+     * a browser that would not change address. */
+    display_fill_rect(DISP_W - 48u, URL_Y + 2u, 46u, URL_H - 4u,
+                      g_raw ? COLOR_BLUE : FIELD);
+    put(DISP_W - 40u, URL_Y + 12u, "raw", FG, g_raw ? COLOR_BLUE : FIELD);
 }
 
 static void draw_all(void)
@@ -452,6 +521,23 @@ void browser_dump_rows(void)
     extern void uart_putc(char);
     extern void uart_put_dec(unsigned int);
 
+    /* [step 394] The fetch's own account of itself.
+     *
+     * webfetch_status() returns "a short line naming what happened" -- which of
+     * DNS, connect or the request failed -- and this view has always had it and
+     * shown it only on the PANEL, in the status bar, which cannot be read back
+     * (MISO is held low). So a failed `weburl` reported state 5 and not one
+     * word about why. That is the same defect step 388 fixed in netdev.c and it
+     * survived here because the browser had its own copy of the problem. */
+    {
+        extern const char *webfetch_status(void);
+        extern int webfetch_state(void);
+        uart_puts("   web      fetch state ");
+        uart_put_dec((unsigned)webfetch_state());
+        uart_puts(" -- ");
+        uart_puts(webfetch_status());
+        uart_puts("\n");
+    }
     uart_puts("   web      mode=");
     uart_puts(g_raw ? "raw" : "page");
     uart_puts("  at=");
@@ -592,15 +678,7 @@ void browser_touch(uint32_t x, uint32_t y, int down)
         if (r != KB_SUBMIT) { return; }
         const char *t = keyboard_text();
         if (t[0]) {
-            /* "host" or "host/path" -- a typed URL that carries a path should
-             * reach it, now that there is somewhere to keep one. */
-            uint32_t i = 0u, h = 0u;
-            while (t[i] && t[i] != '/' && h + 1u < WEB_HOST_MAX) { g_host[h++] = t[i++]; }
-            g_host[h] = 0;
-            uint32_t p = 0u;
-            if (!t[i]) { g_path[p++] = '/'; }
-            while (t[i] && p + 1u < WEB_HOST_MAX) { g_path[p++] = t[i++]; }
-            g_path[p] = 0;
+            set_url(t);
         }
         g_editing    = 0;
         g_want_fetch = 1;       /* the net task performs it */
@@ -609,27 +687,37 @@ void browser_touch(uint32_t x, uint32_t y, int down)
         return;
     }
 
-    /* [step 390] The header toggles the raw response. The exit is at the right
-     * and keeps its 22 pixels; the rest of the bar is the toggle. "Show exactly
-     * what came back" is a diagnostic this view has needed more than once, and
-     * a rendered page must not be the only thing it can show. */
-    if (y < HDR_H && x < DISP_W - 22u) {
-        g_raw    = !g_raw;
-        g_scroll = 0u;
-        g_sel    = -1;
-        g_dirty++;
-        return;
-    }
-
+    /* [step 395] The URL row, and the ONE THING THIS VIEW GOT WRONG.
+     *
+     * `taps` recorded eight consecutive presses at x 67-92, y 13-28 -- the URL
+     * TEXT, and the header strip just above it. Neither did anything: the row
+     * only ever tested x >= 144 for `go` and x >= 192 for `ed`, so tapping the
+     * address itself was inert, and tapping slightly high hit step 390's
+     * raw-mode toggle, which occupied the whole header.
+     *
+     * Tapping the address is what a person does to change an address. It was
+     * the obvious affordance and it was the one region that did nothing, while
+     * the strip above it silently changed what the page looked like. That reads
+     * exactly like a browser stuck on one site.
+     *
+     * So: the FIELD opens the editor, `raw` takes the third button (it was
+     * `ed`, which the field now replaces), and the header is inert again except
+     * for the exit that desktop.c owns. */
     if (y >= URL_Y && y < URL_Y + URL_H) {
-        if (x >= DISP_W - 48u) {                /* ed */
-            g_editing = 1;
-            keyboard_reset("go");
-            g_full  = 1;        /* the layout changes; clear once */
+        if (x >= DISP_W - 48u) {                /* raw */
+            g_raw    = !g_raw;
+            g_scroll = 0u;
+            g_sel    = -1;
+            g_full   = 1;
             g_dirty++;
         } else if (x >= DISP_W - 96u) {         /* go */
             BLOG("go tapped");
             g_want_fetch = 1;
+            g_dirty++;
+        } else {                                /* the address: edit it */
+            g_editing = 1;
+            keyboard_reset("go");
+            g_full  = 1;        /* the layout changes; clear once */
             g_dirty++;
         }
         return;

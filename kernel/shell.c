@@ -2796,6 +2796,98 @@ static void execute(char *line)
             browser_dump_rows();
         }
     }
+    else if (str_eq(line, "sram1")) {
+        /* [step 396] Does SRAM1 survive being used?
+         *
+         * UM-NATOS-004 section 6 lists "DRAM above 0x3FFE0000 is ROM-reserved"
+         * as BELIEVED, NOT INDEPENDENTLY CONFIRMED. The whole memory map was
+         * built at Milestone 0 to stay clear of it -- 128 KB, a third of this
+         * chip's RAM, avoided on an assumption nobody tested. It matters
+         * because the heap is 23,688 bytes and a TLS handshake wants ~40,000.
+         *
+         * THE FIRST VERSION OF THIS COMMAND WAS THE WRONG INSTRUMENT. It
+         * counted non-zero words, and reported 1024/1024 for almost every page
+         * -- which says nothing at all, because uninitialised SRAM is noise and
+         * noise is never zero. "Has content" cannot distinguish the ROM's data
+         * from random bits. Only a WRITE can.
+         *
+         *   sram1 mark   write an address-derived pattern, verify immediately
+         *   sram1        re-verify, and report which pages no longer hold
+         *
+         * So: mark, then run wifiopen and a flash write and the browser, then
+         * `sram1` again. Pages that still hold were never wanted by anybody.
+         *
+         * This CAN hang the board -- the ROM keeps its stack and its BSS
+         * somewhere in here and rom_stubs.c and the blob both call ROM code.
+         * That is the experiment, and a reflash recovers it. */
+        const uint32_t BASE = 0x3FFE0000u, LEN = 0x20000u, PAGE = 0x1000u;
+        int mark = str_eq(arg, "mark");
+        if (mark) {
+            uart_puts("   marking 0x3FFE0000..0x40000000 -- this may hang" "\n");
+            for (uint32_t off = 0u; off < LEN; off += 4u) {
+                *(volatile uint32_t *)(BASE + off) = (BASE + off) ^ 0xA5A5A5A5u;
+            }
+            uart_puts("   survived the write" "\n");
+        }
+        uint32_t held = 0u, run = 0u, best = 0u, best_at = 0u, run_at = 0u;
+        uart_puts("   page      words holding pattern" "\n");
+        for (uint32_t off = 0u; off < LEN; off += PAGE) {
+            uint32_t ok = 0u;
+            for (uint32_t w = 0u; w < PAGE; w += 4u) {
+                uint32_t a = BASE + off + w;
+                if (*(volatile uint32_t *)a == (a ^ 0xA5A5A5A5u)) { ok++; }
+            }
+            if (ok == PAGE / 4u) {
+                held++;
+                if (!run) { run_at = BASE + off; }
+                run += PAGE;
+                if (run > best) { best = run; best_at = run_at; }
+            } else {
+                run = 0u;
+                uart_puts("     ");
+                uart_put_hex(BASE + off);
+                uart_puts("  ");
+                uart_put_dec(ok);
+                uart_puts("/1024  CLOBBERED" "\n");
+            }
+        }
+        uart_puts("   intact pages      : ");
+        uart_put_dec(held);
+        uart_puts(" of 32  = ");
+        uart_put_dec(held * 4u);
+        uart_puts(" KB" "\n");
+        uart_puts("   longest intact run: ");
+        uart_put_dec(best);
+        uart_puts(" B at ");
+        uart_put_hex(best_at);
+        uart_puts("\n");
+    }
+    else if (str_eq(line, "weburl")) {
+        /* [step 394] Go to any address, from here.
+         *
+         * The panel's keyboard is multi-tap on a resistive screen -- thirty-odd
+         * presses for a hostname, more for a path -- which is a fine way to type
+         * one URL and a bad way to try six. This calls browser_goto(), the same
+         * splitter and the same fetch the `go` button runs, so the two cannot
+         * disagree about what a URL means.
+         *
+         * It opens the view if it is not already open, because a fetch whose
+         * result nobody can see is not a thing anybody wanted. */
+        const char *u = arg;
+        while (*u == ' ') { u++; }
+        if (!*u) {
+            uart_puts("   usage: weburl <host>[/path]   e.g. weburl neverssl.com" "\n");
+            uart_puts("   currently at ");
+            uart_puts(browser_where());
+            uart_puts("\n");
+        } else {
+            if (!desktop_web()) { desktop_open_web(); }
+            browser_goto(u);
+            uart_puts("   going to ");
+            uart_puts(browser_where());
+            uart_puts("  -- plain HTTP, no TLS" "\n");
+        }
+    }
     else if (str_eq(line, "webrows")) {
         /* [step 390] The layout, on demand -- after scrolling or following a
          * link, when the interesting question is what the view holds NOW. */

@@ -51,4 +51,16 @@ void browser_service(void);
  * this the layout and the hit-testing could only be argued about. */
 void browser_dump_rows(void);
 
+/* [step 394] Point the view at a URL and fetch it, from the shell.
+ *
+ * Accepts "host", "host/path", and either with http:// or https:// on the
+ * front -- the scheme is stripped and the fetch is plain HTTP either way,
+ * because there is no TLS and refusing every URL a person copies out of a real
+ * browser is a worse answer than fetching what can be fetched.
+ *
+ * Same splitter and same fetch the go button uses; browser_where() reports the
+ * result so a caller can print where the view actually ended up. */
+void        browser_goto(const char *url);
+const char *browser_where(void);
+
 #endif /* NATOS_BROWSER_H */

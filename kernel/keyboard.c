@@ -9,14 +9,22 @@
  * ever texted already knows, and this interface should not have to be learned
  * twice. */
 static const char *const KEYS[KB_ROWS][KB_COLS] = {
-    { ".,-1",  "abc2", "def3"  },
+    /* [step 394] "/" added, second in the cycle. The browser could type a host
+     * and never a path: there was no slash on this keyboard at all, so every
+     * site was reachable only at its root. "." and "/" are the two characters a
+     * URL is made of, so they lead.
+     *
+     * The cost is one extra press to reach "1", which is paid by the wifi
+     * view's passphrase entry. Worth it: a digit is one press further away, a
+     * path was impossible. */
+    { "./,-1", "abc2", "def3"  },
     { "ghi4",  "jkl5", "mno6"  },
     { "pqrs7", "tuv8", "wxyz9" },
     { "<",     " 0",   ">"     },   /* delete, space/zero, submit */
 };
 
 static const char *const FACES[KB_ROWS][KB_COLS] = {
-    { "1 .,-", "2 abc", "3 def"  },
+    { "1 ./,-","2 abc", "3 def"  },
     { "4 ghi", "5 jkl", "6 mno"  },
     { "7 pqrs","8 tuv", "9 wxyz" },
     { "del",   "space", 0        },  /* [2][2] comes from keyboard_reset */
