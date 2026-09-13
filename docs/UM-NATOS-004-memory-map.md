@@ -194,10 +194,37 @@ the other party's link script, not to move our own.
 
 | Assumption | Status |
 |---|---|
-| DRAM above `0x3FFE0000` is ROM-reserved | Believed; not independently confirmed |
+| DRAM above `0x3FFE0000` is ROM-reserved | **MEASURED 2026-09-13, and substantially wrong** — see below |
 | IRAM window `0x40080000`+`0x20000` is fully available | **Contradicted by §5** |
 | SRAM region boundaries in §2 | Transcribed, not verified against silicon |
 | Cache consumption of SRAM0 when XIP is enabled | Not measured — relevant from the first flash-resident build |
+
+### 6.1 SRAM1, measured (step 396)
+
+The first row above was tested rather than believed. `sram1 mark` writes
+`addr ^ 0xA5A5A5A5` across all 128 KB of `0x3FFE0000`–`0x40000000`; `sram1`
+re-verifies. Marked and checked within one serial connection, because opening
+the port may reset the board.
+
+| exercise | pages intact |
+|---|---|
+| browser fetch, a VM app, SD, DMA | **32 of 32 — 128 KB** |
+| flash write, PHY bring-up, WPA2 join | **28 of 32 — 112 KB** |
+
+Steady-state operation touches none of it. Flash and radio touch four pages, and
+two runs reproduced each other byte for byte — 9, 821, 838 and 716 words held at
+`0x3ffe0000`, `0x3ffe1000`, `0x3ffe3000` and `0x3fff0000`. `0x3ffe2000` sits
+between two used pages and is not itself used.
+
+**`0x3fff1000`–`0x40000000` — 60 KB contiguous — survived all of it.**
+
+So the region is not ROM-reserved. A small part of it is, deterministically, and
+the layout in §3.2 gave up 128 KB to avoid roughly 16.
+
+**Not established:** one board, one chip revision. BT is never started here, and
+deep sleep, OTA and the coredump path were not exercised. Nothing allocates from
+the region yet — `heap.c` manages one contiguous span between `_bss_end` and the
+stack, and the blob's reserved 32 KB lies between that span and this one.
 
 ## 7. References
 

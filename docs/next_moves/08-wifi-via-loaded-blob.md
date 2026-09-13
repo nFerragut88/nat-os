@@ -23194,3 +23194,182 @@ open   the link on that page is https, so it cannot be followed (no TLS, by
        DHCP offer, not a measured optimum
        VM-08 proper; APP_MAX 4; per-task stacks (352c); the null-sp fault (351)
 ```
+
+---
+
+## step 394 — any site, and the first web page
+
+The browser could reach exactly one address. Not by policy — by two gaps that
+had never been put side by side.
+
+### 394a. There was no slash on the keyboard
+
+`keyboard.c`'s keypad is `.,-1 / abc2 / def3 / ...`: letters, digits, `.`, `,`,
+`-` and space. **No `/` anywhere.** So a person at the panel could type a
+hostname and never a path, and every site was reachable only at its root.
+
+`"./,-1"`, with `/` second in the cycle — `.` and `/` are what a URL is made of,
+so they lead. The cost is one extra press to reach `1`, paid by the wifi view's
+passphrase entry. A digit one press further away against a path being
+impossible.
+
+### 394b. And thirty presses is a way to type one URL, not six
+
+`weburl <host>[/path]` goes to an address from the shell and opens the view if
+it is not already open. It calls `browser_goto()`, which uses the **same
+splitter and the same fetch** the `go` button runs, so the two cannot disagree
+about what a URL means — the editor now calls `set_url()` too, rather than
+keeping its own copy of the parsing.
+
+A scheme on the front is **stripped, not refused** — including `https://`, and
+that deserves saying out loud. The fetch is plain HTTP on port 80 regardless.
+The alternative to stripping it is refusing every URL anybody copies out of a
+real browser; what the site does with a plain request is then the site's answer,
+usually a 301, which this view renders as readable prose.
+
+### 394c. The browser had the reason and showed it only on the glass
+
+A failed `weburl` reported `state 5` and nothing else. `webfetch_status()`
+returns *"a short line naming what happened"*, and the browser has always had it
+— in the status bar, on a panel that cannot be read back because MISO is held
+low. So the reason existed and was unreachable.
+
+That is precisely the defect step 388 fixed in `netdev.c`, surviving here
+because **the browser had its own copy of the problem**. `browser_dump_rows()`
+now prints the state and the status first.
+
+It answered immediately: `neverssl.com` is not a DNS failure, it is
+`connect timeout` — the name resolves and the TCP handshake does not complete.
+
+### 394d. What it reaches
+
+| | |
+|---|---|
+| `example.com` | 200, renders, 1 link |
+| `info.cern.ch` | 200, **271 bytes of text, 4 links** |
+| `info.cern.ch/hypertext/WWW/TheProject.html` | 200, **816 bytes, 16 links** |
+| `neverssl.com` | connect timeout |
+
+The third was reached **by tapping a link on the second** — select, then follow —
+and it is the first web page ever published. Its links are relative
+(`WhatIs.html`, `Summary.html`), which is the path in `follow()` that had never
+run against anything real.
+
+### 394e. Every counter fired, on a real page, for the first time
+
+```
+web  fetch state 4 -- done (truncated)
+     text=816B  links=16  LINKS DROPPED=5
+dev 7 2 = 2047      body length, one below WEB_BODY_MAX
+dev 7 3 = 403       bytes the kernel threw away
+```
+
+388 built `g_dropped` and the `"done (truncated)"` status and could only predict
+what they would say; 393 measured them on a page that fitted, so they read 828
+and 0. **This is the first real page that did not fit**: 2,047 bytes kept, 403
+dropped, the status saying so, and html.c reporting five links lost past
+`HTML_LINKS_MAX` as well.
+
+Three instruments built across three steps, all reporting a real loss, and none
+of them silent about it. That is what 060 asked for.
+
+### State
+
+```
+works  any address, from the panel or from `weburl`; a scheme is accepted and
+       stripped; relative, rooted and absolute links follow; a failed fetch
+       names which of DNS, connect or request it was
+       info.cern.ch renders, and its link reaches the first web page
+open   neverssl.com: connect timeout, unexplained -- DNS resolves, TCP does not
+       complete. Not chased.
+       WEB_BODY_MAX 2048 truncates a real page at 403 bytes lost, and
+       HTML_LINKS_MAX 16 dropped 5. Both now VISIBLE, neither raised.
+       no TLS, so https links are refused; VM-08; APP_MAX 4; 352c; 351
+```
+
+---
+
+## step 396 — 112 KB that was never reserved
+
+Asked whether HTTPS could be done "in IROM". It cannot — IROM is flash mapped
+read-only through the instruction cache, and TLS's cost is two 16 KB read-write
+record buffers, not code. But the question sent me to the memory map, and the
+memory map has been wrong since Milestone 0.
+
+### 396a. The assumption
+
+`UM-NATOS-004` §6, Unverified assumptions:
+
+| Assumption | Status |
+|---|---|
+| DRAM above `0x3FFE0000` is ROM-reserved | **Believed; not independently confirmed** |
+
+§3.2 explains the layout was chosen to end "comfortably clear" of it, and
+`flash.c:34` asserts the blob stays below it. **128 KB — a third of this chip's
+RAM — avoided on a belief the document itself flagged as untested.**
+
+### 396b. The first instrument was the wrong one
+
+`sram1` began as a read-only survey counting non-zero words per page. It
+reported **1024/1024 for almost every page**, which says nothing whatever:
+uninitialised SRAM is noise, and noise is never zero. "Has content" cannot
+distinguish the ROM's data from random bits.
+
+Only a write can. `sram1 mark` writes `addr ^ 0xA5A5A5A5` across all 128 KB;
+`sram1` re-verifies and names the pages that no longer hold.
+
+### 396c. What actually uses it
+
+Marked, then exercised, then checked — all in ONE serial connection, because
+opening the port may reset the board and a reset between mark and check would
+have produced a fabricated answer.
+
+| exercise | intact |
+|---|---|
+| `weburl`, `run meter`, `sd`, `dmastat` | **32 of 32 — 128 KB** |
+| `storetest`, `wifiopen`, `wifijoin` | **28 of 32 — 112 KB** |
+
+Steady-state operation touches **none of it**. Flash writes and radio bring-up
+touch exactly four pages, and the second run reproduced the first **byte for
+byte** — 9, 821, 838 and 716 words held, at the same four addresses. Identical
+counts twice is deterministic ROM usage, not corruption.
+
+```
+0x3ffe0000    9/1024     heavily used
+0x3ffe1000  821/1024
+0x3ffe2000  intact       <- not used, between two that are
+0x3ffe3000  838/1024
+0x3fff0000  716/1024
+0x3fff1000  ---- 61,440 B contiguous, intact ----  0x40000000
+```
+
+**60 KB contiguous at `0x3fff1000` survived a flash write, a PHY bring-up and a
+full WPA2 join.** The heap is 23,688 bytes. A TLS handshake wants roughly
+40,000.
+
+### 396d. What this does NOT establish
+
+- **One board, one chip revision, one set of paths.** BT is never started here,
+  and deep sleep, OTA and the coredump path were not exercised. ROM usage under
+  those is unknown.
+- **Surviving what was tested is not surviving everything.** The four pages
+  found are the ones this kernel's current behaviour touches.
+- **Nothing uses it yet.** The heap is whatever lies between `_bss_end` and the
+  stack — one contiguous region. A second, disjoint region means either teaching
+  `heap.c` about regions or moving the `dram` window, and the blob's reserved
+  32 KB sits between them.
+
+### State
+
+```
+works  sram1 mark / sram1 -- a write-and-verify probe of SRAM1, on the board
+       112 of 128 KB survives everything tested; 60 KB contiguous at
+       0x3fff1000 survives flash writes and a full radio bring-up, twice,
+       byte for byte
+open   NOT CLAIMED yet -- no code allocates from it and heap.c has one region
+       untested paths: BT, deep sleep, OTA, coredump, another chip revision
+       UM-NATOS-004 section 6 needs updating: the assumption is now measured,
+       and it was substantially wrong
+       TLS is arithmetically possible for the first time. It is still an
+       mbedTLS port, a trust store and a heap change, not a switch to flip
+```
