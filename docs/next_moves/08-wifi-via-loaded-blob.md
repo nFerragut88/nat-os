@@ -22455,3 +22455,742 @@ works  NatScript reaches the network: HTTP 200 from example.com, 767 bytes,
 open   the body is read but not shown -- app_fetch prints four blocks and the
        page is longer; VM-08 proper; APP_MAX 4; per-task stacks (352c)
 ```
+
+---
+
+## step 388 — the page was never 767 bytes
+
+UM-NATOS-061 §5 filed this as the smallest open item: *"`app_fetch` reads four
+blocks and stops. The page is longer than 256 bytes and the program does not
+say so."* That is true and it is the shallower half. Reading the code found the
+same defect one layer down, in the kernel, where the program could not have
+fixed it.
+
+### 388a. Two truncations, stacked, neither counted
+
+```
+webfetch.c   on_recv()   for (i = 0; i < q->len && g_len + 1u < WEB_BODY_MAX; i++)
+app_fetch    body loop   while shown < length && block < 4
+```
+
+`WEB_BODY_MAX` is 768. The copy loop stops at 767 bytes and the rest of the
+pbuf goes on the floor — and `tcp_recved(pcb, p->tot_len)` acknowledges those
+bytes to the server regardless, so the window opens and more arrive to be
+dropped the same way. `webfetch_len()` then returns 767 and `webfetch_status()`
+returns `"done"`.
+
+**The 767 that 387 published was the ceiling, not the page.** example.com's
+response is about twice that. Every instrument agreed: the state was 4, the code
+was 200, the length was a number, and the status said done. There was no reading
+anywhere in the system that distinguished a complete 767-byte page from the
+first 767 bytes of a longer one.
+
+That is the sixth item in the series UM-NATOS-060 catalogued, and the second
+found in code written *after* the report — 061 §4.1 was the first. The
+truncation itself is deliberate and documented at the `WEB_BODY_MAX` definition.
+**The silence about it was not.**
+
+### 388b. And a third, in the printing
+
+```
+buf chunk[64]
+...
+if net.xfer_in(block, chunk, 64) { puts(chunk) }
+```
+
+`VM_SYS_PUTS` walks until it finds a NUL or leaves the arena. A block that comes
+back **full** puts 64 bytes into a 64-byte buffer and leaves no NUL, so `puts`
+ran off the end of `chunk` and printed whatever lay next in the arena until a
+zero turned up. Bounds-checked, so not a fault and not a leak past the arena —
+but the program was printing bytes the fetch never delivered, and four of the
+four blocks it read were full ones.
+
+`buf chunk[68]` fixes it for one byte: buffers start zeroed (§7), nothing ever
+transfers into byte 64, so it stays a terminator for every full block.
+
+### 388c. What was changed
+
+| | |
+|---|---|
+| `webfetch.c` | `g_dropped` counts `q->len - i` per pbuf — `i` is the only thing that distinguishes a spent pbuf from a full buffer |
+| `webfetch.c` | `"done"` becomes `"done (truncated)"` when anything was dropped, on both the peer-closed and the timeout path |
+| `webfetch.h` | `webfetch_dropped()` |
+| `netdev.c` | read channel **3** — the dropped count, so a program can see it |
+| `device.c` | `net` goes from 3 channels to 4. Appended, like the row itself |
+| `app_fetch.nat` | every block (`divu(length + 63, 64)`), not four; `chunk[68]`; and three numbers at the end — shown, held, dropped |
+
+The program no longer prints `done` unqualified. It prints what it showed
+against what the kernel held against what the kernel threw away, and says
+`INCOMPLETE` or `TRUNCATED` when those disagree.
+
+### 388d. Verified, and not verified
+
+Built: `-WiFi` links, 303,792 bytes, nattest 27/27, no new warnings.
+
+On the board, **without the radio**:
+
+```
+>>> dev                       (387's image)
+   7   net       3      r-s-x     0
+
+>>> dev                       (this one)
+   7   net       4      r-s-x     0
+>>> dev 7 3
+   0
+```
+
+Four channels where there were three, and channel 3 reads rather than refusing.
+Zero is the right answer with no fetch behind it, which is the one reading this
+can take without the radio.
+
+**The end-to-end fetch was not re-run, and the reason is 376 again.** On this
+connection the serial link dies the instant the radio comes up:
+
+```
+>>> wifiopen
+[board] link lost: GetOverlappedResult failed (PermissionError 13)
+>>> wifijoin
+[board] link lost: GetOverlappedResult failed (PermissionError 13)
+```
+
+and on the second attempt the board went silent altogether — 19 bytes across a
+15-second watch, the CH340 still enumerated. A reflash brought it back, exactly
+as 376b describes. 377b resolved this by **changing the connection**, and that
+is what it needs again.
+
+So `g_dropped` has never been read on hardware. The number it will report for
+example.com is a prediction, not a measurement, and this step does not claim
+otherwise.
+
+### 388e. The diagnostic, and the defect it found in 388 itself
+
+388 was written, built and flashed before any of it was tested. Testing it
+afterwards found something the flashing had not.
+
+**What was tested.** `natvm_ref.py`'s device model is a loopback that does not
+know `net`, and its header forbids editing it to make a test pass -- so the
+harness lived in a scratchpad and substituted a model of `netdev_xfer_in()`
+transcribed line by line: block addressing, the `off >= have` refusal, the zero
+fill.
+
+| | |
+|---|---|
+| body arithmetic | 8 body shapes -- 0, 1, 63, 64, 65, 256, 257, 767 bytes -- each reproduced BYTE-EXACT, in 0/1/1/1/2/4/5/12 transfers |
+| negative control | the same harness on the pre-388 program: 4 transfers, **not** byte-exact, last line `done` |
+| dropped counter | 9 pbuf chains against the loop extracted from `webfetch.c` and pinned by hash, with `kept + dropped == everything that arrived` asserted every time |
+| stack balance | r15 returns to the top of the arena in all 9 runs |
+| the status string | nothing in the kernel compares it to a literal -- `browser.c:140` and `netdev.c:168` only display it, and every other caller switches on `webfetch_state()`, which did not change |
+
+**The negative control earned its keep twice.** It failed as intended -- and it
+printed **268** bytes from four 64-byte blocks. The extra twelve were
+`'NOPQRSTUVnet'`: the tail of an earlier block still lying in the arena,
+followed by the literal string **`net`**, which is the device name the program
+resolves itself by. 388b was reasoned from `VM_SYS_PUTS`'s source; this is the
+old program actually doing it, and printing its own device-name constant as
+page content.
+
+### 388f. And the defect: 21 bytes of stack
+
+388's reporting added five string literals. The image went from **2,180 bytes
+to 3,039** -- against an arena of **3,072**.
+
+`vm.c:180` starts r15 at the top of the arena and grows it DOWN, into the image.
+So the change shipped with **33 bytes of stack**, and the deepest r15 excursion
+in the generated assembly is 12. It fitted, by 21 bytes, and every test passed
+because it fitted.
+
+**Nothing would have caught it if it had not.** `app_start()` checks
+`len > arena_bytes` (app.c:154) and nothing else. A stack running past the image
+writes *inside* the arena, so the VM's bounds check passes; it lands in the
+string literals at the top of the image, and the symptom is a garbled message,
+not a fault.
+
+The first measurement missed it, too, and the way it missed is worth keeping:
+the program produced byte-identical output at an arena of 3,039 -- zero
+headroom -- which read as "the stack is never used". It is used. The literal it
+corrupts at that size is `S18`, `"  [fetch] done -- the whole body"`, and the
+truncated test case never prints S18. **A test whose blind spot is exactly the
+string the failure destroys.**
+
+`fetch`'s arena is now 3,584. Not 4,096: step 364 cut `tap` from 4 KB to 3 for
+the reason this table states two entries above -- a program generous with its
+arena starves the next one.
+
+**The general form is already written down and still true.** kmain.c, step 364:
+*"Arena sizes in this table are hand-written and unchecked against the image the
+compiler produced. natc knows both numbers; nothing carries them across."* It is
+now three numbers -- image, arena, and deepest stack excursion -- and `vasm.py`
+can compute the third from the assembly it already emits.
+
+### State
+
+```
+works  the net device carries a dropped-byte count on channel 4-of-4; the
+       status line says "truncated"; app_fetch reads every block and reports
+       shown / held / dropped rather than "done"
+open   THE FETCH IS NOT MEASURED END TO END -- the radio takes the USB link on
+       this supply (376). Everything below the radio is tested (388e); the
+       prediction for a 1,256-byte page is length=767, dropped=489, unread
+       nothing carries image / arena / stack depth across -- 388f, and the
+       same gap step 364 named for two of the three
+       whether to RAISE WEB_BODY_MAX or stream past it -- 388 makes the loss
+       visible and does not decide what to do about it
+       VM-08 proper; APP_MAX 4; per-task stacks (352c); the null-sp fault (351)
+```
+
+---
+
+## step 389 — the third number
+
+388f found that `app_fetch` shipped with 21 bytes between its stack and its own
+image, and that nothing in the system would have noticed had it been -21. This
+closes that, and it closes the general form rather than the instance.
+
+### 389a. What was missing
+
+kmain.c has said it since step 364:
+
+> *"Arena sizes in this table are hand-written and unchecked against the image
+> the compiler produced. natc knows both numbers; nothing carries them across."*
+
+It is three numbers, not two. The arena is hand-written in kmain.c. The image
+size comes from vasm. **The deepest the stack goes was computed by nobody** —
+and it is the one that decides whether the other two are safe, because r15
+starts at the top of the arena and grows down into the image (`vm.c:180`).
+
+### 389b. vasm now computes it
+
+`Assembler.stack_depth()` walks the assembled items, finds `addi r15, imm`, and
+returns the deepest cumulative excursion below the start, plus the net drift.
+`emit_header` writes it out:
+
+```
+#define VM_APP_FETCH_STACK 12u
+```
+
+Twelve, which is what 388e measured independently by walking the `.vasm` — two
+methods, same number.
+
+It walks **items, not encoded bytes**, so `.string` data that happens to look
+like `addi r15` is not counted. It is linear over the assembled order, which is
+exact for natc's output — push and pop are emitted in matched pairs within an
+expression, and the running total returns to zero — and a **lower bound** for
+hand-written `.vasm`, where a branch could push and not pop. The drift is
+emitted as a warning comment in the header when it is non-zero, so the one case
+the method cannot bound says so in the generated file.
+
+### 389c. `tools/arenacheck.py`, and it fails the build
+
+It reads the arena out of kmain.c's table, `_LEN` and `_STACK` out of the
+generated headers, and prints all twenty programs sorted by margin:
+
+```
+    program      image  stack   arena   margin
+    gfxrogue        76      0     256      180
+    dev            583      0     768      185
+    ...
+    fetch         3039     12    3584      533
+    tap           2149     28    3072      895
+    hello         1866     20    3072     1186
+    20 programs, all clear
+```
+
+`build.ps1` runs it **after codegen and before the compiler**, so a bad arena
+fails the build rather than flashing and garbling a message on the panel.
+
+**`MIN_MARGIN` is 128 bytes, and it is a POLICY, not a measurement.** Below that
+a program cannot gain one more string literal without eating its own image, and
+the failure is silent. The tightest program in the tree today is `gfxrogue` at
+180, so nothing had to move to adopt it.
+
+### 389d. Proved by putting the bug back
+
+A guard is only shown to work by measuring it in its absence (standing rule 2).
+`fetch`'s arena was returned to the 3,072 that 388 shipped:
+
+```
+    fetch         3039     12    3072       21  TIGHT (< 128)
+  arenacheck FAILED:
+    fetch      arena 3072 holds image 3039 + stack 12 with 21 to spare;
+               raise it to at least 3179
+```
+
+and at 3,044, where it genuinely overruns:
+
+```
+    fetch         3039     12    3044       -7  OVERRUNS THE IMAGE
+```
+
+Both fail `build.ps1` with exit 1, and in both the build stops **before**
+`== compiling ==` — the check runs early enough to be worth having.
+
+### 389e. What it does not do
+
+- It does not make `app_start()` any stricter. The runtime check is still
+  `len > arena_bytes` (app.c:154). This is a build-time guard on the programs
+  in kmain.c's table, and an image arriving any other way is not covered.
+- The bound is a lower bound for hand-written `.vasm`. Every hand-written
+  program in the tree reports 0 or 8 bytes with zero drift, so nothing is
+  relying on the weak case today.
+- It says nothing about the ESP32 task stacks, which are a different problem
+  and still open (352c).
+
+### State
+
+```
+works  vasm emits VM_<NAME>_STACK; arenacheck carries image, stack and arena
+       into one place and fails the build if they disagree; proved by putting
+       388's bug back and watching it fail. 20 programs, all clear
+open   the fetch is still not measured end to end -- the radio takes the USB
+       link on this supply (376)
+       app_start() is unchanged; per-task ESP32 stacks (352c); VM-08 proper;
+       APP_MAX 4; the null-sp fault (351)
+```
+
+---
+
+## step 390 — the page, as words
+
+The web view showed the response. All of it: status line, headers, doctype,
+`<head>`, and whatever markup fitted in the eight lines after that. It was
+honest about what the machine held and useless as a page.
+
+### 390a. `kernel/html.c` — a reader, not an engine
+
+One pass, four states, no allocation:
+
+| | |
+|---|---|
+| headers | found by the blank line and skipped |
+| tags | removed; block tags become line breaks |
+| `<script>`, `<style>` | contents **discarded**, and skipped in the SOURCE -- their bodies contain `<` and would otherwise be read as markup |
+| entities | ~20 decoded; an unknown one is emitted **verbatim**, `&sup2;` and all, because a visible failure says something was not understood and a silent deletion does not |
+| `<a href>` | href and the byte range of its text recorded, up to 16 |
+| whitespace | runs collapsed, never leading a line |
+
+Everything that does not fit is **counted** -- `html_dropped()`,
+`html_links_dropped()` -- rather than lost. That is 388's correction applied at
+the point of writing rather than two steps later.
+
+### 390b. The view
+
+`browser.c` lays the text out with **word wrapping**, draws each row in runs of
+one colour so a link is visibly a link, and remembers where every visible row
+began in the rendered text. A tap is mapped pixel to row to column to offset to
+link.
+
+**Two taps, not one.** The first selects, the second follows. This panel's
+default calibration puts the reported point some way from the finger, and a
+single tap that navigated would send the reader somewhere they did not choose
+with no way to see it coming.
+
+The view also gained a **path**. Every fetch it had ever made was of `/` -- so a
+link could not have been followed even if one had been found, which is the other
+half of why extracting them was not worth doing before. `follow()` resolves
+absolute, rooted and relative hrefs; `https://` is refused **out loud** rather
+than attempted and left to time out.
+
+The header toggles the **raw response**, which is what this view used to show
+and is still the better answer to "what actually came back".
+
+### 390c. Seeing it, with no radio and no way to read the panel
+
+`fbdump` dumps the raycast framebuffer, not the panel, and MISO is held low by
+GPIO12's strapping resistor so the glass cannot be read back (05, answered). The
+radio takes the USB link with it on this supply (376). So this view could not be
+photographed, fetched into, or touched from a capture.
+
+Three diagnostics, all using the paths the real thing uses (standing rule 3):
+
+- **`htmltest`** — 31 checks over the real `html_render()`, on the board.
+- **`webdemo`** — injects a canned response through `webfetch_inject()` and opens
+  the view the way the icon does.
+- **`webtap x y`** — calls `browser_touch()`, the function the touch task calls.
+  A press AND a release, because sending only the press leaves `g_was_down` set
+  and swallows the next tap -- the shape step 310 spent a session on.
+
+`browser_dump_rows()` prints what the last paint laid out, **from the arrays the
+tap handler reads**, so the layout and the hit-testing cannot disagree with what
+is reported:
+
+```
+>>> webdemo
+   injected 425 bytes -- opening the web view
+   web      mode=page  at=example.com/  sel=none  text=163B  links=2
+     0 |nat-os|
+     1 |Example Domain|
+     2 |This domain is for use in illustrative|
+     3 |examples & documents. You may use this|
+     4 |domain without permission.|
+     5 |[More information...] or [another host].|
+     link 0 -> /more
+     link 1 -> http://example.net/other
+```
+
+425 bytes of response, 163 bytes of text. The same board in `raw` mode still
+shows `<!doctype html><html><head><title>...`, one tap away.
+
+Following, end to end:
+
+```
+>>> webtap 32 99      sel=none -> sel=0
+>>> webtap 32 99      at=example.com/  -> at=example.com/more
+>>> webtap 152 99     sel=1
+>>> webtap 152 99     at=example.com/more -> at=example.net/other
+```
+
+The second pair is the absolute href, and it moved **both** host and path.
+
+### 390d. And it found a bug that the old view had hidden
+
+`ROWS` is 24. A rendered page is often six. One tap in the lower half scrolled
+by twelve and left a **completely blank view**, with nothing to say why and no
+way back except guessing that the upper half scrolls up.
+
+The scroll was never clamped. It had not mattered because the raw dump was
+twenty-odd rows of headers and markup; turning markup into words is what made
+the bug reachable. `max_scroll()` now bounds it, counting rows with the **same**
+`wrap_one()` the draw uses so the count cannot disagree with the layout.
+
+### 390e. Wikipedia, and why it is not the test
+
+It was asked for, and it cannot be the test. `en.wikipedia.org` on port 80
+answers **301 Moved Permanently** to `https://`, and has since 2015. So does
+google.com, and so does most of the web.
+
+There is no TLS here and there is not going to be: webfetch.h has the
+arithmetic -- a single mbedTLS handshake wants 40-50 KB of heap, and this build
+boots with 32,856 bytes in total. It is not effort, it does not fit.
+
+What step 390 changes about that is worth stating precisely and no more
+strongly: pointed at Wikipedia this view now shows **the redirect as readable
+prose, with the target as a link it will decline to follow**, instead of showing
+raw headers. That is better and it is not a page.
+
+`example.com` is the default instead, because it serves real HTML over plain
+HTTP and carries exactly one real link -- which makes it a genuine end-to-end
+test of everything above rather than a demonstration of a redirect.
+
+### State
+
+```
+works  the response is read as text and links: tags gone, entities decoded,
+       script/style discarded, word-wrapped, links coloured, selected on one
+       tap and followed on a second; absolute, rooted and relative hrefs; the
+       raw response one tap away; scroll clamped to the content
+       htmltest 31/31 ON THE BOARD; webdemo + webtap drive the real view
+open   NO REAL FETCH HAS BEEN RENDERED -- the radio takes the USB link (376),
+       so every reading above is an injected response
+       no TLS, so any https:// site can only ever show its 301
+       WEB_BODY_MAX is 768: a real page is truncated long before it is rendered
+       VM-08 proper; APP_MAX 4; per-task stacks (352c); the null-sp fault (351)
+```
+
+---
+
+## step 391 — the page renders, and 376's inference was wrong
+
+Two findings, and the second is the one that matters.
+
+### 391a. The reader had nothing to read
+
+390 proved `html.c` against injected samples and against a page written to
+exercise it. It never asked what a REAL response leaves behind after
+`WEB_BODY_MAX` has taken its cut.
+
+example.com's actual response is 1,461 bytes. At 768:
+
+```
+>>> webdemo real
+   injected 1461 bytes -- opening the web view
+   web  mode=page  at=example.com/  sel=none  text=14B  links=0
+     0 |Example Domain|
+```
+
+**Fourteen bytes and no links.** The 767 bytes kept were headers, the doctype,
+`<head>`, and the first third of a CSS block; the `<h1>`, the paragraph and the
+only `<a href>` on the page were all past the cut. The reader worked perfectly
+and had nothing to work on — which is why 390's demonstration looked complete
+and a real page would not have.
+
+`WEB_BODY_MAX` is 2048 now, and step 352's reasoning is what changed rather than
+being wrong: it sized the buffer to *what a person would read of a raw
+response*. Since 390 the response is not what is shown. 2,048 holds a real
+response **with its headers**, where 1,536 would have cleared example.com by 75
+bytes — a margin that stops being true the first time a server adds a header.
+The same page now:
+
+```
+   web  mode=page  text=202B  links=1
+     0 |Example Domain|
+     1 |Example Domain|
+     2 |This domain is for use in illustrative|
+     3 |examples in documents. You may use|
+     ...
+     7 |[More information...]|
+     link 0 -> https://www.iana.org/domains/example
+```
+
+Cost: 1,280 bytes of DRAM, 12,872 free before and 11,592 after.
+
+### 391b. `wifiopen` PANICS, and it has been panicking for 83 boots
+
+Checking that the DRAM spent above had not starved the radio produced this:
+
+```
+>>> wifiopen
+*** KERNEL PANIC ***
+  exccause : 20  (InstFetchProhibited)
+  epc      : 0x00000000   <- faulting instruction
+  GRANT DRIFT [pre-TierB, see task.c]: predicted 0x00000008 but vectors.S
+               wrote 0x0000aa8a for task 6
+  frames    : task 6 held 0x0000aa8a granted 0x00000008 LOST 0x0000aa82
+```
+
+A call through a **null function pointer**, in the windowed-frame machinery.
+
+**It is not mine.** One variable, `WEB_BODY_MAX` back to 768, same command:
+identical fault, `exccause 20, epc 0x00000000`. And the boot banner reports it
+had already been recorded:
+
+```
+  LAST FAULT   : exception, exccause 20, epc 0x00000000  (boot #83)
+```
+
+| | |
+|---|---|
+| 768 | panic, exccause 20, epc 0 |
+| 2048 | panic, exccause 20, epc 0 |
+| previous boots | same fault, recorded at boot #83 |
+
+**This contradicts step 376's conclusion, and 376 said so itself.** It inferred
+*supply, not software* from the CH340 disappearing rather than the ESP32
+rebooting, and it listed what that inference did not establish: *"no brownout
+reset cause was ever observed — the board went silent, it did not reboot, so
+this is inference from the shape of the failure rather than from a reset
+register."*
+
+A panic explains the same shape. After one, the shell is not running, so serial
+goes quiet — and "the board went silent" was read as the USB chip vanishing when
+it is equally what a kernel that stopped scheduling looks like. 377b then
+recorded that *"changing the connection made the radio come up and stay up"*,
+which is real and may be a second, independent problem; it is not evidence that
+there is no software fault, because nobody had a panic report to look at.
+
+There is one now, it is reproducible on demand, and `epc 0x00000000` in windowed
+frames is very likely **the null-`sp` window fault identified at step 351 and
+listed ever since as "never reproduced"**. That should be stated as a lead
+rather than a conclusion: what is established is a reproducible null-call panic
+on `wifiopen` at two different build configurations.
+
+### State
+
+```
+works  a real full-size example.com response renders to title, heading, the
+       whole paragraph and its link -- 1,461 bytes in, 202 bytes of text out
+       htmltest 31/31; WEB_BODY_MAX 2048, heap 11,592 free
+open   `wifiopen` PANICS -- exccause 20, epc 0x00000000, reproducible, and
+       recorded as far back as boot #83. NOT caused by 391a: identical at 768.
+       This is the next thing to chase, and 376's "supply, not software" needs
+       reopening rather than trusting
+       no real fetch has been rendered, for that reason
+       no TLS, so any https:// link is refused -- including the only one on
+       example.com
+```
+
+---
+
+## step 392 — the blob eats the heap, and nobody was checking
+
+`wifiopen` has been killing every session on this board. 376 read it as supply
+and said honestly that it was inferring from the shape of the failure rather
+than from a reset register. There is a panic report now.
+
+Full trail in **`docs/debug/2026-09-11-wifiopen-null-call.md`**, including two
+mistakes of mine that a later reader would otherwise repeat.
+
+### 392a. The mechanism
+
+```
+osi sizes : 32 4 60 8 24 3120 1024 136 136 136 596 596 596 596 596 120 1604 1604
+            └─────────── fixed overhead = 7,780 ───────────┘ └─ RX buffers ─┘
+osi FAIL  : wanted 1604 B, free 1312, LARGEST BLOCK 1312, blocks 19
+```
+
+7,780 bytes of fixed overhead, then one **1,604-byte RX buffer per
+`static_rx_buf_num`**, then dynamic buffers — and `dynamic_rx_buf_num` was 32,
+another 51,328 bytes. Espressif's reference configuration needs **23,820 bytes
+before a single dynamic buffer**, against a heap of 11,592.
+
+`heap_alloc` returns NULL. **The blob does not check it** — `osi table : 118
+words, no null slots`, so the null call is inside the blob — and calls through
+it. That is `exccause 20, epc 0x00000000`.
+
+### 392b. Where the memory was
+
+Two shell diagnostics were holding **13 KB of `.bss` permanently**:
+
+| | bytes | |
+|---|---|---|
+| `snap[384][6]` | 9,216 | `txwatch`, a **transmit** diagnostic — and transmit was closed as a negative at step 01 |
+| `many[240*12]` | 5,760 | a display-transfer ruler |
+
+`snap`'s own comment records it being halved **twice** for DRAM pressure, and
+`many`'s records being halved once. The memory had been coming out of the radio
+the whole time and the two facts had never been put side by side.
+
+`snap` → 32 slots, `many` → 4 rows, `static_rx_buf_num` → 6,
+`dynamic_rx_buf_num`/`dynamic_tx_buf_num` → 8. Heap at boot: **11,592 → 23,688**.
+
+### 392c. Result
+
+```
+>>> wifiopen                      (no panic)
+>>> wifijoin
+   joining ivory-billed with the compiled-in passphrase
+   lwip      netif up, mtu 1500, starting DHCP
+   dhcp      state 8 tries 2  addr 0.0.0.0
+   associated; data path started
+```
+
+No panic, the radio associates, the data path starts, **and the serial link
+survives** — the first time `wifiopen` has not ended the session.
+
+DHCP went from state 6 (SELECTING, nine retries, nothing arriving) at four
+static buffers to **state 8, CHECKING** at six: an OFFER was received. Four
+associate but cannot catch an offer; six can.
+
+### 392d. What this does to 376 — and what it does not
+
+376's *"supply, not software"* was incomplete: there **was** a software fault,
+and a panic makes the board go silent exactly the way a vanished CH340 does.
+Nobody had a panic report because no capture had survived `wifiopen` long enough
+to print one.
+
+**But the supply problem is real and still here.** On the run after the fix the
+link died at `wifiopen` again with **no panic**, and the CH340 then left the USB
+bus entirely — `no serial ports at all`. 377b's *"changing the connection made
+the radio come up and stay up"* stands. These are two independent faults that
+produce the same silence, which is why one hid the other for sixteen steps.
+
+### State
+
+```
+works  wifiopen no longer panics; the radio associates, the data path starts,
+       DHCP receives an OFFER and reaches CHECKING, and serial survives it
+       heap at boot 11,592 -> 23,688
+open   DHCP BOUND not yet observed -- the capture after the fix lost the USB
+       device to the supply fault before it could be read
+       the supply fault (376/377b) is untouched and needs a cable or a hub
+       a real fetch still not rendered; everything below "bytes arrived" is
+       proved (390), this is the last unjoined link
+       is 6 the right count? it is the first value that received an OFFER, not
+       a measured optimum. task.c holds 26,624 B of stacks, unexamined
+```
+
+---
+
+## step 393 — a page off the internet, as words, on the glass
+
+Everything 388 through 392 left open is closed, and the thing that unblocked it
+was moving the board to a different USB socket.
+
+### 393a. The USB fault was the socket
+
+`USB\VID_0000&PID_0002\5&B00D8BA&0&7` — hub port 7, `Device Descriptor Request
+Failed`, no COM port, nothing software could reach. The board had only ever
+enumerated on ports 1 and 2 of that controller. Moved back, it came up as
+**COM6** and has been stable since. `board.py` finds the port rather than
+assuming COM5, which is the one thing that made this a non-event.
+
+### 393b. DHCP BOUND
+
+```
+>>> wifiopen        (no panic)
+>>> wifijoin
+   joining ivory-billed with the compiled-in passphrase
+   lwip      netif up, mtu 1500, starting DHCP
+   dhcp      state 8 tries 2  addr 0.0.0.0
+   associated; data path started
+>>> wpa
+   dhcp      state 10 tries 0  addr 192.168.1.140
+```
+
+State 10 is BOUND. 392 got as far as CHECKING and could not be read further.
+
+### 393c. A real fetch, rendered
+
+`webdemo` to open the view, `webtap 165 37` to press **go**, and then:
+
+```
+>>> webrows
+   web      mode=page  at=example.com/  sel=none  text=142B  links=1
+     0 |Example Domain|
+     1 |Example Domain|
+     2 |This domain is for use in|
+     3 |documentation examples without needing|
+     4 |permission. Avoid use in operations.|
+     5 |[Learn more]|
+     link 0 -> https://iana.org/domains/example
+```
+
+**The text is not the sample.** Every rendering before this one came from
+`webdemo`'s hand-written replica, which used example.com's older copy —
+"illustrative examples", "More information...". The real page now reads
+"documentation examples without needing permission" and its link says "Learn
+more". Nothing in this tree contains those words. They came off the wire.
+
+The header view removes any remaining doubt:
+
+```
+>>> webtap 10 5     (header toggles raw)
+     0 |HTTP/1.1 200 OK |
+     1 |Date: Sun, 13 Sep 2026 15:54:56 GMT |
+     4 |Server: cloudflare |
+     9 |Age: 9787 |
+```
+
+### 393d. And the number 388 could only predict
+
+Step 388 added `g_dropped` and said plainly that it had never been read on
+hardware — "the number it will report for example.com is a prediction, not a
+measurement". Measured:
+
+| | |
+|---|---|
+| `dev 7 2` body length | **828** bytes |
+| `dev 7 3` dropped | **0** |
+
+The whole response was kept. It also settles whether 391's raise was
+load-bearing: at the old `WEB_BODY_MAX` of 768 the cap holds 767 bytes, so this
+response would have lost **61 bytes off its end** — the closing tags, and the
+terminator of the only link on the page.
+
+391 sized the buffer against a 1,461-byte hand-written replica of the old
+example.com. The real current page is 828 bytes, so 2,048 is more headroom than
+this particular page needs. That is the right direction to be wrong in, and the
+reasoning it was chosen by — hold a real response WITH its headers — is
+unchanged.
+
+### 393e. The one thing still true about TLS
+
+The only link on the page is `https://iana.org/domains/example`. Tapping it
+twice will refuse, out loud, because there is no TLS and there is not going to
+be — webfetch.h has the arithmetic. The browser reads the page and declines the
+link, and that is an honest description of what this machine can do.
+
+### State
+
+```
+works  AN OPERATING SYSTEM WRITTEN FROM SCRATCH FETCHED A PAGE OFF THE INTERNET
+       OVER ITS OWN WPA2 LINK AND DREW IT AS WORDS WITH A LINK IN IT.
+       wifiopen no panic; DHCP BOUND 192.168.1.140; HTTP 200; 828 bytes kept,
+       0 dropped; 142 bytes of text and one link extracted and highlighted
+open   the link on that page is https, so it cannot be followed (no TLS, by
+       arithmetic rather than by choice)
+       the supply/socket fault is understood but not fixed -- hub port 7 still
+       fails, the board simply is not in it any more
+       is 6 the right static_rx_buf_num? it is the first value that received a
+       DHCP offer, not a measured optimum
+       VM-08 proper; APP_MAX 4; per-task stacks (352c); the null-sp fault (351)
+```
