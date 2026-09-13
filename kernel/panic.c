@@ -888,6 +888,8 @@ uart_puts("  pre-spill : ps ");
                     extern uint32_t g_osi_alloc_calls, g_osi_alloc_bytes;
                     extern uint32_t g_osi_alloc_max, g_osi_alloc_fails;
                     extern uint32_t osi_impl_free_heap(void);
+                    extern uint32_t g_osi_fail_size, g_osi_fail_free;
+                    extern uint32_t g_osi_fail_largest, g_osi_fail_blocks;
                     uart_puts("  osi alloc : calls ");
                     uart_put_dec(g_osi_alloc_calls);
                     uart_puts("  bytes ");
@@ -899,6 +901,35 @@ uart_puts("  pre-spill : ps ");
                     uart_puts("  heap free ");
                     uart_put_dec(osi_impl_free_heap());
                     uart_puts("\n");
+                    /* [step 392] The failure itself. "FAILS 1" says a request
+                     * was refused and not one word about which, or against
+                     * what -- and a refusal with 9,800 bytes free is a
+                     * different bug from a refusal with none. heap_largest_free()
+                     * was ALREADY captured by osi_alloc_note() and had never
+                     * been printed anywhere. */
+                    if (g_osi_alloc_fails) {
+                        uart_puts("  osi FAIL  : wanted ");
+                        uart_put_dec(g_osi_fail_size);
+                        uart_puts(" B, free ");
+                        uart_put_dec(g_osi_fail_free);
+                        uart_puts(", LARGEST BLOCK ");
+                        uart_put_dec(g_osi_fail_largest);
+                        uart_puts(", blocks ");
+                        uart_put_dec(g_osi_fail_blocks);
+                        uart_puts("\n");
+                        /* [step 392] The sequence, not the total. */
+                        {
+                            extern uint32_t g_osi_sizes[], g_osi_sizes_n;
+                            uint32_t n = g_osi_sizes_n;
+                            if (n > 40u) { n = 40u; }
+                            uart_puts("  osi sizes : ");
+                            for (uint32_t k = 0u; k < n; k++) {
+                                uart_put_dec(g_osi_sizes[k]);
+                                uart_putc((char)0x20);
+                            }
+                            uart_puts("\n");
+                        }
+                    }
                 }
                 {
                     /* [step 187] rom_call4 refusals: a null blob target, and

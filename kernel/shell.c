@@ -29,6 +29,7 @@ extern uint32_t wincollide_bad(void);
 #include "i2c.h"
 #include "audio.h"
 #include "desktop.h"
+#include "browser.h"
 #include "uart.h"
 #include "vm.h"
 #include "window.h"
@@ -1904,7 +1905,18 @@ static void execute(char *line)
          * sampler together overflowed DRAM, and this half still measures
          * exactly what it did -- where the LAST of N contiguous transfers
          * lands, against a 16 px ruler. Only N changed. */
-        enum { MANY_H = 12u };
+        /* [step 392] 4, was 12. This buffer is DISP_W*MANY_H*2 bytes --
+         * 5,760 at 12 -- and the comment above already records it being
+         * halved once because it and the txwatch sampler together
+         * overflowed DRAM. The same reasoning applies again and for a
+         * better reason: the WiFi blob needs 23,820 bytes of heap to
+         * initialise with Espressif's REFERENCE buffer counts, and
+         * freeing this and snap is what makes running the reference
+         * configuration possible instead of trimming it.
+         *
+         * What it measures is unchanged: where the LAST of N contiguous
+         * transfers lands against a 16 px ruler. Only N changed. */
+        enum { MANY_H = 4u };
         static uint16_t one_row[DISP_W];
         static uint16_t many[DISP_W * MANY_H];
 
@@ -2650,6 +2662,154 @@ static void execute(char *line)
                       " silent bus is the honest result\n   for an empty"
                       " header.\n");
         }
+    }
+    else if (str_eq(line, "webdemo")) {
+        /* [step 390] Render a canned page through the REAL view.
+         *
+         * Standing rule 3: a diagnostic must use the path an application uses.
+         * The alternative was to test html.c in isolation and ASSERT that the
+         * browser drew it, which is the shape `beep` was wrong in for months.
+         *
+         * No network is touched. 376 means a real fetch cannot be captured on
+         * this supply, and a rendering nobody can see is a claim. */
+        extern void webfetch_inject(const char *, uint32_t);
+        /* Written the way webfetch DELIVERS a response, with every CR already
+         * mapped to a space (webfetch.c, on_recv). A sample carrying real CRs
+         * would be exercising a shape this code never receives. */
+        static const char PAGE[] =
+            "HTTP/1.1 200 OK \n"
+            "Content-Type: text/html \n"
+            " \n"
+            "<!doctype html><html><head><title>nat-os</title>\n"
+            "<style>body{margin:0}</style></head><body>\n"
+            "<h1>Example Domain</h1>\n"
+            "<p>This domain is for use in illustrative examples &amp; documents. "
+            "You may use this domain without permission.</p>\n"
+            "<p><a href=\"/more\">More information...</a> or "
+            "<a href=\"http://example.net/other\">another host</a>.</p>\n"
+            "<script>var x = 1 < 2;</script></body></html>\n";
+
+        /* [step 391] `webdemo real` injects example.com's ACTUAL response,
+         * full size, so webfetch_inject() truncates it at WEB_BODY_MAX exactly
+         * as on_recv() would. The short sample above proves the reader works;
+         * this one answers a different and more useful question -- what a real
+         * fetch of a real page actually puts on the glass. */
+        static const char REAL[] =
+            "HTTP/1.1 200 OK \n"
+            "Accept-Ranges: bytes \n"
+            "Content-Type: text/html \n"
+            "Content-Length: 1256 \n"
+            "Cache-Control: max-age=604800 \n"
+            "Date: Thu, 11 Sep 2026 12:00:00 GMT \n"
+            "Server: ECAcc (dcd/7D5A) \n"
+            "Vary: Accept-Encoding \n"
+            " \n"
+            "<!doctype html>\n<html>\n<head>\n"
+            "    <title>Example Domain</title>\n\n"
+            "    <meta charset=\"utf-8\" />\n"
+            "    <meta http-equiv=\"Content-type\" content=\"text/html; charset=utf-8\" />\n"
+            "    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n"
+            "    <style type=\"text/css\">\n"
+            "    body {\n"
+            "        background-color: #f0f0f2;\n"
+            "        margin: 0;\n"
+            "        padding: 0;\n"
+            "        font-family: -apple-system, system-ui, BlinkMacSystemFont, "
+            "\"Segoe UI\", \"Open Sans\", \"Helvetica Neue\", Helvetica, Arial, sans-serif;\n"
+            "        \n"
+            "    }\n"
+            "    div {\n"
+            "        width: 600px;\n"
+            "        margin: 5em auto;\n"
+            "        padding: 2em;\n"
+            "        background-color: #fdfdff;\n"
+            "        border-radius: 0.5em;\n"
+            "        box-shadow: 2px 3px 7px 2px rgba(0,0,0,0.02);\n"
+            "    }\n"
+            "    a:link, a:visited {\n"
+            "        color: #38488f;\n"
+            "        text-decoration: none;\n"
+            "    }\n"
+            "    @media (max-width: 700px) {\n"
+            "        div {\n"
+            "            margin: 0 auto;\n"
+            "            width: auto;\n"
+            "        }\n"
+            "    }\n"
+            "    </style>    \n"
+            "</head>\n\n<body>\n<div>\n"
+            "    <h1>Example Domain</h1>\n"
+            "    <p>This domain is for use in illustrative examples in documents. "
+            "You may use this\n    domain in literature without prior coordination "
+            "or asking for permission.</p>\n"
+            "    <p><a href=\"https://www.iana.org/domains/example\">More information..."
+            "</a></p>\n</div>\n</body>\n</html>\n";
+
+        int real = str_eq(arg, "real");
+        const char *src = real ? REAL : PAGE;
+        uint32_t n = 0u;
+        while (src[n]) { n++; }
+        webfetch_inject(src, n);
+        uart_puts("   injected ");
+        uart_put_dec(n);
+        uart_puts(" bytes -- opening the web view\n");
+        desktop_open_web();
+        /* The layout is read back AFTER the view has painted, from the arrays
+         * the tap handler uses -- see browser.h. */
+        task_sleep(30u);
+        browser_dump_rows();
+    }
+    else if (str_eq(line, "webtap")) {
+        /* [step 390] A tap in the web view, at coordinates, from here.
+         *
+         * The panel cannot be driven from a capture and MISO is held low so it
+         * cannot be read back, so without this the hit-testing -- pixel to row
+         * to offset to link -- could only be argued about. It calls
+         * browser_touch(), which is the function the touch task calls: a
+         * diagnostic must use the path the real thing uses (standing rule 3).
+         *
+         * A tap is a press AND a release. Sending only the press would leave
+         * g_was_down set and the next tap would be swallowed, which is the
+         * shape of bug step 310 spent a session on. */
+        const char *a2 = arg;
+        while (*a2 == ' ') { a2++; }
+        char xs[8], ys[8];
+        uint32_t k = 0u;
+        while (*a2 && *a2 != ' ' && k + 1u < sizeof xs) { xs[k++] = *a2++; }
+        xs[k] = 0;
+        while (*a2 == ' ') { a2++; }
+        k = 0u;
+        while (*a2 && *a2 != ' ' && k + 1u < sizeof ys) { ys[k++] = *a2++; }
+        ys[k] = 0;
+        int tx = parse_int(xs), ty = parse_int(ys);
+        if (tx < 0 || ty < 0) {
+            uart_puts("   usage: webtap <x> <y>\n");
+        } else {
+            browser_touch((uint32_t)tx, (uint32_t)ty, 1);
+            browser_touch((uint32_t)tx, (uint32_t)ty, 0);
+            uart_puts("   tapped ");
+            uart_put_dec((unsigned)tx);
+            uart_puts(",");
+            uart_put_dec((unsigned)ty);
+            uart_puts("\n");
+            task_sleep(30u);
+            browser_dump_rows();
+        }
+    }
+    else if (str_eq(line, "webrows")) {
+        /* [step 390] The layout, on demand -- after scrolling or following a
+         * link, when the interesting question is what the view holds NOW. */
+        browser_dump_rows();
+    }
+    else if (str_eq(line, "htmltest")) {
+        /* [step 390] The HTML reader, over known inputs, on the board.
+         *
+         * The path that would exercise it against a real page needs the radio,
+         * and on this supply the radio takes the USB link with it (376, 388d).
+         * This needs no network: the real html_render() over samples written
+         * the way webfetch delivers them. */
+        extern void html_selftest(void);
+        html_selftest();
     }
     else if (str_eq(line, "vmargtest")) {
         /* Drive known-BAD arguments through the harness and require each to be
@@ -3580,7 +3740,19 @@ static void execute(char *line)
          * Halved again from 768 purely for DRAM: snap plus the display
          * buffers overflowed .bss by ~12.9 KB and nothing else could give
          * it back without degrading an instrument further. */
-        enum { NW = 6, NS = 384 };
+        /* [step 392] 32, was 384. snap is NS*NW*4 bytes of .bss -- 9,216
+         * at 384 -- and it is the single largest object in this file.
+         * The WiFi blob needs 14,196 bytes of heap to initialise with
+         * static_rx_buf_num at 4, and the build had 11,400. This is
+         * where the difference came from.
+         *
+         * `txwatch` samples six registers per slot; 32 slots is a
+         * shorter window than 384 and the comment above already records
+         * that this buffer had been halved twice for DRAM before. A
+         * transmit diagnostic holding 9 KB permanently, on a board whose
+         * transmit path was closed as a negative at step 01, is a worse
+         * use of the memory than a radio that comes up. */
+        enum { NW = 6, NS = 32 };
         static uint32_t snap[NS][NW];
         uint32_t t0, t1;
 

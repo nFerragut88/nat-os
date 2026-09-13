@@ -14,6 +14,18 @@ static const uint8_t vm_spin[] = {
 
 #define VM_SPIN_LEN 28u
 
+/* [step 389] Deepest the stack goes below its start, in bytes.
+ * r15 begins at the TOP of the arena and grows DOWN into the
+ * image (vm.c:180), so an arena must hold _LEN + _STACK. Nothing
+ * carried these two numbers to the arena in kmain.c's table until
+ * tools/arenacheck.py; step 388 shipped with 21 bytes to spare and
+ * no check that would have noticed had it been -21.
+ *
+ * Linear over the assembled order, which is exact for natc output
+ * and a lower bound for hand-written .vasm -- see
+ * Assembler.stack_depth(). */
+#define VM_SPIN_STACK 0u
+
 /* [step 356] The manifest: what this program declares it needs.
  * Names, resolved against the kernel's device table at load time --
  * see device_perms_from_names(). A name the table does not know is a

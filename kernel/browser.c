@@ -2,6 +2,7 @@
 
 #include "browser.h"
 #include "webfetch.h"
+#include "html.h"
 #include "display.h"
 #include "desktop.h"
 #include "keyboard.h"
@@ -41,10 +42,23 @@ _Static_assert(BAR_Y + BAR_H == VIEW_H, "the status bar must meet the region end
 #define BUSY  COLOR_YELLOW
 #define BAD   COLOR_RED
 #define FIELD 0x2104u
+/* [step 390] A link has to be distinguishable from prose at 6x8 pixels with no
+ * underline available, so it is colour or it is nothing. Cyan for a link, and
+ * the selected one inverts to yellow rather than changing shape -- a target
+ * that moves when you touch it is worse than one that does not. */
+#define LINK  COLOR_CYAN
+#define SELFG COLOR_YELLOW
+#define CHAR_W 6u                       /* display_text at scale 1 */
 
 /* ---- state --------------------------------------------------------------- */
 
-static char     g_host[WEB_HOST_MAX] = "google.com";
+/* [step 390] The path, which this view never had. Every fetch was of "/", so a
+ * link could not have been followed even if one had been found -- and that is
+ * the other half of why links were not worth extracting before now. */
+static char     g_host[WEB_HOST_MAX] = "example.com";
+static char     g_path[WEB_HOST_MAX] = "/";
+static int      g_raw;                  /* show the response, not the page */
+static int      g_sel = -1;             /* the highlighted link, or none */
 static int      g_editing;
 /* [step 306] A sequence, not a flag, and volatile -- step 303's fault carried
  * across before it could be reported a second time. g_dirty is written by the
@@ -93,33 +107,189 @@ static void put(uint32_t x, uint32_t y, const char *s, uint16_t fg, uint16_t bg)
     display_text(x, y, s, fg, bg, 1u);
 }
 
+/* ---- following a link ----------------------------------------------------
+ *
+ * [step 390] An href is one of four things, and three of them are reachable:
+ *
+ *   http://host/path   absolute -- replaces both
+ *   /path              rooted   -- same host, new path
+ *   path               relative -- same host, relative to the current directory
+ *   https://...        NOT REACHABLE, and it is most of the web
+ *
+ * The last one is refused OUT LOUD rather than attempted and left to time out.
+ * webfetch.h explains why there is no TLS: the handshake wants more heap than
+ * this board has in total. A link this machine cannot follow should say so in
+ * the one place the person tapping it is looking.
+ */
+static int follow(const char *href)
+{
+    uint32_t i = 0u;
+
+    if (href[0] == 'h' && href[1] == 't' && href[2] == 't' && href[3] == 'p') {
+        if (href[4] == 's') {
+            BLOG("https -- no TLS on this board");
+            return 0;
+        }
+        if (href[4] == ':' && href[5] == '/' && href[6] == '/') {
+            i = 7u;
+            uint32_t h = 0u;
+            while (href[i] && href[i] != '/' && h + 1u < WEB_HOST_MAX) {
+                g_host[h++] = href[i++];
+            }
+            g_host[h] = 0;
+            uint32_t p = 0u;
+            if (!href[i]) { g_path[p++] = '/'; }
+            while (href[i] && p + 1u < WEB_HOST_MAX) { g_path[p++] = href[i++]; }
+            g_path[p] = 0;
+            return 1;
+        }
+        /* "http" beginning a relative path, e.g. "httpd.html". Falls through. */
+    }
+
+    /* A fragment alone goes nowhere: it is a position in the page already
+     * shown, and this view has no anchors to scroll to. */
+    if (href[0] == '#' || !href[0]) { return 0; }
+
+    if (href[0] == '/') {
+        uint32_t p = 0u;
+        while (href[p] && p + 1u < WEB_HOST_MAX) { g_path[p] = href[p]; p++; }
+        g_path[p] = 0;
+        return 1;
+    }
+
+    /* Relative: keep everything up to and including the last '/' of the
+     * current path, and append. */
+    uint32_t cut = 0u;
+    for (uint32_t k = 0u; g_path[k]; k++) {
+        if (g_path[k] == '/') { cut = k + 1u; }
+    }
+    uint32_t p = cut;
+    for (uint32_t k = 0u; href[k] && p + 1u < WEB_HOST_MAX; k++) {
+        g_path[p++] = href[k];
+    }
+    g_path[p] = 0;
+    return 1;
+}
+
 /* ---- the page ------------------------------------------------------------ */
 
-/* Wrap the response into fixed columns, honouring the newlines that are already
- * in it. A response is not a paragraph -- it is a status line, headers, then
- * whatever the body is -- so the newlines carry real structure and re-flowing
- * across them would destroy the only formatting there is. */
+/* [step 390] The page, as words.
+ *
+ * Until now this wrapped the RAW response into fixed columns -- status line,
+ * headers, then whatever markup arrived, angle brackets and all. That was
+ * honest about what the machine held and useless as a page: on any real
+ * document the eight visible lines were a doctype and the opening of a <head>.
+ *
+ * html.c turns the response into text and a table of links. This lays that out
+ * and REMEMBERS WHERE EACH ROW CAME FROM, because a tap has to be turned back
+ * into an offset in the rendered text to know which link it landed on.
+ *
+ * The raw view is still one tap away -- the header toggles it -- because "show
+ * exactly what came back" is a diagnostic this view has needed more than once,
+ * and it should not be lost to a prettier default.
+ */
+
+/* Where each drawn row begins and ends in the text being shown, so a tap can be
+ * mapped back to an offset. Only the VISIBLE rows: nothing off-screen is
+ * tappable, so nothing off-screen needs remembering. */
+static uint32_t g_row_a[ROWS];
+static uint32_t g_row_b[ROWS];
+static uint32_t g_rows_drawn;
+
+/* One display row: at most COLS characters, broken at a space rather than
+ * mid-word where there is one. Returns the offset to continue from. */
+static uint32_t wrap_one(const char *t, uint32_t n, uint32_t i, uint32_t *end)
+{
+    uint32_t start = i, last_space = 0u;
+    uint32_t e = start;
+    while (e < n && (e - start) < COLS && t[e] != '\n') {
+        if (t[e] == ' ') { last_space = e; }
+        e++;
+    }
+    /* Broke mid-word: retreat to the last space on the row -- but only when
+     * there is one. A single word longer than the row has to be cut somewhere. */
+    if (e < n && t[e] != '\n' && (e - start) == COLS && last_space > start) {
+        e = last_space;
+    }
+    *end = e;
+    if (e < n && (t[e] == '\n' || t[e] == ' ')) { return e + 1u; }
+    return e;
+}
+
+/* [step 390] How many rows the whole text lays out to.
+ *
+ * Needed because the scroll could run off the end: ROWS is 24 and a rendered
+ * page is often six, so one tap in the lower half left a BLANK VIEW with no
+ * indication that anything was wrong and no way back except guessing that the
+ * upper half scrolls up. The raw dump was twenty-odd rows and hid this; turning
+ * markup into words is what made it reachable. Same wrap_one() as the draw, so
+ * the count cannot disagree with the layout. */
+static uint32_t count_rows(const char *t, uint32_t n)
+{
+    uint32_t i = 0u, rows = 0u;
+    while (i < n) {
+        uint32_t end = 0u;
+        i = wrap_one(t, n, i, &end);
+        rows++;
+        if (rows > 4096u) { break; }        /* nothing sane reaches this */
+    }
+    return rows;
+}
+
+static uint32_t max_scroll(void)
+{
+    const char *t = g_raw ? webfetch_body() : html_text();
+    uint32_t    n = g_raw ? webfetch_len()  : html_len();
+    uint32_t rows = count_rows(t, n);
+    return rows > ROWS ? rows - ROWS : 0u;
+}
+
 static void draw_text(void)
 {
     display_fill_rect(0, TXT_Y, DISP_W, TXT_H, BG);
+    g_rows_drawn = 0u;
 
-    const char *b = webfetch_body();
-    uint32_t    n = webfetch_len();
+    const char *t = g_raw ? webfetch_body() : html_text();
+    uint32_t    n = g_raw ? webfetch_len()  : html_len();
     uint32_t    i = 0u, line = 0u, skipped = 0u;
     char        buf[COLS + 1u];
 
     while (i < n && line < ROWS) {
-        uint32_t c = 0u;
-        while (i < n && c < COLS && b[i] != '\n') { buf[c++] = b[i++]; }
-        buf[c] = 0;
-        if (i < n && b[i] == '\n') { i++; }
+        uint32_t end  = 0u;
+        uint32_t next = wrap_one(t, n, i, &end);
 
-        if (skipped < g_scroll) { skipped++; continue; }
+        if (skipped < g_scroll) { skipped++; i = next; continue; }
 
-        /* The status line is the answer; the rest is context. */
-        put(2u, TXT_Y + line * LINE_H, buf, line == 0u && !g_scroll ? FG : DIM, BG);
+        uint32_t y = TXT_Y + line * LINE_H;
+        g_row_a[line] = i;
+        g_row_b[line] = end;
+
+        if (g_raw) {
+            uint32_t c = 0u;
+            for (uint32_t p = i; p < end && c < COLS; p++) { buf[c++] = t[p]; }
+            buf[c] = 0;
+            put(2u, y, buf, line == 0u && !g_scroll ? FG : DIM, BG);
+        } else {
+            /* Draw the row in RUNS of one colour: a link can start or end
+             * anywhere in it, and a link the reader cannot tell from prose is
+             * not a link anybody will ever tap. */
+            uint32_t p = i;
+            while (p < end) {
+                int who = html_link_at(p);
+                uint32_t q = p, c = 0u;
+                while (q < end && html_link_at(q) == who && c < COLS) {
+                    buf[c++] = t[q++];
+                }
+                buf[c] = 0;
+                put(2u + (p - i) * CHAR_W, y, buf,
+                    who >= 0 ? (who == g_sel ? SELFG : LINK) : FG, BG);
+                p = q;
+            }
+        }
+        i = next;
         line++;
     }
+    g_rows_drawn = line;
 
     if (n == 0u) {
         uint32_t total = g_log_n;
@@ -216,7 +386,7 @@ static void draw_bar(void)
 static void draw_chrome(void)
 {
     display_fill_rect(0, 0, DISP_W, HDR_H, COLOR_BLUE);
-    put(6u, 8u, g_editing ? "url" : "web", FG, COLOR_BLUE);
+    put(6u, 8u, g_editing ? "url" : (g_raw ? "raw" : "web"), FG, COLOR_BLUE);
     /* The way out, drawn -- step 281a: the handler was always there and a
      * header painted over it. */
     display_fill_rect(DISP_W - 22u, 0, 22u, HDR_H, COLOR_RED);
@@ -227,7 +397,19 @@ static void draw_url(uint16_t bg)
 {
     display_fill_rect(0, URL_Y, DISP_W, URL_H, BG);
     display_fill_rect(2u, URL_Y + 2u, DISP_W - 100u, URL_H - 4u, bg);
-    put(5u, URL_Y + 12u, g_host, FG, bg);
+    /* [step 390] host AND path: a view that can follow links has to say where
+     * it actually is, and after one tap the host alone no longer does. */
+    static char shown[WEB_HOST_MAX * 2u];
+    uint32_t k = 0u;
+    for (uint32_t i = 0u; g_host[i] && k + 1u < sizeof shown; i++) { shown[k++] = g_host[i]; }
+    for (uint32_t i = 0u; g_path[i] && k + 1u < sizeof shown; i++) { shown[k++] = g_path[i]; }
+    shown[k] = 0;
+    /* The field holds 22 characters; a long path is shown by its TAIL, because
+     * the end of a path is what distinguishes two pages and the start is what
+     * they have in common. */
+    const char *t = shown;
+    if (k > 22u) { t = &shown[k - 22u]; }
+    put(5u, URL_Y + 12u, t, FG, bg);
 
     /* Two 46-wide, 26-tall targets. A fingertip on this panel is wider than
      * the old 26x14 was in either direction. */
@@ -264,6 +446,63 @@ static void draw_all(void)
     draw_bar();
 }
 
+void browser_dump_rows(void)
+{
+    extern void uart_puts(const char *);
+    extern void uart_putc(char);
+    extern void uart_put_dec(unsigned int);
+
+    uart_puts("   web      mode=");
+    uart_puts(g_raw ? "raw" : "page");
+    uart_puts("  at=");
+    uart_puts(g_host);
+    uart_puts(g_path);
+    uart_puts("  sel=");
+    if (g_sel >= 0) { uart_put_dec((unsigned)g_sel); } else { uart_puts("none"); }
+    uart_puts("  text=");
+    uart_put_dec(html_len());
+    uart_puts("B  links=");
+    uart_put_dec(html_link_count());
+    if (html_dropped()) {
+        uart_puts("  TEXT DROPPED=");
+        uart_put_dec(html_dropped());
+    }
+    if (html_links_dropped()) {
+        uart_puts("  LINKS DROPPED=");
+        uart_put_dec(html_links_dropped());
+    }
+    uart_puts("\n");
+
+    const char *t = g_raw ? webfetch_body() : html_text();
+    for (uint32_t r = 0u; r < g_rows_drawn; r++) {
+        uart_puts("     ");
+        uart_put_dec(r);
+        uart_puts(g_row_a[r] < 10u ? " |" : " |");
+        /* A link run is bracketed, so the ROWS themselves say where a tap
+         * would land rather than a separate table that could disagree. */
+        int was = -1;
+        for (uint32_t p = g_row_a[r]; p < g_row_b[r]; p++) {
+            int who = g_raw ? -1 : html_link_at(p);
+            if (who != was) {
+                if (was >= 0) { uart_putc(']'); }
+                if (who >= 0) { uart_putc('['); }
+                was = who;
+            }
+            uart_putc(t[p]);
+        }
+        if (was >= 0) { uart_putc(']'); }
+        uart_puts("|\n");
+    }
+    for (uint32_t i = 0u; i < html_link_count(); i++) {
+        const html_link_t *L = html_link(i);
+        uart_puts("     link ");
+        uart_put_dec(i);
+        uart_puts(" -> ");
+        uart_puts(L->href);
+        uart_puts("\n");
+    }
+}
+
 /* ---- the view ------------------------------------------------------------ */
 
 void browser_open(void)
@@ -298,7 +537,10 @@ void browser_service(void)
         g_want_fetch = 0;
         g_scroll     = 0u;
         BLOG("starting fetch");
-        if (webfetch_start(g_host, "/") != 0) { BLOG("start refused"); }
+        /* [step 390] g_path, not "/". Every fetch this view made was of the
+         * root, which is the other half of why extracting links was not worth
+         * doing before: there was nowhere to put the one you had found. */
+        if (webfetch_start(g_host, g_path) != 0) { BLOG("start refused"); }
     }
     webfetch_service();
 }
@@ -318,6 +560,20 @@ void browser_frame(void)
     if (st != g_last_state) { g_last_state = st; g_dirty++; }
     if (ln != g_last_len)   { g_last_len   = ln; g_dirty++; }
 
+    /* [step 390] Re-render when the response CHANGES, not on every frame.
+     * html_render() is a full pass over the body and this runs eight times a
+     * second; rendering unconditionally would spend most of the view's budget
+     * re-deriving text that had not moved. The length is what actually moves
+     * -- the same reasoning step 301 applied to the repaint above. */
+    static uint32_t rendered_len = 0xFFFFFFFFu;
+    static int      rendered_st  = -1;
+    if (ln != rendered_len || st != rendered_st) {
+        rendered_len = ln;
+        rendered_st  = st;
+        html_render(webfetch_body(), ln);
+        g_sel = -1;
+    }
+
     uint32_t seq = g_dirty;
     if (seq == g_drawn) { return; }
     g_drawn = seq;
@@ -336,13 +592,31 @@ void browser_touch(uint32_t x, uint32_t y, int down)
         if (r != KB_SUBMIT) { return; }
         const char *t = keyboard_text();
         if (t[0]) {
-            uint32_t i = 0u;
-            for (; i + 1u < WEB_HOST_MAX && t[i]; i++) { g_host[i] = t[i]; }
-            g_host[i] = 0;
+            /* "host" or "host/path" -- a typed URL that carries a path should
+             * reach it, now that there is somewhere to keep one. */
+            uint32_t i = 0u, h = 0u;
+            while (t[i] && t[i] != '/' && h + 1u < WEB_HOST_MAX) { g_host[h++] = t[i++]; }
+            g_host[h] = 0;
+            uint32_t p = 0u;
+            if (!t[i]) { g_path[p++] = '/'; }
+            while (t[i] && p + 1u < WEB_HOST_MAX) { g_path[p++] = t[i++]; }
+            g_path[p] = 0;
         }
         g_editing    = 0;
         g_want_fetch = 1;       /* the net task performs it */
         g_full       = 1;       /* back to the page layout; clear once */
+        g_dirty++;
+        return;
+    }
+
+    /* [step 390] The header toggles the raw response. The exit is at the right
+     * and keeps its 22 pixels; the rest of the bar is the toggle. "Show exactly
+     * what came back" is a diagnostic this view has needed more than once, and
+     * a rendered page must not be the only thing it can show. */
+    if (y < HDR_H && x < DISP_W - 22u) {
+        g_raw    = !g_raw;
+        g_scroll = 0u;
+        g_sel    = -1;
         g_dirty++;
         return;
     }
@@ -361,13 +635,55 @@ void browser_touch(uint32_t x, uint32_t y, int down)
         return;
     }
 
-    /* Anywhere in the text scrolls it: a page longer than the screen needs a
-     * way down, and a scrollbar would cost columns this view cannot spare. The
-     * bottom half pages down, the top half pages up. */
+    /* [step 390] A tap in the text is either a LINK or a scroll.
+     *
+     * Links first, and only on an exact hit: the row the finger landed on, the
+     * column it landed in, mapped back through g_row_a[] to an offset in the
+     * rendered text. Everything else still scrolls, so the gesture this view
+     * has always had keeps working where there is no link to take it.
+     *
+     * Two taps, not one. The first SELECTS -- the link turns yellow -- and the
+     * second follows it. A resistive panel with default calibration puts the
+     * reported point some way from the finger (touch.h), and a single tap that
+     * navigates would send the reader somewhere they did not choose with no way
+     * to see it coming. Selecting first makes the machine say what it thinks
+     * was tapped before it acts on it. */
     if (y >= TXT_Y && y < BAR_Y) {
-        if (y > TXT_Y + TXT_H / 2u) { g_scroll += ROWS / 2u; }
-        else if (g_scroll >= ROWS / 2u) { g_scroll -= ROWS / 2u; }
-        else { g_scroll = 0u; }
+        if (!g_raw && g_rows_drawn) {
+            uint32_t row = (y - TXT_Y) / LINE_H;
+            if (row < g_rows_drawn && x >= 2u) {
+                uint32_t col = (x - 2u) / CHAR_W;
+                uint32_t off = g_row_a[row] + col;
+                if (off < g_row_b[row]) {
+                    int hit = html_link_at(off);
+                    if (hit >= 0) {
+                        if (hit == g_sel) {
+                            const html_link_t *L = html_link((uint32_t)hit);
+                            if (L && follow(L->href)) {
+                                g_sel        = -1;
+                                g_want_fetch = 1;
+                            }
+                        } else {
+                            g_sel = hit;
+                        }
+                        g_dirty++;
+                        return;
+                    }
+                }
+            }
+        }
+        /* A tap that missed every link clears the selection as well as
+         * scrolling -- a highlight left behind after the reader moved on is a
+         * target they did not choose sitting armed. */
+        g_sel = -1;
+        if (y > TXT_Y + TXT_H / 2u) {
+            uint32_t cap = max_scroll();
+            g_scroll = (g_scroll + ROWS / 2u > cap) ? cap : g_scroll + ROWS / 2u;
+        } else if (g_scroll >= ROWS / 2u) {
+            g_scroll -= ROWS / 2u;
+        } else {
+            g_scroll = 0u;
+        }
         g_dirty++;
     }
 }

@@ -14,7 +14,12 @@ permissions {
 }
 
 buf request[32]
-buf chunk[64]
+// [step 388] 68, not 64. `puts` prints until it finds a NUL, and a chunk that
+// came back FULL has no NUL in it -- so the old chunk[64] ran off the end of
+// its own buffer and printed whatever lay next in the arena until a zero
+// turned up. The extra bytes are never transferred into, so byte 64 stays the
+// zero the arena starts with, and it terminates every full block.
+buf chunk[68]
 
 // "example.com/" -- host, then path from the first slash. Written a byte at a
 // time because format() builds text and this is a literal; a string literal
@@ -78,17 +83,68 @@ print(", ")
 print(length)
 println(" bytes")
 
+// The bytes the KERNEL could not keep. webfetch's body buffer is 768 bytes and
+// a real page is longer, so `length` above is the size of what survived, not
+// the size of what the server sent. Without this channel the two are
+// indistinguishable -- which is what step 388 is about.
+net.read(3)
+let dropped = net.value
+
 // The body, one 64-byte block at a time. DEVICE_XFER_MAX is the ceiling on a
 // single transfer -- every byte crosses a kernel bounce buffer, so it is DRAM
 // that exists whether or not anything transfers.
+//
+// EVERY block, not the first four. The old ceiling of 4 was 256 bytes against a
+// `length` that has never once been that small, and the program printed "done"
+// afterwards either way -- so a run that showed a fifth of the body reported
+// exactly like a run that showed all of it.
+let blocks = divu(length + 63, 64)
 let block = 0
 let shown = 0
-while shown < length && block < 4 {
+let n = 0
+let ok = 1
+while block < blocks {
     if net.xfer_in(block, chunk, 64) {
         puts(chunk)
+        // What that block actually carried. The last one is short whenever
+        // `length` is not a multiple of 64, and the kernel zero-fills the rest
+        // rather than leave the bounce buffer's previous tenant in view.
+        n = length - shown
+        if n > 64 {
+            n = 64
+        }
+        shown = shown + n
+    } else {
+        // A refused transfer is the one case where counting blocks would lie.
+        ok = 0
     }
-    shown = shown + 64
     block = block + 1
 }
 println("")
-println("  [fetch] done")
+
+// What was shown, against what there was, against what never arrived. Three
+// numbers, because any one of them alone can look like success.
+print("  [fetch] shown ")
+print(shown)
+print(" of ")
+print(length)
+println(" bytes held")
+if dropped > 0 {
+    print("  [fetch] the kernel dropped ")
+    print(dropped)
+    println(" more -- its body buffer is 768 bytes and the page is longer")
+}
+
+if ok == 0 {
+    println("  [fetch] done -- INCOMPLETE, a transfer was refused")
+    exit(1)
+}
+if shown != length {
+    println("  [fetch] done -- INCOMPLETE")
+    exit(1)
+}
+if dropped > 0 {
+    println("  [fetch] done -- all 768 bytes kept, but TRUNCATED by the kernel")
+    exit(0)
+}
+println("  [fetch] done -- the whole body")

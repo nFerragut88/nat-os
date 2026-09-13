@@ -23,6 +23,13 @@ static char     g_host[WEB_HOST_MAX];
 static char     g_path[WEB_HOST_MAX];
 static char     g_body[WEB_BODY_MAX];
 static uint32_t g_len;
+/* [step 388] What did NOT fit. on_recv() has always stopped at WEB_BODY_MAX
+ * and dropped the rest on the floor, and tcp_recved() acknowledges those bytes
+ * to the server regardless -- so a page longer than 767 bytes was reported as
+ * a 767-byte page and nothing anywhere said otherwise. That is the same defect
+ * UM-NATOS-060 catalogued six times and 061 4.1 caught recurring: the
+ * truncation is deliberate, the SILENCE about it was not. */
+static uint32_t g_dropped;
 static uint32_t g_code;
 static const char *g_status = "";
 
@@ -55,6 +62,32 @@ int         webfetch_state(void)  { return g_state; }
 const char *webfetch_status(void) { return g_status; }
 const char *webfetch_body(void)   { return g_body; }
 uint32_t    webfetch_len(void)    { return g_len; }
+uint32_t    webfetch_dropped(void){ return g_dropped; }
+
+void webfetch_inject(const char *response, uint32_t len)
+{
+    g_len = 0u;
+    g_dropped = 0u;
+    g_code = 0u;
+    for (uint32_t i = 0u; i < len && g_len + 1u < WEB_BODY_MAX; i++) {
+        g_body[g_len++] = response[i];
+    }
+    /* Counted, not clamped in silence -- the same rule as on_recv (388). */
+    g_dropped = (len > g_len) ? len - g_len : 0u;
+    g_body[g_len] = 0;
+    if (g_len > 12u && g_body[0] == 'H') {
+        uint32_t i = 0u;
+        while (i < g_len && g_body[i] != ' ') { i++; }
+        while (i < g_len && g_body[i] == ' ') { i++; }
+        uint32_t v = 0u;
+        while (i < g_len && g_body[i] >= '0' && g_body[i] <= '9') {
+            v = v * 10u + (uint32_t)(g_body[i++] - '0');
+        }
+        g_code = v;
+    }
+    g_state  = WEB_DONE;
+    g_status = g_dropped ? "injected (truncated)" : "injected";
+}
 uint32_t    webfetch_code(void)   { return g_code; }
 
 /* ---- HTTP ---------------------------------------------------------------- */
@@ -77,7 +110,9 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err)
         g_body[g_len] = 0;
         if (g_state == WEB_REQUESTING) {
             g_state  = WEB_DONE;
-            g_status = "done";
+            /* [step 388] "done" is a claim about completeness, and it was made
+             * on every fetch including the ones that lost most of the page. */
+            g_status = g_dropped ? "done (truncated)" : "done";
         }
         tcp_close(pcb);
         g_tcp = 0;
@@ -87,12 +122,18 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err)
     struct pbuf *q = p;
     while (q) {
         const char *s = (const char *)q->payload;
-        for (uint16_t i = 0u; i < q->len && g_len + 1u < WEB_BODY_MAX; i++) {
+        uint16_t i = 0u;
+        for (; i < q->len && g_len + 1u < WEB_BODY_MAX; i++) {
             char c = s[i];
             /* Keep it printable. A raw response carries CR and stray bytes that
              * would otherwise land in the font as blocks. */
             g_body[g_len++] = (c == '\n' || (c >= 32 && c < 127)) ? c : ' ';
         }
+        /* [step 388] That loop stops on a FULL BUFFER as readily as on a
+         * spent pbuf, and `i` is the only thing that tells the two apart.
+         * Counting what it did not reach is the entire cost of knowing
+         * whether g_body holds a page or the first 767 bytes of one. */
+        g_dropped += (uint32_t)(q->len - i);
         q = q->next;
     }
     g_body[g_len] = 0;
@@ -303,7 +344,7 @@ int webfetch_start(const char *host, const char *path)
     }
     g_path[i] = 0;
 
-    g_len = 0u; g_body[0] = 0; g_code = 0u; g_tries = 0u;
+    g_len = 0u; g_body[0] = 0; g_code = 0u; g_tries = 0u; g_dropped = 0u;
     g_id = (uint16_t)(timer_ticks() & 0xFFFFu) | 1u;
 
     g_dns = udp_new();
@@ -343,7 +384,11 @@ void webfetch_service(void)
         /* Whatever arrived is what there is. A truncated answer is still an
          * answer, and reporting it beats reporting nothing. */
         g_body[g_len] = 0;
-        if (g_len) { g_state = WEB_DONE; g_status = "done (timed out)"; }
+        if (g_len) {
+            g_state  = WEB_DONE;
+            g_status = g_dropped ? "done (timed out, truncated)"
+                                 : "done (timed out)";
+        }
         else       { fail("no reply"); }
         if (g_tcp) { tcp_abort(g_tcp); g_tcp = 0; }
     }

@@ -206,6 +206,18 @@ void desktop_open_wifi(void)
     wifiapp_open();
 }
 
+/* [step 390] The web view, from the shell. Mirrors the DESK_ACTION_WEB branch
+ * line for line, including the band suspend, for the reason desktop_open_wifi()
+ * gives above: a diagnostic that opens a view differently from the real thing
+ * is measuring a different bug. */
+void desktop_open_web(void)
+{
+    extern void browser_open(void);
+    g_mode = MODE_WEB;
+    app_views_suspend(1);
+    browser_open();
+}
+
 int      desktop_active(void) { return g_mode == MODE_LAUNCHER; }
 int      desktop_notes(void)  { return g_mode == MODE_NOTES; }
 int      desktop_term(void)   { return g_mode == MODE_TERM; }

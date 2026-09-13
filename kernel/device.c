@@ -436,12 +436,13 @@ static const device_t DEVICES[] = {
      * program compiled against an older table would still be granted by
      * position if this moved anything.
      *
-     * Three read channels -- state, HTTP code, body length -- and transfers
-     * both ways: out is the request, in is the body a block at a time. Slow,
+     * Four read channels -- state, HTTP code, body length, and [step 388]
+     * the bytes dropped for want of room -- and transfers both ways: out is
+     * the request, in is the body a block at a time. Slow,
      * because a fetch is DNS, a TCP handshake and a round trip over the air,
      * and a syscall costing that must not be charged to an instruction
      * quantum. See netdev.c. */
-    { "net",   3u,   DEV_F_READ | DEV_F_XFER | DEV_F_SLOW,
+    { "net",   4u,   DEV_F_READ | DEV_F_XFER | DEV_F_SLOW,
       netdev_read, 0, netdev_xfer_out, netdev_xfer_in },
 };
 

@@ -32,6 +32,7 @@
  *                                   3 requesting, 4 done, 5 failed
  *   net.read(1)   -> HTTP status code, or 0
  *   net.read(2)   -> body length in bytes
+ *   net.read(3)   -> body bytes DROPPED for want of room (388)
  *   net.xfer_in(block, buf, len)    body bytes at block * DEVICE_XFER_MAX
  *
  * A fetch is one at a time. A second request while one is in flight is
@@ -62,6 +63,11 @@ int netdev_read(uint32_t caller, uint32_t chan, uint32_t *out)
     case 0u: *out = (uint32_t)webfetch_state(); return 1;
     case 1u: *out = webfetch_code();            return 1;
     case 2u: *out = webfetch_len();             return 1;
+    /* [step 388] The bytes the kernel threw away. A program that reads
+     * channel 2 and transfers exactly that many is complete only if this is
+     * zero -- otherwise it has the first WEB_BODY_MAX of a longer page and
+     * every other reading it has agrees with a complete fetch. */
+    case 3u: *out = webfetch_dropped();         return 1;
     default: return 0;
     }
 }

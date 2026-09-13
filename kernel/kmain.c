@@ -1015,7 +1015,25 @@ static const shell_program_t PROGRAMS[] = {
      * permission is `net`, declared in the .nat source and resolved by name --
      * and the language needed no change to use it, because the network is a
      * device.c table entry rather than a syscall. */
-    { "fetch",   vm_app_fetch, VM_APP_FETCH_LEN, 3072u, 0u,
+    /* [step 388] 3.5 KB, was 3. 388's reporting added five string literals and
+     * took the image from 2,180 bytes to 3,039 -- against an arena of 3,072,
+     * which left 33 bytes for a stack that starts at the TOP of the arena and
+     * grows DOWN into the image (vm.c:180).
+     *
+     * It fitted: the deepest r15 excursion in the generated assembly is 12
+     * bytes, so it shipped with 21 to spare and every test passed. That is not
+     * a margin, it is a coincidence -- and NOTHING WOULD HAVE CAUGHT the
+     * overrun. app_start() checks `len > arena_bytes` (app.c:154) and nothing
+     * else, and a stack that runs past the image writes INSIDE the arena, so
+     * the VM's bounds check passes and the corruption lands in the string
+     * literals at the top of the image. The symptom would have been a garbled
+     * message, not a fault.
+     *
+     * 3.5 KB, not 4: step 364 cut `tap` from 4 KB to 3 for exactly the reason
+     * this table warns about two entries up -- a program generous with its
+     * arena starves the next one. 545 bytes is room for the program to grow
+     * without being slack for its own sake. */
+    { "fetch",   vm_app_fetch, VM_APP_FETCH_LEN, 3584u, 0u,
       VM_APP_FETCH_ID, vm_app_fetch_perms, VM_APP_FETCH_PERM_COUNT },
     /* [step 371] A DELIBERATELY WRONG ENTRY, kept so the check can be seen to
      * bite rather than asserted to.

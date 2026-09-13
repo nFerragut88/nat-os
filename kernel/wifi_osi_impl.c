@@ -954,15 +954,40 @@ void osi_impl_timer_service(void)
  * because the peak this is looking for may not survive to any point a shell
  * command could read it. */
 uint32_t g_osi_alloc_calls, g_osi_alloc_bytes, g_osi_alloc_max, g_osi_alloc_fails;
+/* [step 392] WHICH request failed, and what the heap looked like when it
+ * did. The panic said "FAILS 1" and nothing else -- so a failure with
+ * 9,800 bytes free could not be told from a failure with none, and the
+ * two need opposite fixes. g_osi_heap_largest was already being captured
+ * by osi_alloc_note() and had never been printed anywhere. */
+uint32_t g_osi_fail_size, g_osi_fail_free, g_osi_fail_largest, g_osi_fail_blocks;
+/* [step 392] Every allocation size, in order. The totals said the blob
+ * eats the whole heap whatever size it is -- 10,988 of 11,592 and 20,612
+ * of 20,024 -- and a total cannot say WHAT is eating it. */
+#define OSI_SIZES 40u
+uint32_t g_osi_sizes[OSI_SIZES];
+uint32_t g_osi_sizes_n;
 uint32_t g_osi_free_calls;
 uint32_t g_osi_heap_used, g_osi_heap_hw, g_osi_heap_largest, g_osi_heap_minfree;
 
 static void osi_alloc_note(uint32_t n, const void *p)
 {
+    if (g_osi_sizes_n < OSI_SIZES) { g_osi_sizes[g_osi_sizes_n] = n; }
+    g_osi_sizes_n++;
     g_osi_alloc_calls++;
     g_osi_alloc_bytes += n;
     if (n > g_osi_alloc_max) { g_osi_alloc_max = n; }
-    if (!p) { g_osi_alloc_fails++; }
+    if (!p) {
+        g_osi_alloc_fails++;
+        /* [step 392] The FIRST failure, kept. A later one overwriting it would
+         * lose the one that started the collapse. */
+        if (!g_osi_fail_size) {
+            extern uint32_t heap_blocks(void);
+            g_osi_fail_size    = n ? n : 1u;
+            g_osi_fail_free    = heap_free_bytes();
+            g_osi_fail_largest = heap_largest_free();
+            g_osi_fail_blocks  = heap_blocks();
+        }
+    }
 
     g_osi_heap_used    = heap_used_bytes();
     g_osi_heap_hw      = heap_high_water();

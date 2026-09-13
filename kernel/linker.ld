@@ -199,6 +199,12 @@ SECTIONS
     *wifiapp.c.o(.literal .literal.* .text .text.*)
       *keyboard.c.o(.literal .literal.* .text .text.*)
       *browser.c.o(.literal .literal.* .text .text.*)
+      /* [step 390] The HTML reader and its self-test, with the view
+       * they serve. Nothing here runs with interrupts masked or
+       * touches the flash controller, which is the only thing that
+       * keeps a file OUT of irom -- see the flash.c note below. */
+      *html.c.o(.literal .literal.* .text .text.*)
+      *htmltest.c.o(.literal .literal.* .text .text.*)
       /* [step 298] webfetch.c is irom and wificred.c is NOT, and the difference
        * is the rule step 292 cost a crash to state: code that touches the FLASH
        * BUS must not live on it. wificred.c drives flash_read/erase/write;

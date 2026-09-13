@@ -603,11 +603,60 @@ const void *wifi_init_cfg(void)
     cr[0] = sizeof g_cfg.wpa_crypto_funcs;
     cr[1] = ESP_WIFI_CRYPTO_VERSION;
 
-    g_cfg.static_rx_buf_num      = 10;
-    g_cfg.dynamic_rx_buf_num     = 32;
+    /* [step 392] 4, was 10 (ESP-IDF's default).
+     *
+     * MEASURED. The allocation sequence at the exccause-20 panic is
+     *
+     *   32 4 60 8 24 3120 1024 136 136 136 596 596 596 596 596 120 1604 1604
+     *
+     * -- 7,780 bytes of fixed overhead, then 1,604-byte RX buffers until the
+     * heap is dry. Ten of those is 16,040 bytes, for a total demand of 23,820
+     * against a heap of 11,400. The blob does not check the result: the
+     * failing allocation is followed by a call through a NULL pointer, which
+     * is the epc 0x00000000 the panic reports.
+     *
+     * An earlier run set this to 4 and saw no change, and that was recorded as
+     * eliminating it. The experiment could not have shown a difference: at
+     * 11,576 bytes free the heap runs out after ONE buffer, so 4 and 10 fail
+     * identically. The count only becomes visible once there is room to reach
+     * it. */
+    /* [step 392] BACK TO 10, Espressif's reference value.
+     *
+     * At 4 the blob initialised without panicking and the radio
+     * associated -- and DHCP then sent nine DISCOVERs and received
+     * nothing. Four static RX buffers is not enough to catch an OFFER
+     * amid beacon traffic. The comment further down already said the
+     * right thing about this struct: matching what Espressif ships is
+     * the shape of argument the driver is known to accept, and trimming
+     * it is a later optimisation WITH A MEASUREMENT ATTACHED.
+     *
+     * So the memory was found instead. snap and many in shell.c were
+     * 15 KB of .bss held permanently for two diagnostics. */
+    /* [step 392] 6 static, and the DYNAMIC counts cut to 8 from 32.
+     *
+     * MEASURED, and the reference values are what could not be afforded. The
+     * allocation sequence at the panic is
+     *
+     *   32 4 60 8 24 3120 1024 136 136 136 596 596 596 596 596 120 then 1604s
+     *
+     * -- 7,780 bytes of fixed overhead, then a 1,604-byte RX buffer per count.
+     * At the reference 10 static that is 23,820 bytes before a single DYNAMIC
+     * buffer, and dynamic_rx_buf_num was 32: another 51,328. The board has
+     * 23,688 after this step freed 13 KB of diagnostics, so the reference
+     * configuration cannot be met and never could be.
+     *
+     * The blob DOES NOT CHECK the result. The failing malloc is followed by a
+     * call through the NULL it returned -- the osi table has no null slots, so
+     * this is inside the blob -- which is the exccause 20, epc 0x00000000 that
+     * has been killing every `wifiopen` since at least boot #62.
+     *
+     * 6 static is 17,404 bytes with the fixed overhead, leaving ~6 KB for
+     * dynamic buffers, and 8 is a ceiling the heap can actually pay. */
+    g_cfg.static_rx_buf_num      = 6;
+    g_cfg.dynamic_rx_buf_num     = 8;    /* [step 392] was 32 = 51,328 B */
     g_cfg.tx_buf_type            = 1;      /* dynamic */
     g_cfg.static_tx_buf_num      = 0;
-    g_cfg.dynamic_tx_buf_num     = 32;
+    g_cfg.dynamic_tx_buf_num     = 8;    /* [step 392] was 32 */
     g_cfg.rx_mgmt_buf_type       = 0;
     g_cfg.rx_mgmt_buf_num        = 5;
     g_cfg.cache_tx_buf_num       = 0;

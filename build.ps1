@@ -128,6 +128,19 @@ if ($vasm) {
     }
 }
 
+# [step 389] Do the three numbers agree? An arena is hand-written in kmain.c;
+# the image size and the deepest stack excursion come from vasm. Step 388
+# shipped app_fetch with 21 bytes between the two, and nothing in the system
+# would have noticed had it been -21: app_start() checks only `len >
+# arena_bytes`, and a stack past the image writes INSIDE the arena, so the VM's
+# bounds check passes and the damage lands in string literals.
+#
+# AFTER codegen and BEFORE the compiler, so a bad arena fails the build rather
+# than flashing and garbling a message on the panel.
+Write-Host "== checking arenas ==" -ForegroundColor Cyan
+& $python "$root\tools\arenacheck.py"
+if ($LASTEXITCODE -ne 0) { throw "arenacheck failed: an arena cannot hold its image and its stack" }
+
 Write-Host "== compiling ==" -ForegroundColor Cyan
 $objs = @()
 # The three files that reach the vendor blobs. Excluded entirely unless -WiFi,
