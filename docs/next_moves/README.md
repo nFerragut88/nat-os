@@ -113,6 +113,7 @@ Each has its own file. Roughly in order of value, but they are independent.
 | [08](08-wifi-via-loaded-blob.md) | WiFi transmit via the vendor path, blob supplied at runtime | large | 07 |
 | [09](09-lora-one-link.md) | **LoRa Phase 0: one link** — what the project is for | medium | hardware arriving |
 | [10](10-lora-bundle.md) | LoRa Phase 1: one bundle that survives a power cut | large | 09 |
+| [11](11-mp3-player.md) | An MP3 player: PCM out (done), FAT32, minimp3, the app | large | — |
 | ~~[06](06-documentation-debt.md)~~ | ~~Claims that have gone stale~~ — **done**, all five items | — | — |
 
 02, 03, 05, 06 and 07 are done. **01 is closed** — see below. What is left is 04

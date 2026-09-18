@@ -22,6 +22,7 @@ extern uint32_t wincollide_bad(void);
 #include "task.h"
 #include "store.h"
 #include "sd.h"
+#include "pcm.h"
 #include "touch.h"
 #include "calib.h"
 #include "intr.h"
@@ -246,6 +247,7 @@ static void cmd_help(void)
               "    perms [a d on|off] what each application may touch\n"
               "    light [thresh] one light reading, beep if dark\n"
               "    tone <hz>     tone on gpio26; 'tone 0' stops. try 3000, not 440\n"
+              "    pcm [...]     sample playback: I2S+DMA into the DAC ('pcm ?')\n"
               "    beep          a short 3 kHz beep\n"
               "    3d [off]      3D view or launcher\n"
               "    taps          dump the touch press log\n"
@@ -572,6 +574,7 @@ static void execute(char *line)
             uart_puts(hz ? "   sounding\n" : "   off\n");
         }
     }
+    else if (str_eq(line, "pcm")) { pcm_shell(arg); }
     else if (str_eq(line, "findspk")) { audio_find_speaker(); }
     else if (str_eq(line, "spktest")) { audio_probe_square(); }
     else if (str_eq(line, "audio")) { audio_dump(); }

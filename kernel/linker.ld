@@ -306,6 +306,12 @@ SECTIONS
     *notes.c.o(.literal .literal.* .text .text.*)
     *term.c.o(.literal .literal.* .text .text.*)
 
+    /* [next_moves/11 step 1] pcm.c: sample playback. Polled, not interrupt
+     * driven, so nothing in it runs in ISR context, and nothing in the pinned
+     * set calls it. The DMA reads its ring from DRAM without the CPU, so a
+     * cache miss here delays a refill, never a sample. */
+    *pcm.c.o(.literal .literal.* .text .text.*)
+
     . = ALIGN(4);
     _flash_text_end = .;
   } > irom
