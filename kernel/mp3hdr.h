@@ -33,4 +33,11 @@ int mp3hdr_parse(const uint8_t *p, mp3hdr_t *h);
  * there is no tag. */
 uint32_t mp3hdr_id3_size(const uint8_t *p);
 
+/* The total frame count from a Xing/Info header in the frame at `p`, or 0 if
+ * there is none or it carries no count. That header is a silent first frame
+ * encoders write into VBR files -- the user's files have one (the
+ * FF FB D4 00 00... frame step 2's walk started on) -- and it is the only
+ * exact source of a VBR file's duration short of reading every frame. */
+uint32_t mp3hdr_xing_frames(const uint8_t *p, uint32_t n);
+
 #endif /* NATOS_MP3HDR_H */

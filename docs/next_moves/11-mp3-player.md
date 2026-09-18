@@ -443,3 +443,75 @@ open   shell commands that print take ~10 s to return (5e) -- predates this
        gets 26-29% during playback
        LAST FAULT exccause 20 from boot #99, unattributed (4d)
 next   F: the player as a desktop app -- file list, play/pause/next, progress
+
+---
+
+## step 6 — the music app, in ping's place on the desktop
+
+### 6a. What was built
+
+- **`kernel/player.c`**, a native view like web and wifi (a VM program cannot
+  reach the decoder or the card, by design). Header with the red x; the
+  card's `.mp3` files, 9 rows with ^/v scroll; now playing (name, elapsed /
+  total, progress bar); prev, play/pause, stop, next. Tap a song to select
+  it, tap again to play -- the browser's two-tap rule, for the same
+  calibration reason. The list (32 x 64 B) lives in SRAM1: 56.3 of 60 KB.
+- **Desktop:** icon slot 5 was "ping"; it is now **"music"** (cyan, two
+  beamed quavers), `DESK_ACTION_MUSIC`, `MODE_MUSIC`, claiming the band as the
+  web view does. At the user's request. **ping is still a registered program**
+  (`run ping`; pong's IPC demo sends to it) -- it lost its cell as pong did at
+  step 370, nothing more.
+- **`mp3.h` grew an API** the view uses and nothing in it blocks: `mp3_play`,
+  `mp3_request_stop`, `mp3_set_pause`, `mp3_busy`, `mp3_status`. Switching
+  songs is a request -- stop, then start when the decoder is free -- carried
+  out by `player_service()`, which the display task runs EVERY frame
+  whatever view is up, so a song that ends moves on with the view closed.
+- **Pause** stops the DMA and keeps the decoder state and file position; the
+  paused time is taken out of the CPU-vs-wall figure.
+- **Length from the Xing/Info header** (`mp3hdr_xing_frames`), the silent
+  first frame VBR encoders write. Without one, an estimate from bytes
+  consumed, shown with a `~`.
+- Shell: `musicopen` (as the icon), `music` (the view's own state),
+  `music <n>` (play n through the view's transport), `mp3 pause|resume`.
+
+### 6b. Measured
+
+```
+music          listed=1 songs=11, all names intact
+music 7        Night Nurse: 4:06 exact (xing frames=10268)
+music 2        while playing: stop, queue, start -> Billy Boyo 5:35 exact
+mp3 pause      PAUSED, position held; resume continued from it
+mp3 stop       "stopped" (not "finished")
+```
+
+**The user, on the glass: "All works"** -- the icon opens the view, songs
+play, the buttons and scrolling do what they say, x returns to the desktop.
+
+### 6c. Wrong on the first try, recorded
+
+- **4:04 for a 4:06 song.** `(frames/100) * spf / (hz/100)` was written to
+  "stay inside 32 bits" and lost two seconds to the truncation; `frames * spf`
+  fits for anything under ~27 hours. The guard cost more than the overflow.
+- Removing the shell's duplicate `err_text` left a stray brace: caught by the
+  compiler, not the board.
+
+### 6d. Not yet verified
+
+- **Auto-advance on a natural end.** Every test stopped the song or switched
+  it; none let one reach its end inside the view. The path is short
+  (`MP3_ST_FINISHED` with an unseen seq -> `start(cur + 1)`) but unexercised.
+- Pause/stop from the buttons were exercised by the user by touch; the
+  shell exercised the same API calls. The CPU/underrun figures of step 5 were
+  not re-measured with the view open; the view repaints only on change
+  (once a second while playing, for the clock).
+
+### State
+
+```
+works  the music app: launcher icon in ping's place, list from the card,
+       tap-tap to play, prev/play-pause/stop/next, scroll, exact length
+       from Xing, keeps playing with the view closed; user-verified by touch
+open   auto-advance on a natural end not yet observed (6d)
+       shell commands that print take ~10 s (5e); display ~75% when idle (3c)
+       LAST FAULT exccause 20 from boot #99, unattributed (4d)
+```

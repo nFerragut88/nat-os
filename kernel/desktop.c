@@ -1,6 +1,7 @@
 /* nat-os — touch-driven launcher. See desktop.h for what this is and is not. */
 
 #include "desktop.h"
+#include "player.h"
 #include "wifiapp.h"
 #include "display.h"
 #include "raycast.h"
@@ -95,8 +96,9 @@ static const uint8_t GLYPHS[COLS * ROWS][8] = {
     { 0x18, 0x18, 0x18, 0x3C, 0x7E, 0x7E, 0x3C, 0x18 },
     /* notes — a page with ruled lines */
     { 0x7E, 0x42, 0x7A, 0x42, 0x7A, 0x42, 0x7E, 0x00 },
-    /* ping — a ball travelling right */
-    { 0x00, 0x00, 0x30, 0x78, 0x78, 0x30, 0x0C, 0x06 },
+    /* music — two beamed quavers. [next_moves/11 step 6] Was ping's ball:
+     * the music player took ping's place on the grid. */
+    { 0x1F, 0x11, 0x11, 0x11, 0x33, 0x77, 0x66, 0x00 },
     /* pong — paddle and ball */
     { 0xC0, 0xC0, 0xC6, 0xCF, 0xCF, 0xC6, 0xC0, 0xC0 },
     /* rogue — a wall */
@@ -135,7 +137,11 @@ static const desk_icon_t ICONS[COLS * ROWS] = {
     { "web",      0,          COLOR_YELLOW,  DESK_ACTION_WEB  },
     { "paint",    "paint",    COLOR_MAGENTA, DESK_ACTION_NONE },
     { "notes",    0,          COLOR_WHITE,   DESK_ACTION_NOTES },
-    { "ping",     "ping",     COLOR_CYAN,    DESK_ACTION_NONE },
+    /* [next_moves/11 step 6] Was "ping". The user asked for the music player
+     * in its place. ping is still a registered program -- `run ping` works,
+     * and pong's IPC demonstration still sends to it -- it just no longer has
+     * a cell, as pong lost its own at step 370. */
+    { "music",    0,          COLOR_CYAN,    DESK_ACTION_MUSIC },
     /* [step 370] Was "pong". Both halves of the IPC demonstration stopped
      * starting at boot at 368, and `run pong` still launches it from the
      * shell -- what it no longer has is a place on a grid that holds nine
@@ -155,6 +161,7 @@ static const desk_icon_t ICONS[COLS * ROWS] = {
 #define MODE_WIFI     4
 #define MODE_WEB      5
 #define MODE_APP      6    /* [step 369] a VM program owns the region */
+#define MODE_MUSIC    7    /* [next_moves/11 step 6] the music view */
 static int      g_app_bar;         /* the focused program's bar needs drawing */
 static int      g_mode = MODE_LAUNCHER;
 #define g_active (g_mode == MODE_LAUNCHER)
@@ -223,6 +230,16 @@ int      desktop_notes(void)  { return g_mode == MODE_NOTES; }
 int      desktop_term(void)   { return g_mode == MODE_TERM; }
 int      desktop_wifi(void)   { return g_mode == MODE_WIFI; }
 int      desktop_web(void)    { return g_mode == MODE_WEB; }
+int      desktop_music(void)  { return g_mode == MODE_MUSIC; }
+
+/* The music view, from the shell (`musicopen`). Mirrors the DESK_ACTION_MUSIC
+ * branch line for line, for the reason desktop_open_wifi() gives. */
+void desktop_open_music(void)
+{
+    g_mode = MODE_MUSIC;
+    app_views_suspend(1);
+    player_open();
+}
 int      desktop_app(void)    { return g_mode == MODE_APP; }
 int      desktop_3d(void)     { return g_mode == MODE_3D; }
 
@@ -392,7 +409,7 @@ void desktop_chrome(void)
     /* [step 277] The shell AND the note pad now occupy this band with their
      * keyboards. Chrome is drawn LAST every frame, so without this it would
      * paint its close buttons over the bottom row of keys. */
-    if (desktop_term() || desktop_notes() || desktop_wifi() || desktop_web()) { return; }
+    if (desktop_term() || desktop_notes() || desktop_wifi() || desktop_web() || desktop_music()) { return; }
 
     /* [step 369] The bar above a focused program: its name, and the way out.
      *
@@ -566,7 +583,7 @@ int desktop_chrome_touch(uint32_t x, uint32_t y)
      * in the band both keyboards now cover. kmain offers this function the
      * press BEFORE term_touch() and notes_touch(), so leaving them live would
      * make a key in the bottom row close a program instead of typing. */
-    if (desktop_term() || desktop_notes() || desktop_wifi() || desktop_web()) { return 0; }
+    if (desktop_term() || desktop_notes() || desktop_wifi() || desktop_web() || desktop_music()) { return 0; }
 
     if (x < CLOSE_X) {
         return 0;               /* the name is a label, not a button */
@@ -646,6 +663,15 @@ static void open_selected(void)
         g_mode = MODE_WEB;
         app_views_suspend(1);
         browser_open();
+        return;
+    }
+
+    if (ic->action == DESK_ACTION_MUSIC) {
+        /* Claims the band as the web view does: the transport buttons sit in
+         * it, below the list. */
+        g_mode = MODE_MUSIC;
+        app_views_suspend(1);
+        player_open();
         return;
     }
 

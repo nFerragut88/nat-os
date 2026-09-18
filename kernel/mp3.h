@@ -22,6 +22,45 @@
 #ifndef NATOS_MP3_H
 #define NATOS_MP3_H
 
+#include <stdint.h>
+
 void mp3_shell(char *arg);
+
+/* ---- the player, for the music view (next_moves/11 step 6) ------------------
+ *
+ * Nothing here blocks: the view calls these from the touch and display tasks,
+ * which must never wait on a decoder. mp3_play() is refused while a song is
+ * still stopping, so a view that wants to switch tracks requests a stop and
+ * starts the next one when mp3_busy() goes false. */
+
+#define MP3_E_NOCARD  (-101)
+#define MP3_E_NOTASK  (-102)
+#define MP3_E_BUSY    (-103)
+
+enum {
+    MP3_ST_IDLE,        /* nothing has been played */
+    MP3_ST_STARTING,    /* submitted, first frame not yet out */
+    MP3_ST_PLAYING,
+    MP3_ST_PAUSED,
+    MP3_ST_FINISHED,    /* reached the end of the file */
+    MP3_ST_STOPPED,     /* stopped on request */
+    MP3_ST_ERROR,
+};
+
+typedef struct {
+    int      state;     /* MP3_ST_* */
+    int      err;       /* when state is ERROR: see mp3_error_text() */
+    uint32_t seq;       /* changes with every song started */
+    uint32_t pos_s;     /* seconds played */
+    uint32_t total_s;   /* length; 0 while unknown */
+    int      exact;     /* total_s came from the file's Xing/Info header */
+} mp3_status_t;
+
+int  mp3_play(const char *path);    /* 0, or MP3_E_* */
+void mp3_request_stop(void);
+void mp3_set_pause(int on);
+int  mp3_busy(void);
+void mp3_status(mp3_status_t *st);
+const char *mp3_error_text(int e);
 
 #endif /* NATOS_MP3_H */

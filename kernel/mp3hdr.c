@@ -34,6 +34,38 @@ int mp3hdr_parse(const uint8_t *p, mp3hdr_t *h)
     return 1;
 }
 
+static uint32_t be32(const uint8_t *p)
+{
+    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | p[3];
+}
+
+uint32_t mp3hdr_xing_frames(const uint8_t *p, uint32_t n)
+{
+    mp3hdr_t h;
+    if (n < 4u || !mp3hdr_parse(p, &h)) {
+        return 0;
+    }
+    /* The tag sits after the side information, whose size depends on version
+     * and channel count (ISO 11172-3 / 13818-3), and after a 16-bit CRC when
+     * the protection bit is CLEAR. */
+    uint32_t side = (h.version == 10u) ? (h.channels == 2u ? 32u : 17u)
+                                       : (h.channels == 2u ? 17u : 9u);
+    uint32_t o = 4u + side + (((p[1] & 1u) == 0u) ? 2u : 0u);
+    if (o + 12u > n) {
+        return 0;
+    }
+    const uint8_t *t = p + o;
+    int xing = t[0] == 'X' && t[1] == 'i' && t[2] == 'n' && t[3] == 'g';
+    int info = t[0] == 'I' && t[1] == 'n' && t[2] == 'f' && t[3] == 'o';
+    if (!xing && !info) {
+        return 0;
+    }
+    if (!(be32(t + 4) & 1u)) {
+        return 0;                                   /* flags: no frame count */
+    }
+    return be32(t + 8);
+}
+
 uint32_t mp3hdr_id3_size(const uint8_t *p)
 {
     if (p[0] != 'I' || p[1] != 'D' || p[2] != '3') {

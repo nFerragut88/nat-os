@@ -19,6 +19,7 @@
 #include "flash.h"
 #include "store.h"
 #include "sd.h"
+#include "player.h"
 #include "app.h"
 #include "console.h"
 #include "ipc.h"
@@ -1453,6 +1454,10 @@ static void task_display(void)
             continue;
         }
 
+        /* [next_moves/11 step 6] Whatever view is up: a song that ends moves
+         * on to the next whether or not anyone is looking at the list. */
+        player_service();
+
         if (desktop_active()) {
             desktop_frame();
         } else if (desktop_notes()) {
@@ -1463,6 +1468,8 @@ static void task_display(void)
             wifiapp_frame();
         } else if (desktop_web()) {
             browser_frame();
+        } else if (desktop_music()) {
+            player_frame();
         } else if (desktop_3d()) {
             raycast_frame();
         }
@@ -1649,6 +1656,8 @@ static void task_touch(void)
             wifiapp_touch(t.x, t.y, down);
         } else if (desktop_web()) {
             browser_touch(t.x, t.y, down);
+        } else if (desktop_music()) {
+            player_touch(t.x, t.y, down);
         } else {
             desktop_touch(t.x, t.y, down);
         }

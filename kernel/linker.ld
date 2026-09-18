@@ -336,6 +336,8 @@ SECTIONS
      * cache misses cost real decode time is a measurement, not an assumption,
      * and moving it is a one-line change if they do. */
     *mp3.c.o(.literal .literal.* .text .text.*)
+    /* [next_moves/11 step 6] the music view; human-driven, like browser.c */
+    *player.c.o(.literal .literal.* .text .text.*)
 
     . = ALIGN(4);
     _flash_text_end = .;

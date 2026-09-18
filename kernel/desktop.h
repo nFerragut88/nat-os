@@ -58,6 +58,7 @@ typedef struct {
 #define DESK_ACTION_TERM   3    /* hand the region to the shell       */
 #define DESK_ACTION_WIFI   4    /* hand the region to the wifi view   */
 #define DESK_ACTION_WEB    5    /* hand the region to the web view    */
+#define DESK_ACTION_MUSIC  6    /* hand the region to the music view  */
 
 int desktop_wifi(void);
 void desktop_init(void);
@@ -92,6 +93,11 @@ int  desktop_app(void);
  * the shell, because the app is the only path that performs a full bring-up. */
 void desktop_open_wifi(void);
 void desktop_open_web(void);
+
+/* [next_moves/11 step 6] The music view: is it open, and open it as the icon
+ * does (the shell's `musicopen`). */
+int  desktop_music(void);
+void desktop_open_music(void);
 
 /* [step 369] The raycaster's mode, asked for by NAME.
  *
