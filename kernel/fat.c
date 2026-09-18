@@ -10,6 +10,7 @@
 #include "uart.h"
 #include "xtensa.h"
 #include "mp3hdr.h"
+#include "task.h"
 
 void *memcpy(void *dst, const void *src, size_t n);     /* kstring.c */
 
@@ -664,6 +665,11 @@ static void cmd_read(const char *path, uint32_t limit)
     }
     uint32_t crc = 0, total = 0, chk_cc = 0, blocks0 = g_blocks_read;
     uint32_t ms = 0, cc_acc = 0;
+    /* This task's own cycles as well as the wall clock: the difference is the
+     * time other tasks had the CPU, which a wall-clock KB/s counts as the
+     * card being slow (task.h, task_cpu_cycles). */
+    uint32_t cpu_ms = 0, cpu_cc = 0;
+    uint32_t polls0 = sd_token_polls();
     uint8_t head[16];
     uint32_t hops0 = g_read_hops;
 
@@ -681,8 +687,14 @@ static void cmd_read(const char *path, uint32_t limit)
             want = sizeof buf;
         }
         uint32_t t0 = xt_ccount();
+        uint32_t c0 = task_cpu_cycles();
         int32_t got = fat_read(&f, buf, want);
         uint32_t t1 = xt_ccount();
+        cpu_cc += task_cpu_cycles() - c0;
+        while (cpu_cc >= CPU_HZ / 1000u) {
+            cpu_cc -= CPU_HZ / 1000u;
+            cpu_ms++;
+        }
         if (got <= 0) {
             uart_puts("   read error: ");
             uart_puts(got < 0 ? fat_strerror(got) : "short file");
@@ -748,7 +760,21 @@ static void cmd_read(const char *path, uint32_t limit)
     uart_put_dec(g_blocks_read - blocks0);
     uart_puts("  (checks took ");
     uart_put_dec(chk_cc / (CPU_HZ / 1000u));
-    uart_puts(" ms, excluded)\n");
+    uart_puts(" ms, excluded)\n   of those ");
+    uart_put_dec(ms);
+    uart_puts(" ms this task ran ");
+    uart_put_dec(cpu_ms);
+    uart_puts(" ms   token-wait bytes/block=");
+    uint32_t nb = g_blocks_read - blocks0;
+    uart_put_dec(nb ? (sd_token_polls() - polls0) / nb : 0u);
+    uart_puts("   bus ");
+    if (sd_speed()) {
+        uart_puts("SPI3 div ");
+        uart_put_dec(sd_speed());
+    } else {
+        uart_puts("bit-banged");
+    }
+    uart_puts("\n");
 
     if (total == f.size && skip == 0u) {
         uint32_t cbytes = g_spc * 512u;

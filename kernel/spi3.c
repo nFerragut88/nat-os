@@ -99,6 +99,18 @@ void spi3_init(void)
     GPIO_REG(SPI3_PIN) = SPI_CS0_DIS_BIT | SPI_CS1_DIS_BIT | SPI_CS2_DIS_BIT;
 }
 
+void spi3_set_div(uint32_t div)
+{
+    if (div < 2u)  { div = 2u; }
+    if (div > 64u) { div = 64u; }
+    /* SPI_CLOCK: pre[30:18]=0, n[17:12], h[11:6], l[5:0]; f = APB / (n+1),
+     * high for h+1 of those cycles. Field positions from spi_reg.h; checked
+     * against SPI3_CLKDIV above, which decodes to n=39 h=19 l=39: 2 MHz. */
+    uint32_t n = div - 1u;
+    uint32_t h = div / 2u - 1u;
+    GPIO_REG(SPI3_CLOCK) = (n << 12) | (h << 6) | n;
+}
+
 /* ---- pads ---------------------------------------------------------------
  *
  * gpio.h's helpers are not usable here and the reason is worth stating: its

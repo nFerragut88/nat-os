@@ -250,6 +250,7 @@ static void cmd_help(void)
               "    tone <hz>     tone on gpio26; 'tone 0' stops. try 3000, not 440\n"
               "    pcm [...]     sample playback: I2S+DMA into the DAC ('pcm ?')\n"
               "    fat [ls|cat]  the SD card as files: FAT16/32, read-only ('fat ?')\n"
+              "    sdspeed <d>   SD bus: 0 bit-banged, else SPI3 at 80 MHz / d\n"
               "    beep          a short 3 kHz beep\n"
               "    3d [off]      3D view or launcher\n"
               "    taps          dump the touch press log\n"
@@ -498,6 +499,52 @@ static void cmd_adc(void)
     adc_dump_rtcio();
 }
 
+/* [next_moves/11 step 3] Where the CPU goes, per kernel task, over one second.
+ *
+ * Built because `fat head` found the shell running 473 ms of a 3,706 ms read:
+ * the SD bus was not slow, the shell was not running. An MP3 decoder is a task
+ * that must get a known share, so the share has to be measurable first. The
+ * shell's own figure includes the second it spends asleep in here, so it reads
+ * low -- which is the point of sleeping rather than spinning. */
+static void cmd_cpu(void)
+{
+    static uint32_t before[TASK_MAX];
+    for (int i = 0; i < TASK_MAX; i++) {
+        before[i] = task_cpu_cycles_of(i);
+    }
+    /* The console lock is dropped for the second: execute() holds it, and any
+     * task that prints would otherwise block on it and read as idle. */
+    uint32_t t0 = xt_ccount();
+    console_unlock();
+    task_sleep(100u);
+    console_lock();
+    uint32_t wall = xt_ccount() - t0;
+    uart_puts("   task            share   (of ");
+    uart_put_dec(wall / 80000u);
+    uart_puts(" ms wall)\n");
+    uint32_t sum = 0;
+    for (int i = 0; i < TASK_MAX; i++) {
+        if (!task_exists(i)) {
+            continue;
+        }
+        uint32_t d = task_cpu_cycles_of(i) - before[i];
+        sum += d;
+        uart_puts("   ");
+        uart_put_dec((unsigned int)i);
+        uart_puts("  ");
+        const char *n = task_name(i);
+        uint32_t len = 0;
+        uart_puts(n);
+        while (n[len]) { len++; }
+        for (; len < 12u; len++) { uart_putc(' '); }
+        uart_put_dec(d / (wall / 1000u + 1u) / 10u);     /* tenths of a percent -> % */
+        uart_puts("%\n");
+    }
+    uart_puts("   accounted ");
+    uart_put_dec(sum / (wall / 100u + 1u));
+    uart_puts("% of wall\n");
+}
+
 static void cmd_mem(void)
 {
     uart_puts("   heap free=");
@@ -578,6 +625,22 @@ static void execute(char *line)
     }
     else if (str_eq(line, "pcm")) { pcm_shell(arg); }
     else if (str_eq(line, "fat")) { fat_shell(arg); }
+    else if (str_eq(line, "cpu")) { cmd_cpu(); }
+    else if (str_eq(line, "sdspeed")) {
+        /* [next_moves/11 step 3] SCK = 80 MHz / div on SPI3; 0 = bit-banged.
+         * Re-initialises the card, so the next `fat` remounts at that speed. */
+        int div = parse_int(arg);
+        if (div < 0 || (div > 0 && div < 4) || div > 64) {
+            uart_puts("   sdspeed <div>: 0 = bit-banged, 4..64 = 80 MHz / div\n");
+        } else {
+            sd_set_speed((uint32_t)div);
+            int rc = sd_init();
+            uart_puts(rc == 0 ? "   card re-initialised, bus " : "   sd_init FAILED, bus ");
+            uart_puts(sd_speed() ? "SPI3 div " : "bit-banged");
+            if (sd_speed()) { uart_put_dec(sd_speed()); }
+            uart_puts("\n");
+        }
+    }
     else if (str_eq(line, "findspk")) { audio_find_speaker(); }
     else if (str_eq(line, "spktest")) { audio_probe_square(); }
     else if (str_eq(line, "audio")) { audio_dump(); }

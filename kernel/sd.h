@@ -77,6 +77,25 @@ int sd_read_block(uint32_t lba, uint8_t *dst);
 
 sd_type_t sd_type(void);
 
+/* ---- speed (next_moves/11 step 3) ------------------------------------------
+ *
+ * Bit-banged, this bus measured 17 KB/s -- and every bit of that is CPU the
+ * MP3 decoder will want. The slot is on SPI3's own pins (18/19/23), so after
+ * identification the pins are handed to the SPI3 peripheral and the clock
+ * comes from hardware.
+ *
+ * Identification ALWAYS runs bit-banged at ~250 kHz: the card requires
+ * <= 400 kHz until initialised, and that path is the one proven on this board.
+ *
+ * `div`: SCK = 80 MHz / div (2..64); 0 = stay bit-banged. sd_init() applies
+ * whatever was last set, so a speed survives re-initialisation. */
+void     sd_set_speed(uint32_t div);
+uint32_t sd_speed(void);        /* current div, 0 = bit-banged */
+
+/* Bytes read while waiting for a block's data token, cumulative: the card's
+ * access latency, measured in bus bytes. */
+uint32_t sd_token_polls(void);
+
 /* The R1 response byte from the last command, and the stage that failed.
  * Reported because SD failures are almost always diagnosable from R1 alone —
  * bit 2 is "illegal command", bit 0 is "still idle" — and losing it means

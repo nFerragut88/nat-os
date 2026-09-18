@@ -207,3 +207,77 @@ open   17 KB/s is below what these files need (up to 40 KB/s)
        player makes a third. Needs a mutex before the player exists.
        shell stack low-water 704 B free after fat head -- watch it
 next   step 3: SD on the SPI3 peripheral
+
+---
+
+## step 3 — SD on SPI3, and the real bottleneck was never the bus
+
+### 3a. What was built
+
+`sd.c`: identification stays bit-banged at ~250 kHz (the card requires
+<= 400 kHz until initialised, and that path is proven). Afterwards SCK/MOSI/
+MISO are routed to **SPI3** through the matrix and every byte goes through the
+peripheral; block data in 64-byte bursts (the W registers' capacity).
+`sdspeed <div>` selects 80 MHz / div, 0 = bit-banged. Default div 8 (10 MHz),
+now also at boot.
+
+`spi3_set_div()` added to spi3.c. `cpu`: per-task CPU share over one second.
+
+### 3b. Measurements
+
+Same 256 KB after the same 776 KB seek, frame walk identical every time
+(846 frames, every header in place):
+
+| bus | wall | this task actually ran | token wait / block |
+|---|---|---|---|
+| bit-banged | 16 KB/s | **134 KB/s of its own CPU time** | 31 bytes |
+| SPI3 10 MHz | 70 KB/s | **554 KB/s** | 49 bytes |
+| SPI3 20 MHz | 76 KB/s | -- | -- |
+
+- **The card is fast**: ~49 bytes of token wait per block, ~40 us. Multi-block
+  reads (CMD18) would buy little. Not done.
+- **The clock is not the limit**: doubling it moved wall-clock 70 -> 76 KB/s.
+- **SPI3 is 4x cheaper per byte of CPU.** A 320 kbps file costs the reader
+  ~7% of one core.
+- **The limit is CPU share.** Of a 3,706 ms read, the shell ran 473 ms.
+
+### 3c. Where the CPU goes
+
+```
+cpu      display 74-76%   vm-host 10-11%   report 8-9%   touch 6-7%
+         shell 0%   idle 0%        -- with the desktop idle, nothing moving
+```
+
+**The machine is saturated while doing nothing visible.** The display task takes
+three quarters of the CPU with an unchanging desktop. This is the most
+important number for the player, more than 80 MHz: a decoder will need that CPU
+back (redraw only on change) or priority over it. Not chased yet; it is the
+display's behaviour, and step D must first learn the decoder's cost in its OWN
+cycles (`task_cpu_cycles()`), independent of what share it gets.
+
+`cpu` reports a 100-tick sleep as 1,145 ms of CCOUNT. The sleep returns when
+the shell next gets a slice after its deadline, so this is not a clock
+measurement. Recorded because 1d's rate skew makes CCOUNT-vs-tick figures
+worth noticing.
+
+### 3d. Eliminated, and a hazard found
+
+- **"The card is slow"** -- 40 us of access latency per block.
+- **"The bus clock is the limit"** -- 2x clock, 1.09x wall.
+- **div 2 (40 MHz) is dangerous, not just unreliable.** Identification failed
+  and the card stayed unresponsive through the next two inits, recovering only
+  after a clean bit-banged init. Garbled MOSI can decode as ANY command,
+  including a write. `sd_set_speed` now clamps to div >= 4 and `sdspeed`
+  refuses below 4. The routing theory (pins left on SPI3) was checked and
+  **eliminated**: gpio_out_init restores both IO_MUX and FUNC_OUT_SEL, and ten
+  consecutive inits in both directions later all passed.
+
+### State
+
+```
+works  SD over SPI3 at 10 MHz: 554 KB/s of CPU time, frame walk identical
+       cpu: per-task share
+open   display takes ~75% of the CPU on an idle desktop; idle task gets 0%.
+       The player's real obstacle.
+       fat/sd unlocked; device.c and boot are also SD callers (step 2e)
+next   C: claim SRAM1, enable the FPU; D: minimp3, timed in its own cycles

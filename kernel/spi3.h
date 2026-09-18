@@ -68,6 +68,11 @@ void spi3_route(uint8_t sck, uint8_t mosi, uint8_t miso);
 #define SPI3_XFER_MAX 64u
 int spi3_xfer(const uint8_t *tx, uint8_t *rx, uint32_t n);
 
+/* SCK = APB (80 MHz) / div, div 2..64, 50% duty. The default after
+ * spi3_init() is div 40, 2 MHz -- the radio's rate. The SD card uses this to
+ * go faster once it has identified itself (next_moves/11 step 3). */
+void spi3_set_div(uint32_t div);
+
 /* ---- bring-up diagnostics ---------------------------------------------- */
 
 /* Tie MISO to a constant through the matrix and check what comes back. `level`

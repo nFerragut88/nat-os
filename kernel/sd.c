@@ -3,6 +3,7 @@
 #include "sd.h"
 #include "gpio.h"
 #include "xtensa.h"
+#include "spi3.h"
 
 #define CPU_HZ 80000000u
 
@@ -31,6 +32,13 @@
 #define CLK_FAST_US 0u          /* as fast as the loop runs */
 
 static uint32_t g_half_us = CLK_SLOW_US;
+
+/* SPI3 divider to use after identification, and whether the pins are on SPI3
+ * right now. 8 = 10 MHz: comfortably inside the 25 MHz SPI-mode limit and the
+ * ~26 MHz full-duplex ceiling of a GPIO-matrix input. Raised only on evidence. */
+static uint32_t g_div_wanted = 8u;
+static int      g_hw;
+static uint32_t g_token_polls;  /* bytes read waiting for a data token */
 static sd_type_t g_type;
 static uint32_t g_last_r1 = 0xFF;
 static uint32_t g_attempts;
@@ -66,6 +74,11 @@ static void delay_us(uint32_t us)
 static uint8_t sd_xfer(uint8_t out)
 {
     uint8_t in = 0;
+
+    if (g_hw) {
+        spi3_xfer(&out, &in, 1u);
+        return in;
+    }
 
     for (int i = 7; i >= 0; i--) {
         if ((out >> i) & 1u) {
@@ -155,6 +168,7 @@ int sd_init(void)
     g_attempts++;
     g_type    = SD_TYPE_NONE;
     g_half_us = CLK_SLOW_US;
+    g_hw      = 0;              /* gpio_out_init below takes the pins back */
 
     gpio_out_init(SD_PIN_CS);
     gpio_out_init(SD_PIN_SCK);
@@ -248,7 +262,35 @@ int sd_init(void)
 
     cs_high();
     g_half_us = CLK_FAST_US;    /* identification done; the bus can run up */
+
+    if (g_div_wanted) {
+        /* Hand SCK/MOSI/MISO to SPI3 through the matrix. CS stays a GPIO: a
+         * block read holds it low across many transfers. */
+        spi3_init();
+        spi3_set_div(g_div_wanted);
+        spi3_route(SD_PIN_SCK, SD_PIN_MOSI, SD_PIN_MISO);
+        g_hw = 1;
+    }
     return SD_OK;
+}
+
+void sd_set_speed(uint32_t div)
+{
+    /* Not below 4 (20 MHz). div 2 was tried: identification failed, and the
+     * card stayed unresponsive across the next two re-inits. Garbled bits on
+     * MOSI can decode as ANY command, a write included, so a speed the bus
+     * cannot carry is a risk to the card's contents, not only a failed read. */
+    if (div != 0u && div < 4u) {
+        div = 4u;
+    }
+    g_div_wanted = div;
+}
+
+uint32_t sd_token_polls(void) { return g_token_polls; }
+
+uint32_t sd_speed(void)
+{
+    return g_hw ? g_div_wanted : 0u;
 }
 
 int sd_read_block(uint32_t lba, uint8_t *dst)
@@ -272,6 +314,7 @@ int sd_read_block(uint32_t lba, uint8_t *dst)
     uint8_t token = 0xFFu;
     for (int i = 0; i < 4000; i++) {
         token = sd_rx();
+        g_token_polls++;
         if (token != 0xFFu) {
             break;
         }
@@ -281,8 +324,23 @@ int sd_read_block(uint32_t lba, uint8_t *dst)
         return SD_ERR_TOKEN;
     }
 
-    for (uint32_t i = 0; i < SD_BLOCK_SIZE; i++) {
-        dst[i] = sd_rx();
+    if (g_hw) {
+        /* 64 bytes per transaction: the W registers' whole capacity. */
+        static const uint8_t ff[SPI3_XFER_MAX] = {
+            0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF, 0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
+            0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF, 0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
+            0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF, 0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
+            0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF, 0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF };
+        for (uint32_t i = 0; i < SD_BLOCK_SIZE; i += SPI3_XFER_MAX) {
+            if (!spi3_xfer(ff, dst + i, SPI3_XFER_MAX)) {
+                cs_high();
+                return SD_ERR_TOKEN;
+            }
+        }
+    } else {
+        for (uint32_t i = 0; i < SD_BLOCK_SIZE; i++) {
+            dst[i] = sd_rx();
+        }
     }
 
     /* Two CRC bytes, discarded. The SPI-mode CRC is off by default and the
