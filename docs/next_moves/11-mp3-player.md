@@ -739,8 +739,9 @@ before:                          ~10 of 23
 full-volume song afterwards     0 underruns
 ```
 
-At the old ~43% rate, 22 clean trials in a row is well under a one-in-a-
-million chance. **The user, at the speaker: music plays normally, and the pop
+At the old ~43% rate, 22 clean trials in a row would happen by chance about
+4 times in a million (0.57^22). (First written as "well under one in a
+million": the arithmetic was not checked, and it was wrong.) **The user, at the speaker: music plays normally, and the pop
 at start and stop -- which they HAD been hearing -- is gone.**
 
 ### 9e. Also measured
