@@ -312,6 +312,11 @@ SECTIONS
      * cache miss here delays a refill, never a sample. */
     *pcm.c.o(.literal .literal.* .text .text.*)
 
+    /* [next_moves/11 step 2] fat.c: shell- and player-driven, no ISR path,
+     * nothing pinned calls it. Its speed is the SD bus's, not the cache's. */
+    *fat.c.o(.literal .literal.* .text .text.*)
+    *mp3hdr.c.o(.literal .literal.* .text .text.*)
+
     . = ALIGN(4);
     _flash_text_end = .;
   } > irom

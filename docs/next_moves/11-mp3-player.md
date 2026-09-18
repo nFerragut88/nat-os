@@ -131,3 +131,79 @@ open   rate reads 1.4-2.2% high and varies -- suspect CCOUNT in WAITI, untested
        but only just; the player should defer saves while playing
 next   B: FAT32, and how fast the bit-banged SD bus actually reads
 ```
+
+---
+
+## step 2 — the card as files, and a bus too slow to play them
+
+### 2a. What was built
+
+`kernel/fat.c`, read-only: MBR or superfloppy, **FAT16 and FAT32 decided by
+cluster count** (fatgen103's only rule, not the "FAT16" label), directories,
+cluster chains, seek, and long filenames checked against each short entry's
+checksum. `fat` / `fat ls [dir]` / `fat cat <file>` / `fat head <KB> <file>`;
+a name ending `*` matches by prefix, because these names are long, bracketed
+and full of spaces.
+
+`kernel/mp3hdr.c`: Layer III frame headers and ID3v2 tag sizes, no decoding.
+Built as an instrument first (below), and the player will need it anyway.
+
+### 2b. The card is not what was asked for, and that is fine
+
+Asked for FAT32. It is a **256 MB SDSC card, FAT16** (MBR type 0x06, 490,000
+sectors, 4 KB clusters, 512 root entries, formatted `MSDOS5.0`). Handled.
+
+```
+fat ls     12 entries: System Volume Information/ and 11 .mp3,
+           7.9 MB to 54.7 MB, long names intact (non-ASCII dashes as '?')
+```
+
+### 2c. The check that needs no copy of the file
+
+A CRC32 proves the bytes only against a reference computed on a PC. The frame
+walk does not need one: every Layer III header gives the next header's offset,
+so a wrong byte or a cluster read from the wrong place breaks the walk AT that
+frame.
+
+```
+fat head 256 musical*
+   ID3 tag of 776776 bytes skipped by seeking
+   262144 bytes in 15271 ms = 17 KB/s   blocks=513
+   MPEG-1 Layer III  48000 Hz  stereo  32-320 kbps (VBR)
+   frames walked=846 = 20 s of audio -- every header where the previous one said
+fat head 128 night*
+   ID3 tag of 453504 bytes skipped by seeking
+   frames walked=182 = 4 s   (32 KB/s of audio data in this stretch)
+```
+
+846 consecutive headers after a 776 KB seek, across 64 clusters: chain
+following, `fat_seek`, and the bytes themselves, all at once.
+
+### 2d. Two things the files taught
+
+1. **The tags are enormous.** 776 KB and 453 KB of ID3 -- cover art. Read
+   rather than seeked, that is 45 s of silence before the first note at this
+   bus speed. The first `fat head` run read 256 KB of JPEG and truthfully
+   reported "no frame found"; the reader now seeks.
+2. **These are 48 kHz stereo VBR up to 320 kbps.** Measured stretches need
+   13-32 KB/s; a 320 kbps passage needs 40.
+
+### 2e. The number that decides step 3
+
+**17 KB/s**, wall clock, in the shell task, bit-banged. Every bit costs CPU and
+the shell has only a share of it -- which is also what the decoder will need.
+It does not carry these files.
+
+The fix is structural: the slot is wired to **SPI3's native IO_MUX pins** (18,
+19, 23, 5 -- spi3.h says so), and SPI3 is otherwise unused.
+
+### State
+
+```
+works  fat / fat ls / fat cat / fat head: FAT16 read-only with long names,
+       seek, and an MPEG frame walk that validated 846 frames after a 776 KB seek
+open   17 KB/s is below what these files need (up to 40 KB/s)
+       fat.c and sd.c are unlocked, and device.c is a second SD caller; the
+       player makes a third. Needs a mutex before the player exists.
+       shell stack low-water 704 B free after fat head -- watch it
+next   step 3: SD on the SPI3 peripheral
