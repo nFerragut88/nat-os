@@ -677,3 +677,84 @@ works  idle desktop 56% idle (was 0); display 17-21% (was 75); flash saves
 open   USB link drop at playback start (8e); auto-advance unobserved (6d);
        LAST FAULT from boot #99 (4d)
 ```
+
+---
+
+## step 9 — the USB link dropped because the DAC popped
+
+Asked by the user: fix the USB serial link dropping when a song starts (8e).
+
+### 9a. What the drop is
+
+Reproduced on the first try (`mp3 play` in a loop). Straight after the drop
+**COM6 did not exist** -- `board.py ports`: "no serial ports" -- and it came
+back within seconds. The ESP32 never reset: it was still playing with 0
+underruns when reconnected. So the **CH340 fell off the USB bus**; the board
+itself was fine. Windows' Kernel-PnP and System logs held nothing about it --
+recorded as inconclusive, not as evidence of no disconnect.
+
+### 9b. Isolating it (separate connection per trial, drop = link lost)
+
+| trial | drops |
+|---|---|
+| A: `pcm tone` only (DAC + amp, no SD, no decoder), one session | 0 of 6 |
+| B: `mp3 bench` only (SD + decoder, no DAC) | 0 of 6 |
+| song at volume **0** (silent), after a fresh flash | **4 of 4** |
+| song at volume 4 / 16 | 1 of 4 / 0 of 4 |
+| alternating song / tone after a fresh flash | 4 of 10 -- **including a tone** |
+
+**Eliminated: current drawn by the music.** A silent song dropped every
+time; full volume never did. (`mp3 vol` was built for this test and is kept
+as the player's volume control.)
+
+**Eliminated: the song's content, and the SD card / decoder** -- a tone
+dropped too, and decoding without the DAC never dropped.
+
+What every dropping trial shares is **the DAC switching on**.
+`dac_pad_claim()` took GPIO26 from 0 V (LEDC parks it low) to the DAC's
+mid-rail 0x80 (~1.65 V) in ONE register write, and release did the reverse: a
+1.65 V step into the speaker amplifier each way -- the textbook speaker POP,
+a current spike through the coil. The supply on this setup is already known
+to be marginal (08: the hub-port and supply notes). The ESP32 rides through on
+its own regulator; the CH340 does not.
+
+Not explained by this: why the drops clustered soon after a flash in the
+earlier series. The per-trial uptime capture failed (every line read t=0),
+so that could not be tested; recorded, not claimed either way.
+
+### 9c. The fix: soft start, soft stop
+
+`pcm.c`: the pad comes up at code 0 (0 V), and the DAC is walked to 0x80 in
+128 steps over ~100 ms through the register path (DIG_FORCE off, CW_EN2
+clear) before I2S takes over; on release it is walked back down to 0 before
+the pad is handed back. `dac ramps=` counts them in `pcm`.
+
+### 9d. Result
+
+```
+after the fix, fresh flash each batch:
+  alternating song / tone       0 of 12 dropped
+  silent song (was 4 of 4)      0 of 10 dropped
+before:                          ~10 of 23
+full-volume song afterwards     0 underruns
+```
+
+At the old ~43% rate, 22 clean trials in a row is well under a one-in-a-
+million chance. **The user, at the speaker: music plays normally, and the pop
+at start and stop -- which they HAD been hearing -- is gone.**
+
+### 9e. Also measured
+
+`pcm tone` at 22,050 Hz now reads **22,117 (+0.3%)**. Step 1 read +1.4 to
++2.2% and varying, with the CPU saturated. Now it runs with the idle task
+running (step 8). Step 1d's skew followed that change; the mechanism is
+still not established.
+
+### State
+
+```
+works  no USB drop at song start: 0 of 22 trials (was ~10 of 23); the
+       audible pop is gone (user); mp3 vol 0..16
+open   the post-flash clustering in 9b is unexplained; auto-advance
+       unobserved (6d); LAST FAULT from boot #99 (4d)
+```

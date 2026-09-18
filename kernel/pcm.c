@@ -129,6 +129,7 @@ static uint32_t  g_last_eof;
 static uint32_t  g_queued;
 static uint32_t  g_fill;            /* samples already in the writer's buffer */
 
+static uint32_t  g_ramps;           /* soft starts + soft stops done */
 static uint32_t  g_played;
 static uint32_t  g_underruns;
 static uint32_t  g_blind;
@@ -290,6 +291,50 @@ static void set_clock(uint32_t rate)
     REG(I2S_SAMPLE_RATE) = (BCK_DIV << SR_TX_BCK_DIV_S) | (16u << SR_TX_BITS_S);
 }
 
+/* ---- soft start and soft stop (next_moves/11 step 9) ------------------------
+ *
+ * The pad sits at 0 V while LEDC owns it (audio_off parks it low), and the DAC
+ * rests at mid-rail, 0x80, ~1.65 V. Claiming the pad used to jump straight
+ * there in one register write, and releasing it jumped back: a 1.65 V step
+ * into the speaker amplifier each way -- the classic cause of a speaker POP,
+ * a sharp current spike through the coil.
+ *
+ * On this board's USB supply that spike is the leading suspect for the USB
+ * link dropping as audio started: the CH340 fell off the bus (COM6 vanished
+ * and re-enumerated) while the ESP32, on its own regulator, played on. The
+ * drop followed the DAC switching on, not the signal: a SILENT song (volume
+ * 0) dropped 4 of 4 times, a DAC tone dropped too, and decoding with no DAC
+ * never dropped.
+ *
+ * So the pad comes up at 0 V and the DAC is walked to mid-rail over ~100 ms
+ * before I2S takes over, and walked back down before the pad is released.
+ * The register path drives the DAC during a ramp, which needs DIG_FORCE off
+ * and CW_EN2 clear (step 1's dumps showed CW_EN2 set under I2S). */
+#define RAMP_STEP_CC (CPU_HZ / 1280u)          /* 128 steps in ~100 ms */
+
+static void dac_set_code(uint32_t code)
+{
+    REG(PAD_DAC2) = (REG(PAD_DAC2) & ~PDAC_DAC_M) | ((code & 0xFFu) << PDAC_DAC_S);
+}
+
+static void dac_ramp(uint32_t from, uint32_t to)
+{
+    REG(SENS_DAC_CTRL1) &= ~(DAC_DIG_FORCE | DAC_CLK_INV);   /* register drives */
+    REG(SENS_DAC_CTRL2) &= ~DAC_CW_EN2;
+    uint32_t c = from;
+    for (;;) {
+        dac_set_code(c);
+        uint32_t t0 = xt_ccount();
+        while (xt_ccount() - t0 < RAMP_STEP_CC) {
+        }
+        if (c == to) {
+            break;
+        }
+        c = (c < to) ? c + 1u : c - 1u;
+    }
+    g_ramps++;
+}
+
 static void dac_pad_claim(void)
 {
     /* Stop LEDC first: a tone left running is harmless once RTC owns the pad,
@@ -297,13 +342,20 @@ static void dac_pad_claim(void)
     audio_off();
     uint32_t p = REG(PAD_DAC2);
     p &= ~(PDAC_FUN_SEL_M | PDAC_RUE | PDAC_RDE | PDAC_DAC_M);
-    p |= PDAC_MUX_SEL | PDAC_XPD_DAC | PDAC_XPD_FORCE | (0x80u << PDAC_DAC_S);
+    /* Code 0, not 0x80: the pad was parked at 0 V, so it comes up at 0 V. */
+    p |= PDAC_MUX_SEL | PDAC_XPD_DAC | PDAC_XPD_FORCE;
     REG(PAD_DAC2) = p;
     REG(SENS_MEAS_CTRL2) &= ~SAR1_DAC_XPD_FSM_M;
+    dac_ramp(0u, 0x80u);
 }
 
 static void dac_pad_release(void)
 {
+    /* From mid-rail, where I2S leaves it after the silence a song ends with
+     * (and near enough after a stop mid-song), down to the 0 V the pad will
+     * sit at once LEDC has it back. */
+    dac_set_code(0x80u);
+    dac_ramp(0x80u, 0u);
     REG(SENS_DAC_CTRL1) &= ~(DAC_DIG_FORCE | DAC_CLK_INV);
     REG(PAD_DAC2) &= ~(PDAC_XPD_DAC | PDAC_XPD_FORCE);
     /* audio_init() clears MUX_SEL and re-routes LEDC -- the state 027 fought
@@ -427,6 +479,8 @@ void pcm_dump(void)
     uart_put_dec(g_blind);
     uart_puts(" bogus_eof=");
     uart_put_dec(g_bogus_eof);
+    uart_puts(" dac ramps=");
+    uart_put_dec(g_ramps);
     uart_puts("\n     i2s clk_en=");
     uart_put_dec((REG(DPORT_PERIP_CLK_EN) >> 4) & 1u);
     uart_puts(" rst=");

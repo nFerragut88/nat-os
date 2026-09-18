@@ -137,6 +137,12 @@ static struct {
 
 static int g_task = -1;
 
+/* Output gain in sixteenths; survives across songs. */
+static volatile uint32_t g_volume = MP3_VOL_MAX;
+
+void     mp3_set_volume(uint32_t v) { g_volume = v > MP3_VOL_MAX ? MP3_VOL_MAX : v; }
+uint32_t mp3_volume(void)           { return g_volume; }
+
 /* The file and the input window, shared by both jobs. */
 static uint32_t g_fill, g_pos;
 static int      g_eof;
@@ -373,7 +379,14 @@ static void play(void)
                 g_pcm[i] = (int16_t)(((int32_t)g_pcm[2 * i] + g_pcm[2 * i + 1]) >> 1);
             }
         }
+        /* Volume, 0..16 sixteenths, applied after the level is measured so
+         * `peak` keeps describing the file rather than the knob. */
         measure(g_pcm, (uint32_t)n);
+        if (g_volume < MP3_VOL_MAX) {
+            for (int i = 0; i < n; i++) {
+                g_pcm[i] = (int16_t)(((int32_t)g_pcm[i] * (int32_t)g_volume) / (int32_t)MP3_VOL_MAX);
+            }
+        }
         queue(g_pcm, (uint32_t)n);
     }
 
@@ -744,6 +757,15 @@ void mp3_shell(char *arg)
         if (submit_verbose(KIND_PLAY, rest, 0)) {
             uart_puts("   playing on task 'mp3' -- 'mp3' for status, 'mp3 stop' to stop\n");
         }
+    } else if (sub[0] == 'v' && sub[1] == 'o') {            /* vol [n] */
+        const char *p;
+        uint32_t v = parse_u32(rest, &p);
+        if (*rest) {
+            mp3_set_volume(v);
+        }
+        uart_puts("   volume ");
+        uart_put_dec(mp3_volume());
+        uart_puts("/16\n");
     } else if (sub[0] == 'p' && sub[1] == 'a') {            /* pause */
         mp3_set_pause(1);
         uart_puts("   pause requested\n");

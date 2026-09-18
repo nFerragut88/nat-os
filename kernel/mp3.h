@@ -63,4 +63,10 @@ int  mp3_busy(void);
 void mp3_status(mp3_status_t *st);
 const char *mp3_error_text(int e);
 
+/* Output volume in sixteenths, 0 (silent) .. MP3_VOL_MAX (the file's own
+ * level). Applied to each sample before the DAC; takes effect within a frame. */
+#define MP3_VOL_MAX 16u
+void     mp3_set_volume(uint32_t v);
+uint32_t mp3_volume(void);
+
 #endif /* NATOS_MP3_H */
