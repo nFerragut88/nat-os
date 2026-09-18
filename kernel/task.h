@@ -126,7 +126,16 @@ typedef enum {
 #define TASK_PRIO_LOW    0
 #define TASK_PRIO_NORMAL 1
 #define TASK_PRIO_HIGH   2
-#define TASK_PRIO_LEVELS 3
+/* [next_moves/11 step 5] Above the display, for a task whose deadline is set
+ * by hardware: the MP3 player, feeding a DMA ring that drains at 48 kHz
+ * whether or not anyone refills it. At HIGH, level with the display, it got
+ * 23% of the CPU against the ~51% it needs and underran 465 times in 30 s.
+ *
+ * Only a task that SLEEPS when it is ahead may use this. The player sleeps
+ * whenever its ring is full, so it takes what decoding costs and no more; a
+ * task that spun here would starve everything but ageing. */
+#define TASK_PRIO_AUDIO  3
+#define TASK_PRIO_LEVELS 4
 
 /* ---- fairness by ageing --------------------------------------------------
  *
@@ -149,7 +158,9 @@ typedef enum {
  * immediately blocks still makes no progress, and that is the caller's
  * problem, not the scheduler's. */
 #define TASK_AGE_TICKS  30u
-#define TASK_AGE_MAX    3u      /* cap, so ageing cannot invert LOW past HIGH twice over */
+#define TASK_AGE_MAX    4u      /* cap, so ageing cannot invert LOW past the top twice over.
+                                 * Was 3; raised with TASK_PRIO_AUDIO, exactly as
+                                 * NA-006 below says a new level requires. */
 
 /* NA-006. The cap is EXACTLY sized for the current priority range, and that is
  * load-bearing rather than incidental.

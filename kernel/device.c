@@ -14,6 +14,7 @@
 #include "i2c.h"
 #include "term.h"
 #include "sd.h"
+#include "fat.h"
 
 static uint32_t g_reads, g_writes, g_refusals;
 
@@ -314,7 +315,12 @@ static int sd_dev_write(uint32_t caller, uint32_t chan, uint32_t lba)
     if (chan != 0u) {
         return 0;
     }
-    if (sd_read_block(lba, g_sd_block) != 0) {
+    /* fat_lock: the MP3 player reads the same bus from another task, and
+     * sd.c is not reentrant (next_moves/11 step 5). */
+    fat_lock();
+    int rc = sd_read_block(lba, g_sd_block);
+    fat_unlock();
+    if (rc != 0) {
         g_sd_loaded = 0;                /* a stale block must not survive a
                                          * failed seek and be read as fresh */
         return 0;

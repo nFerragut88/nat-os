@@ -635,8 +635,10 @@ static void execute(char *line)
         if (div < 0 || (div > 0 && div < 4) || div > 64) {
             uart_puts("   sdspeed <div>: 0 = bit-banged, 4..64 = 80 MHz / div\n");
         } else {
+            fat_lock();
             sd_set_speed((uint32_t)div);
             int rc = sd_init();
+            fat_unlock();
             uart_puts(rc == 0 ? "   card re-initialised, bus " : "   sd_init FAILED, bus ");
             uart_puts(sd_speed() ? "SPI3 div " : "bit-banged");
             if (sd_speed()) { uart_put_dec(sd_speed()); }
@@ -4529,7 +4531,9 @@ static void execute(char *line)
         uart_puts("   press log cleared\n");
     }
     else if (str_eq(line, "sd")) {
+        fat_lock();                 /* not under a playing song's reads */
         int rc = sd_init();
+        fat_unlock();
         uart_puts("   sd_init ");
         uart_puts(rc == 0 ? "OK" : "FAILED");
         uart_puts("  type=");
@@ -4564,7 +4568,9 @@ static void execute(char *line)
             uart_puts("   usage: sdread <lba>\n");
         } else {
             static uint8_t blk[SD_BLOCK_SIZE];
+            fat_lock();
             int rc = sd_read_block((uint32_t)lba, blk);
+            fat_unlock();
             if (rc != 0) {
                 uart_puts("   read failed, R1=");
                 uart_put_hex(sd_last_r1());

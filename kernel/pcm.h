@@ -49,11 +49,12 @@
 
 #include <stdint.h>
 
-/* Ring geometry. 8 x 512 samples = 8 KB, which at 22,050 Hz is 186 ms of
- * audio: the producer can be away for ~160 ms and the listener hears nothing.
- * Allocated from the heap in pcm_start() and returned in pcm_stop(), so it
- * costs nothing while no sound is playing. */
-#define PCM_BUFS     8u
+/* Ring geometry. 16 x 512 samples = 16 KB: 170 ms at 48 kHz, the rate the
+ * user's MP3s are at. Step 1 had 8 buffers from the heap -- 186 ms at 22,050
+ * Hz but only 85 ms at 48 kHz, less than one store_save() (125 ms, interrupts
+ * masked). Since step 5 of next_moves/11 the ring lives in SRAM1, statically:
+ * 16 KB is most of the heap, and SRAM1 holds nothing that outlives a reboot. */
+#define PCM_BUFS     16u
 #define PCM_SAMPLES  512u
 
 #define PCM_RATE_MIN 19600u

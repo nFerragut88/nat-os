@@ -207,7 +207,37 @@ def cmd_run(args):
         except Exception as e:
             out.append("[board] write failed: %s\n" % e)
             break
-        live = pump(s, out, args.wait)
+        if not args.prompt:
+            live = pump(s, out, args.wait)
+            continue
+        # --prompt: stop at the prompt that FOLLOWS this command's output.
+        #
+        # Without it, every command listens for the whole --wait. On
+        # 2026-09-18 that read as "the shell takes ~130 s to answer during
+        # MP3 playback" -- it was --wait 120 plus the probe, every time, and a
+        # scheduler change was made and measured against it before anyone
+        # looked here. (next_moves/11 step 5.)
+        #
+        # Only text arriving AFTER the send counts, or the prompt the probe
+        # already saw would end the wait at once.
+        mark = len(out)
+        t0 = time.time()
+        stop = t0 + args.wait
+        seen = False
+        while time.time() < stop:
+            try:
+                d = s.read(4096)
+            except Exception as e:
+                out.append("\n[board] link lost: %s\n" % e)
+                live = False
+                break
+            if d:
+                out.append(d.decode("utf-8", "replace"))
+                if "\n> " in "".join(out[mark:]):
+                    seen = True
+                    break
+        out.append("\n[board] %s after %.1fs\n"
+                   % ("prompt" if seen else "NO PROMPT", time.time() - t0))
     s.close()
     sys.stdout.buffer.write("".join(out).encode("utf-8", "replace"))
     return 0 if live else 1
@@ -260,6 +290,9 @@ def main():
     r = sub.add_parser("run")
     r.add_argument("command", nargs="+")
     r.add_argument("--wait", type=float, default=12.0)
+    r.add_argument("--prompt", action="store_true",
+                   help="return from each command when the shell prompt comes "
+                        "back (--wait becomes a timeout) and print how long it took")
 
     w = sub.add_parser("watch")
     w.add_argument("seconds", type=float)

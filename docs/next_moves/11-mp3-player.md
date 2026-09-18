@@ -354,3 +354,92 @@ open   the decoder needs ~51% of the CPU; the display takes ~75%
        LAST FAULT exccause 20 epc 0 from boot #99, unattributed
 next   E: streaming playback -- decode, downmix, pcm_write at 48 kHz --
        and the scheduling that makes it keep up
+
+---
+
+## step 5 — a whole song, clean, at 80 MHz
+
+### 5a. What was built
+
+- **`mp3 play <file>`** runs in the background on the 'mp3' task; `mp3` shows
+  position, underruns, the DAC's measured rate and the decoder's CPU against
+  wall time; `mp3 stop` stops. Stereo is averaged to mono, played at the
+  file's own rate; rates outside 19.6-48 kHz are refused, not played at the
+  wrong speed. A ring of silence follows the last frame so the DMA does not
+  loop stale audio.
+- **The PCM ring moved to SRAM1 and doubled**: 16 x 512 samples, 170 ms at
+  48 kHz (8 buffers were only 85 ms there -- less than one 125 ms
+  interrupts-masked store_save). SRAM1: 54.3 of 60 KB.
+- **A FAT mutex.** The decoder reads the card for minutes while a person can
+  type `fat ls`; fat.c/sd.c share one sector buffer and are not reentrant.
+  Every public fat_* takes a recursive mutex; `fat_lock()` is exported and
+  taken by the shell's sd/sdread/sdspeed and by device.c's SD channel.
+- **`TASK_PRIO_AUDIO` (3)**, above the display. `TASK_AGE_MAX` 3 -> 4, as
+  NA-006's static assert requires for a new level.
+
+### 5b. The priority, measured both ways
+
+| player at | decoder CPU | display | result over the run |
+|---|---|---|---|
+| HIGH (level with display) | 23% | 56% | **465 underruns**, 11 s of audio in 30.6 s |
+| AUDIO (above display) | 60-62% | 26-29% | **0 underruns**, whole song |
+
+The player sleeps a tick whenever the ring is full (14,127 times in one song),
+which is what makes a top priority safe: it takes what decoding costs.
+
+### 5c. The result
+
+```
+Night Nurse, start to finish
+   at 4:06  48000 Hz 2 ch  32-320 kbps
+   underruns=0 blind=0  ring-full waits=14127  dac rate measured=47999
+   decode CPU 116165 ms + SD 15354 ms over 246610 ms wall = 53%
+   worst frame 14232 us     output peak=32768 mean |s|=6144
+```
+
+**The user, at the speaker: "Music, clean."** First song ever played by this
+kernel.
+
+Note `dac rate measured=47999` here against step 1's 1.4-2.2% high at 22,050
+Hz. Same instrument, longer runs, different rate; 1d's question stays open
+but the error is not present at 48 kHz over four minutes.
+
+### 5d. Two wrong turns, recorded so they are not retaken
+
+1. **"The shell takes ~130 s to answer during playback" -- false; it was the
+   tool.** `board.py run` listens for the full `--wait` after EVERY command,
+   and the runs used `--wait 120`. 134/142/140 s was 120 s of listening plus
+   the probe. It also explains "`cpu` took two minutes" and "`mp3 stop` landed
+   at 2:11" (sent after two 60 s waits). Believing it, a fix was built --
+   demote the display to NORMAL during playback -- and "measured" against the
+   same broken instrument (still ~135 s: no change, of course). **The
+   demotion is removed**: it cut the display to 6% during playback and bought
+   nothing that could be shown. `board.py run --prompt` now returns at the
+   prompt and prints the elapsed time; the note in cmd_run records why.
+2. **"The shell is slow because the display ages above it" -- eliminated** as
+   the explanation for the above. The ageing arithmetic (display HIGH+4 vs
+   shell NORMAL+4) is real, but the demotion that removes it changed nothing.
+
+### 5e. Open: the ~10 s commands
+
+With `--prompt`, measured honestly: `mp3 play` returns in **1.5 s** (2.9 s in
+another run); `cpu`, `mp3 stop`, `fat ls` and idle `mp3` take **8-10.7 s**,
+idle or playing. `cpu` sleeps only 1 s. So the delay depends on the command,
+not on playback -- and it predates the player (the probe has said "shell
+answered after 7-11 s" all along). Eliminated: pyserial blocking on
+read(4096) (port timeout is 0.2 s). Suspect next: the console lock -- the
+report task prints ~900-byte telemetry lines at NORMAL while holding it, and
+the slow commands are the ones that print more. Not chased; the desktop app
+will be driven by touch (HIGH), not the shell.
+
+### State
+
+```
+works  mp3 play / mp3 / mp3 stop: 48 kHz stereo VBR-320 from SD, decoded by
+       minimp3 at 80 MHz, 0 underruns over a whole 4:06 song, 53% CPU;
+       heard clean by the user
+open   shell commands that print take ~10 s to return (5e) -- predates this
+       display animates at ~75% CPU when idle (step 3c) -- unchanged, and now
+       gets 26-29% during playback
+       LAST FAULT exccause 20 from boot #99, unattributed (4d)
+next   F: the player as a desktop app -- file list, play/pause/next, progress

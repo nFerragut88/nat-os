@@ -8,6 +8,8 @@
 #include "task.h"
 #include "console.h"
 #include "uart.h"
+#include "pcm.h"
+#include "timer.h"
 
 void *memmove(void *dst, const void *src, size_t n);    /* kstring.c */
 
@@ -61,7 +63,7 @@ float __divsf3(float a, float b)
 
 /* ---- memory: all of it in SRAM1 ------------------------------------------- */
 
-#define IN_BYTES     8192u              /* >= 5 max-size frames at 48 kHz */
+#define IN_BYTES     4096u              /* 2 KB kept ahead + a top-up; > 2 max frames */
 #define STACK_WORDS  1536u              /* 6 KB; minimp3 without its scratch */
 
 SRAM1 static mp3dec_t  g_dec;
@@ -90,17 +92,24 @@ static uint32_t fpu_enabled(void)
     return v;
 }
 
-/* ---- the job the shell hands the decoder task ----------------------------- */
+/* ---- the job the shell hands the decoder task -----------------------------
+ *
+ * One task, one job at a time: minimp3's scratch is static (vendor README), so
+ * two decodes at once would share it. BENCH decodes N frames and reports; PLAY
+ * streams a whole file to the DAC and keeps its status live for `mp3`. */
 
 enum { JOB_IDLE, JOB_PENDING, JOB_RUNNING, JOB_DONE };
+enum { KIND_BENCH, KIND_PLAY };
 
 static struct {
     volatile int state;
+    volatile int stop;                  /* set by `mp3 stop`, read by the task */
+    int      kind;
     char     path[96];
-    uint32_t frames_wanted;
+    uint32_t frames_wanted;             /* bench only */
 
-    /* results */
-    int      err;                       /* fat_err_t, or 1 = no frame decoded */
+    /* results, and for PLAY the live status */
+    int      err;                       /* fat_err_t, or MP3_ERR_* below */
     uint32_t id3;
     uint32_t hz, channels, kbps_min, kbps_max;
     uint32_t frames, samples;           /* samples per channel */
@@ -108,14 +117,25 @@ static struct {
     uint32_t dec_ms, dec_cc;            /* decoder's own CPU, decode only */
     uint32_t worst_cc;                  /* slowest single frame */
     uint32_t read_ms, read_cc;          /* decoder's own CPU, SD reads */
-    uint32_t bytes;
+    uint32_t bytes, size;
     int32_t  peak;
     uint32_t abs_sum_hi, abs_sum_lo;    /* sum |sample| as 64 bits, by hand */
     uint32_t nsamp;
     uint32_t cpen;
+    uint32_t start_tick;                /* play: when the first sample was queued */
+    uint32_t end_tick;                  /* play: when it stopped; 0 while playing */
+    uint32_t full_waits;                /* play: times the ring was full, so it slept */
 } g_job;
 
+#define MP3_ERR_NOFRAME  1
+#define MP3_ERR_RATE     2              /* sample rate the DAC cannot produce */
+#define MP3_ERR_PCM      3
+
 static int g_task = -1;
+
+/* The file and the input window, shared by both jobs. */
+static uint32_t g_fill, g_pos;
+static int      g_eof;
 
 static void add_ms(uint32_t *ms, uint32_t *cc, uint32_t d)
 {
@@ -126,98 +146,211 @@ static void add_ms(uint32_t *ms, uint32_t *cc, uint32_t d)
     }
 }
 
-static void bench(void)
+static int open_track(void)
 {
-    g_job.err = fat_open(&g_file, g_job.path);
-    if (g_job.err) {
-        return;
+    int rc = fat_open(&g_file, g_job.path);
+    if (rc) {
+        return rc;
     }
-
+    g_job.size = g_file.size;
     /* Seek past the ID3 tag: these files carry up to 776 KB of cover art. */
     uint8_t t[10];
     g_job.id3 = (fat_read(&g_file, t, 10u) == 10) ? mp3hdr_id3_size(t) : 0u;
     if (fat_seek(&g_file, g_job.id3) != FAT_OK) {
-        g_job.err = FAT_ERR_CHAIN;
-        return;
+        return FAT_ERR_CHAIN;
     }
-
     mp3dec_init(&g_dec);
-    uint32_t fill = 0, pos = 0;
-    int eof = 0;
+    g_fill = g_pos = 0;
+    g_eof = 0;
     g_job.kbps_min = 0xFFFFu;
+    return 0;
+}
 
-    while (g_job.frames < g_job.frames_wanted) {
-        /* Keep at least 2 KB ahead -- more than any one frame (1,441 bytes at
-         * 320 kbps / 32 kHz) -- by sliding what is left down and topping up. */
-        if (!eof && fill - pos < 2048u) {
-            memmove(g_in, g_in + pos, fill - pos);
-            fill -= pos;
-            pos = 0;
-            uint32_t c0 = task_cpu_cycles();
-            int32_t got = fat_read(&g_file, g_in + fill, IN_BYTES - fill);
-            add_ms(&g_job.read_ms, &g_job.read_cc, task_cpu_cycles() - c0);
-            if (got < 0) {
-                g_job.err = got;
-                return;
-            }
-            if (got == 0) {
-                eof = 1;
-            }
-            fill += (uint32_t)got;
-            g_job.bytes += (uint32_t)got;
-        }
-        if (fill == pos) {
-            break;
-        }
+/* Keeps at least 2 KB ahead -- more than any one frame (1,441 bytes at
+ * 320 kbps / 32 kHz) -- by sliding what is left down and topping up. */
+static int refill(void)
+{
+    if (g_eof || g_fill - g_pos >= 2048u) {
+        return 0;
+    }
+    memmove(g_in, g_in + g_pos, g_fill - g_pos);
+    g_fill -= g_pos;
+    g_pos = 0;
+    uint32_t c0 = task_cpu_cycles();
+    int32_t got = fat_read(&g_file, g_in + g_fill, IN_BYTES - g_fill);
+    add_ms(&g_job.read_ms, &g_job.read_cc, task_cpu_cycles() - c0);
+    if (got < 0) {
+        return got;
+    }
+    if (got == 0) {
+        g_eof = 1;
+    }
+    g_fill += (uint32_t)got;
+    g_job.bytes += (uint32_t)got;
+    return 0;
+}
 
-        mp3dec_frame_info_t info;
+/* Decodes the next frame into g_pcm. Returns samples per channel, 0 at the end
+ * of the file, or a negative fat_err_t. Skips frames that yield nothing. */
+static int next_frame(mp3dec_frame_info_t *info)
+{
+    for (;;) {
+        int rc = refill();
+        if (rc) {
+            return rc;
+        }
+        if (g_fill == g_pos) {
+            return 0;
+        }
         uint32_t c0 = task_cpu_cycles();
-        int n = mp3dec_decode_frame(&g_dec, g_in + pos, (int)(fill - pos), g_pcm, &info);
+        int n = mp3dec_decode_frame(&g_dec, g_in + g_pos, (int)(g_fill - g_pos), g_pcm, info);
         uint32_t d = task_cpu_cycles() - c0;
 
-        if (info.frame_bytes == 0) {
-            if (eof) {
-                break;
+        if (info->frame_bytes == 0) {
+            if (g_eof) {
+                return 0;
             }
-            /* Nothing found in what is buffered: drop it and read on. */
-            pos = fill;
+            g_pos = g_fill;             /* nothing in what is buffered: read on */
             continue;
         }
-        pos += (uint32_t)info.frame_bytes;
+        g_pos += (uint32_t)info->frame_bytes;
         if (n == 0) {
             g_job.skipped++;
             continue;
         }
-
         add_ms(&g_job.dec_ms, &g_job.dec_cc, d);
         if (d > g_job.worst_cc) {
             g_job.worst_cc = d;
         }
         g_job.frames++;
         g_job.samples += (uint32_t)n;
-        g_job.hz = (uint32_t)info.hz;
-        g_job.channels = (uint32_t)info.channels;
-        if ((uint32_t)info.bitrate_kbps < g_job.kbps_min) { g_job.kbps_min = (uint32_t)info.bitrate_kbps; }
-        if ((uint32_t)info.bitrate_kbps > g_job.kbps_max) { g_job.kbps_max = (uint32_t)info.bitrate_kbps; }
-
-        /* Evidence the output is audio: its peak, and its mean level. Zeros
-         * or a stuck value would show here long before anyone listens. */
-        uint32_t total = (uint32_t)n * (uint32_t)info.channels;
-        for (uint32_t i = 0; i < total; i++) {
-            int32_t s = g_pcm[i];
-            uint32_t a = (uint32_t)(s < 0 ? -s : s);
-            if ((int32_t)a > g_job.peak) {
-                g_job.peak = (int32_t)a;
-            }
-            uint32_t lo = g_job.abs_sum_lo + a;
-            if (lo < g_job.abs_sum_lo) {
-                g_job.abs_sum_hi++;
-            }
-            g_job.abs_sum_lo = lo;
-        }
-        g_job.nsamp += total;
+        g_job.hz = (uint32_t)info->hz;
+        g_job.channels = (uint32_t)info->channels;
+        if ((uint32_t)info->bitrate_kbps < g_job.kbps_min) { g_job.kbps_min = (uint32_t)info->bitrate_kbps; }
+        if ((uint32_t)info->bitrate_kbps > g_job.kbps_max) { g_job.kbps_max = (uint32_t)info->bitrate_kbps; }
+        return n;
     }
-    g_job.err = g_job.frames ? 0 : 1;
+}
+
+/* Evidence the output is audio: its peak, and its mean level. Zeros or a stuck
+ * value would show here long before anyone listens. */
+static void measure(const int16_t *s, uint32_t total)
+{
+    for (uint32_t i = 0; i < total; i++) {
+        int32_t v = s[i];
+        uint32_t a = (uint32_t)(v < 0 ? -v : v);
+        if ((int32_t)a > g_job.peak) {
+            g_job.peak = (int32_t)a;
+        }
+        uint32_t lo = g_job.abs_sum_lo + a;
+        if (lo < g_job.abs_sum_lo) {
+            g_job.abs_sum_hi++;
+        }
+        g_job.abs_sum_lo = lo;
+    }
+    g_job.nsamp += total;
+}
+
+static void bench(void)
+{
+    g_job.err = open_track();
+    if (g_job.err) {
+        return;
+    }
+    mp3dec_frame_info_t info;
+    while (g_job.frames < g_job.frames_wanted) {
+        int n = next_frame(&info);
+        if (n <= 0) {
+            if (n < 0) {
+                g_job.err = n;
+                return;
+            }
+            break;
+        }
+        measure(g_pcm, (uint32_t)n * (uint32_t)info.channels);
+    }
+    g_job.err = g_job.frames ? 0 : MP3_ERR_NOFRAME;
+}
+
+/* Queues n mono samples, sleeping a tick whenever the ring is full.
+ *
+ * The sleep is what makes running at HIGH priority safe (task.h: strict
+ * priority is only safe because tasks sleep). The ring holds 170 ms and a tick
+ * is 10 ms, so the task wakes with the ring still nearly full, decodes the
+ * next frame (~11 ms of CPU for 24 ms of audio) and sleeps again. */
+static void queue(const int16_t *s, uint32_t n)
+{
+    uint32_t w = 0;
+    while (w < n && !g_job.stop) {
+        uint32_t k = pcm_write(s + w, n - w);
+        w += k;
+        if (k == 0) {
+            g_job.full_waits++;
+            task_sleep(1u);
+        }
+    }
+}
+
+static void play(void)
+{
+    g_job.err = open_track();
+    if (g_job.err) {
+        return;
+    }
+    mp3dec_frame_info_t info;
+    int started = 0;
+
+    while (!g_job.stop) {
+        int n = next_frame(&info);
+        if (n <= 0) {
+            if (n < 0) {
+                g_job.err = n;
+            }
+            break;
+        }
+        if (!started) {
+            /* The DAC's clock cannot go below ~19.6 kHz (pcm.h). Refuse rather
+             * than play a 16 kHz file at the wrong speed. */
+            if ((uint32_t)info.hz < PCM_RATE_MIN || (uint32_t)info.hz > PCM_RATE_MAX) {
+                g_job.err = MP3_ERR_RATE;
+                return;
+            }
+            if (pcm_start((uint32_t)info.hz) != 0) {
+                g_job.err = MP3_ERR_PCM;
+                return;
+            }
+            started = 1;
+            g_job.start_tick = timer_ticks();
+        }
+        /* Stereo to mono, in place: output i reads inputs 2i and 2i+1, which
+         * are never behind it, so nothing is overwritten before it is read. */
+        if (info.channels == 2) {
+            for (int i = 0; i < n; i++) {
+                g_pcm[i] = (int16_t)(((int32_t)g_pcm[2 * i] + g_pcm[2 * i + 1]) >> 1);
+            }
+        }
+        measure(g_pcm, (uint32_t)n);
+        queue(g_pcm, (uint32_t)n);
+    }
+
+    if (started) {
+        /* A ring's worth of silence behind the last frame, so the DMA plays
+         * out the tail instead of looping stale buffers. Skipped on stop:
+         * whoever pressed stop wants silence now, not in 170 ms. */
+        if (!g_job.stop) {
+            static const int16_t zero[64] = { 0 };
+            for (uint32_t i = 0; i < PCM_BUFS * PCM_SAMPLES / 64u; i++) {
+                queue(zero, 64u);
+            }
+        }
+        pcm_stop();
+        /* Stop the clock here, so a status read long after the song ended does
+         * not divide the song's CPU by minutes of silence (step 5: it did). */
+        g_job.end_tick = timer_ticks();
+    }
+    if (!g_job.err && !g_job.frames) {
+        g_job.err = MP3_ERR_NOFRAME;
+    }
 }
 
 static void mp3_task(void)
@@ -228,7 +361,11 @@ static void mp3_task(void)
             g_job.state = JOB_RUNNING;
             fpu_enable();               /* cheap, and nothing may have cleared it */
             g_job.cpen = fpu_enabled();
-            bench();
+            if (g_job.kind == KIND_PLAY) {
+                play();
+            } else {
+                bench();
+            }
             g_job.state = JOB_DONE;
         }
         task_sleep(2u);
@@ -243,11 +380,34 @@ static void put_ms(uint32_t ms)
     uart_puts(" ms");
 }
 
-static void report(void)
+static const char *err_text(int e)
 {
-    if (g_job.err && g_job.err != 1) {
+    switch (e) {
+    case MP3_ERR_NOFRAME: return "no frame decoded";
+    case MP3_ERR_RATE:    return "sample rate outside what the DAC can play (19.6-48 kHz)";
+    case MP3_ERR_PCM:     return "pcm_start refused";
+    default:              return fat_strerror(e);
+    }
+}
+
+static uint32_t mean_abs(void)
+{
+    /* sum / n without 64-bit division: shift both down until the sum fits. */
+    uint32_t n = g_job.nsamp ? g_job.nsamp : 1u;
+    uint32_t hi = g_job.abs_sum_hi, lo = g_job.abs_sum_lo, sh = 0;
+    while (hi) {
+        lo = (lo >> 1) | (hi << 31);
+        hi >>= 1;
+        sh++;
+    }
+    return (lo / n) << sh;
+}
+
+static void report_bench(void)
+{
+    if (g_job.err && g_job.err != MP3_ERR_NOFRAME) {
         uart_puts("   ");
-        uart_puts(fat_strerror(g_job.err));
+        uart_puts(err_text(g_job.err));
         uart_puts("\n");
         return;
     }
@@ -258,7 +418,7 @@ static void report(void)
     uart_puts("  bytes read=");
     uart_put_dec(g_job.bytes);
     uart_puts("\n");
-    if (g_job.err == 1) {
+    if (g_job.err == MP3_ERR_NOFRAME) {
         uart_puts("   no frame decoded\n");
         return;
     }
@@ -292,16 +452,71 @@ static void report(void)
     uart_puts("% of real time\n   output peak=");
     uart_put_dec((uint32_t)g_job.peak);
     uart_puts("  mean |s|=");
-    /* sum / n without 64-bit division: n < 2^24 here, so shift both down. */
-    uint32_t n = g_job.nsamp ? g_job.nsamp : 1u;
-    uint32_t hi = g_job.abs_sum_hi, lo = g_job.abs_sum_lo, sh = 0;
-    while (hi) {
-        lo = (lo >> 1) | (hi << 31);
-        hi >>= 1;
-        sh++;
-    }
-    uart_put_dec((lo / n) << sh);
+    uart_put_dec(mean_abs());
     uart_puts("   (of 32767)\n");
+}
+
+/* `mp3` while playing (or after): where it is, and whether it is keeping up.
+ * The two numbers that say "stutter" are underruns (the DMA replayed a stale
+ * buffer) and the decoder's CPU against the wall clock since it started. */
+static void report_play(void)
+{
+    const char *st = (g_job.state == JOB_RUNNING) ? "PLAYING" :
+                     (g_job.state == JOB_DONE)    ? "finished" : "idle";
+    uart_puts("   ");
+    uart_puts(st);
+    uart_puts("  ");
+    uart_puts(g_job.path);
+    uart_puts("\n");
+    if (g_job.err) {
+        uart_puts("   error: ");
+        uart_puts(err_text(g_job.err));
+        uart_puts("\n");
+    }
+    if (!g_job.hz) {
+        return;
+    }
+    uint32_t pos_s = g_job.samples / g_job.hz;
+    uart_puts("   at ");
+    uart_put_dec(pos_s / 60u);
+    uart_puts(":");
+    if (pos_s % 60u < 10u) { uart_putc('0'); }
+    uart_put_dec(pos_s % 60u);
+    uart_puts("  (");
+    uart_put_dec(g_job.size ? (g_job.id3 + g_job.bytes) / (g_job.size / 100u + 1u) : 0u);
+    uart_puts("% of the file)  ");
+    uart_put_dec(g_job.hz);
+    uart_puts(" Hz ");
+    uart_put_dec(g_job.channels);
+    uart_puts(" ch  ");
+    uart_put_dec(g_job.kbps_min);
+    uart_puts("-");
+    uart_put_dec(g_job.kbps_max);
+    uart_puts(" kbps\n   underruns=");
+    uart_put_dec(pcm_underruns());
+    uart_puts(" blind=");
+    uart_put_dec(pcm_blind());
+    uart_puts("  ring-full waits=");
+    uart_put_dec(g_job.full_waits);
+    uart_puts("  dac rate measured=");
+    uart_put_dec(pcm_rate_actual());
+    uint32_t now = g_job.end_tick ? g_job.end_tick : timer_ticks();
+    uint32_t wall_ms = (now - g_job.start_tick) * 10u;
+    uart_puts("\n   decode CPU ");
+    put_ms(g_job.dec_ms);
+    uart_puts(" + SD ");
+    put_ms(g_job.read_ms);
+    uart_puts(" over ");
+    put_ms(wall_ms);
+    uart_puts(" wall = ");
+    uart_put_dec(wall_ms ? (g_job.dec_ms + g_job.read_ms) * 100u / wall_ms : 0u);
+    uart_puts("%   worst frame ");
+    uart_put_dec(g_job.worst_cc / (CPU_HZ / 1000000u));
+    uart_puts(" us\n   output peak=");
+    uart_put_dec((uint32_t)g_job.peak);
+    uart_puts(" mean |s|=");
+    uart_put_dec(mean_abs());
+    uart_puts("\n");
 }
 
 static uint32_t parse_u32(const char *s, const char **end)
@@ -312,6 +527,54 @@ static uint32_t parse_u32(const char *s, const char **end)
     }
     *end = s;
     return v;
+}
+
+/* Hands a job to the decoder task, creating it on first use. */
+static int submit(int kind, const char *path, uint32_t frames)
+{
+    if (!fat_mounted() && fat_mount() != FAT_OK) {
+        uart_puts("   card not mounted\n");
+        return 0;
+    }
+    if (g_task < 0) {
+        g_task = task_create_with_stack("mp3", mp3_task, g_stack, STACK_WORDS);
+        if (g_task < 0) {
+            uart_puts("   task table full\n");
+            return 0;
+        }
+        /* AUDIO, above the display (task.h). At HIGH it got 23% of the CPU
+         * and underran 465 times in 30 s. Safe only because queue() sleeps
+         * whenever the ring is full -- see there. */
+        task_set_priority(g_task, TASK_PRIO_AUDIO);
+    }
+    if (g_job.state == JOB_PENDING || g_job.state == JOB_RUNNING) {
+        uart_puts("   busy -- 'mp3 stop' first\n");
+        return 0;
+    }
+    uint8_t *z = (uint8_t *)&g_job;
+    for (uint32_t i = 0; i < sizeof g_job; i++) {
+        z[i] = 0;
+    }
+    uint32_t i = 0;
+    for (; path[i] && i < sizeof g_job.path - 1u; i++) {
+        g_job.path[i] = path[i];
+    }
+    g_job.path[i] = 0;
+    g_job.kind = kind;
+    g_job.frames_wanted = frames;
+    g_job.state = JOB_PENDING;
+    return 1;
+}
+
+/* Waits for the job without holding the console: tasks that print would
+ * otherwise block on it, and their time would be lost from the comparison. */
+static void wait_done(void)
+{
+    console_unlock();
+    while (g_job.state == JOB_PENDING || g_job.state == JOB_RUNNING) {
+        task_sleep(5u);
+    }
+    console_lock();
 }
 
 void mp3_shell(char *arg)
@@ -332,46 +595,36 @@ void mp3_shell(char *arg)
             uart_puts("   mp3 bench <frames> <file>\n");
             return;
         }
-        if (!fat_mounted() && fat_mount() != FAT_OK) {
-            uart_puts("   card not mounted\n");
+        if (submit(KIND_BENCH, p, frames)) {
+            uart_puts("   decoding on task 'mp3'...\n");
+            wait_done();
+            report_bench();
+            g_job.state = JOB_IDLE;
+        }
+    } else if (sub[0] == 'p' && sub[1] == 'l') {            /* play */
+        if (!*rest) {
+            uart_puts("   mp3 play <file>\n");
             return;
         }
-        if (g_task < 0) {
-            g_task = task_create_with_stack("mp3", mp3_task, g_stack, STACK_WORDS);
-            if (g_task < 0) {
-                uart_puts("   task table full\n");
-                return;
-            }
+        if (submit(KIND_PLAY, rest, 0)) {
+            uart_puts("   playing on task 'mp3' -- 'mp3' for status, 'mp3 stop' to stop\n");
         }
-        if (g_job.state == JOB_PENDING || g_job.state == JOB_RUNNING) {
-            uart_puts("   busy\n");
-            return;
+    } else if (sub[0] == 's' && sub[1] == 't') {            /* stop */
+        if (g_job.state == JOB_RUNNING || g_job.state == JOB_PENDING) {
+            g_job.stop = 1;
+            wait_done();
         }
-        /* Fresh results; the path copied because `arg` is the shell's line. */
-        uint8_t *z = (uint8_t *)&g_job;
-        for (uint32_t i = 0; i < sizeof g_job; i++) {
-            z[i] = 0;
+        report_play();
+    } else if (!*sub) {
+        if (g_job.kind == KIND_PLAY) {
+            report_play();
+        } else {
+            uart_puts("   no song has been played\n");
         }
-        uint32_t i = 0;
-        for (; p[i] && i < sizeof g_job.path - 1u; i++) {
-            g_job.path[i] = p[i];
-        }
-        g_job.path[i] = 0;
-        g_job.frames_wanted = frames;
-        g_job.state = JOB_PENDING;
-
-        uart_puts("   decoding on task 'mp3'...\n");
-        /* Wait without holding the console: tasks that print would block on
-         * it and their time would be lost from the comparison. */
-        console_unlock();
-        while (g_job.state != JOB_DONE) {
-            task_sleep(5u);
-        }
-        console_lock();
-        g_job.state = JOB_IDLE;
-        report();
     } else {
-        uart_puts("   mp3 bench <frames> <file>   decode N frames; cost in the decoder's\n"
-                  "                               own CPU time against the audio's length\n");
+        uart_puts("   mp3                      status of what is playing\n"
+                  "   mp3 play <file>          play it (a name ending * matches a prefix)\n"
+                  "   mp3 stop\n"
+                  "   mp3 bench <frames> <f>   decode N frames; cost in the decoder's own CPU\n");
     }
 }

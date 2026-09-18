@@ -8,7 +8,6 @@
 
 #include "pcm.h"
 #include "audio.h"
-#include "heap.h"
 #include "task.h"
 #include "timer.h"
 #include "uart.h"
@@ -115,6 +114,9 @@ typedef struct {
 #define D_BYTES     (PCM_SAMPLES * 2u)
 #define D_CTRL      (D_BYTES | (D_BYTES << 12) | (1u << 30) | (1u << 31))
 
+#define SRAM1 __attribute__((section(".sram1")))
+SRAM1 static desc_t   g_ring_desc[PCM_BUFS];
+SRAM1 static uint16_t g_ring[PCM_BUFS * PCM_SAMPLES];
 static desc_t   *g_desc;
 static uint16_t *g_buf;             /* PCM_BUFS * PCM_SAMPLES */
 static int       g_running;
@@ -317,15 +319,8 @@ int pcm_start(uint32_t rate)
     if (g_running) {
         pcm_stop();
     }
-    g_desc = (desc_t *)heap_alloc(PCM_BUFS * sizeof(desc_t));
-    g_buf  = (uint16_t *)heap_alloc(PCM_BUFS * D_BYTES);
-    if (!g_desc || !g_buf) {
-        if (g_desc) { heap_free(g_desc); }
-        if (g_buf)  { heap_free(g_buf); }
-        g_desc = 0;
-        g_buf  = 0;
-        return -2;
-    }
+    g_desc = g_ring_desc;
+    g_buf  = g_ring;
     for (uint32_t i = 0; i < PCM_BUFS * PCM_SAMPLES; i++) {
         g_buf[i] = 0x8000u;
     }
@@ -408,8 +403,6 @@ void pcm_stop(void)
     REG(I2S_LC_CONF) &= ~(LC_OUT_AUTO_WRBACK | LC_OUT_EOF_MODE);
     dac_pad_release();
     g_running = 0;
-    heap_free(g_buf);
-    heap_free(g_desc);
     g_buf  = 0;
     g_desc = 0;
 }

@@ -23,10 +23,9 @@
  *
  * ---- concurrency -----------------------------------------------------------
  *
- * None. One sector buffer and one FAT-sector cache, shared, unlocked -- and
- * sd.c itself is unlocked, with device.c as a second caller. Today every user
- * is the shell. The player will be a second one, and that is the point at
- * which this needs a mutex; noted here so it is not discovered as corruption.
+ * One mutex around every public entry point (fat.c, "the lock"), added when
+ * the player became a second caller. sd.c beneath it is still unlocked;
+ * callers that bypass FAT use fat_lock()/fat_unlock().
  */
 
 #ifndef NATOS_FAT_H
@@ -96,6 +95,11 @@ int32_t fat_read(fat_file_t *f, void *buf, uint32_t n);
 int fat_seek(fat_file_t *f, uint32_t pos);
 
 const char *fat_strerror(int rc);
+
+/* The lock every function above takes. Exported for callers that go to sd.c
+ * directly and must not do so while the player is reading. Recursive. */
+void fat_lock(void);
+void fat_unlock(void);
 
 void fat_shell(char *arg);
 

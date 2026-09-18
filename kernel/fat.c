@@ -11,6 +11,7 @@
 #include "xtensa.h"
 #include "mp3hdr.h"
 #include "task.h"
+#include "mutex.h"
 
 void *memcpy(void *dst, const void *src, size_t n);     /* kstring.c */
 
@@ -96,7 +97,7 @@ static int looks_like_bpb(const uint8_t *b)
         && b[16] != 0u;                     /* number of FATs   */
 }
 
-int fat_mount(void)
+static int mount_impl(void)
 {
     g_mounted = 0;
     g_sec_lba = g_fatsec_lba = 0xFFFFFFFFu;
@@ -259,7 +260,7 @@ static void lfn_put(char *dst, uint32_t pos, uint16_t ch, fat_dir_t *d)
     dst[pos] = (ch < 0x80u) ? (char)ch : '?';
 }
 
-int fat_dir_next(fat_dir_t *d, fat_dirent_t *e)
+static int dir_next_impl(fat_dir_t *d, fat_dirent_t *e)
 {
     if (!g_mounted) {
         return FAT_ERR_MOUNT;
@@ -415,7 +416,7 @@ static int lookup(const char *path, fat_dirent_t *e)
     return FAT_OK;
 }
 
-int fat_dir_open(fat_dir_t *d, const char *path)
+static int dir_open_impl(fat_dir_t *d, const char *path)
 {
     fat_dirent_t e;
     int rc = lookup(path, &e);
@@ -430,7 +431,7 @@ int fat_dir_open(fat_dir_t *d, const char *path)
     return FAT_OK;
 }
 
-int fat_open(fat_file_t *f, const char *path)
+static int open_impl(fat_file_t *f, const char *path)
 {
     fat_dirent_t e;
     int rc = lookup(path, &e);
@@ -447,7 +448,7 @@ int fat_open(fat_file_t *f, const char *path)
     return FAT_OK;
 }
 
-int fat_seek(fat_file_t *f, uint32_t pos)
+static int seek_impl(fat_file_t *f, uint32_t pos)
 {
     if (pos > f->size) {
         pos = f->size;
@@ -469,7 +470,7 @@ int fat_seek(fat_file_t *f, uint32_t pos)
     return FAT_OK;
 }
 
-int32_t fat_read(fat_file_t *f, void *buf, uint32_t n)
+static int32_t read_impl(fat_file_t *f, void *buf, uint32_t n)
 {
     if (!g_mounted) {
         return FAT_ERR_MOUNT;
@@ -518,6 +519,70 @@ int32_t fat_read(fat_file_t *f, void *buf, uint32_t n)
          * next read does that, and a file ending there has no next cluster. */
     }
     return (int32_t)got;
+}
+
+/* ---- the lock ---------------------------------------------------------------
+ *
+ * [next_moves/11 step 5] Until the player, every caller was the shell. Now the
+ * decoder task reads the card for minutes at a time while a person can type
+ * `fat ls` -- two tasks through one sector buffer, one FAT cache and one SD
+ * bus, none of which is reentrant. Every public entry point takes this mutex.
+ * It is recursive, so fat_open -> lookup -> fat_dir_next nests harmlessly.
+ *
+ * sd.c is below it and still unlocked. Its other callers (device.c, and the
+ * shell's sd/sdread/sdspeed) take fat_lock() explicitly, or are recorded as not
+ * doing so. */
+static mutex_t g_lock = { MUTEX_FREE, 0, 0, 0, 0, 0, 0 };
+
+void fat_lock(void)   { mutex_lock(&g_lock); }
+void fat_unlock(void) { mutex_unlock(&g_lock); }
+
+int fat_mount(void)
+{
+    mutex_lock(&g_lock);
+    int rc = mount_impl();
+    mutex_unlock(&g_lock);
+    return rc;
+}
+
+int fat_dir_open(fat_dir_t *d, const char *path)
+{
+    mutex_lock(&g_lock);
+    int rc = dir_open_impl(d, path);
+    mutex_unlock(&g_lock);
+    return rc;
+}
+
+int fat_dir_next(fat_dir_t *d, fat_dirent_t *e)
+{
+    mutex_lock(&g_lock);
+    int rc = dir_next_impl(d, e);
+    mutex_unlock(&g_lock);
+    return rc;
+}
+
+int fat_open(fat_file_t *f, const char *path)
+{
+    mutex_lock(&g_lock);
+    int rc = open_impl(f, path);
+    mutex_unlock(&g_lock);
+    return rc;
+}
+
+int fat_seek(fat_file_t *f, uint32_t pos)
+{
+    mutex_lock(&g_lock);
+    int rc = seek_impl(f, pos);
+    mutex_unlock(&g_lock);
+    return rc;
+}
+
+int32_t fat_read(fat_file_t *f, void *buf, uint32_t n)
+{
+    mutex_lock(&g_lock);
+    int32_t rc = read_impl(f, buf, n);
+    mutex_unlock(&g_lock);
+    return rc;
 }
 
 /* ---- shell ------------------------------------------------------------------ */
