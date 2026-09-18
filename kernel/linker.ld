@@ -25,6 +25,20 @@ MEMORY
    * blob having writable state, and the MMU cannot help with it. */
   dram (rw)  : ORIGIN = 0x3FFB0000, LENGTH = 0x24000   /* 144 KB */
 
+  /* [next_moves/11 step 4] SRAM1's upper 60 KB, the first RAM above the
+   * old "ROM-reserved" line to be claimed.
+   *
+   * UM-NATOS-004 avoided all of 0x3FFE0000.. on a belief it flagged as untested.
+   * next_moves/08 step 396 measured it with a write-and-verify probe: the ROM
+   * touches 0x3FFE0000/1000/3000 and 0x3FFF0000 (flash writes, PHY bring-up),
+   * deterministically, and 0x3FFF1000..0x40000000 survived all of it -- a
+   * flash write, a PHY bring-up and a full WPA2 join, twice, byte for byte.
+   * This region is exactly that surviving block and nothing more.
+   *
+   * Untested there, so untrusted here: BT, deep sleep, OTA, coredump. Only
+   * data that can be rebuilt goes in it -- decoder state, never the record. */
+  sram1 (rw) : ORIGIN = 0x3FFF1000, LENGTH = 0xF000    /* 60 KB */
+
   /* Flash mapped read-only through the data cache.
    *
    * Nothing is copied here: the 2nd-stage bootloader recognises load addresses
@@ -317,6 +331,12 @@ SECTIONS
     *fat.c.o(.literal .literal.* .text .text.*)
     *mp3hdr.c.o(.literal .literal.* .text .text.*)
 
+    /* [next_moves/11 step 4] mp3.c, i.e. minimp3: 19 KB, run by the decoder
+     * task only. In flash first because iram is the scarcer resource; whether
+     * cache misses cost real decode time is a measurement, not an assumption,
+     * and moving it is a one-line change if they do. */
+    *mp3.c.o(.literal .literal.* .text .text.*)
+
     . = ALIGN(4);
     _flash_text_end = .;
   } > irom
@@ -389,6 +409,17 @@ SECTIONS
     . = ALIGN(4);
     _bss_end = .;
   } > dram
+
+  /* SRAM1: NOLOAD, so nothing here is in the image and the contents at boot
+   * are whatever the silicon holds. Users zero what they need. Placed with
+   * __attribute__((section(".sram1"))). */
+  .sram1 (NOLOAD) : ALIGN(16)
+  {
+    _sram1_start = .;
+    *(.sram1 .sram1.*)
+    . = ALIGN(4);
+    _sram1_end = .;
+  } > sram1
 
   /* Kernel stack grows down from the top of DRAM. */
   _stack_top = ORIGIN(dram) + LENGTH(dram);

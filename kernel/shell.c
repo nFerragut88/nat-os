@@ -24,6 +24,7 @@ extern uint32_t wincollide_bad(void);
 #include "sd.h"
 #include "pcm.h"
 #include "fat.h"
+#include "mp3.h"
 #include "touch.h"
 #include "calib.h"
 #include "intr.h"
@@ -626,6 +627,7 @@ static void execute(char *line)
     else if (str_eq(line, "pcm")) { pcm_shell(arg); }
     else if (str_eq(line, "fat")) { fat_shell(arg); }
     else if (str_eq(line, "cpu")) { cmd_cpu(); }
+    else if (str_eq(line, "mp3")) { mp3_shell(arg); }
     else if (str_eq(line, "sdspeed")) {
         /* [next_moves/11 step 3] SCK = 80 MHz / div on SPI3; 0 = bit-banged.
          * Re-initialises the card, so the next `fat` remounts at that speed. */

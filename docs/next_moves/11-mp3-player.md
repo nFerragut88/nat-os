@@ -281,3 +281,76 @@ open   display takes ~75% of the CPU on an idle desktop; idle task gets 0%.
        The player's real obstacle.
        fat/sd unlocked; device.c and boot are also SD callers (step 2e)
 next   C: claim SRAM1, enable the FPU; D: minimp3, timed in its own cycles
+
+---
+
+## step 4 — minimp3 decodes on the board, at 46% of real time, at 80 MHz
+
+### 4a. What was built
+
+- **`vendor/minimp3/`**: lieff's minimp3, CC0, commit `ea99364`, sha256
+  recorded. **One local change**: an `#ifdef` letting the 16 KB
+  `mp3dec_scratch_t` be a static instead of a stack local (README.md there).
+  The decoder is therefore not reentrant.
+- **SRAM1 claimed.** `linker.ld` region `sram1` = 0x3FFF1000..0x40000000,
+  exactly the block 08 step 396 measured as surviving a flash write, PHY
+  bring-up and a WPA2 join. NOLOAD section `.sram1`. It holds the decoder
+  state, scratch, an 8 KB input buffer, the PCM frame and the decoder task's
+  6 KB stack: **41.9 KB of 60, and 0 bytes of heap.**
+- **The FPU.** CPENABLE was never set and FP registers are not saved on a
+  switch. The decoder task sets CPENABLE; `build.ps1` now **fails any build in
+  which an object other than mp3.c contains an FPU instruction**, so "only one
+  task uses the FPU" is checked rather than remembered. The check was itself
+  checked: 661 hits in mp3.c.o, 0 in kmain.c.o.
+- **`__divsf3`** supplied in mp3.c (no libgcc): reciprocal by bit trick + 3
+  Newton steps. minimp3 divides once, in L3_pow_43, by an integer >= 64. Not
+  IEEE; limits stated at the definition.
+- **`mp3 bench <frames> <file>`**: decodes on its own task ('mp3'), timing
+  decode and SD reads in THAT TASK'S OWN cycles.
+
+### 4b. Measured
+
+```
+mp3 bench 100 musical*   100 frames 48 kHz 2 ch 32-256 kbps
+   decode 1002 ms CPU for 2400 ms audio = 41%   avg 10.0 ms/frame, worst 11.4
+   output peak=0 mean=0     <- 14,432 bytes for 100 frames: a silent lead-in
+mp3 bench 300 night*     300 frames 48 kHz 2 ch 32-320 kbps
+   decode 3373 ms CPU for 7200 ms audio = 46%   avg 11.2 ms/frame, worst 14.2
+   SD read  425 ms CPU = 5%
+   output peak=32768 mean |s|=4745 -- music, at full scale
+   cpenable=0x1 read back inside the task; no fault
+```
+
+**The "measure first" decision is answered: 80 MHz is enough.** 48 kHz stereo
+at up to 320 kbps costs ~46% decode + ~5% SD = ~51% of one core, with the
+worst frame (14.2 ms) well inside its 24 ms. No clock change and no file
+limit needed -- decoded from flash (irom) with cache misses included.
+
+The zero-peak result on the first file was checked, not waved through: that
+stretch averaged 144 bytes/frame (~48 kbps, floor 32), which is what digital
+silence costs in VBR, and the second file's full-scale output shows the path
+from decoder to sample buffer works.
+
+### 4c. What this makes the real problem
+
+~51% needed, and step 3c measured the display task taking ~75% on an idle
+desktop with idle at 0%. Round-robin will not give the decoder half the CPU.
+That is step 5's problem.
+
+### 4d. Not attributed
+
+The boot banner showed `LAST FAULT: exception, exccause 20, epc 0x00000000
+(boot #99)` -- InstFetchProhibited at address 0, a call through a null
+pointer. The current boot is **#127**. The record persists until another fault
+overwrites it, so this happened 28 boots ago and cannot be placed within this
+work or outside it from the record alone. Recorded, not chased.
+
+### State
+
+```
+works  minimp3 on its own task, SRAM1, FPU; 46% of real time for 48 kHz
+       stereo 320 kbps at 80 MHz; SD 5%
+open   the decoder needs ~51% of the CPU; the display takes ~75%
+       LAST FAULT exccause 20 epc 0 from boot #99, unattributed
+next   E: streaming playback -- decode, downmix, pcm_write at 48 kHz --
+       and the scheduling that makes it keep up

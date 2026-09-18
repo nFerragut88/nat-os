@@ -78,6 +78,8 @@ $cflags = @(
     # lives in kernel/ and is found by the -I above.
     "-I", "$root\vendor\lwip\include",
     "-I", "$root\vendor\wpa\include",
+    # minimp3 is header-only and included by kernel/mp3.c alone.
+    "-I", "$root\vendor\minimp3",
     "-DBOARD_$($Board.ToUpper())"
 )
 if ($WiFi) { $cflags += "-DBOARD_WIFI_OVERRIDE=1" }
@@ -324,6 +326,31 @@ if (Test-Path "$root\vendor\phy\libphy_natos.a") {
 } elseif (-not $WiFi) {
     Write-Host "  no vendor archives: this image is blob-free" -ForegroundColor Green
 }
+
+# [next_moves/11 step 4] Exactly one object may use the FPU.
+#
+# nat-os does not save FPU registers (f0-f15, FCR, FSR) on a task switch, and
+# the decoder sets CPENABLE for the whole core. That is correct only while ONE
+# task ever executes FPU instructions: two, and each silently corrupts the
+# other's floating-point state at every preemption -- wrong numbers, no fault.
+#
+# So the rule is checked rather than remembered. Any object other than mp3.c
+# containing an FPU instruction fails the build. Writing a `float` anywhere
+# else in the kernel is the way this would break; that now stops here instead of
+# producing audio glitches nobody can trace.
+$objdump = Find-Tool "toolchain-xtensa-esp32\bin\xtensa-esp32-elf-objdump.exe"
+$fpuPattern = '\s(lsi|lsiu|ssi|ssiu|lsx|lsxu|ssx|ssxu|wfr|rfr|rur\.f[cs]r|wur\.f[cs]r|[a-z0-9]+\.s)\s'
+$fpuUsers = @()
+foreach ($o in $objs) {
+    if ((Split-Path $o -Leaf) -eq "mp3.c.o") { continue }
+    $hits = & $objdump -d $o | Select-String -Pattern $fpuPattern
+    if ($hits) { $fpuUsers += "$(Split-Path $o -Leaf): $($hits[0].Line.Trim())" }
+}
+if ($fpuUsers) {
+    $fpuUsers | ForEach-Object { Write-Host "  FPU instruction outside mp3.c: $_" -ForegroundColor Red }
+    throw "FPU check failed: only mp3.c may use the FPU (FP registers are not saved on a task switch)"
+}
+Write-Host "  FPU check: only mp3.c uses the FPU" -ForegroundColor DarkGray
 
 $ldflags = @(
     "-mabi=call0", "-nostdlib", "-nostartfiles",
