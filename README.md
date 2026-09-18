@@ -28,7 +28,8 @@ project code.
 | **Input** | XPT2046 touch, gated on PENIRQ *and* pressure, confined per application |
 | **UI** | Touch launcher; a program can own the main 240x202 region, with the way out drawn where it cannot reach |
 | **Graphics** | Raycast 3D view at 16 fps, optional framebuffer |
-| **Storage** | Flash records surviving power cycles; microSD read over SPI |
+| **Storage** | Flash records surviving power cycles; microSD over hardware SPI, read-only FAT16/FAT32 with long names |
+| **Audio** | MP3 playback: minimp3 at 80 MHz, 48 kHz stereo into the DAC by DMA, 0 underruns over a whole song; a music app on the launcher (UM-NATOS-063) |
 | **Networking** | WPA2-PSK, DHCP, a DNS resolver and a TCP/HTTP client — see the caveat below |
 | **Failure** | Stack guards enforced per switch, hang detector, panic to serial *and* flash *and* the panel |
 
