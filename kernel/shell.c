@@ -547,6 +547,50 @@ static void cmd_cpu(void)
     uart_puts("% of wall\n");
 }
 
+/* Where the display task's time goes, per section, over one second -- in its
+ * own cycles, so preemption is not counted as drawing. */
+static void cmd_dispcost(void)
+{
+    extern uint32_t g_dc_view, g_dc_chrome, g_dc_spec, g_dc_frames;
+    int disp = -1;
+    for (int i = 0; i < TASK_MAX; i++) {
+        const char *n = task_name(i);
+        if (task_exists(i) && n[0] == 'd' && n[1] == 'i' && n[2] == 's') { disp = i; }
+    }
+    uint32_t v = g_dc_view, c = g_dc_chrome, s = g_dc_spec, f = g_dc_frames;
+    uint32_t sf = store_frames();       /* +256 per flash save the loop makes */
+    uint32_t all = disp >= 0 ? task_cpu_cycles_of(disp) : 0u;
+    uint32_t t0 = xt_ccount();
+    console_unlock();
+    task_sleep(100u);
+    console_lock();
+    uint32_t wall = (xt_ccount() - t0) / 80000u;            /* ms */
+    uint32_t pv = (g_dc_view - v) / 80000u;
+    uint32_t pc = (g_dc_chrome - c) / 80000u;
+    uint32_t ps = (g_dc_spec - s) / 80000u;
+    uint32_t pa = disp >= 0 ? (task_cpu_cycles_of(disp) - all) / 80000u : 0u;
+    uart_puts("   display task over ");
+    uart_put_dec(wall);
+    uart_puts(" ms: ran ");
+    uart_put_dec(pa);
+    uart_puts(" ms, ");
+    uart_put_dec(g_dc_frames - f);
+    uart_puts(" frames\n     view ");
+    uart_put_dec(pv);
+    uart_puts(" ms   chrome ");
+    uart_put_dec(pc);
+    uart_puts(" ms   spectrum strip ");
+    uart_put_dec(ps);
+    uart_puts(" ms   rest of loop ");
+    uart_put_dec(pa > pv + pc + ps ? pa - pv - pc - ps : 0u);
+    /* Was "(delta / 256) saves" while each save added exactly 256 frames. Since
+     * step 8 a save adds the frames actually drawn, once a minute, so all this
+     * second can say is whether one happened. */
+    uart_puts(" ms\n     frame-count record written to flash in that second: ");
+    uart_puts(store_frames() != sf ? "YES" : "no");
+    uart_puts(" (each is an erase: 125 ms with interrupts masked)\n");
+}
+
 static void cmd_mem(void)
 {
     uart_puts("   heap free=");
@@ -657,6 +701,7 @@ static void execute(char *line)
     else if (str_eq(line, "pcm")) { pcm_shell(arg); }
     else if (str_eq(line, "fat")) { fat_shell(arg); }
     else if (str_eq(line, "cpu")) { cmd_cpu(); }
+    else if (str_eq(line, "dispcost")) { cmd_dispcost(); }
     else if (str_eq(line, "mp3")) { mp3_shell(arg); }
     else if (str_eq(line, "musicopen")) {
         /* Opens the music view exactly as its icon does, for testing without

@@ -224,9 +224,20 @@ static void task_vm(void)
          * for cycles it cannot use. */
         if (g_vm_result != (uint32_t)VM_RUN_QUANTUM) {
             for (;;) {
-                task_yield();
+                /* [next_moves/11 step 8] Sleep, not yield: a yield loop is
+                 * still a spin, it just spins politely. */
+                task_sleep(100u);
             }
         }
+
+        /* [next_moves/11 step 8] Rest between quanta -- the workers' rule,
+         * "continuously, not constantly". This program exists to show the VM
+         * survives preemption, which a quantum every few ticks shows as well as
+         * a thousand; running quanta back to back took whatever CPU was left,
+         * and once the display and reporter stopped spinning that was 70%. One
+         * tick between quanta still cost 22% (a 2,000-instruction quantum is
+         * ~2 ms); four is ~5%. */
+        task_sleep(4u);
     }
 }
 
@@ -316,6 +327,12 @@ static void task_report(void)
     for (;;) {
         uint32_t t = timer_ticks();
         if (t - reported < 200u) {
+            /* [next_moves/11 step 8] Sleep out the rest of the interval. This
+             * was a bare `continue`: a busy-wait that burned every cycle it was
+             * given between reports. It looked like 9% only because the display
+             * was taking the rest; once the display stopped spinning, the
+             * reporter took 63% and idle still got 0 (`cpu`). */
+            task_sleep(200u - (t - reported));
             continue;
         }
         reported = t;
@@ -1416,6 +1433,11 @@ static void task_net(void)
     }
 }
 
+/* [dispcost] This task's own cycles by section, and its frame count. Built to
+ * find where the ~75% of the CPU the display takes on an idle desktop goes
+ * (next_moves/11 step 3c) before changing anything. */
+uint32_t g_dc_view, g_dc_chrome, g_dc_spec, g_dc_frames;
+
 static void task_display(void)
 {
     /* Nothing static any more: the backdrop is repainted every frame and
@@ -1428,6 +1450,8 @@ static void task_display(void)
      * painted here. */
 
     uint32_t frame = 0;
+    uint32_t saved_frame = 0;               /* frames already in the record */
+    uint32_t saved_tick  = timer_ticks();   /* when they were written */
     for (;;) {
         /* The dungeon view owns the top 168 rows. The status text that used to
          * live here is gone from the panel — it is all still on the UART, and a
@@ -1458,6 +1482,7 @@ static void task_display(void)
          * on to the next whether or not anyone is looking at the list. */
         player_service();
 
+        uint32_t dc0 = task_cpu_cycles();
         if (desktop_active()) {
             desktop_frame();
         } else if (desktop_notes()) {
@@ -1485,8 +1510,20 @@ static void task_display(void)
          * inheriting the raycaster, which looks like a feature misbehaving. */
 
         /* Close buttons last, so they sit over whatever drew beneath them. */
+        uint32_t dc1 = task_cpu_cycles();
         desktop_chrome();
-        spectrum_region(SPEC_Y, SPEC_H, frame, 96u);
+        uint32_t dc2 = task_cpu_cycles();
+        /* [next_moves/11 step 8] Animated by the TICK, not the frame count, so
+         * the strip moves at one speed whatever the frame rate: it used to race
+         * at 122-168 fps on the launcher and crawl at 15 in the 3D view. 100
+         * ticks a second against SPEC_STEPS 64 is the ~0.6 s half-cycle it had
+         * on the launcher. */
+        spectrum_region(SPEC_Y, SPEC_H, timer_ticks(), 96u);
+        uint32_t dc3 = task_cpu_cycles();
+        g_dc_view  += dc1 - dc0;
+        g_dc_chrome += dc2 - dc1;
+        g_dc_spec  += dc3 - dc2;
+        g_dc_frames++;
 
         frame++;
 
@@ -1511,11 +1548,20 @@ static void task_display(void)
          *
          * Once a minute is a few thousand erases over a part rated for a
          * hundred thousand, and the sector is used by nothing else. */
-#define STORE_EVERY_FRAMES 256u
+        /* [next_moves/11 step 8] ...and 256 frames was not "about once a
+         * minute" for long. Once the loop ran flat out the launcher drew 122
+         * frames a second, so this erased the record's sector every ~2 s --
+         * measured, one save per ~2 s with `dispcost` -- about 40,000 erases a
+         * day against a part rated for ~100,000, each masking interrupts for
+         * 125 ms. The interval is now TIME, which is what the reasoning above
+         * always meant, and the count added is the frames actually drawn. */
+#define STORE_EVERY_TICKS 6000u         /* one minute at 100 Hz */
 
 #if FLASH_ENABLE
-        if ((frame % STORE_EVERY_FRAMES) == 0u) {
-            store_set_frames(store_frames() + STORE_EVERY_FRAMES);
+        if ((uint32_t)(timer_ticks() - saved_tick) >= STORE_EVERY_TICKS) {
+            store_set_frames(store_frames() + (frame - saved_frame));
+            saved_frame = frame;
+            saved_tick  = timer_ticks();
             /* Asks before spending 125 ms with interrupts masked. Nothing
              * registers a predicate yet, so today this is store_save() with an
              * extra branch -- the point is that the call site is now the right
@@ -1556,7 +1602,26 @@ static void task_display(void)
          * the frame period from ~32 ms to ~51 ms — the fix was correct and the
          * consequence here was a slower view. The yield restores the timing
          * these numbers were taken under. */
-        task_yield();
+        /* [next_moves/11 step 8] Only the 3D view runs flat out.
+         *
+         * Everything above was reasoned about the RAYCASTER, which redraws the
+         * whole region every frame and is limited by how often it gets to. But
+         * the yield applied to every view, and on the launcher -- which draws
+         * nothing when nothing changed -- it spun the loop 122 times a second
+         * to repaint the spectrum strip (573 ms of CPU a second) and the chrome
+         * (264 ms): 74% of the CPU, idle at 0%, measured with `dispcost`. The
+         * music view ran it at 168 fps.
+         *
+         * So the 3D view keeps the yield and its frame rate, and every other
+         * view sleeps DISPLAY_IDLE_TICKS between frames: ~20 fps, plenty for
+         * a keyboard, a list and a clock, and the strip animates by the tick
+         * so it looks the same. */
+#define DISPLAY_IDLE_TICKS 4u
+        if (desktop_3d()) {
+            task_yield();
+        } else {
+            task_sleep(DISPLAY_IDLE_TICKS);
+        }
     }
 }
 
@@ -1814,7 +1879,12 @@ static void task_apps(void)
     for (;;) {
         app_tick(2000);
         if (app_live_count() == 0) {
-            task_yield();       /* nothing to run — do not spin at full tilt */
+            /* [next_moves/11 step 8] Was task_yield(), commented "do not spin
+             * at full tilt" -- and it spun at full tilt: a yield loop with
+             * nothing to run took 42% of the CPU once the display, reporter
+             * and vm-host stopped taking it first. Two ticks is how long a
+             * program started from the launcher or shell waits to be run. */
+            task_sleep(2u);
         }
     }
 }

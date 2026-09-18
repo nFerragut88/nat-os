@@ -590,3 +590,90 @@ works  board.py answers at the speed of the board: prompts in ~0.1 s
 open   display ~75% when idle (3c); auto-advance unobserved (6d);
        LAST FAULT from boot #99 (4d)
 ```
+
+---
+
+## step 8 — the display's 75%, and the three spinners behind it
+
+Asked by the user: fix the display using ~75% of the CPU (3c).
+
+### 8a. Measured first
+
+`dispcost`: the display task's own cycles by section over one second.
+
+| view | display ran | frames/s | where |
+|---|---|---|---|
+| launcher, idle | 846 of 1,146 ms | **122** | spectrum strip 573 ms, chrome 264, launcher **0** |
+| music | 822 of 1,131 ms | **168** | strip 788, player 129 |
+| 3D | 1,045 of 1,259 ms | 15 | raycaster 919 (real work) |
+
+The loop ended in `task_yield()` at HIGH. That comment reasoned entirely about
+the raycaster, but it applied to every view, so the launcher -- which draws
+nothing when nothing changes -- spun 122 times a second repainting a
+decorative strip.
+
+### 8b. And a flash-wear bug riding on it
+
+The loop saved the frame count every **256 frames**, commented "about once a
+minute" at 4.4 fps. At 122 fps it was **every ~2 s** -- `dispcost` saw one
+save in a second-long window about every other sample: ~40,000 erases a day
+of a sector rated for ~100,000, each masking interrupts for 125 ms.
+
+### 8c. The changes
+
+1. **Only the 3D view yields.** Every other view sleeps 4 ticks between
+   frames (`DISPLAY_IDLE_TICKS`): ~25 fps.
+2. **The strip animates by the tick**, not the frame count: one speed at any
+   frame rate (~0.6 s half-cycle, as it looked on the launcher before).
+3. **The frame count is saved once a minute by time**, adding the frames
+   actually drawn.
+
+Display on the idle launcher: **188 ms/s, 27 fps**. But idle stayed at 0%:
+the CPU moved to the next task down, three times.
+
+| after fixing | the next spinner | how it spun |
+|---|---|---|
+| display | **report 63%** | `if (t - reported < 200) continue;` -- a bare busy-wait |
+| report | **vm-host 70%** | the VM self-test ran quanta back to back, never sleeping |
+| vm-host (1 tick) | **app-host 42%** | `task_yield()` when no apps -- commented "do not spin at full tilt" |
+
+Each had been invisible behind the one above it. Fixed with the workers'
+existing rule, "continuously, not constantly": the reporter sleeps out its
+interval; vm-host sleeps 4 ticks between quanta (1 tick still cost 22%) and
+sleeps rather than yields once its program halts; app-host sleeps 2 ticks
+when nothing is loaded.
+
+### 8d. Result
+
+```
+idle launcher   display 17-21%   vm-host 7%   touch 8%   workers 2+2%
+                report 0-4%      idle 56%      (was: display 74-76%, idle 0%)
+3D view         15 fps, raycaster 918 ms/s -- unchanged
+playing a song  0 underruns, 53%, DAC 47,992 Hz; display 13%, idle 16%
+flash writes    2 in a 71 s window, 61 s apart (old code: ~35)
+```
+
+The user, at the panel: launcher, music app and a keyboard view **"feel the
+same"**, and the strip still animates.
+
+### 8e. Noted, not chased
+
+- **The USB serial link dropped at the start of playback, twice** (step 5 and
+  here), both times as the DAC started; the board kept playing both times.
+  Looks electrical (the speaker amplifier powering up), not software.
+- `cpu` now reports ~1,000 ms of CCOUNT for a 100-tick sleep (it read
+  1,145-1,199 while nothing idled). With the idle task finally running WAITI,
+  CCOUNT evidently keeps counting through it -- which weakens step 1d's
+  "CCOUNT pauses in WAITI" hypothesis for the rate skew.
+- The display's remaining ~17-21% is the strip and the chrome at 25 fps;
+  either could draw only on change. Not done: it is now a small number and
+  the chrome's history (desktop.c) is of stale-band bugs.
+
+### State
+
+```
+works  idle desktop 56% idle (was 0); display 17-21% (was 75); flash saves
+       once a minute (was every ~2 s); 3D and playback unchanged; user-verified
+open   USB link drop at playback start (8e); auto-advance unobserved (6d);
+       LAST FAULT from boot #99 (4d)
+```
