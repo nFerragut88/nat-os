@@ -515,3 +515,78 @@ open   auto-advance on a natural end not yet observed (6d)
        shell commands that print take ~10 s (5e); display ~75% when idle (3c)
        LAST FAULT exccause 20 from boot #99, unattributed (4d)
 ```
+
+---
+
+## step 7 — the "10 second shell delay" was the PC reading 4 KB at a time
+
+Asked by the user: fix the ~10 s every shell command took to answer (5e).
+
+### 7a. The board timed itself first
+
+`shtime` (shell.c): CCOUNT stamps across the previous command -- first
+character to Enter, waiting for the console lock, running, and the gap to the
+prompt -- plus the longest gap between two `shell_poll()` calls.
+
+```
+musicopen   lock wait 219 ms, ran 0 ms        host saw: 10.2 s
+fat ls      lock wait 0 ms,   ran 230 ms      host saw: 10.0 s
+cpu         lock wait 149 ms, ran 1201 ms     host saw: 10.1 s
+shell polled the UART 84-267 times between commands, longest gap 517 ms
+```
+
+**The board answers in well under a second.** The 10 s is outside it.
+
+### 7b. Then the pipe
+
+`board.py run --prompt` now also records when the ECHO arrives (the shell
+echoes as it reads). Echo and prompt arrived together at ~10 s -- so either
+input or output was late, not the command. `board.py latency`, a newline every
+0.5 s, then managed to send **3 newlines in 25 s**: the host loop itself was
+blocking. Timing each pyserial call:
+
+```
+write 0.00 s   flush 0.00 s   read 11.16 s (4096 bytes)
+write 0.00 s   flush 0.00 s   read 10.27 s (4096 bytes)
+```
+
+**`s.read(4096)` blocks until it has all 4,096 bytes**, whatever the port's
+0.2 s timeout says, on this Windows / CH340 / pyserial 3.5 setup. The board's
+telemetry trickles out at ~400 B/s, so every read took ~10 s -- and every
+command, probe and prompt waited behind one.
+
+### 7c. The fix, in board.py only
+
+`rd(s)` reads `in_waiting` bytes (at least one, so a quiet line still sleeps
+for the timeout). All four read sites use it.
+
+```
+latency 15        sent 30 newlines, got 30 prompts, each ~0.1 s after sending
+probe             "shell answered after 1s"  (was 7-11 s all session)
+musicopen 0.0 s   mp3 0.1 s   fat ls 0.3 s   cpu 1.3 s (it sleeps 1 s)
+```
+
+**Nothing in NatOS changed to fix it.** The shell was never slow.
+
+### 7d. Corrections to earlier steps, in place of rewriting them
+
+- **5e is wrong about where the delay lived.** It says the delay "depends on
+  the command, not on playback" and names the console lock as the suspect.
+  Both wrong: `mp3 play`'s 1.4 s was simply a read that happened to fill
+  sooner. And 5e's elimination -- "pyserial blocking on read(4096) (port
+  timeout is 0.2 s)" -- **eliminated the actual cause by reading a setting
+  instead of timing the call.** That is the pattern this project's own notes
+  warn about, committed while writing it down.
+- **The probe's 7-11 s** (every run since step 1, and earlier in 08) was the
+  same read, not the board booting or the shell starving.
+- 5d's finding stands: `--wait` IS a fixed listen, and the 130 s figures were
+  that. It was two tool faults stacked, not one.
+
+### State
+
+```
+works  board.py answers at the speed of the board: prompts in ~0.1 s
+       shtime: the shell times its own commands
+open   display ~75% when idle (3c); auto-advance unobserved (6d);
+       LAST FAULT from boot #99 (4d)
+```

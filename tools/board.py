@@ -141,13 +141,32 @@ def open_port(port):
         sys.exit(2)
 
 
+def rd(s):
+    """Whatever has arrived, and never more than that.
+
+    `s.read(4096)` was here, trusting the port's 0.2 s timeout to bound it. On
+    this Windows / CH340 / pyserial 3.5 setup it does not: the call blocks
+    until all 4,096 bytes arrive -- measured 10.3-11.2 s per read, because the
+    board's telemetry trickles out at ~400 B/s. Every command therefore
+    "took ~10 s to answer" while the board, timing itself (`shtime`), answered
+    in under 0.5 s. This was the whole of next_moves/11 step 5e's "shell
+    delay", and it was once wrongly eliminated by READING the timeout setting
+    instead of timing the call.
+
+    Asking only for what is waiting (at least one byte, so the call still
+    sleeps up to the timeout when the line is quiet) returns as soon as any
+    data exists."""
+    n = s.in_waiting
+    return s.read(n if n else 1)
+
+
 def pump(s, out, seconds, until=None):
     """Read for `seconds`, or until `until` appears. Returns False if the link
     dropped -- and everything read so far is already in `out`."""
     stop = time.time() + seconds
     while time.time() < stop:
         try:
-            d = s.read(4096)
+            d = rd(s)
         except Exception as e:
             out.append("\n[board] link lost: %s\n" % e)
             return False
@@ -224,20 +243,28 @@ def cmd_run(args):
         t0 = time.time()
         stop = t0 + args.wait
         seen = False
+        t_echo = None
         while time.time() < stop:
             try:
-                d = s.read(4096)
+                d = rd(s)
             except Exception as e:
                 out.append("\n[board] link lost: %s\n" % e)
                 live = False
                 break
             if d:
                 out.append(d.decode("utf-8", "replace"))
-                if "\n> " in "".join(out[mark:]):
+                fresh = "".join(out[mark:])
+                # The shell echoes each character as it reads it, so the echo
+                # arriving late means the INPUT was late, and an early echo
+                # with a late prompt means the output was.
+                if t_echo is None and c in fresh:
+                    t_echo = time.time() - t0
+                if "\n> " in fresh:
                     seen = True
                     break
-        out.append("\n[board] %s after %.1fs\n"
-                   % ("prompt" if seen else "NO PROMPT", time.time() - t0))
+        out.append("\n[board] %s after %.1fs (echo at %s)\n"
+                   % ("prompt" if seen else "NO PROMPT", time.time() - t0,
+                      "%.1fs" % t_echo if t_echo is not None else "never"))
     s.close()
     sys.stdout.buffer.write("".join(out).encode("utf-8", "replace"))
     return 0 if live else 1
@@ -276,6 +303,36 @@ def cmd_flash(args):
     return 1
 
 
+def cmd_latency(args):
+    """Sends a bare newline every 0.5 s and timestamps each prompt that comes
+    back. A constant delay in the pipe shows as prompts starting late and then
+    arriving steadily; a stall shows as bursts. Built for the ~10 s every
+    command took to answer (next_moves/11, the shell-delay investigation)."""
+    s = open_port(args.port)
+    t0 = time.time()
+    sent = 0
+    got = []
+    buf = ""
+    next_send = t0
+    while time.time() - t0 < args.seconds:
+        now = time.time()
+        if now >= next_send:
+            s.write(b"\r")
+            s.flush()
+            sent += 1
+            next_send += 0.5
+        d = rd(s)
+        if d:
+            buf += d.decode("utf-8", "replace")
+            while "\n> " in buf:
+                buf = buf.split("\n> ", 1)[1]
+                got.append(time.time() - t0)
+    s.close()
+    print("sent %d newlines over %.0fs, got %d prompts" % (sent, args.seconds, len(got)))
+    print("prompt arrival times (s): " + " ".join("%.1f" % g for g in got))
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--port", default=None,
@@ -294,6 +351,8 @@ def main():
                    help="return from each command when the shell prompt comes "
                         "back (--wait becomes a timeout) and print how long it took")
 
+    l = sub.add_parser("latency")
+    l.add_argument("seconds", type=float, nargs="?", default=25.0)
     w = sub.add_parser("watch")
     w.add_argument("seconds", type=float)
 
@@ -304,7 +363,8 @@ def main():
         p = ports()
         print("\n".join("%s  %s" % pd for pd in p) if p else "no serial ports")
         return 0 if p else 1
-    return {"flash": cmd_flash, "run": cmd_run, "watch": cmd_watch}[args.cmd](args)
+    return {"flash": cmd_flash, "run": cmd_run, "watch": cmd_watch,
+            "latency": cmd_latency}[args.cmd](args)
 
 
 if __name__ == "__main__":

@@ -564,6 +564,13 @@ static void cmd_mem(void)
 
 static void execute(char *line);   /* defined below */
 
+/* [shtime] CCOUNT stamps across one command, and the last command's result in
+ * ms: first character -> enter, waiting for the console lock, running, and
+ * from the end of the command to the prompt being printed. */
+static uint32_t g_t_first, g_t_lockreq, g_t_locked, g_t_ran;
+static uint32_t g_p_type, g_p_lock, g_p_run, g_p_prompt;
+static uint32_t g_t_lastpoll, g_gap_max, g_polls;
+
 /* Runs one command line from somewhere other than the UART.
  *
  * execute() splits its argument in place, so a caller's string cannot be passed
@@ -603,9 +610,31 @@ static void execute(char *line)
     char *arg = split(line);
 
     /* One command, one uninterrupted response. */
+    g_t_lockreq = xt_ccount();
     console_lock();
+    g_t_locked = xt_ccount();
 
-    if (str_eq(line, "help"))       { cmd_help(); }
+    if (str_eq(line, "shtime")) {
+        /* The previous command's timeline, in ms. Built to find the ~10 s
+         * some commands take to answer (next_moves/11 step 5e) instead of
+         * guessing at it a third time. */
+        uart_puts("   last command: first char -> enter ");
+        uart_put_dec(g_p_type);
+        uart_puts(" ms, lock wait ");
+        uart_put_dec(g_p_lock);
+        uart_puts(" ms, ran ");
+        uart_put_dec(g_p_run);
+        uart_puts(" ms, prompt ");
+        uart_put_dec(g_p_prompt);
+        uart_puts(" ms\n   since last shtime: ");
+        uart_put_dec(g_polls);
+        uart_puts(" polls, longest gap between polls ");
+        uart_put_dec(g_gap_max);
+        uart_puts(" ms\n");
+        g_polls = 0;
+        g_gap_max = 0;
+    }
+    else if (str_eq(line, "help"))  { cmd_help(); }
     else if (str_eq(line, "ps"))    { cmd_ps(); }
     else if (str_eq(line, "progs")) { cmd_progs(); }
     else if (str_eq(line, "mem"))   { cmd_mem(); }
@@ -4694,6 +4723,7 @@ static void execute(char *line)
         uart_puts("\n");
     }
 
+    g_t_ran = xt_ccount();
     console_unlock();
 }
 
@@ -4704,20 +4734,46 @@ void shell_begin(void)
 
 void shell_poll(void)
 {
+    /* [shtime] How long the shell went without looking at the UART. */
+    uint32_t now = xt_ccount();
+    if (g_t_lastpoll) {
+        uint32_t gap = (now - g_t_lastpoll) / 80000u;
+        if (gap > g_gap_max) {
+            g_gap_max = gap;
+        }
+    }
+    g_t_lastpoll = now;
+    g_polls++;
+
     int ch;
     while ((ch = uart_getc_nb()) >= 0) {
         if (ch == '\r' || ch == '\n') {
+            uint32_t t_enter = xt_ccount();
             uart_puts("\n");
             g_line[g_len] = 0;
+            int timed = (g_len > 0u);
+            g_t_lockreq = g_t_locked = g_t_ran = t_enter;
             execute(g_line);
             g_len = 0;
             uart_puts("> ");
+            if (timed) {
+                /* CCOUNT differences in ms. Under 53 s each, which a command
+                 * that answers at all always is. */
+                const uint32_t ms = 80000u;
+                g_p_type   = (t_enter - g_t_first) / ms;
+                g_p_lock   = (g_t_locked - g_t_lockreq) / ms;
+                g_p_run    = (g_t_ran - g_t_locked) / ms;
+                g_p_prompt = (xt_ccount() - g_t_ran) / ms;
+            }
         } else if (ch == 8 || ch == 127) {          /* backspace / delete */
             if (g_len > 0) {
                 g_len--;
                 uart_puts("\b \b");
             }
         } else if (ch >= 32 && ch < 127 && g_len < LINE_MAX - 1) {
+            if (g_len == 0u) {
+                g_t_first = xt_ccount();
+            }
             g_line[g_len++] = (char)ch;
             uart_putc((char)ch);
         }
