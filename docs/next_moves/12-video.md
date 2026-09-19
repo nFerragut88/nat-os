@@ -311,3 +311,35 @@ works  the SD bus at 20 MHz by default; vidconv predicts per-frame cost
 open   full screen itself is not yet verified on the glass: a rotated test
        file is on the card, the board build is flashed, and the card is
        currently in the PC
+
+### 5d. Full screen, verified -- and a measurement taken at the wrong speed
+
+The user, on the glass: **the test pattern fills the screen**, with black
+strips along the two long edges. Those are the shape, not a defect: a 16:9
+picture turned sideways is 180 of the panel's 240 pixels. Filling them needs a
+crop (~25% of each shot, ~5 fps) or pixel doubling (blocky, 10 fps); the user
+chose to keep the whole picture and the strips.
+
+The first playthrough dropped **13 of 105 frames** at 5.9 fps, read costing
+104.6 ms/frame against 79.8 predicted. The bus was at **div 8**: checking
+whether a card was present, I had run `sdspeed 8`, which sticks until reboot,
+and the board had not rebooted since. At 10 MHz, 1.72 us/byte agrees with the
+1.81 measured in 11 step 3 -- the model was right, the conditions were not.
+
+At div 4, the same file:
+
+```
+shown 105  dropped 0  = 6.8 fps over 15,370 ms   underruns=1
+per shown frame: read 80.1 ms (predicted 79.8)  draw 46.8   worst 129 ms
+                 = 127 ms of a 143 ms frame (89%)
+```
+
+**Full screen at 180x320 and 7 fps works.** The one underrun is not chased.
+
+### State
+
+```
+works  full-screen video, 180x320 at 7 fps, 0 dropped, user-verified;
+       vidconv's per-frame prediction matched within 0.4%
+open   the example still needs re-converting (the user is fetching the
+       original); 1 underrun per play; USB drop at video start (4c)
