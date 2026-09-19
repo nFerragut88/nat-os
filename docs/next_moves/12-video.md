@@ -175,3 +175,88 @@ works  the video browser: thumbnails, titles, lengths, a cover detail;
        user-verified
 next   playback: stream chunks, blit frames, feed the PCM ring, and measure
        the frame rate before tuning the format
+
+---
+
+## step 4 — playback
+
+`kernel/vplay.c`, run on the MP3 player's task (AUDIO priority) as a third job
+kind, borrowing that player's idle buffers (`g_in` 4 KB, `g_pcm` 4.6 KB):
+SRAM1 had 2.5 KB left, and only one of them can play at a time.
+
+- **The DAC is the clock.** Frame i is drawn when `pcm_samples_played()`
+  reaches frame i's first sample; if frame i+1's moment has also passed, frame
+  i is dropped and counted. Falling behind costs frames, never sync.
+- **Two cursors through one file.** Audio is queued K chunks ahead by one
+  `fat_file_t`; frames are read by another. K is bounded by the ring: (K+1)
+  frames of audio must fit its 8,192 samples, so K = 2 at 22,050 Hz / 10 fps
+  (3 would put every frame's moment in the past as its turn came).
+- **The ring starts full of silence**, so the file's first sample plays after
+  8,192 samples; the clock is offset by exactly that.
+- **`fat_seek` walks forward from where the file is** when the target is not
+  behind it. Two cursors a chunk apart through a 17 MB file would otherwise
+  have walked the chain from the first cluster -- 4,000+ FAT lookups -- per
+  cursor per frame.
+- Frames: 9 rows at a time, indices -> RGB565 through the palette, blitted;
+  `draw_frame` checks the stop flag per batch, and the view's x calls
+  `vidlist_close()`, which stops the video and waits for it to be off the
+  panel before the launcher repaints.
+- The view: the detail screen has a green "play"; while playing, the view
+  draws only OUTSIDE the picture (title above; clock and bar below, once a
+  second); any tap stops. Shell: `video <n>` (the button's path), `mp3 video
+  <file>`, `mp3` status.
+
+### 4a. Measured -- the whole example
+
+```
+frame 516 of 516  240x134 @ 10 fps   audio 2 chunks ahead
+shown 516  dropped 0  = 9.9 fps over 51,990 ms (51.6 s of video)
+per shown frame: read 58.4 ms  draw 26.1 ms   worst 87 ms   (budget 100)
+```
+
+**240x134 PAL8 at 10 fps fits, with ~15% headroom.** Reading is the larger
+cost, as the budget said it would be. No tuning of the format needed.
+
+**The user, at the panel: "looks and sounds right"** -- picture, colours,
+audio, sync.
+
+### 4b. Wrong on the way, fixed
+
+- **A race I wrote:** `video <n>` built the list on the shell task while the
+  display task built the same list with the same static directory iterator.
+  The fat mutex guards each call, not a whole walk: "videos=0" for a card with
+  a video on it. Only the view's frame() touches the list now; `video <n>`
+  leaves a request.
+- **2 underruns at the end** of the first full play: the tail waited for the
+  last audio without feeding the ring, so it ran dry -- the drain lesson from
+  11 step 1, relearned. It now feeds silence; the run after showed 0 (to
+  frame 73, see below).
+- **Not a bug, and nearly chased as one:** `fat ls` once showed
+  `[tEJ6JVBUB.mk]` for `[tEJ6JVBUBmk]`. It is the heartbeat '.' that another
+  task prints into the serial stream -- the same interleaving that has broken
+  `i.nt_raw` and `0x00.000054` all along. Four clean listings followed.
+
+### 4c. Open: the USB drop is back at video start, and a phantom stop
+
+- **The CH340 dropped off USB at video start, 2 of 2 times** -- after 11 step
+  9's soft start made song starts clean (0 of 22). The board played on.
+- **In the second run the video STOPPED itself at frame 73** (~7.3 s). Nothing
+  sent a stop; in this view only a tap does. The likely cause is a phantom
+  touch -- the touch controller misreading during the same electrical event.
+  If so, the disturbance reaches the board, not only the PC's link.
+- What differs from a song start, which no longer drops: the display blitting
+  continuously and SD reads at 340 KB/s, together with the DAC; and this
+  video's own audio. The loudness hypothesis was eliminated for songs (11 step
+  9: silence dropped, full volume did not) -- but that was the pop; a second,
+  load-dependent cause was never tested. Next experiments: the same video
+  converted with `--no-audio` (DAC never on), and at `mp3 vol 0`.
+- Seen in passing: the boot banner's persisted frame count is 910,336 at boot
+  #159, as at #127, though step 8's once-a-minute saves change it in RAM.
+
+### State
+
+```
+works  video playback: the example, all 516 frames, 0 dropped, 9.9 fps, in
+       sync, user-verified; read 58 + draw 26 ms of a 100 ms frame
+open   USB drop at video start (2/2) and a self-stop at frame 73 (4c);
+       frame-count persistence (4c); auto-advance in the music app (11 6d)

@@ -708,7 +708,13 @@ static void execute(char *line)
         desktop_open_video();
         uart_puts("   video view opened\n");
     }
-    else if (str_eq(line, "video")) { vidlist_dump(); }
+    else if (str_eq(line, "video")) {
+        int n = parse_int(arg);
+        if (n > 0) {
+            vidlist_play_number((uint32_t)n);
+        }
+        vidlist_dump();
+    }
     else if (str_eq(line, "musicopen")) {
         /* Opens the music view exactly as its icon does, for testing without
          * a finger on the glass -- `wifiopen`'s reasoning. */

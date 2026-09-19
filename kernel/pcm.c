@@ -231,6 +231,15 @@ uint32_t pcm_space(void)
     return (PCM_BUFS - g_queued) * PCM_SAMPLES - g_fill;
 }
 
+uint32_t pcm_samples_played(void)
+{
+    if (!g_running) {
+        return 0;
+    }
+    poll();
+    return g_played * PCM_SAMPLES;
+}
+
 uint32_t pcm_write(const int16_t *s, uint32_t n)
 {
     if (!g_running) {

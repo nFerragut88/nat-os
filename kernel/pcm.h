@@ -77,6 +77,12 @@ uint32_t pcm_write(const int16_t *s, uint32_t n);
 /* Samples the ring can take right now. Polls the DMA as a side effect. */
 uint32_t pcm_space(void);
 
+/* Samples the DAC has finished playing since pcm_start(), in whole buffers of
+ * PCM_SAMPLES (23 ms at 22,050 Hz). The video player's clock: a frame is shown
+ * when this reaches that frame's first sample (next_moves/12 step 4). Polls
+ * the DMA as a side effect. */
+uint32_t pcm_samples_played(void);
+
 /* ---- instruments -----------------------------------------------------------
  *
  * Each exists to answer one question the ear cannot answer reliably.

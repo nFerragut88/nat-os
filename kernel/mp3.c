@@ -10,6 +10,7 @@
 #include "uart.h"
 #include "pcm.h"
 #include "timer.h"
+#include "vplay.h"
 
 void *memmove(void *dst, const void *src, size_t n);    /* kstring.c */
 
@@ -99,7 +100,11 @@ static uint32_t fpu_enabled(void)
  * streams a whole file to the DAC and keeps its status live for `mp3`. */
 
 enum { JOB_IDLE, JOB_PENDING, JOB_RUNNING, JOB_DONE };
-enum { KIND_BENCH, KIND_PLAY };
+/* KIND_VIDEO [next_moves/12 step 4]: a .nvd played by vplay.c on this task,
+ * borrowing g_in and g_pcm -- idle whenever a video plays, since this task
+ * runs one job at a time. For it, frames_wanted carries the row the picture
+ * goes at. */
+enum { KIND_BENCH, KIND_PLAY, KIND_VIDEO };
 
 static struct {
     volatile int state;
@@ -420,6 +425,10 @@ static void mp3_task(void)
             g_job.cpen = fpu_enabled();
             if (g_job.kind == KIND_PLAY) {
                 play();
+            } else if (g_job.kind == KIND_VIDEO) {
+                g_job.err = vplay_run(g_job.path, g_job.frames_wanted, &g_job.stop,
+                                      g_in, IN_BYTES, (uint16_t *)g_pcm,
+                                      MINIMP3_MAX_SAMPLES_PER_FRAME);
             } else {
                 bench();
             }
@@ -578,6 +587,64 @@ static void report_play(void)
     uart_puts("\n");
 }
 
+/* `mp3` while a video plays (or after): where it is, and the three numbers
+ * that decide whether this format is right for the board -- frames shown
+ * against dropped, and where each frame's time goes. */
+static void report_video(void)
+{
+    vplay_status_t v;
+    vplay_status(&v);
+    const char *st = (g_job.state == JOB_RUNNING) ? "PLAYING" :
+                     (g_job.state == JOB_DONE) ? (g_job.stop ? "stopped" : "finished") : "idle";
+    uart_puts("   video ");
+    uart_puts(st);
+    uart_puts("  ");
+    uart_puts(g_job.path);
+    uart_puts("\n");
+    if (g_job.err) {
+        uart_puts("   error: ");
+        uart_puts(vplay_error_text(g_job.err));
+        uart_puts("\n");
+    }
+    if (!v.frames) {
+        return;
+    }
+    uart_puts("   frame ");
+    uart_put_dec(v.frame + 1u);
+    uart_puts(" of ");
+    uart_put_dec(v.frames);
+    uart_puts("  ");
+    uart_put_dec(v.w);
+    uart_puts("x");
+    uart_put_dec(v.h);
+    uart_puts(" @ ");
+    uart_put_dec(v.fps_den ? v.fps_num / v.fps_den : 0u);
+    uart_puts(" fps   audio ");
+    uart_put_dec(v.lookahead);
+    uart_puts(" chunks ahead\n   shown ");
+    uart_put_dec(v.shown);
+    uart_puts("  dropped ");
+    uart_put_dec(v.dropped);
+    uart_puts("  = ");
+    uint32_t fps10 = v.wall_ms ? v.shown * 10000u / v.wall_ms : 0u;
+    uart_put_dec(fps10 / 10u);
+    uart_puts(".");
+    uart_put_dec(fps10 % 10u);
+    uart_puts(" fps shown over ");
+    uart_put_dec(v.wall_ms);
+    uart_puts(" ms   underruns=");
+    uart_put_dec(pcm_underruns());
+    uart_puts("\n   per shown frame: read ");
+    uart_put_dec(v.shown ? v.read_ms * 10u / v.shown : 0u);
+    uart_puts("/10 ms  draw ");
+    uart_put_dec(v.shown ? v.draw_ms * 10u / v.shown : 0u);
+    uart_puts("/10 ms   audio total ");
+    uart_put_dec(v.audio_ms);
+    uart_puts(" ms   worst frame ");
+    uart_put_dec(v.worst_frame_us / 1000u);
+    uart_puts(" ms\n");
+}
+
 static uint32_t parse_u32(const char *s, const char **end)
 {
     uint32_t v = 0;
@@ -641,6 +708,16 @@ static int submit_verbose(int kind, const char *path, uint32_t frames)
  * None of these block: they are called from the touch and display tasks, which
  * must not wait on a decoder. A stop is a request; the view sees it land
  * through mp3_status(). */
+
+int mp3_play_video(const char *path, uint32_t y)
+{
+    return submit(KIND_VIDEO, path, y);
+}
+
+int mp3_video_active(void)
+{
+    return g_job.kind == KIND_VIDEO && mp3_busy();
+}
 
 int mp3_play(const char *path)
 {
@@ -777,16 +854,31 @@ void mp3_shell(char *arg)
             g_job.stop = 1;
             wait_done();
         }
-        report_play();
+        if (g_job.kind == KIND_VIDEO) {
+            report_video();
+        } else {
+            report_play();
+        }
+    } else if (sub[0] == 'v' && sub[1] == 'i') {            /* video <file> */
+        if (!*rest) {
+            uart_puts("   mp3 video <file.nvd>\n");
+            return;
+        }
+        if (submit_verbose(KIND_VIDEO, rest, VIDEO_Y_DEFAULT)) {
+            uart_puts("   playing video on task 'mp3' -- 'mp3' for status, 'mp3 stop'\n");
+        }
     } else if (!*sub) {
         if (g_job.kind == KIND_PLAY) {
             report_play();
+        } else if (g_job.kind == KIND_VIDEO) {
+            report_video();
         } else {
             uart_puts("   no song has been played\n");
         }
     } else {
         uart_puts("   mp3                      status of what is playing\n"
                   "   mp3 play <file>          play it (a name ending * matches a prefix)\n"
+                  "   mp3 video <file.nvd>     play a video (vidconv.py makes them)\n"
                   "   mp3 pause | resume | stop\n"
                   "   mp3 bench <frames> <f>   decode N frames; cost in the decoder's own CPU\n");
     }

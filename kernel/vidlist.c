@@ -5,7 +5,9 @@
 #include "fat.h"
 #include "mp3.h"            /* mp3_error_text(): the same words for card errors */
 #include "display.h"
+#include "task.h"
 #include "uart.h"
+#include "vplay.h"
 
 #define SRAM1 __attribute__((section(".sram1")))
 
@@ -39,6 +41,9 @@
 #define TEXT_X    70u
 #define TEXT_CH   28u                           /* (240 - 70) / 6, less a margin */
 
+#define PLAY_Y    (SPEC_Y - 44u)                /* the detail screen's play button */
+#define PLAY_H    30u
+
 #define BG  COLOR_BLACK
 #define FG  COLOR_WHITE
 
@@ -64,6 +69,11 @@ static uint32_t g_skipped;                      /* .nvd files that did not parse
 static int      g_sel = -1;
 static uint32_t g_top;
 static int      g_detail = -1;                  /* video whose detail is shown */
+static int      g_want = -1;                    /* start once the media task is free */
+static int      g_playing = -1;                 /* video on screen now */
+static uint32_t g_shown_s = 0xFFFFFFFFu;        /* the second the status line shows */
+static int      g_start_err;
+static volatile uint32_t g_req_n;               /* `video <n>`, carried out by frame() */
 
 static volatile uint32_t g_dirty;
 static uint32_t g_drawn;
@@ -319,9 +329,41 @@ static void draw_detail(const vid_t *v)
     s[k] = 0;
     #undef PUTN
     put(48u, y, s, COLOR_GREY, BG);
-    put(6u, y + 22u, "playback is the next step --", COLOR_YELLOW, BG);
-    put(6u, y + 32u, "this is the browser.", COLOR_YELLOW, BG);
-    put(6u, SPEC_Y - 14u, "tap to go back", COLOR_GREY, BG);
+    if (g_start_err) {
+        put(6u, y + 16u, vplay_error_text(g_start_err), COLOR_RED, BG);
+    }
+    display_fill_rect(20u, PLAY_Y, DISP_W - 40u, PLAY_H, COLOR_GREEN);
+    display_text(DISP_W / 2u - 24u, PLAY_Y + 7u, "play", FG, COLOR_GREEN, 2u);
+    put(6u, SPEC_Y - 11u, "tap elsewhere to go back", COLOR_GREY, BG);
+}
+
+/* The playing screen draws everything EXCEPT the picture, which is vplay's:
+ * the title above it and the clock below, and nothing that overlaps. */
+static void draw_playing_frame(const vid_t *v)
+{
+    display_fill_rect(0, HDR_H, DISP_W, SPEC_Y - HDR_H, BG);
+    put_wrapped(6u, HDR_H + 8u, v->title, 38u, 3u, FG, BG);
+}
+
+static void draw_playing_status(const vid_t *v, const vplay_status_t *st)
+{
+    uint32_t y = VIDEO_Y_DEFAULT + v->h + 10u;
+    display_fill_rect(0, y, DISP_W, 24u, BG);
+    char t[20];
+    uint32_t pos = st->fps_num ? st->frame * st->fps_den / st->fps_num : 0u;
+    fmt_time(t, pos);
+    uint32_t k = 0;
+    while (t[k]) { k++; }
+    t[k++] = ' '; t[k++] = '/'; t[k++] = ' ';
+    fmt_time(t + k, v->dur_ms / 1000u);
+    put(6u, y, t, FG, BG);
+    put(DISP_W - 6u * 11u, y, "tap to stop", COLOR_GREY, BG);
+    /* The bar, like the music app's. */
+    display_fill_rect(6u, y + 12u, DISP_W - 12u, 6u, COLOR_GREY);
+    if (st->frames) {
+        uint32_t wbar = (DISP_W - 14u) * (st->frame + 1u) / st->frames;
+        display_fill_rect(7u, y + 13u, wbar, 4u, COLOR_GREEN);
+    }
 }
 
 /* ---- the view ------------------------------------------------------------------ */
@@ -338,6 +380,53 @@ void vidlist_open(void)
 
 void vidlist_frame(void)
 {
+    /* Transport, before the "nothing changed" early return: a queued start
+     * waits for the media task (a song may be stopping), and a video that
+     * ended must bring the detail screen back. */
+    if (g_req_n) {
+        uint32_t n = g_req_n;
+        g_req_n = 0;
+        if (g_listed == 0) {
+            build_list();
+        }
+        if (n <= g_count) {
+            g_sel = g_detail = (int)n - 1;
+            if (mp3_busy()) {
+                mp3_request_stop();
+            }
+            g_want = (int)n - 1;
+        }
+    }
+    if (g_want >= 0 && !mp3_busy()) {
+        g_start_err = mp3_play_video(g_vids[g_want].name, VIDEO_Y_DEFAULT);
+        g_playing = g_start_err ? -1 : g_want;
+        g_want = -1;
+        g_shown_s = 0xFFFFFFFFu;
+        g_full = 1;
+    } else if (g_playing >= 0 && g_want < 0 && !mp3_busy()) {
+        vplay_status_t st;
+        vplay_status(&st);
+        g_start_err = st.err;
+        g_playing = -1;
+        g_full = 1;
+    }
+    if (g_playing >= 0) {
+        vplay_status_t st;
+        vplay_status(&st);
+        if (g_full) {
+            draw_header("video");
+            draw_playing_frame(&g_vids[g_playing]);
+            g_full = 0;
+            g_drawn = g_dirty;
+        }
+        uint32_t sec = st.fps_num ? st.frame * st.fps_den / st.fps_num : 0u;
+        if (sec != g_shown_s) {
+            g_shown_s = sec;
+            draw_playing_status(&g_vids[g_playing], &st);
+        }
+        return;
+    }
+
     uint32_t seq = g_dirty;
     if (!g_full && seq == g_drawn) {
         return;
@@ -371,8 +460,22 @@ void vidlist_touch(uint32_t x, uint32_t y, int down)
     }
     g_was_down = 1;
 
+    if (g_playing >= 0 || g_want >= 0) {
+        g_want = -1;
+        mp3_request_stop();                     /* any tap: stop; frame() sees it end */
+        return;
+    }
     if (g_detail >= 0) {
-        g_detail = -1;                          /* any tap: back to the list */
+        if (y >= PLAY_Y && y < PLAY_Y + PLAY_H) {
+            g_start_err = 0;
+            if (mp3_busy()) {
+                mp3_request_stop();             /* a song first; frame() starts us */
+            }
+            g_want = g_detail;
+            return;
+        }
+        g_detail = -1;                          /* elsewhere: back to the list */
+        g_start_err = 0;
         g_full = 1;
         g_dirty++;
         return;
@@ -400,11 +503,37 @@ void vidlist_touch(uint32_t x, uint32_t y, int down)
     }
 }
 
+void vidlist_play_number(uint32_t n)
+{
+    /* A REQUEST, carried out by frame() on the display task. The first
+     * version built the list and set the selection right here, on the shell
+     * task -- while the display task was building the same list with the same
+     * static directory iterator. The fat mutex guards each call, not a whole
+     * walk, so the two walks reset each other's count: "videos=0" for a card
+     * with a video on it. Only frame() builds or changes the list now. */
+    g_req_n = n;
+}
+
+void vidlist_close(void)
+{
+    /* Leaving the view: the video must be off the panel BEFORE the launcher
+     * repaints, or its next rows land on the icons. vplay checks the stop
+     * flag between batches of rows, so this is a few tens of ms. Bounded, so
+     * a stuck decoder cannot hang the touch task that calls this. */
+    g_want = -1;
+    if (g_playing >= 0 && mp3_busy()) {
+        mp3_request_stop();
+        for (uint32_t t = 0; t < 50u && mp3_busy(); t++) {
+            task_sleep(1u);
+        }
+    }
+    g_playing = -1;
+}
+
 void vidlist_dump(void)
 {
-    if (g_listed == 0) {
-        build_list();
-    }
+    /* Prints what the view has; never builds the list itself (see
+     * vidlist_play_number for what that cost). */
     uart_puts("   video view: listed=");
     uart_put_dec((uint32_t)(g_listed > 0 ? g_listed : 0));
     if (g_listed < 0) {

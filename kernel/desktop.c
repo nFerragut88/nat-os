@@ -585,6 +585,12 @@ int desktop_chrome_touch(uint32_t x, uint32_t y)
      * user inside it: the keyboard covered the band, the chrome was
      * suppressed, and the only way out went with it. */
     if (!g_active && x >= DISP_W - 22u && y < 22u) {
+        /* [next_moves/12 step 4] A playing video draws from the media task,
+         * not from here: it must be stopped and off the panel before the
+         * launcher repaints over it. */
+        if (g_mode == MODE_VIDEO) {
+            vidlist_close();
+        }
         g_mode  = MODE_LAUNCHER;    /* leave whichever view is open */
         app_view_focus(-1);         /* [step 369] and give the region back */
         g_app_bar = 0;

@@ -57,6 +57,12 @@ typedef struct {
 } mp3_status_t;
 
 int  mp3_play(const char *path);    /* 0, or MP3_E_* */
+
+/* [next_moves/12 step 4] A .nvd video, on the same task (vplay.c), with its
+ * picture at row `y`. mp3_request_stop() stops it; mp3_busy() covers it. */
+#define VIDEO_Y_DEFAULT 89u         /* 240x134 centred in rows 24..288 */
+int  mp3_play_video(const char *path, uint32_t y);
+int  mp3_video_active(void);
 void mp3_request_stop(void);
 void mp3_set_pause(int on);
 int  mp3_busy(void);

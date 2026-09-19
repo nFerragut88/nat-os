@@ -459,7 +459,20 @@ static int seek_impl(fat_file_t *f, uint32_t pos)
      * means seeking to the end of a file never steps past its last cluster. */
     uint32_t cbytes = g_spc * 512u;
     uint32_t c = f->first;
-    for (uint32_t n = pos ? (pos - 1u) / cbytes : 0u; n > 0u; n--) {
+    uint32_t hops = pos ? (pos - 1u) / cbytes : 0u;
+
+    /* [next_moves/12 step 4] Forward from where the file already is, when the
+     * target is not behind it. The video player moves two cursors through one
+     * file a chunk at a time; restarting from the first cluster made every
+     * seek walk the whole chain so far -- 4,000+ FAT lookups deep into a 17 MB
+     * file, per cursor, per frame. f->cluster holds the cluster index
+     * (f->pos - 1) / cbytes by the same convention as above. */
+    uint32_t here = f->pos ? (f->pos - 1u) / cbytes : 0u;
+    if (f->cluster >= 2u && hops >= here) {
+        c = f->cluster;
+        hops -= here;
+    }
+    for (uint32_t n = hops; n > 0u; n--) {
         c = fat_next(c);
         if (!valid_cluster(c)) {
             return FAT_ERR_CHAIN;

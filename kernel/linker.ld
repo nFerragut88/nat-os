@@ -340,6 +340,9 @@ SECTIONS
     *player.c.o(.literal .literal.* .text .text.*)
     /* [next_moves/12 step 3] the video browser; human-driven, like player.c */
     *vidlist.c.o(.literal .literal.* .text .text.*)
+    /* [next_moves/12 step 4] video playback, run by the media task. From
+     * flash like mp3.c: its time goes to the SD bus and the panel. */
+    *vplay.c.o(.literal .literal.* .text .text.*)
 
     . = ALIGN(4);
     _flash_text_end = .;
