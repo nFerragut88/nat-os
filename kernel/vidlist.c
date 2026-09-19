@@ -74,6 +74,7 @@ static int      g_playing = -1;                 /* video on screen now */
 static uint32_t g_shown_s = 0xFFFFFFFFu;        /* the second the status line shows */
 static int      g_start_err;
 static volatile uint32_t g_req_n;               /* `video <n>`, carried out by frame() */
+static volatile int g_fullscreen;               /* the video owns the whole panel */
 
 static volatile uint32_t g_dirty;
 static uint32_t g_drawn;
@@ -398,8 +399,16 @@ void vidlist_frame(void)
         }
     }
     if (g_want >= 0 && !mp3_busy()) {
-        g_start_err = mp3_play_video(g_vids[g_want].name, VIDEO_Y_DEFAULT);
+        /* A picture too tall to sit under the header takes the whole panel:
+         * no header, no clock, and kmain stops drawing the spectrum strip
+         * over its bottom rows. The way out is a tap, which stops it. */
+        g_fullscreen = (g_vids[g_want].h > SPEC_Y - VIDEO_Y_DEFAULT);
+        g_start_err = mp3_play_video(g_vids[g_want].name,
+                                     g_fullscreen ? 0u : VIDEO_Y_DEFAULT);
         g_playing = g_start_err ? -1 : g_want;
+        if (g_start_err) {
+            g_fullscreen = 0;
+        }
         g_want = -1;
         g_shown_s = 0xFFFFFFFFu;
         g_full = 1;
@@ -408,9 +417,13 @@ void vidlist_frame(void)
         vplay_status(&st);
         g_start_err = st.err;
         g_playing = -1;
+        g_fullscreen = 0;
         g_full = 1;
     }
     if (g_playing >= 0) {
+        if (g_fullscreen) {
+            return;                             /* every pixel is vplay's */
+        }
         vplay_status_t st;
         vplay_status(&st);
         if (g_full) {
@@ -514,6 +527,11 @@ void vidlist_play_number(uint32_t n)
     g_req_n = n;
 }
 
+int vidlist_fullscreen(void)
+{
+    return g_fullscreen && g_playing >= 0;
+}
+
 void vidlist_close(void)
 {
     /* Leaving the view: the video must be off the panel BEFORE the launcher
@@ -521,6 +539,7 @@ void vidlist_close(void)
      * flag between batches of rows, so this is a few tens of ms. Bounded, so
      * a stuck decoder cannot hang the touch task that calls this. */
     g_want = -1;
+    g_fullscreen = 0;
     if (g_playing >= 0 && mp3_busy()) {
         mp3_request_stop();
         for (uint32_t t = 0; t < 50u && mp3_busy(); t++) {

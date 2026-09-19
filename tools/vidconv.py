@@ -432,12 +432,16 @@ def convert(a):
         if cover else "no cover"))
     print("  size     %.1f MB" % (size / 1048576))
     print("  the board must read %.0f KB/s to keep up" % kbs)
-    # docs/next_moves/11 step 3: SPI3 at 10 MHz read 554 KB/s of the reading
-    # task's own CPU time. A file near that is a file the board cannot play.
-    if kbs > 400:
-        print("  WARNING: that is near or over what the SD bus was measured to "
-              "read (554 KB/s of CPU time at 10 MHz). Try --fps lower, "
-              "--width smaller, or pal8.")
+    # Measured during playback (next_moves/12 steps 4-5), with the SD bus at
+    # its 20 MHz default: reading costs ~1.31 us/byte (~760 KB/s of CPU time)
+    # and drawing ~0.77 us/pixel, against 1,000,000/fps us per frame.
+    per_frame_us = stride * 1.31 + out_w * out_h * 0.77
+    budget_us = 1000000.0 * fps_den / fps_num
+    print("  per frame on the board: ~%.0f ms of %.0f ms available (%.0f%%)" % (
+        per_frame_us / 1000, budget_us / 1000, 100 * per_frame_us / budget_us))
+    if per_frame_us > 0.85 * budget_us:
+        print("  WARNING: that leaves little or no headroom -- expect dropped "
+              "frames. Try a lower --fps, a smaller --width, or pal8.")
     return out
 
 

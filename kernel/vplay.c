@@ -189,7 +189,7 @@ int vplay_run(const char *path, uint32_t y, volatile int *stop,
     /* Everything the loop will trust, checked once. A bad header must not
      * become a blit off the panel or a divide by zero. */
     if ((pix != PIX_PAL8 && pix != PIX_RGB565) || !g_st.w || g_st.w > DISP_W
-        || !g_st.h || g_st.h > SPEC_Y - y || g_frame_b != g_st.w * g_st.h * bpp
+        || !g_st.h || g_st.h > DISP_H - y || g_frame_b != g_st.w * g_st.h * bpp
         || !g_fnum || !g_fden || g_stride % 512u || g_first % 512u
         || g_stride < 16u + g_frame_b
         || (afmt == AUD_U8_MONO && (g_rate < PCM_RATE_MIN || g_rate > PCM_RATE_MAX))) {

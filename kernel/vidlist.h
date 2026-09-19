@@ -28,6 +28,10 @@ void vidlist_dump(void);        /* the list as the view parsed it, for `video` *
  * to be off the panel before the launcher repaints. */
 void vidlist_close(void);
 
+/* Non-zero while a video owns the whole panel: kmain must not draw the
+ * spectrum strip over its bottom rows. */
+int  vidlist_fullscreen(void);
+
 /* Plays video n (1-based) by the play button's own path; the view must be
  * open (`videoopen`). For `video <n>` in the shell. */
 void vidlist_play_number(uint32_t n);

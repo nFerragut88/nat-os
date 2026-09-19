@@ -1516,12 +1516,17 @@ static void task_display(void)
         uint32_t dc1 = task_cpu_cycles();
         desktop_chrome();
         uint32_t dc2 = task_cpu_cycles();
+        /* [next_moves/12 step 5] A full-screen video owns every row,
+         * including the ones this strip animates in. */
+        int strip = !(desktop_video() && vidlist_fullscreen());
+        if (strip) {
         /* [next_moves/11 step 8] Animated by the TICK, not the frame count, so
          * the strip moves at one speed whatever the frame rate: it used to race
          * at 122-168 fps on the launcher and crawl at 15 in the 3D view. 100
          * ticks a second against SPEC_STEPS 64 is the ~0.6 s half-cycle it had
          * on the launcher. */
-        spectrum_region(SPEC_Y, SPEC_H, timer_ticks(), 96u);
+            spectrum_region(SPEC_Y, SPEC_H, timer_ticks(), 96u);
+        }
         uint32_t dc3 = task_cpu_cycles();
         g_dc_view  += dc1 - dc0;
         g_dc_chrome += dc2 - dc1;

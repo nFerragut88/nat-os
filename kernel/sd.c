@@ -34,9 +34,14 @@
 static uint32_t g_half_us = CLK_SLOW_US;
 
 /* SPI3 divider to use after identification, and whether the pins are on SPI3
- * right now. 8 = 10 MHz: comfortably inside the 25 MHz SPI-mode limit and the
- * ~26 MHz full-duplex ceiling of a GPIO-matrix input. Raised only on evidence. */
-static uint32_t g_div_wanted = 8u;
+ * right now. Inside the 25 MHz SPI-mode limit and the ~26 MHz full-duplex
+ * ceiling of a GPIO-matrix input; raised only on evidence.
+ *
+ * [next_moves/12 step 5] 4 (20 MHz), was 8 (10 MHz). Video wants 340-430 KB/s,
+ * and a frame's read cost fell from 58.4 ms to 42.2 ms at div 4, measured
+ * during playback. div 2 remains refused below -- that is the one that
+ * corrupted transfers and left the card unresponsive (11 step 3d). */
+static uint32_t g_div_wanted = 4u;
 static int      g_hw;
 static uint32_t g_token_polls;  /* bytes read waiting for a data token */
 static sd_type_t g_type;

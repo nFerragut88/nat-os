@@ -260,3 +260,54 @@ works  video playback: the example, all 516 frames, 0 dropped, 9.9 fps, in
        sync, user-verified; read 58 + draw 26 ms of a 100 ms frame
 open   USB drop at video start (2/2) and a self-stop at frame 73 (4c);
        frame-count persistence (4c); auto-advance in the music app (11 6d)
+
+---
+
+## step 5 — full screen, sideways
+
+The user asked for the video to fill the screen. The panel is 240x320 upright
+and the video is 16:9, so something has to give; the choices were put to them
+with the frame rate each costs, measured per pixel from step 4 (read 1.81 +
+draw 0.81 us/px at 10 MHz). **Rotated, sharp, held sideways** was chosen:
+180x320 fills the panel exactly.
+
+### 5a. The bus, first
+
+At the SD bus's 20 MHz (div 4) instead of 10, measured DURING playback:
+
+```
+read 42.2 ms/frame (was 58.4)   draw 24.7 (was 26.1)   worst 70 ms (was 87)
+```
+
+Reading is ~1.31 us/byte, drawing ~0.77 us/pixel. **div 4 is now the
+default** in sd.c; div 2 stays refused (11 step 3d). That is what makes
+180x320 possible: 57,600 px costs ~124 ms against 143 ms at 7 fps.
+
+`vidconv.py` now prints that arithmetic for every file it writes -- ms per
+frame against the budget -- and warns over 85%. It predicts 70 ms for the
+240x134 file whose frames measured 67: close enough to size a format with.
+
+### 5b. Full screen means the WHOLE panel
+
+- `vplay` accepts a picture up to `DISP_H` (was `SPEC_Y`, the strip's top).
+- The view plays full screen when the picture is too tall to sit under its
+  header: no header, no clock, `y = 0`. A tap still stops it.
+- **kmain stops drawing the spectrum strip** while such a video plays
+  (`vidlist_fullscreen()`), or it would repaint over the bottom 32 rows of
+  every frame.
+
+### 5c. Untested until there is a file to test with
+
+The source .mkv was deleted from the card at the user's request (step 2) and
+is not on the PC, so the example cannot be re-converted yet -- the user is
+fetching the original. To exercise the path meanwhile, a generated 15 s
+rotated clip is on the card: `Test pattern rotated.nvd`, 180x320 pal8 at 7
+fps, 416 KB/s, ~124 ms of a 143 ms frame (87%).
+
+### State
+
+```
+works  the SD bus at 20 MHz by default; vidconv predicts per-frame cost
+open   full screen itself is not yet verified on the glass: a rotated test
+       file is on the card, the board build is flashed, and the card is
+       currently in the PC
