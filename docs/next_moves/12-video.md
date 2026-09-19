@@ -91,3 +91,42 @@ works  vidconv.py: any ffmpeg-readable video -> .nvd, checked and previewable;
 open   nothing on the board reads .nvd yet
 next   the board-side player: read chunks, blit frames, feed audio, and
        MEASURE the frame rate before tuning size / fps / format
+
+---
+
+## step 2 — a list icon in the file, and --set-cover
+
+The user: use the JPG (copied back onto the card after the video was deleted)
+as a small icon, to browse videos by thumbnail the way the music app lists
+songs. Decided with the user: the browser takes **meter**'s launcher cell.
+
+### 2a. Format
+
+An icon block after the cover: 64x36 RGB565 by default (`--icon-width`),
+located by `ICON` at header byte 192 -- previously unused, and 0 means "no
+icon", so the addition breaks nothing. A list row reads 9 sectors per video
+instead of a 32-sector cover. `--check` now also verifies both pictures sit
+between the palette and the first chunk without overlapping.
+
+### 2b. --set-cover PICTURE FILE.nvd
+
+Rebuilds cover and icon from any picture and copies the chunks across byte
+for byte. Built because the example's source video is gone: a thumbnail can be
+changed without reconverting. One layout helper (`front_layout` /
+`front_bytes`) serves both a conversion and --set-cover, so the two cannot
+disagree about where anything is.
+
+Self-test grew a case: a sibling picture becomes 120x68 + 64x36; --set-cover
+with a different picture makes the icon blue; the frames are compared before
+and after -- identical. PASS.
+
+Applied to the card: `Learn Numbers in Mandarin Chinese.nvd` now carries the
+user's JPG as cover (120x68 at 1024) and icon (64x36 at 17408); first chunk at
+22016; --check OK. The icon, looked at: the purple character, fence, tree and
+logo are recognisable at 64x36.
+
+### State
+
+```
+works  .nvd files carry a list icon; --set-cover swaps it from any picture
+next   the video browser on the board, in meter's launcher cell

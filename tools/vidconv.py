@@ -16,9 +16,11 @@ THE FILE (.nvd, version 1). All integers little-endian, because the ESP32 is:
 RGB565 words can be handed to display_blit() as they sit in memory -- it takes
 plain RGB565 (red = 0xF800) and does its own byte swap for the panel.
 
-    sector 0   header (HEADER below; the rest zero)
+    sector 0   header (HEADER, then ICON at byte 192; the rest zero)
     sector 1   palette: 256 x u16 RGB565 (PAL8), zeros otherwise
     cover      cover_w x cover_h x u16 RGB565, padded to a sector (optional)
+    icon       icon_w x icon_h x u16 RGB565, padded to a sector (optional) --
+               the small picture a list of videos shows
     chunks     frame_count of them, each exactly chunk_stride bytes (a
                multiple of 512), starting at first_chunk:
                    0   'NVCK'
@@ -39,6 +41,7 @@ Usage:
                             [--format pal8|rgb565] [--rotate]
                             [--audio-rate 22050 | --no-audio]
                             [--cover IMG | --no-cover] [--start S] [--duration S]
+    python tools/vidconv.py --set-cover PICTURE FILE.nvd   (new cover + icon)
     python tools/vidconv.py --check FILE.nvd
     python tools/vidconv.py --preview FILE.nvd --frame N --out frame.png
     python tools/vidconv.py --preview FILE.nvd --cover-only --out cover.png
@@ -92,6 +95,17 @@ HEADER = struct.Struct(
     "128s"  # 64  title, ASCII, NUL-padded
 )
 assert HEADER.size == 192
+
+# The list icon, right after HEADER in sector 0 (added 2026-09-19 for the
+# video browser; 0 offset = no icon, so files without one still parse). The
+# cover is 120 wide for a "now showing" panel; a list row wants something a
+# quarter the size, and reading six rows' icons should cost sectors, not a
+# cover each.
+ICON = struct.Struct(
+    "<I"    # 192 icon offset (0 = none)
+    "HH"    # 196 icon width, height (RGB565)
+)
+ICON_AT = HEADER.size
 
 
 def die(msg):
@@ -233,6 +247,34 @@ def image_to_rgb565(src, stream_spec, width):
     return width, len(data) // (width * 2), data
 
 
+# ---- the front of the file: header, palette, cover, icon ------------------------
+#
+# One place lays it out, used by both a fresh conversion and --set-cover, so
+# the two cannot disagree about where anything is.
+
+def front_layout(cover, icon):
+    """(cover_off, icon_off, first_chunk) for these pictures (either may be
+    None)."""
+    off = 2 * SECTOR
+    cover_off = off if cover else 0
+    if cover:
+        off += round_up(cover[0] * cover[1] * 2, SECTOR)
+    icon_off = off if icon else 0
+    if icon:
+        off += round_up(icon[0] * icon[1] * 2, SECTOR)
+    return cover_off, icon_off, off
+
+
+def front_bytes(hdr, icon_off, icon, palette, cover):
+    s0 = hdr + ICON.pack(icon_off, icon[0] if icon else 0, icon[1] if icon else 0)
+    b = bytearray(s0 + bytes(SECTOR - len(s0)))
+    b += palette + bytes(SECTOR - len(palette))
+    for img in (cover, icon):
+        if img:
+            b += img[2] + bytes(round_up(len(img[2]), SECTOR) - len(img[2]))
+    return bytes(b)
+
+
 # ---- convert -------------------------------------------------------------------
 
 def find_cover(a, info):
@@ -314,9 +356,10 @@ def convert(a):
                        "-f", "u8", "-"]).stdout
 
         cover_src, cover_map = find_cover(a, info)
-        cover = None
+        cover = icon = None
         if cover_src:
             cover = image_to_rgb565(cover_src, cover_map, a.cover_width)
+            icon = image_to_rgb565(cover_src, cover_map, a.icon_width)
 
         # Pass 2: frames, streamed, so memory does not grow with length.
         cmd = ["ffmpeg", "-v", "error"] + clip_args(a) + ["-i", a.input]
@@ -333,9 +376,7 @@ def convert(a):
         # every frame -- measured, not assumed (2 frames of 16x8 = 2,304 B).
         per_read = frame_bytes + (1024 if pix == PIX_PAL8 else 0)
 
-        cover_off = 2 * SECTOR if cover else 0
-        cover_bytes = round_up(cover[0] * cover[1] * 2, SECTOR) if cover else 0
-        first = 2 * SECTOR + cover_bytes
+        cover_off, icon_off, first = front_layout(cover, icon)
 
         palette = bytes(512)
         frames = 0
@@ -377,10 +418,7 @@ def convert(a):
                 frames * 1000 * fps_den // fps_num,
                 title.encode("ascii")[:127])
             f.seek(0)
-            f.write(hdr + bytes(SECTOR - len(hdr)))
-            f.write(palette + bytes(SECTOR - len(palette)))
-            if cover:
-                f.write(cover[2] + bytes(cover_bytes - len(cover[2])))
+            f.write(front_bytes(hdr, icon_off, icon, palette, cover))
         os.replace(out + ".part", out)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -390,7 +428,8 @@ def convert(a):
     print("  wrote    %s" % out)
     print("  frames   %d x %d B chunks  (%.1f s), %s" % (
         frames, stride, frames * fps_den / fps_num,
-        "cover %dx%d" % (cover[0], cover[1]) if cover else "no cover"))
+        "cover %dx%d, icon %dx%d" % (cover[0], cover[1], icon[0], icon[1])
+        if cover else "no cover"))
     print("  size     %.1f MB" % (size / 1048576))
     print("  the board must read %.0f KB/s to keep up" % kbs)
     # docs/next_moves/11 step 3: SPI3 at 10 MHz read 554 KB/s of the reading
@@ -415,7 +454,10 @@ def read_header(path):
             "cover_h duration_ms title").split()
     d = dict(zip(keys, v))
     d["title"] = d["title"].rstrip(b"\0").decode("ascii", "replace")
+    d["icon_off"], d["icon_w"], d["icon_h"] = ICON.unpack(h[ICON_AT:ICON_AT + ICON.size])
     d["palette"] = struct.unpack("<256H", h[SECTOR:SECTOR + 512])
+    d["raw_header"] = h[:HEADER.size]
+    d["raw_palette"] = h[SECTOR:SECTOR + 512]
     return d
 
 
@@ -433,6 +475,20 @@ def check(path):
         errs.append("stride/first not sector aligned")
     if d["stride"] < 16 + d["frame_bytes"] + d["aud_max"]:
         errs.append("stride too small for a frame and its audio")
+    # Pictures must sit between the palette and the first chunk, and not
+    # overlap: the board seeks straight to them.
+    pics = []
+    for name, off, w, h in (("cover", d["cover_off"], d["cover_w"], d["cover_h"]),
+                            ("icon", d["icon_off"], d["icon_w"], d["icon_h"])):
+        if off:
+            end = off + w * h * 2
+            if off % SECTOR or off < 2 * SECTOR or end > d["first"] or not w or not h:
+                errs.append("%s %dx%d at %d does not fit before the chunks" % (name, w, h, off))
+            pics.append((off, end, name))
+    pics.sort()
+    for (o1, e1, n1), (o2, e2, n2) in zip(pics, pics[1:]):
+        if e1 > o2:
+            errs.append("%s overlaps %s" % (n1, n2))
     size = os.path.getsize(path)
     want = d["first"] + d["frames"] * d["stride"]
     if size != want:
@@ -466,9 +522,10 @@ def check(path):
         d["frames"], d["duration_ms"] / 1000))
     print("  audio %s, %d samples total" % (
         ("%d Hz u8 mono" % d["rate"]) if d["afmt"] else "none", audio_total))
-    print("  chunks %d B from offset %d; cover %s" % (
+    print("  chunks %d B from offset %d; cover %s; icon %s" % (
         d["stride"], d["first"],
-        ("%dx%d at %d" % (d["cover_w"], d["cover_h"], d["cover_off"])) if d["cover_off"] else "none"))
+        ("%dx%d at %d" % (d["cover_w"], d["cover_h"], d["cover_off"])) if d["cover_off"] else "none",
+        ("%dx%d at %d" % (d["icon_w"], d["icon_h"], d["icon_off"])) if d["icon_off"] else "none"))
     print("  the board must read %.0f KB/s" % (d["stride"] * d["fps_num"] / d["fps_den"] / 1024))
     if errs:
         for e in errs:
@@ -496,13 +553,14 @@ def preview(a):
     -- and write a PNG, so a file can be looked at before it is ever copied."""
     d = read_header(a.preview)
     with open(a.preview, "rb") as f:
-        if a.cover_only:
-            if not d["cover_off"]:
-                die("no cover in this file")
-            f.seek(d["cover_off"])
-            n = d["cover_w"] * d["cover_h"]
+        if a.cover_only or a.icon_only:
+            k = "icon" if a.icon_only else "cover"
+            if not d[k + "_off"]:
+                die("no %s in this file" % k)
+            f.seek(d[k + "_off"])
+            n = d[k + "_w"] * d[k + "_h"]
             words = struct.unpack("<%dH" % n, f.read(2 * n))
-            to_png(d["cover_w"], d["cover_h"], rgb24_from565(words), a.out)
+            to_png(d[k + "_w"], d[k + "_h"], rgb24_from565(words), a.out)
         else:
             if not 0 <= a.frame < d["frames"]:
                 die("frame %d out of range (0..%d)" % (a.frame, d["frames"] - 1))
@@ -514,6 +572,38 @@ def preview(a):
                 words = struct.unpack("<%dH" % (d["w"] * d["h"]), raw)
             to_png(d["w"], d["h"], rgb24_from565(words), a.out)
     print("vidconv: wrote %s" % a.out)
+
+
+def set_cover(picture, path, cover_width, icon_width):
+    """Replaces a file's cover and icon from any picture, without the source
+    video: the frames are copied across byte for byte, only the front of the
+    file is rebuilt. Built so a thumbnail can be changed after the original
+    video has been deleted -- which the user's example already has been."""
+    need_tools()
+    d = read_header(path)
+    cover = image_to_rgb565(picture, None, cover_width)
+    icon = image_to_rgb565(picture, None, icon_width)
+    cover_off, icon_off, first = front_layout(cover, icon)
+
+    # The header with only the fields that moved changed: cover and first.
+    h = bytearray(d["raw_header"])
+    struct.pack_into("<I", h, 44, first)
+    struct.pack_into("<IHH", h, 48, cover_off, cover[0], cover[1])
+    front = front_bytes(bytes(h), icon_off, icon, d["raw_palette"], cover)
+
+    tmp = path + ".part"
+    with open(path, "rb") as src, open(tmp, "wb") as dst:
+        dst.write(front)
+        src.seek(d["first"])
+        while True:
+            block = src.read(1 << 20)
+            if not block:
+                break
+            dst.write(block)
+    os.replace(tmp, path)
+    print("vidconv: %s -- cover %dx%d, icon %dx%d from %s" % (
+        path, cover[0], cover[1], icon[0], icon[1], picture))
+    return check(path)
 
 
 # ---- self-test ---------------------------------------------------------------------
@@ -534,14 +624,48 @@ def selftest():
             ns = argparse.Namespace(
                 input=src, output=os.path.join(tmp, "t-%s.nvd" % fmt), width=240,
                 fps=10, format=fmt, rotate=False, audio_rate=22050, no_audio=False,
-                cover=None, no_cover=True, cover_width=120, start=None,
-                duration=None, title=None)
+                cover=None, no_cover=True, cover_width=120, icon_width=64,
+                start=None, duration=None, title=None)
             out = convert(ns)
             d = read_header(out)
             ok = (d["w"], d["h"], d["frames"]) == (240, 134, 20)
             print("  selftest %s: %dx%d, %d frames -> %s" % (
                 fmt, d["w"], d["h"], d["frames"], "ok" if ok else "WRONG (want 240x134, 20)"))
             fails += (not ok) + check(out)
+
+        # A cover beside the video (what yt-dlp writes), then replaced with a
+        # different picture: the frames must come through untouched.
+        pic1 = os.path.splitext(src)[0] + ".jpg"
+        pic2 = os.path.join(tmp, "other.png")
+        run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=red:size=1280x720",
+             "-frames:v", "1", "-y", pic1])
+        run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=blue:size=640x360",
+             "-frames:v", "1", "-y", pic2])
+        ns = argparse.Namespace(
+            input=src, output=os.path.join(tmp, "t-cover.nvd"), width=240, fps=10,
+            format="pal8", rotate=False, audio_rate=22050, no_audio=False,
+            cover=None, no_cover=False, cover_width=120, icon_width=64,
+            start=None, duration=None, title=None)
+        out = convert(ns)
+        d = read_header(out)
+        with open(out, "rb") as f:
+            f.seek(d["first"])
+            frames_before = f.read()
+        ok = (d["cover_w"], d["cover_h"], d["icon_w"], d["icon_h"]) == (120, 68, 64, 36)
+        fails += (not ok) + check(out)
+        fails += set_cover(pic2, out, 120, 64)
+        d2 = read_header(out)
+        with open(out, "rb") as f:
+            f.seek(d2["icon_off"])
+            px = struct.unpack("<H", f.read(2))[0]
+            f.seek(d2["first"])
+            frames_after = f.read()
+        blue = (px & 0x1F) > 25 and (px >> 11) < 4          # RGB565: blue high, red low
+        same = frames_before == frames_after
+        print("  selftest cover: 120x68 + 64x36 %s; after --set-cover icon is blue %s; "
+              "frames untouched %s" % ("ok" if ok else "WRONG", "ok" if blue else "WRONG",
+                                       "ok" if same else "WRONG"))
+        fails += (not blue) + (not same)
         print("selftest:", "PASS" if not fails else "FAIL")
         return 1 if fails else 0
     finally:
@@ -573,6 +697,11 @@ def main():
     ap.add_argument("--cover", help="picture to use as the cover")
     ap.add_argument("--no-cover", action="store_true")
     ap.add_argument("--cover-width", type=int, default=120)
+    ap.add_argument("--icon-width", type=int, default=64,
+                    help="the list thumbnail; 64 gives 64x36 for 16:9")
+    ap.add_argument("--set-cover", nargs=2, metavar=("PICTURE", "NVD"),
+                    help="replace an existing file's cover and icon")
+    ap.add_argument("--icon-only", action="store_true")
     ap.add_argument("--start", type=float, help="seconds into the source")
     ap.add_argument("--duration", type=float, help="seconds to convert")
     ap.add_argument("--title", help="shown on the board; default from the file name")
@@ -586,6 +715,8 @@ def main():
 
     if a.selftest:
         return selftest()
+    if a.set_cover:
+        return set_cover(a.set_cover[0], a.set_cover[1], a.cover_width, a.icon_width)
     if a.check:
         return check(a.check)
     if a.preview:
