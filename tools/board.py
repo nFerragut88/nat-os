@@ -125,7 +125,14 @@ def holder(port):
 
 def open_port(port):
     try:
-        return serial.Serial(port, 115200, timeout=0.2)
+        s = serial.Serial(port, 115200, timeout=0.2)
+        # Start from NOW. The board prints continuously, and the driver keeps
+        # what arrived while nothing was reading -- so a fresh session used to
+        # open on minutes-old text: a status query answered with the previous
+        # run's numbers, and a probe matched a prompt printed long ago. Once
+        # read as "the shell has hung" while the board was answering fine.
+        s.reset_input_buffer()
+        return s
     except Exception as e:
         print("board: cannot open %s: %s" % (port, e), file=sys.stderr)
         if not any(d == port for d, _ in ports()):
@@ -219,6 +226,21 @@ def cmd_run(args):
     for c in args.command:
         if not live:
             break
+        if args.prompt:
+            # Drain first: the PREVIOUS command's prompt can still be in
+            # flight, and matching that one ends this command's wait at once
+            # -- which is how a status query came back showing the output of
+            # the command before it.
+            # Bounded by wall clock, NOT by "until it goes quiet": the board
+            # prints a heartbeat continuously, so a quiet-gap rule never ends.
+            t_drain = time.time()
+            while time.time() - t_drain < 0.4:
+                try:
+                    d = rd(s)
+                except Exception:
+                    break
+                if d:
+                    out.append(d.decode("utf-8", "replace"))
         out.append("\n>>> %s\n" % c)
         try:
             s.write((c + "\r\n").encode())
@@ -236,6 +258,11 @@ def cmd_run(args):
         # MP3 playback" -- it was --wait 120 plus the probe, every time, and a
         # scheduler change was made and measured against it before anyone
         # looked here. (next_moves/11 step 5.)
+        #
+        # (The drain happens BEFORE the send, above. A second copy lived here
+        # and extended its own deadline on every byte -- which, against a board
+        # that prints continuously, never ends. It hung every --prompt run and
+        # read exactly like a wedged shell.)
         #
         # Only text arriving AFTER the send counts, or the prompt the probe
         # already saw would end the wait at once.

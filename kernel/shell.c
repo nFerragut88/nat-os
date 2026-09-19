@@ -671,7 +671,9 @@ static void execute(char *line)
         uart_put_dec(g_p_run);
         uart_puts(" ms, prompt ");
         uart_put_dec(g_p_prompt);
-        uart_puts(" ms\n   since last shtime: ");
+        uart_puts(" ms\n   uart rx overflows (input lost, port reset): ");
+        uart_put_dec(uart_rx_overflows());
+        uart_puts("\n   since last shtime: ");
         uart_put_dec(g_polls);
         uart_puts(" polls, longest gap between polls ");
         uart_put_dec(g_gap_max);

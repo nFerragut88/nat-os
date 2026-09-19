@@ -48,6 +48,7 @@ typedef struct {
 
 #define VPLAY_E_FORMAT  (-201)  /* not a .nvd this player understands */
 #define VPLAY_E_PCM     (-202)  /* the DAC refused the rate */
+#define VPLAY_E_STALL   (-203)  /* the audio clock stopped advancing */
 
 /* Plays `path` with its frames centred horizontally at row `y`. Blocks until
  * the end of the file or until *stop goes non-zero. Borrows `a` (bytes) and
@@ -57,6 +58,13 @@ int vplay_run(const char *path, uint32_t y, volatile int *stop,
 
 /* A snapshot, safe to take from another task while a video plays. */
 void vplay_status(vplay_status_t *st);
+
+/* Play with the DAC never started (the tick becomes the clock). An
+ * experiment, not a feature: it tells a USB drop caused by audio starting
+ * apart from one caused by the display and the card working hard
+ * (next_moves/12 step 6). */
+void vplay_set_mute(int on);
+int  vplay_muted(void);
 
 const char *vplay_error_text(int e);
 

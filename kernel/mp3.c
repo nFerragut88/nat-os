@@ -795,11 +795,19 @@ const char *mp3_error_text(int e)
  * otherwise block on it, and their time would be lost from the comparison. */
 static void wait_done(void)
 {
+    /* BOUNDED: a job that never finishes used to hang the shell here -- no
+     * echo, no prompt, while the board itself ran on. 10 s is longer than any
+     * job takes to notice a stop (a video checks between batches of rows). */
     console_unlock();
-    while (g_job.state == JOB_PENDING || g_job.state == JOB_RUNNING) {
+    uint32_t guard = timer_ticks() + 1000u;
+    while ((g_job.state == JOB_PENDING || g_job.state == JOB_RUNNING)
+           && (int32_t)(timer_ticks() - guard) < 0) {
         task_sleep(5u);
     }
     console_lock();
+    if (g_job.state == JOB_PENDING || g_job.state == JOB_RUNNING) {
+        uart_puts("   still running after 10 s -- not waiting any longer\n");
+    }
 }
 
 void mp3_shell(char *arg)
@@ -859,6 +867,14 @@ void mp3_shell(char *arg)
         } else {
             report_play();
         }
+    } else if (sub[0] == 'v' && sub[1] == 'm') {            /* vmute [0|1] */
+        const char *p;
+        uint32_t v = parse_u32(rest, &p);
+        if (*rest) {
+            vplay_set_mute((int)v);
+        }
+        uart_puts(vplay_muted() ? "   video audio OFF (experiment)\n"
+                                : "   video audio on\n");
     } else if (sub[0] == 'v' && sub[1] == 'i') {            /* video <file> */
         if (!*rest) {
             uart_puts("   mp3 video <file.nvd>\n");

@@ -120,9 +120,48 @@ static unsigned int rx_fifo_used(void)
     return (REG(UART_STATUS_REG) >> UART_RXFIFO_CNT_SHIFT) & UART_RXFIFO_CNT_MASK;
 }
 
+/* ---- the receive FIFO can wedge, and did -----------------------------------
+ *
+ * The RX FIFO is 128 bytes. Overrun it -- a burst of commands typed or pasted
+ * while the shell is not running, which is exactly what happens while a video
+ * plays at AUDIO priority -- and the hardware raises RXFIFO_OVF and stops
+ * accepting. The board goes on printing, so it looks alive and simply deaf:
+ * observed twice as "the shell has hung", once for twenty minutes, while the
+ * telemetry ran the whole time and every task read READY.
+ *
+ * Recovery is a pulse of RXFIFO_RST with the flag cleared. What is already in
+ * the FIFO is lost either way, so nothing is thrown away that could have been
+ * delivered -- and `shtime` counts the resets, because a rising count is a
+ * host sending faster than the shell drains, not a mystery. */
+#define UART_INT_RAW_REG   (UART0_BASE + 0x04u)
+#define UART_INT_CLR_REG   (UART0_BASE + 0x10u)
+#define UART_CONF0_REG     (UART0_BASE + 0x20u)
+#define UART_RXFIFO_OVF    (1u << 4)
+#define UART_RXFIFO_RST    (1u << 17)
+
+static unsigned int g_rx_overflows;
+
+unsigned int uart_rx_overflows(void);
+unsigned int uart_rx_overflows(void) { return g_rx_overflows; }
+
 int uart_rx_ready(void)
 {
-    return rx_fifo_used() != 0u;
+    /* DATA FIRST. An earlier version tested the overflow flag first and
+     * returned 0 when it was set -- and if that flag is ever set while data
+     * keeps arriving, every call says "nothing to read" and the shell goes
+     * deaf for good. That is a worse fault than the one being fixed, and it
+     * is what it did on the board. Characters waiting are always read; the
+     * flag is only acted on when the FIFO is empty. */
+    if (rx_fifo_used() != 0u) {
+        return 1;
+    }
+    if (REG(UART_INT_RAW_REG) & UART_RXFIFO_OVF) {
+        REG(UART_INT_CLR_REG) = UART_RXFIFO_OVF;
+        REG(UART_CONF0_REG) |= UART_RXFIFO_RST;
+        REG(UART_CONF0_REG) &= ~UART_RXFIFO_RST;
+        g_rx_overflows++;
+    }
+    return 0;
 }
 
 int uart_getc_nb(void)

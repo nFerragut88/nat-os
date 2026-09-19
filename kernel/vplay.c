@@ -10,6 +10,11 @@
 
 #define CPU_HZ 80000000u
 
+/* How long either wait on the audio clock may go without finishing. Five
+ * seconds is far longer than a frame (143 ms) or a drain (the ring is 371 ms)
+ * and far shorter than a person's patience. */
+#define STALL_TICKS 500u
+
 /* .nvd header (vidconv.py HEADER) */
 #define NV_VERSION   4u
 #define NV_W         8u
@@ -34,6 +39,10 @@ static fat_file_t g_fa, g_fv;           /* the audio cursor and the video cursor
 
 /* Per-file values the loop needs. */
 static uint32_t g_first, g_stride, g_frame_b, g_rate, g_fnum, g_fden;
+static int g_mute;
+
+void vplay_set_mute(int on) { g_mute = on ? 1 : 0; }
+int  vplay_muted(void)      { return g_mute; }
 
 void vplay_status(vplay_status_t *st)
 {
@@ -45,6 +54,7 @@ const char *vplay_error_text(int e)
     switch (e) {
     case VPLAY_E_FORMAT: return "not a playable .nvd";
     case VPLAY_E_PCM:    return "audio output refused";
+    case VPLAY_E_STALL:  return "audio clock stopped";
     default:             return fat_strerror(e);
     }
 }
@@ -209,7 +219,7 @@ int vplay_run(const char *path, uint32_t y, volatile int *stop,
         return g_st.err = VPLAY_E_FORMAT;
     }
 
-    int audio = (afmt == AUD_U8_MONO);
+    int audio = (afmt == AUD_U8_MONO) && !g_mute;
     uint32_t spf = 0, ring = PCM_BUFS * PCM_SAMPLES, k_ahead = 0;
     if (audio) {
         /* See vplay.h for why (K + 1) frames of audio must fit the ring. */
@@ -252,8 +262,19 @@ int vplay_run(const char *path, uint32_t y, volatile int *stop,
 
         if (audio) {
             /* Wait for frame i's moment; if frame i+1's has already come,
-             * this one is too late to be worth drawing. */
+             * this one is too late to be worth drawing.
+             *
+             * BOUNDED. This waits on the DAC, and if the DAC ever stops
+             * advancing the wait never ends -- the task sleeps at 0% CPU,
+             * looking idle, while `mp3 stop` blocks in wait_done() and the
+             * shell stops answering. Observed once; the cause is not known,
+             * so the wait is bounded rather than assumed safe. */
+            uint32_t guard = timer_ticks() + STALL_TICKS;
             while (!*stop && pcm_samples_played() < offset0 + a_of(i)) {
+                if ((int32_t)(timer_ticks() - guard) >= 0) {
+                    g_st.err = VPLAY_E_STALL;
+                    goto out;
+                }
                 task_sleep(1u);
             }
             if (pcm_samples_played() >= offset0 + a_of(i + 1u)) {
@@ -293,10 +314,15 @@ int vplay_run(const char *path, uint32_t y, volatile int *stop,
      * replay stale buffers: the first full play of the example counted 2
      * underruns, both here. The same lesson pcm.c's test and mp3.c's play()
      * learned. */
+    uint32_t drain_guard = timer_ticks() + STALL_TICKS;
     while (audio && !*stop && pcm_samples_played() < offset0 + a_of(g_st.frames)) {
         static const int16_t quiet[64] = { 0 };
         if (!pcm_write(quiet, 64u)) {
             task_sleep(1u);
+        }
+        if ((int32_t)(timer_ticks() - drain_guard) >= 0) {
+            g_st.err = VPLAY_E_STALL;           /* same bound as the sync wait */
+            break;
         }
     }
 out:

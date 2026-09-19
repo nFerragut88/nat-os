@@ -422,7 +422,16 @@ void vidlist_frame(void)
     }
     if (g_playing >= 0) {
         if (g_fullscreen) {
-            return;                             /* every pixel is vplay's */
+            /* The picture is 180 of the panel's 240 pixels across -- the shape
+             * of 16:9 turned sideways -- so two strips are not vplay's. Paint
+             * the whole panel black ONCE as playback starts, or those strips
+             * keep showing the detail screen underneath. */
+            if (g_full) {
+                display_fill_rect(0, 0, DISP_W, DISP_H, BG);
+                g_full = 0;
+                g_drawn = g_dirty;
+            }
+            return;                             /* every other pixel is vplay's */
         }
         vplay_status_t st;
         vplay_status(&st);
@@ -474,6 +483,14 @@ void vidlist_touch(uint32_t x, uint32_t y, int down)
     g_was_down = 1;
 
     if (g_playing >= 0 || g_want >= 0) {
+        /* [next_moves/12 step 6] Say so. A video stopped itself at frame 73
+         * with nobody touching the panel; only a tap or the view's x can stop
+         * one, so the next occurrence has to name which, and where. */
+        uart_puts("   [video] stopped by a press at ");
+        uart_put_dec(x);
+        uart_puts(",");
+        uart_put_dec(y);
+        uart_puts("\n");
         g_want = -1;
         mp3_request_stop();                     /* any tap: stop; frame() sees it end */
         return;
@@ -541,6 +558,7 @@ void vidlist_close(void)
     g_want = -1;
     g_fullscreen = 0;
     if (g_playing >= 0 && mp3_busy()) {
+        uart_puts("   [video] stopped by leaving the view\n");
         mp3_request_stop();
         for (uint32_t t = 0; t < 50u && mp3_busy(); t++) {
             task_sleep(1u);

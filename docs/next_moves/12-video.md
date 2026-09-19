@@ -343,3 +343,73 @@ works  full-screen video, 180x320 at 7 fps, 0 dropped, user-verified;
        vidconv's per-frame prediction matched within 0.4%
 open   the example still needs re-converting (the user is fetching the
        original); 1 underrun per play; USB drop at video start (4c)
+
+---
+
+## step 6 — chasing the USB drop and the self-stop, and finding my own tools
+
+Asked by the user: fix the USB drop at video start and the run that stopped
+itself (4c).
+
+### 6a. Neither reproduces
+
+With the board-side work of step 5 in place (SD at 20 MHz; the 180x320 file):
+
+```
+29 video starts, 14 full playbacks:  0 link drops, 0 self-stops
+before, with the 240x134 file at 10 MHz:  2 of 2 starts dropped the link
+```
+
+**That is not a fix, it is a failure to reproduce.** Three things changed at
+once -- the DAC's soft start (11 step 9), the bus speed, and the format -- and
+none of them was tested against the fault in isolation. What exists now is the
+instrument that was missing: the view says WHO stopped a video and where the
+press was (`[video] stopped by a press at x,y`), so a recurrence names its
+cause instead of being inferred.
+
+Added for the experiment that is now not needed: `mp3 vmute 1` plays a video
+with the DAC never started (the tick becomes the clock), which would separate
+an audio-caused drop from a display/SD-caused one.
+
+### 6b. Defensive fixes worth keeping
+
+- **Unbounded waits on the audio clock.** `vplay` waited for
+  `pcm_samples_played()` to reach a frame's moment, and for the drain, with no
+  bound. If the DAC ever stops advancing, both wait forever -- the task sleeps
+  at 0% CPU, looking idle, while `mp3 stop` blocks in `wait_done()` and the
+  shell stops answering. Both are now bounded (5 s) and report
+  `VPLAY_E_STALL`; `wait_done()` gives up after 10 s and says so.
+- **The UART receive FIFO can wedge.** 128 bytes; overrun it -- a burst of
+  commands while the shell is not running -- and the hardware raises
+  RXFIFO_OVF and stops accepting while the board keeps printing. Recovery is
+  a FIFO reset; `shtime` counts them.
+
+### 6c. The instruments that were lying, both mine
+
+The "wedged shell" that prompted 6b's hunt was **board.py**, twice over:
+
+1. **A session opened on stale text.** The driver keeps what arrived while
+   nothing was reading, so a fresh run replayed minutes-old output: a status
+   query answered with an earlier run's numbers, and the probe matched a
+   prompt printed long ago. `open_port()` now calls `reset_input_buffer()`.
+2. **A leftover drain loop.** Fixing (1) I added a drain before each command,
+   and left the first attempt in place after it -- and that one extended its
+   own deadline on every byte received. Against a board that prints
+   continuously it never ends. Every `--prompt` run hung, which read exactly
+   like a deaf board; it was chased into the UART registers before the loop
+   was found.
+
+The board, asked directly once the tool was fixed: `shtime` reports **0 uart
+rx overflows**, 1.88M polls, longest gap 57 ms. It had been answering all
+along.
+
+### State
+
+```
+works  29 starts / 14 playbacks with no drop and no self-stop; bounded waits
+       so a stuck job cannot hang the shell; UART overflow recovery; the view
+       names who stopped a video
+open   NOT proven fixed -- not reproduced. If it returns, the log now says
+       whether a press stopped it, and `mp3 vmute 1` separates audio from
+       display/SD
+       1 underrun per full playback, consistently, not chased
