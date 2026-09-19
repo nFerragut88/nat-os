@@ -338,6 +338,8 @@ SECTIONS
     *mp3.c.o(.literal .literal.* .text .text.*)
     /* [next_moves/11 step 6] the music view; human-driven, like browser.c */
     *player.c.o(.literal .literal.* .text .text.*)
+    /* [next_moves/12 step 3] the video browser; human-driven, like player.c */
+    *vidlist.c.o(.literal .literal.* .text .text.*)
 
     . = ALIGN(4);
     _flash_text_end = .;

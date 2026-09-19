@@ -26,6 +26,7 @@ extern uint32_t wincollide_bad(void);
 #include "fat.h"
 #include "mp3.h"
 #include "player.h"
+#include "vidlist.h"
 #include "touch.h"
 #include "calib.h"
 #include "intr.h"
@@ -703,6 +704,11 @@ static void execute(char *line)
     else if (str_eq(line, "cpu")) { cmd_cpu(); }
     else if (str_eq(line, "dispcost")) { cmd_dispcost(); }
     else if (str_eq(line, "mp3")) { mp3_shell(arg); }
+    else if (str_eq(line, "videoopen")) {
+        desktop_open_video();
+        uart_puts("   video view opened\n");
+    }
+    else if (str_eq(line, "video")) { vidlist_dump(); }
     else if (str_eq(line, "musicopen")) {
         /* Opens the music view exactly as its icon does, for testing without
          * a finger on the glass -- `wifiopen`'s reasoning. */

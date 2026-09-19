@@ -20,6 +20,7 @@
 #include "store.h"
 #include "sd.h"
 #include "player.h"
+#include "vidlist.h"
 #include "app.h"
 #include "console.h"
 #include "ipc.h"
@@ -1495,6 +1496,8 @@ static void task_display(void)
             browser_frame();
         } else if (desktop_music()) {
             player_frame();
+        } else if (desktop_video()) {
+            vidlist_frame();
         } else if (desktop_3d()) {
             raycast_frame();
         }
@@ -1723,6 +1726,8 @@ static void task_touch(void)
             browser_touch(t.x, t.y, down);
         } else if (desktop_music()) {
             player_touch(t.x, t.y, down);
+        } else if (desktop_video()) {
+            vidlist_touch(t.x, t.y, down);
         } else {
             desktop_touch(t.x, t.y, down);
         }

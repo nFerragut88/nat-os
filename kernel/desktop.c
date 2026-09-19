@@ -2,6 +2,7 @@
 
 #include "desktop.h"
 #include "player.h"
+#include "vidlist.h"
 #include "wifiapp.h"
 #include "display.h"
 #include "raycast.h"
@@ -99,8 +100,10 @@ static const uint8_t GLYPHS[COLS * ROWS][8] = {
     /* music — two beamed quavers. [next_moves/11 step 6] Was ping's ball:
      * the music player took ping's place on the grid. */
     { 0x1F, 0x11, 0x11, 0x11, 0x33, 0x77, 0x66, 0x00 },
-    /* pong — paddle and ball */
-    { 0xC0, 0xC0, 0xC6, 0xCF, 0xCF, 0xC6, 0xC0, 0xC0 },
+    /* video — a play button in a frame. [next_moves/12 step 3] This cell was
+     * pong's, then meter's (which kept pong's glyph); the video browser has
+     * it now, at the user's choice. */
+    { 0xFF, 0x81, 0x91, 0x99, 0x99, 0x91, 0x81, 0xFF },
     /* rogue — a wall */
     { 0xFF, 0x91, 0x91, 0xFF, 0x19, 0x19, 0xFF, 0x00 },
     /* 3D view — an isometric cube */
@@ -147,7 +150,9 @@ static const desk_icon_t ICONS[COLS * ROWS] = {
      * shell -- what it no longer has is a place on a grid that holds nine
      * things, on a board whose whole point is now that you can write one of
      * these yourself. `meter` is that: NatScript, an icon, and the region. */
-    { "meter",    "meter",    COLOR_GREEN,   DESK_ACTION_NONE },
+    /* [next_moves/12 step 3] Was "meter". meter is still a registered
+     * program -- `run meter` -- and lost only its cell, as pong and ping did. */
+    { "video",    0,          COLOR_GREEN,   DESK_ACTION_VIDEO },
     { "rogue",    "gfxrogue", COLOR_YELLOW,  DESK_ACTION_NONE },
     { "3D view",  0,          COLOR_RED,     DESK_ACTION_3D   },
 };
@@ -162,6 +167,7 @@ static const desk_icon_t ICONS[COLS * ROWS] = {
 #define MODE_WEB      5
 #define MODE_APP      6    /* [step 369] a VM program owns the region */
 #define MODE_MUSIC    7    /* [next_moves/11 step 6] the music view */
+#define MODE_VIDEO    8    /* [next_moves/12 step 3] the video browser */
 static int      g_app_bar;         /* the focused program's bar needs drawing */
 static int      g_mode = MODE_LAUNCHER;
 #define g_active (g_mode == MODE_LAUNCHER)
@@ -231,6 +237,15 @@ int      desktop_term(void)   { return g_mode == MODE_TERM; }
 int      desktop_wifi(void)   { return g_mode == MODE_WIFI; }
 int      desktop_web(void)    { return g_mode == MODE_WEB; }
 int      desktop_music(void)  { return g_mode == MODE_MUSIC; }
+int      desktop_video(void)  { return g_mode == MODE_VIDEO; }
+
+/* The video view, from the shell (`videoopen`), exactly as its icon does. */
+void desktop_open_video(void)
+{
+    g_mode = MODE_VIDEO;
+    app_views_suspend(1);
+    vidlist_open();
+}
 
 /* The music view, from the shell (`musicopen`). Mirrors the DESK_ACTION_MUSIC
  * branch line for line, for the reason desktop_open_wifi() gives. */
@@ -409,7 +424,7 @@ void desktop_chrome(void)
     /* [step 277] The shell AND the note pad now occupy this band with their
      * keyboards. Chrome is drawn LAST every frame, so without this it would
      * paint its close buttons over the bottom row of keys. */
-    if (desktop_term() || desktop_notes() || desktop_wifi() || desktop_web() || desktop_music()) { return; }
+    if (desktop_term() || desktop_notes() || desktop_wifi() || desktop_web() || desktop_music() || desktop_video()) { return; }
 
     /* [step 369] The bar above a focused program: its name, and the way out.
      *
@@ -583,7 +598,7 @@ int desktop_chrome_touch(uint32_t x, uint32_t y)
      * in the band both keyboards now cover. kmain offers this function the
      * press BEFORE term_touch() and notes_touch(), so leaving them live would
      * make a key in the bottom row close a program instead of typing. */
-    if (desktop_term() || desktop_notes() || desktop_wifi() || desktop_web() || desktop_music()) { return 0; }
+    if (desktop_term() || desktop_notes() || desktop_wifi() || desktop_web() || desktop_music() || desktop_video()) { return 0; }
 
     if (x < CLOSE_X) {
         return 0;               /* the name is a label, not a button */
@@ -663,6 +678,14 @@ static void open_selected(void)
         g_mode = MODE_WEB;
         app_views_suspend(1);
         browser_open();
+        return;
+    }
+
+    if (ic->action == DESK_ACTION_VIDEO) {
+        /* Claims the band, as music does: the list runs down to the strip. */
+        g_mode = MODE_VIDEO;
+        app_views_suspend(1);
+        vidlist_open();
         return;
     }
 

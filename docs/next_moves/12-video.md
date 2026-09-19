@@ -130,3 +130,48 @@ logo are recognisable at 64x36.
 ```
 works  .nvd files carry a list icon; --set-cover swaps it from any picture
 next   the video browser on the board, in meter's launcher cell
+
+---
+
+## step 3 — the video browser on the board, in meter's cell
+
+`kernel/vidlist.c`, a native view like the music app. The card's `.nvd` files,
+6 rows of 40 px: the 64x36 icon from the file, the title wrapped over two
+lines, the length. Tap to select, tap again for a detail screen: the 120x68
+cover, the title, size / fps / colour format -- and, in yellow, that playback
+is the next step. It does not pretend to be a player.
+
+- Pictures stream from the file 512 bytes at a time into one buffer and blit
+  as they arrive; no icon or cover is ever held whole.
+- A file that is not a version-1 `.nvd` is skipped and counted, not shown half
+  broken; picture sizes larger than their slot are not drawn.
+- Launcher cell 6: "meter" -> "video", a play button in a frame. meter is still
+  registered (`run meter`: "started id=0 perms=light"). The glyph there had
+  still been pong's paddle under meter's name.
+- Shell: `videoopen` (as the icon), `video` (the list as parsed).
+
+### Measured
+
+```
+no card     video view: listed=0 (no SD card)          -- says so
+card in     videos=1 skipped=0
+            'Learn Numbers in Mandarin Chinese | Counting Numbers in '
+            240x134 516 frames 51600 ms  icon 64x36@17408  cover 120x68@1024
+```
+
+Every value matches `vidconv.py --check` on the PC. **The user, on the
+glass: thumbnail and title shown, and two taps show the bigger cover.**
+
+### A number for the next step
+
+SRAM1 is **58.9 of 60 KB** (_sram1_end 0x3FFFF648). The player will need
+its frame and audio buffers from somewhere; the MP3 player's buffers are the
+obvious candidate, since only one of them can play at a time.
+
+### State
+
+```
+works  the video browser: thumbnails, titles, lengths, a cover detail;
+       user-verified
+next   playback: stream chunks, blit frames, feed the PCM ring, and measure
+       the frame rate before tuning the format

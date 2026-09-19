@@ -59,6 +59,7 @@ typedef struct {
 #define DESK_ACTION_WIFI   4    /* hand the region to the wifi view   */
 #define DESK_ACTION_WEB    5    /* hand the region to the web view    */
 #define DESK_ACTION_MUSIC  6    /* hand the region to the music view  */
+#define DESK_ACTION_VIDEO  7    /* hand the region to the video view  */
 
 int desktop_wifi(void);
 void desktop_init(void);
@@ -98,6 +99,10 @@ void desktop_open_web(void);
  * does (the shell's `musicopen`). */
 int  desktop_music(void);
 void desktop_open_music(void);
+
+/* [next_moves/12 step 3] The video browser, likewise (`videoopen`). */
+int  desktop_video(void);
+void desktop_open_video(void);
 
 /* [step 369] The raycaster's mode, asked for by NAME.
  *
