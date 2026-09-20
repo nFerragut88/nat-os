@@ -7,6 +7,7 @@
 #include "display.h"
 #include "task.h"
 #include "timer.h"
+#include "mp3.h"            /* mp3_volume(): one volume for the player */
 
 #define CPU_HZ 80000000u
 
@@ -14,6 +15,9 @@
  * seconds is far longer than a frame (143 ms) or a drain (the ring is 371 ms)
  * and far shorter than a person's patience. */
 #define STALL_TICKS 500u
+
+/* The loudest a video may play. See the volume note in queue_audio(). */
+#define VPLAY_VOL_CAP 12u
 
 /* .nvd header (vidconv.py HEADER) */
 #define NV_VERSION   4u
@@ -105,8 +109,29 @@ static int queue_audio(uint32_t i, volatile int *stop)
         if (fat_read(&g_fa, raw, n) != (int32_t)n) {
             return FAT_ERR_CHAIN;
         }
+        /* Volume (mp3 vol 0..16), CAPPED while a video plays.
+         *
+         * [next_moves/12 step 7] At full volume this file dropped the USB
+         * link 2 times in 3 -- and took the video with it, stopped by what
+         * looks like a phantom touch from the same disturbance. The same file
+         * at volume 0 (the DAC on, playing silence) and with the DAC never
+         * started: 0 of 3 each. So it is the current the speaker draws, on
+         * top of the panel and the card, not the DAC switching on -- that was
+         * the pop, fixed in 11 step 9.
+         *
+         * At 12/16: 0 of 4. At 8/16: 0 of 4. Songs at full volume never did
+         * it (0 of 22), because a song is not also blitting 57,600 pixels and
+         * reading 416 KB/s. So the cap applies to VIDEO only, and `mp3 vol`
+         * can still go lower. The real limit is this board's supply; software
+         * can only ask for less. */
+        uint32_t vol = mp3_volume();
+        if (vol > VPLAY_VOL_CAP) {
+            vol = VPLAY_VOL_CAP;
+        }
         for (uint32_t k = 0; k < n; k++) {
-            s[k] = (int16_t)(((int32_t)raw[k] - 128) << 8);
+            int32_t v = ((int32_t)raw[k] - 128) << 8;
+            s[k] = (int16_t)(vol == MP3_VOL_MAX ? v
+                             : v * (int32_t)vol / (int32_t)MP3_VOL_MAX);
         }
         uint32_t w = 0;
         while (w < n && !*stop) {

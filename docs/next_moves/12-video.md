@@ -413,3 +413,54 @@ open   NOT proven fixed -- not reproduced. If it returns, the log now says
        whether a press stopped it, and `mp3 vmute 1` separates audio from
        display/SD
        1 underrun per full playback, consistently, not chased
+
+---
+
+## step 7 — the drop was the speaker, and it is the same fault as the self-stop
+
+Step 6 said "not reproduced, not fixed". It reproduced on the first play of
+the USER'S file: every earlier trial had used the generated test pattern,
+whose audio is a steady tone. The link dropped AND the video stopped itself at
+frame 66 -- together, as at 4c.
+
+Same file, everything else identical:
+
+| | link drops |
+|---|---|
+| full volume | **2 of 3** |
+| `mp3 vol 0` -- DAC on, playing silence | 0 of 3 |
+| `mp3 vmute 1` -- DAC never started | 0 of 3 |
+
+**The cause is the current the speaker draws**, not the DAC switching on --
+that was the pop, fixed in 11 step 9 (and still fixed: silence at volume 0
+does not drop). A song at full volume never did it (0 of 22) because a song
+is not also blitting 57,600 pixels and reading 416 KB/s; video adds the rest
+and the supply cannot carry all three. The self-stop rides on the same
+disturbance: the touch controller reporting a press nobody made.
+
+```
+volume 12/16   0 of 4       volume 8/16    0 of 4
+```
+
+`vplay` caps a video's volume at **12/16** (`VPLAY_VOL_CAP`), music keeps full
+volume, and `mp3 vol` still lowers it. Video audio now honours `mp3 vol` at
+all, which it did not before.
+
+```
+with the cap, asking for full volume:  0 link drops, 0 self-stops in 5 runs
+the user's file, end to end:           361 of 361 frames, 0 dropped,
+                                       6.9 fps over 51,940 ms, underruns=1
+```
+
+**This is a reduction in demand, not a repair.** The limit is the board's
+supply; 12/16 is the lowest value tested to work, not a measured margin.
+
+### State
+
+```
+works  video plays whole files with sound, full screen, no link drop and no
+       self-stop; video volume capped at 12/16 and obeying `mp3 vol`
+open   the cap is empirical; a louder file or a weaker USB port could cross
+       the line again -- the view will name a phantom press if it does
+       1 underrun per playback, not chased
+```

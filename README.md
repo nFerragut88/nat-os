@@ -30,6 +30,7 @@ project code.
 | **Graphics** | Raycast 3D view at 16 fps, optional framebuffer |
 | **Storage** | Flash records surviving power cycles; microSD over hardware SPI, read-only FAT16/FAT32 with long names |
 | **Audio** | MP3 playback: minimp3 at 80 MHz, 48 kHz stereo into the DAC by DMA, 0 underruns over a whole song; a music app on the launcher (UM-NATOS-063) |
+| **Video** | Full-screen 180x320 video with sound from the SD card, 361 of 361 frames and none dropped; a PC converter (`tools/vidconv.py`) prepares the files (UM-NATOS-064) |
 | **Networking** | WPA2-PSK, DHCP, a DNS resolver and a TCP/HTTP client — see the caveat below |
 | **Failure** | Stack guards enforced per switch, hang detector, panic to serial *and* flash *and* the panel |
 
