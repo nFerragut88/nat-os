@@ -126,6 +126,17 @@ void display_text(uint32_t x, uint32_t y, const char *s, uint16_t fg, uint16_t b
 void display_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h,
                   const uint16_t *src, uint32_t src_stride);
 
+/* The same rectangle, but from bytes ALREADY in the panel's order (RGB565 high
+ * byte first), sent straight to the DMA engine with no staging copy and no
+ * per-row transfer. For callers that can produce that order for free; the video
+ * player keeps its palette byte-swapped and so gets it for nothing.
+ *
+ * `be` is w*h pixels, contiguous, two bytes each. Not clipped -- a rectangle
+ * that does not fit is refused rather than narrowed, because narrowing a
+ * contiguous stream misplaces every row after the first. */
+void display_blit_be(uint32_t x, uint32_t y, uint32_t w, uint32_t h,
+                     const uint8_t *be);
+
 /* Bytes pushed to the panel since init — the cheapest measure of whether the
  * driver is doing anything at all when nothing appears on screen. */
 uint32_t display_bytes_written(void);

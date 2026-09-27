@@ -75,6 +75,21 @@ int sd_init(void);
  * a byte offset internally on SDSC, so callers always speak in blocks. */
 int sd_read_block(uint32_t lba, uint8_t *dst);
 
+/* Reads `count` CONSECUTIVE blocks into one buffer with a single command
+ * (CMD18), which is worth having because the card's access latency -- 347 us
+ * of the 791 us a block cost at 20 MHz -- is charged per command, not per
+ * sector. Below three blocks, or on the bit-banged bus, it falls back to a
+ * loop of sd_read_block(); callers need not care which happened.
+ *
+ * `dst` must have room for count * 512 bytes. */
+int sd_read_blocks(uint32_t lba, uint32_t count, uint8_t *dst);
+
+/* How much of the reading actually went the multi-block way. An instrument
+ * that can fail: if a change to fat.c stops offering runs of sectors, these
+ * stay at zero while throughput quietly returns to where it was. */
+uint32_t sd_multi_bursts(void);
+uint32_t sd_multi_blocks(void);
+
 sd_type_t sd_type(void);
 
 /* ---- speed (next_moves/11 step 3) ------------------------------------------
@@ -95,6 +110,13 @@ uint32_t sd_speed(void);        /* current div, 0 = bit-banged */
 /* Bytes read while waiting for a block's data token, cumulative: the card's
  * access latency, measured in bus bytes. */
 uint32_t sd_token_polls(void);
+
+/* CPU cycles spent in each phase of every block read since boot, and the
+ * block count: command, waiting for the data token, and the data itself. */
+uint32_t sd_cc_cmd(void);
+uint32_t sd_cc_token(void);
+uint32_t sd_cc_data(void);
+uint32_t sd_blocks(void);
 
 /* The R1 response byte from the last command, and the stage that failed.
  * Reported because SD failures are almost always diagnosable from R1 alone —

@@ -705,6 +705,7 @@ static void execute(char *line)
     else if (str_eq(line, "fat")) { fat_shell(arg); }
     else if (str_eq(line, "cpu")) { cmd_cpu(); }
     else if (str_eq(line, "dispcost")) { cmd_dispcost(); }
+    else if (str_eq(line, "spitest")) { spi3_probe_speed(); }
     else if (str_eq(line, "mp3")) { mp3_shell(arg); }
     else if (str_eq(line, "videoopen")) {
         desktop_open_video();

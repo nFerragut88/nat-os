@@ -3,6 +3,8 @@
 #include "spi3.h"
 #include "gpio.h"
 #include "xtensa.h"
+#include "task.h"
+#include "uart.h"
 
 /* ---- register map -------------------------------------------------------
  *
@@ -217,6 +219,42 @@ void spi3_route(uint8_t sck, uint8_t mosi, uint8_t miso)
     }
 }
 
+/* Receive n bytes while sending 0xFF -- what every SD read is.
+ *
+ * The transmit side needs no packing loop: the W registers are simply filled
+ * with ones. That and the word-wise readback are the whole of the difference
+ * between 0.4 us of software per byte and the wire's own 0.4 us at 20 MHz. */
+int spi3_read(uint8_t *rx, uint32_t n)
+{
+    if (!rx || n == 0u || n > SPI3_XFER_MAX) {
+        return 0;
+    }
+    for (uint32_t w = 0; w < (n + 3u) / 4u; w++) {
+        GPIO_REG(SPI3_W(w)) = 0xFFFFFFFFu;
+    }
+    GPIO_REG(SPI3_MOSI_DLEN) = n * 8u - 1u;
+    GPIO_REG(SPI3_MISO_DLEN) = n * 8u - 1u;
+    GPIO_REG(SPI3_CMD)       = SPI_USR_BIT;
+
+    uint32_t start = xt_ccount();
+    while (GPIO_REG(SPI3_CMD) & SPI_USR_BIT) {
+        if ((xt_ccount() - start) > 40000000u) {
+            g_timeouts++;
+            return 0;
+        }
+    }
+    for (uint32_t i = 0; i < n; i += 4u) {
+        uint32_t w = GPIO_REG(SPI3_W(i / 4u));
+        uint32_t k = n - i < 4u ? n - i : 4u;
+        rx[i] = (uint8_t)w;
+        if (k > 1u) { rx[i + 1u] = (uint8_t)(w >> 8); }
+        if (k > 2u) { rx[i + 2u] = (uint8_t)(w >> 16); }
+        if (k > 3u) { rx[i + 3u] = (uint8_t)(w >> 24); }
+    }
+    g_transfers++;
+    return 1;
+}
+
 int spi3_xfer(const uint8_t *tx, uint8_t *rx, uint32_t n)
 {
     if (!tx || n == 0u || n > SPI3_XFER_MAX) {
@@ -254,8 +292,17 @@ int spi3_xfer(const uint8_t *tx, uint8_t *rx, uint32_t n)
     }
 
     if (rx) {
-        for (uint32_t i = 0; i < n; i++) {
-            rx[i] = (uint8_t)(GPIO_REG(SPI3_W(i / 4u)) >> (8u * (i % 4u)));
+        /* One register read per WORD, not per byte. Each W access goes out on
+         * the peripheral bus; four of them for four bytes was most of this
+         * driver's 0.4 us/byte -- measured at 32 CPU cycles a byte, against
+         * 0.4 us of actual wire time at 20 MHz (next_moves/12 step 8). */
+        for (uint32_t i = 0; i < n; i += 4u) {
+            uint32_t w = GPIO_REG(SPI3_W(i / 4u));
+            uint32_t k = n - i < 4u ? n - i : 4u;
+            rx[i] = (uint8_t)w;
+            if (k > 1u) { rx[i + 1u] = (uint8_t)(w >> 8); }
+            if (k > 2u) { rx[i + 2u] = (uint8_t)(w >> 16); }
+            if (k > 3u) { rx[i + 3u] = (uint8_t)(w >> 24); }
         }
     }
 
@@ -264,6 +311,55 @@ int spi3_xfer(const uint8_t *tx, uint8_t *rx, uint32_t n)
 }
 
 /* ---- bring-up ------------------------------------------------------------ */
+
+/* [next_moves/12 step 8] Where a transfer's time goes, with no card in the
+ * picture: the peripheral clocks whether or not anything listens.
+ *
+ * Timed in THIS TASK'S OWN CYCLES. The first version used xt_ccount() and
+ * measured the same 64-byte transfer at 80 us and at 59 us, because a tick
+ * lands inside a 12 ms loop and another task's slice goes on the bill --
+ * task.h says exactly this, and it was ignored for one more round.
+ *
+ * Cost is measured against LENGTH so the fixed part of a transfer separates
+ * from the per-byte part: only the second is helped by a faster clock. */
+void spi3_probe_speed(void)
+{
+    static uint8_t ff[SPI3_XFER_MAX], rx[SPI3_XFER_MAX];
+    for (uint32_t i = 0; i < SPI3_XFER_MAX; i++) {
+        ff[i] = 0xFFu;
+    }
+    uint32_t saved = GPIO_REG(SPI3_CLOCK);
+    static const uint32_t divs[] = { 2u, 4u, 8u };
+    static const uint32_t lens[] = { 1u, 16u, 64u };
+
+    for (uint32_t d = 0; d < 3u; d++) {
+        spi3_set_div(divs[d]);
+        uart_puts("   div ");
+        uart_put_dec(divs[d]);
+        uart_puts(" (");
+        uart_put_dec(80u / divs[d]);
+        uart_puts(" MHz, reg ");
+        uart_put_hex(GPIO_REG(SPI3_CLOCK));
+        uart_puts("):");
+        for (uint32_t l = 0; l < 3u; l++) {
+            uint32_t c0 = task_cpu_cycles();
+            for (uint32_t i = 0; i < 400u; i++) {
+                spi3_xfer(ff, rx, lens[l]);
+            }
+            uint32_t ns = (task_cpu_cycles() - c0) * 25u / 2u / 400u;
+            uart_puts("  ");
+            uart_put_dec(lens[l]);
+            uart_puts(" B: ");
+            uart_put_dec(ns / 1000u);
+            uart_puts(".");
+            uart_put_dec((ns / 100u) % 10u);
+            uart_puts(" us");
+        }
+        uart_puts("\n");
+    }
+    GPIO_REG(SPI3_CLOCK) = saved;
+    uart_puts("   wire time for 64 B: 25.6 us at 20 MHz, 12.8 at 40, 51.2 at 10\n");
+}
 
 int spi3_selftest_const(int level)
 {

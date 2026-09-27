@@ -517,10 +517,24 @@ static int32_t read_impl(fat_file_t *f, void *buf, uint32_t n)
             k = n - got;
         }
         if (off == 0u && k == 512u) {
-            if (read_block(lba, out + got) != FAT_OK) {    /* straight in */
+            /* A run of whole sectors, straight into the caller's buffer and in
+             * one card command (sd_read_blocks). Bounded by what is left of
+             * THIS cluster: the next cluster is wherever the chain says, so a
+             * run cannot be assumed to continue across the boundary. */
+            uint32_t run  = (n - got) / 512u;
+            uint32_t left = (cbytes - in_c) / 512u;
+            if (run > left) {
+                run = left;
+            }
+            g_blocks_read += run;
+            if (sd_read_blocks(lba, run, out + got) != SD_OK) {
                 return got ? (int32_t)got : FAT_ERR_SD;
             }
-        } else {
+            got    += run * 512u;
+            f->pos += run * 512u;
+            continue;
+        }
+        {
             if (load_sec(lba) != FAT_OK) {
                 return got ? (int32_t)got : FAT_ERR_SD;
             }
@@ -748,6 +762,14 @@ static void cmd_read(const char *path, uint32_t limit)
      * card being slow (task.h, task_cpu_cycles). */
     uint32_t cpu_ms = 0, cpu_cc = 0;
     uint32_t polls0 = sd_token_polls();
+    /* Phase counters are cumulative since boot, and this board has usually read
+     * blocks at more than one clock divider by the time anyone runs this. An
+     * average over all of them answers a question nobody asked, so take the
+     * delta across this read instead. (One earlier "unchanged token wait" was
+     * this instrument reporting old div-8 blocks.) */
+    uint32_t cc_cmd0 = sd_cc_cmd(), cc_tok0 = sd_cc_token();
+    uint32_t cc_dat0 = sd_cc_data(), sdb0 = sd_blocks();
+    uint32_t mb0 = sd_multi_blocks(), mr0 = sd_multi_bursts();
     uint8_t head[16];
     uint32_t hops0 = g_read_hops;
 
@@ -836,6 +858,22 @@ static void cmd_read(const char *path, uint32_t limit)
     uart_put_dec(ms ? total / ms : 0u);         /* bytes per ms == KB/s (1000) */
     uart_puts(" KB/s   blocks=");
     uart_put_dec(g_blocks_read - blocks0);
+    {
+        uint32_t nb = sd_blocks() - sdb0;
+        uart_puts("   per block: cmd ");
+        uart_put_dec(nb ? (sd_cc_cmd() - cc_cmd0) / nb / 80u : 0u);
+        uart_puts(" us  token wait ");
+        uart_put_dec(nb ? (sd_cc_token() - cc_tok0) / nb / 80u : 0u);
+        uart_puts(" us  data ");
+        uart_put_dec(nb ? (sd_cc_data() - cc_dat0) / nb / 80u : 0u);
+        uart_puts(" us  (");
+        uart_put_dec(nb);
+        uart_puts(" blocks, this read only)\n   of those, ");
+        uart_put_dec(sd_multi_blocks() - mb0);
+        uart_puts(" came in ");
+        uart_put_dec(sd_multi_bursts() - mr0);
+        uart_puts(" multi-block commands\n");
+    }
     uart_puts("  (checks took ");
     uart_put_dec(chk_cc / (CPU_HZ / 1000u));
     uart_puts(" ms, excluded)\n   of those ");

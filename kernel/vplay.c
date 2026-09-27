@@ -38,6 +38,10 @@
 #define AUD_U8_MONO  1u
 
 static vplay_status_t g_st;
+/* Held BYTE-SWAPPED, in the panel's own order. The lookup that expands a frame
+ * has to write each pixel somewhere regardless, so swapping here costs 256
+ * operations per file instead of 57,600 per frame, and lets the expanded rows go
+ * to the panel by DMA with no staging copy (display_blit_be). */
 static uint16_t g_pal[256];
 static fat_file_t g_fa, g_fv;           /* the audio cursor and the video cursor */
 
@@ -173,9 +177,9 @@ static int draw_frame(uint32_t i, uint32_t x, uint32_t y, uint32_t pix,
             uint32_t t1 = task_cpu_cycles();
             *read_cc += t1 - t0;
             for (uint32_t k = 0; k < n * w; k++) {
-                b[k] = g_pal[a[k]];
+                b[k] = g_pal[a[k]];     /* already panel-order; see g_pal */
             }
-            display_blit(x, y + r, w, n, b, w);
+            display_blit_be(x, y + r, w, n, (const uint8_t *)b);
             *draw_cc += task_cpu_cycles() - t1;
         } else {
             if (fat_read(&g_fv, b, n * w * 2u) != (int32_t)(n * w * 2u)) {
@@ -231,7 +235,8 @@ int vplay_run(const char *path, uint32_t y, volatile int *stop,
         return g_st.err = VPLAY_E_FORMAT;
     }
     for (uint32_t k = 0; k < 256u; k++) {
-        g_pal[k] = rd16(a + 512u + 2u * k);
+        uint16_t v = rd16(a + 512u + 2u * k);
+        g_pal[k] = (uint16_t)((v >> 8) | (v << 8));
     }
 
     /* Rows per batch: as many as the smaller of the two borrowed buffers

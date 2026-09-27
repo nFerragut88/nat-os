@@ -464,3 +464,106 @@ open   the cap is empirical; a louder file or a weaker USB port could cross
        the line again -- the view will name a phantom press if it does
        1 underrun per playback, not chased
 ```
+
+---
+
+## step 8 — the frame budget, halved: 127 ms to 85 ms
+
+The user asked whether the frame rate could be improved. 7 fps was not chosen;
+it was what step 5 could afford. One frame cost **127 ms** of a 143 ms budget:
+
+```
+read 80.1 ms   draw 46.8 ms
+```
+
+Both halves turned out to be paying for the same thing -- bytes moved through
+peripheral registers by the CPU, one transaction at a time.
+
+### the instrument first
+
+`spitest` (`spi3_probe_speed()`) times 1, 16 and 64-byte transfers at each
+divider with `task_cpu_cycles()`, so preemption cannot be read as the bus
+being slow (the first version used `xt_ccount()` and measured the same
+transfer at 80 us and 59 us). It showed **~0.4 us per byte of software plus
+~2.5 us per transaction, at every clock** -- the driver was charging as much
+per byte as the 20 MHz wire was.
+
+### the read side
+
+Three changes, each measured against the same file and checked by CRC:
+
+1. **Word-wise register access.** `spi3_xfer()` packed and unpacked the W
+   registers a byte at a time; a new `spi3_read()` fills them with
+   0xFFFFFFFF and reads them back as words.
+2. **Batched token polling.** The card answers a read command with 0xFF until
+   its data token. One byte per transaction cost 343 us a block for bytes that
+   are all padding. Now 16 at a time, and the batch that contains the token
+   also contains the first data bytes, which are kept rather than re-read.
+3. **Multi-block reads (CMD18).** The measurement that made this obvious:
+
+   ```
+   per block: cmd 39 us   token wait 347 us   data 405 us
+   ```
+
+   That 347 us is the card's access latency, and it is charged **per command,
+   not per sector**. `sd_read_blocks()` reads a run of consecutive sectors with
+   one CMD18, and `fat.c` offers it every whole-sector run inside a cluster.
+
+```
+                    KB/s    cmd   token   data    per block
+before              480     46    338*    664     ~694 (CPU)
+word-wise + batch   637     46    347     405      791
++ CMD18            1022      7     77     390      474
+```
+
+*The "338" was the instrument lying: those phase counters were cumulative
+since boot and this board had read blocks at three different dividers, so the
+average answered a question nobody asked. `fat cat` now reports the delta
+across the one read it performed. The apparent "no change" in the token wait
+after batching was that average, not the bus.
+
+**The bytes are unchanged**, which is the only reason any of this counts:
+`crc32=0xf584e81c` before and after every step, chain 1563 of 1563 clusters.
+And an instrument that can fail: `fat cat` prints how many blocks arrived by
+multi-block command, so a future change to `fat.c` that stops offering runs
+shows up as `0` rather than as quietly worse throughput.
+
+```
+12,496 of 12,504 blocks in 3,124 commands -- 4 a burst, the buffer's size
+```
+
+### the draw side
+
+`display_blit()` byte-swaps every pixel into a 480-byte staging buffer and
+sends that, so a full-screen frame was 57,600 swaps and 240 DMA transactions
+over a ~23 ms wire floor. `display_blit_be()` takes bytes **already in the
+panel's order** and hands them to the DMA engine in 4 KB pieces, with no
+staging copy. The video player gets that order for free by keeping its palette
+byte-swapped: 256 swaps per file instead of 57,600 per frame.
+
+It refuses a rectangle that does not fit rather than clipping one, because
+narrowing a contiguous stream misplaces every row after the first -- a subtly
+wrong picture is worse than none.
+
+### where the budget stands
+
+```
+                 read     draw    frame    worst frame
+before          80.1     46.8     127      143 (budget)
+after           50.0     35.1      85       88
+```
+
+0 frames dropped, 0 underruns, `dmastat` 0 timeouts over 14,494 transfers.
+**The file is still 7 fps**, so nothing looks different yet -- the gain is
+headroom, and spending it needs the card in the PC and a re-convert.
+
+### State
+
+```
+works  the same playback at two thirds the cost per frame; SD reads 1022 KB/s
+       (was 480); bytes proven identical by CRC at every step
+open   the read half is still ~0.36 us/byte of CPU above the 20 MHz wire
+       time, because sd.c moves data through the W registers. SPI3 DMA is the
+       next ~2x on that half, and display.c already has the pattern
+open   the 7 fps file has not been re-converted, so the headroom is unspent
+```

@@ -1109,6 +1109,43 @@ void display_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h,
     draw_unlock();
 }
 
+/* ---- blitting bytes the panel can take as they are -------------------------
+ *
+ * display_blit() byte-swaps each pixel into a 480-byte staging buffer and sends
+ * that, so a full-screen video frame costs 57,600 swaps and 240 DMA
+ * transactions on top of the 115 KB of wire time it cannot avoid. Measured, the
+ * whole draw was 45 ms a frame against a ~23 ms floor at this clock.
+ *
+ * A caller that can produce panel-order bytes for nothing -- the video player
+ * can, by keeping its palette byte-swapped -- can hand the buffer to the DMA
+ * engine directly, in the largest pieces one descriptor holds.
+ *
+ * `be` holds w*h pixels, high byte first, contiguous. Unlike display_blit()
+ * this does NOT clip: a contiguous stream whose width was reduced would put
+ * every row after the first at the wrong offset, and drawing a subtly wrong
+ * picture is worse than drawing none. Out-of-bounds is refused. */
+#define BLIT_BE_CHUNK 4088u     /* fits the descriptor's 12-bit size, /4 and /2 */
+
+void display_blit_be(uint32_t x, uint32_t y, uint32_t w, uint32_t h,
+                     const uint8_t *be)
+{
+    if (w == 0u || h == 0u || x >= DISP_W || y >= DISP_H
+        || w > DISP_W - x || h > DISP_H - y) {
+        return;
+    }
+    draw_lock();
+    set_window(x, y, x + w - 1u, y + h - 1u);
+    uint32_t total = w * h * 2u;
+    while (total) {
+        uint32_t chunk = (total > BLIT_BE_CHUNK) ? BLIT_BE_CHUNK : total;
+        spi_tx(be, chunk);
+        be    += chunk;
+        total -= chunk;
+    }
+    push_end();
+    draw_unlock();
+}
+
 void display_clear(uint16_t colour)
 {
     display_fill_rect(0, 0, DISP_W, DISP_H, colour);

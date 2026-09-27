@@ -44,6 +44,18 @@ static uint32_t g_half_us = CLK_SLOW_US;
 static uint32_t g_div_wanted = 4u;
 static int      g_hw;
 static uint32_t g_token_polls;  /* bytes read waiting for a data token */
+
+/* [next_moves/12 step 8] Where a block read's time goes, in CPU cycles: the
+ * command, the wait for the card's data token, and the data itself. Video
+ * spends 80 ms a frame reading 61 KB that is only ~25 ms of wire time at
+ * 20 MHz, so the rest is somewhere, and guessing which is how the last three
+ * days went wrong. */
+static uint32_t g_cc_cmd, g_cc_token, g_cc_data, g_blocks;
+
+uint32_t sd_cc_cmd(void)   { return g_cc_cmd; }
+uint32_t sd_cc_token(void) { return g_cc_token; }
+uint32_t sd_cc_data(void)  { return g_cc_data; }
+uint32_t sd_blocks(void)   { return g_blocks; }
 static sd_type_t g_type;
 static uint32_t g_last_r1 = 0xFF;
 static uint32_t g_attempts;
@@ -53,7 +65,9 @@ static uint32_t g_attempts;
 #define CMD0_GO_IDLE        0u
 #define CMD8_SEND_IF_COND   8u
 #define CMD16_SET_BLOCKLEN 16u
+#define CMD12_STOP         12u
 #define CMD17_READ_SINGLE  17u
+#define CMD18_READ_MULTI   18u
 #define CMD55_APP_CMD      55u
 #define CMD58_READ_OCR     58u
 #define ACMD41_SEND_OP_COND 41u
@@ -298,6 +312,138 @@ uint32_t sd_speed(void)
     return g_hw ? g_div_wanted : 0u;
 }
 
+/* ---- one block's two waits, shared by the single and multi-block reads ------
+ *
+ * Waits for a data token on the hardware bus. A batch that contains the token
+ * also contains the data bytes behind it, so those are kept in `dst` and
+ * reported in `*have` rather than being re-read. Returns the token byte, or
+ * 0xFF if the card never sent one. */
+static uint8_t token_wait_hw(uint8_t *dst, uint32_t *have)
+{
+    uint8_t batch[16];
+    *have = 0;
+    for (int i = 0; i < 300; i++) {
+        if (!spi3_read(batch, sizeof batch)) {
+            return 0xFFu;
+        }
+        g_token_polls += sizeof batch;
+        for (uint32_t k = 0; k < sizeof batch; k++) {
+            if (batch[k] != 0xFFu) {
+                uint32_t n = (uint32_t)(sizeof batch - (k + 1u));
+                for (uint32_t j = 0; j < n; j++) {
+                    dst[j] = batch[k + 1u + j];
+                }
+                *have = n;
+                return batch[k];
+            }
+        }
+    }
+    return 0xFFu;
+}
+
+/* The rest of a block, then its two discarded CRC bytes. 64 bytes per
+ * transaction: the W registers' whole capacity. */
+static int data_read_hw(uint8_t *dst, uint32_t have)
+{
+    for (uint32_t i = have; i < SD_BLOCK_SIZE; i += SPI3_XFER_MAX) {
+        uint32_t n = SD_BLOCK_SIZE - i;
+        if (n > SPI3_XFER_MAX) {
+            n = SPI3_XFER_MAX;
+        }
+        if (!spi3_read(dst + i, n)) {
+            return 0;
+        }
+    }
+    uint8_t crc[2];
+    return spi3_read(crc, sizeof crc);
+}
+
+/* ---- multi-block reads (next_moves/12 step 8) -------------------------------
+ *
+ * Measured per block on this card at 20 MHz: command 39 us, waiting for the
+ * data token 347 us, moving the 512 bytes 405 us. The middle one is the card's
+ * own access latency and it is paid once per COMMAND, not once per sector --
+ * so a run of consecutive sectors read with CMD18 pays it once instead of once
+ * each. That is where video's read budget was going: 120 sectors a frame.
+ *
+ * The stream is open-ended until CMD12 stops it, so every early return has to
+ * send the stop -- a card left streaming answers the next command with data. */
+static uint32_t g_multi_bursts, g_multi_blocks;
+
+uint32_t sd_multi_bursts(void) { return g_multi_bursts; }
+uint32_t sd_multi_blocks(void) { return g_multi_blocks; }
+
+static void multi_stop(void)
+{
+    sd_command(CMD12_STOP, 0);
+    /* R1 for CMD12 is followed by a busy stretch of 0x00 while the card tidies
+     * up. Its VALUE is not checked: the card may still have been sending the
+     * block after the last one we wanted, and a data byte can look like any
+     * R1. What matters is that the bus is idle (0xFF) again before the next
+     * command, which is what this waits for. */
+    for (int i = 0; i < 1000; i++) {
+        if (sd_rx() == 0xFFu) {
+            break;
+        }
+    }
+    cs_high();
+}
+
+int sd_read_blocks(uint32_t lba, uint32_t count, uint8_t *dst)
+{
+    if (count == 0u) {
+        return SD_OK;
+    }
+    /* One block, or the bit-banged bus, goes the proven way. Below three
+     * blocks CMD18 saves one latency and costs a CMD12, which is close enough
+     * to a wash that it is not worth a second code path being exercised. */
+    if (count < 3u || !g_hw) {
+        for (uint32_t i = 0; i < count; i++) {
+            int rc = sd_read_block(lba + i, dst + i * SD_BLOCK_SIZE);
+            if (rc != SD_OK) {
+                return rc;
+            }
+        }
+        return SD_OK;
+    }
+    if (g_type == SD_TYPE_NONE) {
+        return SD_ERR_IDLE;
+    }
+
+    uint32_t addr = (g_type == SD_TYPE_SDHC) ? lba : lba * SD_BLOCK_SIZE;
+
+    uint32_t t0 = xt_ccount();
+    cs_low();
+    if (sd_command(CMD18_READ_MULTI, addr) != 0u) {
+        multi_stop();
+        return SD_ERR_READ;
+    }
+    g_cc_cmd += xt_ccount() - t0;
+    g_multi_bursts++;
+
+    for (uint32_t b = 0; b < count; b++) {
+        uint8_t *p = dst + b * SD_BLOCK_SIZE;
+        uint32_t t1 = xt_ccount(), have = 0;
+        uint8_t token = token_wait_hw(p, &have);
+        uint32_t t2 = xt_ccount();
+        g_cc_token += t2 - t1;
+        if (token != DATA_TOKEN) {
+            multi_stop();
+            return SD_ERR_TOKEN;
+        }
+        if (!data_read_hw(p, have)) {
+            multi_stop();
+            return SD_ERR_TOKEN;
+        }
+        g_cc_data += xt_ccount() - t2;
+        g_blocks++;
+        g_multi_blocks++;
+    }
+
+    multi_stop();
+    return SD_OK;
+}
+
 int sd_read_block(uint32_t lba, uint8_t *dst)
 {
     if (g_type == SD_TYPE_NONE) {
@@ -309,50 +455,60 @@ int sd_read_block(uint32_t lba, uint8_t *dst)
      * site. */
     uint32_t addr = (g_type == SD_TYPE_SDHC) ? lba : lba * SD_BLOCK_SIZE;
 
+    uint32_t t0 = xt_ccount();
     cs_low();
     if (sd_command(CMD17_READ_SINGLE, addr) != 0u) {
         cs_high();
         return SD_ERR_READ;
     }
+    uint32_t t1 = xt_ccount();
 
-    /* The card sends 0xFF until its data token. Bounded for the usual reason. */
+    /* The card sends 0xFF until its data token. Bounded for the usual reason.
+     *
+     * [next_moves/12 step 8] In BATCHES on the hardware bus. This card takes
+     * ~60 bytes to answer, and one byte per transfer cost 343 us a block --
+     * half the time a block took, for bytes that are all 0xFF. A batch that
+     * contains the token also contains the first data bytes behind it, so
+     * they are kept rather than re-read. */
     uint8_t token = 0xFFu;
-    for (int i = 0; i < 4000; i++) {
-        token = sd_rx();
-        g_token_polls++;
-        if (token != 0xFFu) {
-            break;
+    uint32_t have = 0;                  /* data bytes already in dst */
+    if (g_hw) {
+        token = token_wait_hw(dst, &have);
+    } else {
+        for (int i = 0; i < 4000; i++) {
+            token = sd_rx();
+            g_token_polls++;
+            if (token != 0xFFu) {
+                break;
+            }
         }
     }
+    uint32_t t2 = xt_ccount();
+    g_cc_cmd += t1 - t0;
+    g_cc_token += t2 - t1;
     if (token != DATA_TOKEN) {
         cs_high();
         return SD_ERR_TOKEN;
     }
 
     if (g_hw) {
-        /* 64 bytes per transaction: the W registers' whole capacity. */
-        static const uint8_t ff[SPI3_XFER_MAX] = {
-            0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF, 0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
-            0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF, 0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
-            0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF, 0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
-            0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF, 0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF };
-        for (uint32_t i = 0; i < SD_BLOCK_SIZE; i += SPI3_XFER_MAX) {
-            if (!spi3_xfer(ff, dst + i, SPI3_XFER_MAX)) {
-                cs_high();
-                return SD_ERR_TOKEN;
-            }
+        /* `have` bytes already arrived in the batch that carried the token.
+         * The two CRC bytes at the end are read and discarded: the SPI-mode
+         * CRC is off by default and the bytes are still sent, so not consuming
+         * them leaves the bus out of step for the next command. */
+        if (!data_read_hw(dst, have)) {
+            cs_high();
+            return SD_ERR_TOKEN;
         }
     } else {
         for (uint32_t i = 0; i < SD_BLOCK_SIZE; i++) {
             dst[i] = sd_rx();
         }
+        sd_rx();
+        sd_rx();
     }
-
-    /* Two CRC bytes, discarded. The SPI-mode CRC is off by default and the
-     * bytes are still sent; not consuming them leaves the bus out of step for
-     * the next command. */
-    sd_rx();
-    sd_rx();
+    g_cc_data += xt_ccount() - t2;
+    g_blocks++;
 
     cs_high();
     return SD_OK;

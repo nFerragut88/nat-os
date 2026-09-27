@@ -68,6 +68,10 @@ void spi3_route(uint8_t sck, uint8_t mosi, uint8_t miso);
 #define SPI3_XFER_MAX 64u
 int spi3_xfer(const uint8_t *tx, uint8_t *rx, uint32_t n);
 
+/* Receives n bytes while sending 0xFF: an SD read, without the packing loop
+ * a general transfer needs. Same bound, same limit. */
+int spi3_read(uint8_t *rx, uint32_t n);
+
 /* SCK = APB (80 MHz) / div, div 2..64, 50% duty. The default after
  * spi3_init() is div 40, 2 MHz -- the radio's rate. The SD card uses this to
  * go faster once it has identified itself (next_moves/11 step 3). */
@@ -77,6 +81,8 @@ void spi3_set_div(uint32_t div);
 
 /* Tie MISO to a constant through the matrix and check what comes back. `level`
  * is 0 or 1. Returns 1 if every received byte matched. Drives no pin. */
+void spi3_probe_speed(void);    /* where a transfer's time goes */
+
 int spi3_selftest_const(int level);
 
 /* Route MISO from the same pin MOSI drives, transfer a pattern, and check it
