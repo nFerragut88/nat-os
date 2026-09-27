@@ -567,3 +567,51 @@ open   the read half is still ~0.36 us/byte of CPU above the 20 MHz wire
        next ~2x on that half, and display.c already has the pattern
 open   the 7 fps file has not been re-converted, so the headroom is unspent
 ```
+
+---
+
+## step 9 — the headroom spent: 10 fps, 516 of 516
+
+Step 8's gain was invisible, because the file was still the 7 fps one. The
+source MKV was still on the card, so the card went into the PC and
+`vidconv.py` re-cut it at 10 fps: 516 frames, 59,904 B chunks, 29.5 MB, and
+**585 KB/s the board must now sustain** against 416 before.
+
+The converter's own prediction was re-measured first. It had carried the
+step 4-5 constants -- 1.31 us/byte read, 0.77 us/pixel draw -- which after
+step 8 describe a machine that no longer exists and would have advised against
+a frame rate the board can hold:
+
+```
+read  1.31 -> 0.82 us/byte      draw  0.77 -> 0.61 us/pixel
+  -> per frame ~84 ms of 100 ms available (84%)
+```
+
+Measured, playing it:
+
+```
+shown 516  dropped 0  = 9.9 fps shown over 51,930 ms   underruns=0
+per shown frame: read 50.2 ms  draw 35.4 ms   worst frame 88 ms
+```
+
+51.93 s of playback for 51.6 s of video: the DAC is the clock and it runs
+slightly slow, which is the same 0.6% the music player shows. No link drop at
+the higher data rate, so the 12/16 volume cap still covers the louder load.
+
+Two things the day's instruments got right, worth recording because so many
+of them have been wrong:
+
+- the card had to be re-initialised after being hot-swapped, and the view said
+  `listed=0 (SD read failed)` rather than showing an empty list
+- `fat cat` reported `12,496 of 12,504 blocks in 3,124 multi-block commands`,
+  which is what proves the CMD18 path is the one running
+
+### State
+
+```
+works  the example plays at 10 fps, 516 of 516 frames, 0 dropped, 0
+       underruns, no link drop; vidconv.py predicts the board it measures
+open   the read half is still ~0.36 us/byte of CPU above the wire time; SPI3
+       DMA is the next ~2x and would put 13-15 fps in reach
+open   1 underrun per full MP3 playback, still not chased
+```

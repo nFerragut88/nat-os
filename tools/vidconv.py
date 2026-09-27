@@ -432,10 +432,16 @@ def convert(a):
         if cover else "no cover"))
     print("  size     %.1f MB" % (size / 1048576))
     print("  the board must read %.0f KB/s to keep up" % kbs)
-    # Measured during playback (next_moves/12 steps 4-5), with the SD bus at
-    # its 20 MHz default: reading costs ~1.31 us/byte (~760 KB/s of CPU time)
-    # and drawing ~0.77 us/pixel, against 1,000,000/fps us per frame.
-    per_frame_us = stride * 1.31 + out_w * out_h * 0.77
+    # Measured during playback, SD bus at its 20 MHz default, against
+    # 1,000,000/fps us per frame. Re-measured after next_moves/12 step 8 made
+    # both halves cheaper -- multi-block SD reads and a byte-swap-free blit:
+    #
+    #   read  1.31 -> 0.82 us/byte    draw  0.77 -> 0.61 us/pixel
+    #
+    # Numbers a build ago will UNDERSTATE what the board can do, which is the
+    # safe direction for a warning but wrong for choosing an fps, so they are
+    # updated here whenever the board is re-measured.
+    per_frame_us = stride * 0.82 + out_w * out_h * 0.61
     budget_us = 1000000.0 * fps_den / fps_num
     print("  per frame on the board: ~%.0f ms of %.0f ms available (%.0f%%)" % (
         per_frame_us / 1000, budget_us / 1000, 100 * per_frame_us / budget_us))
