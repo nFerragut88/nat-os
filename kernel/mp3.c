@@ -429,9 +429,19 @@ static void mp3_task(void)
             if (g_job.kind == KIND_PLAY) {
                 play();
             } else if (g_job.kind == KIND_VIDEO) {
+                /* The decoder's own state, borrowed.
+                 *
+                 * SRAM1 has 2.4 KB free of 60 (measured), and video needs two
+                 * converted row batches so the panel can read one while the CPU
+                 * fills the other (next_moves/12 step 16). g_dec is 6,668 bytes
+                 * that minimp3 only uses while a SONG is playing, and a song
+                 * and a video are different jobs of this one task -- never both
+                 * at once. mp3dec_init() runs at the start of every playback,
+                 * so whatever a video leaves in there is overwritten before it
+                 * could matter. */
                 g_job.err = vplay_run(g_job.path, g_job.frames_wanted, &g_job.stop,
-                                      g_in, IN_BYTES, (uint16_t *)g_pcm,
-                                      MINIMP3_MAX_SAMPLES_PER_FRAME);
+                                      g_in, IN_BYTES, (uint16_t *)&g_dec,
+                                      sizeof g_dec / 2u);
             } else {
                 bench();
             }
@@ -645,7 +655,15 @@ static void report_video(void)
     uart_put_dec(v.audio_ms);
     uart_puts(" ms   worst frame ");
     uart_put_dec(v.worst_frame_us / 1000u);
-    uart_puts(" ms\n");
+    /* The draw, split: only the first of the three can be hidden behind a
+     * read, so these say whether the overlap is worth anything. */
+    uart_puts(" ms\n   of the draw, per frame: panel wait ");
+    uart_put_dec(v.shown ? vplay_fin_ms() * 10u / v.shown : 0u);
+    uart_puts("/10 ms  palette ");
+    uart_put_dec(v.shown ? vplay_conv_ms() * 10u / v.shown : 0u);
+    uart_puts("/10 ms  window ");
+    uart_put_dec(v.shown ? vplay_start_ms() * 10u / v.shown : 0u);
+    uart_puts("/10 ms\n");
 }
 
 static uint32_t parse_u32(const char *s, const char **end)

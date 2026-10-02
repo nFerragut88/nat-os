@@ -287,7 +287,19 @@ static void spi2_dma_init(void)
 /* Returns 1 if the transfer completed, 0 if it timed out. A timeout disables
  * DMA permanently rather than retrying: a DMA engine that missed one completion
  * has no reason to be trusted with the next, and the FIFO path still works. */
+static int spi2_dma_wait(void);
+static int spi2_dma_go(const uint8_t *data, uint32_t n, int wait);
+
+/* The one panel transfer that may be in flight. */
+static int      g_tx_busy;
+static uint32_t g_tx_bytes;
+
 static int spi2_dma_tx(const uint8_t *data, uint32_t n)
+{
+    return spi2_dma_go(data, n, 1);
+}
+
+static int spi2_dma_go(const uint8_t *data, uint32_t n, int wait)
 {
     /* Reset the outbound DMA channel BEFORE every transfer, not once at init.
      *
@@ -374,6 +386,29 @@ static int spi2_dma_tx(const uint8_t *data, uint32_t n)
 
     GPIO_REG(SPI2_MOSI_DLEN) = n * 8u - 1u;
     GPIO_REG(SPI2_CMD)       = SPI_USR_BIT;
+
+    /* ---- the split (next_moves/12 step 16) ---------------------------------
+     *
+     * Everything above starts the engine; everything below waits for it. The
+     * panel takes 23 ms of a frame at this clock and the SD card 40, and they
+     * are different buses -- so a caller that starts the panel, reads the card
+     * while it drains, and only then waits, pays for one of them instead of
+     * both. A frame becomes max(read, draw) rather than read + draw. */
+    g_tx_busy = 1;
+    g_tx_bytes = n;
+    if (!wait) {
+        return 1;
+    }
+    return spi2_dma_wait();
+}
+
+static int spi2_dma_wait(void)
+{
+    if (!g_tx_busy) {
+        return 1;
+    }
+    g_tx_busy = 0;
+    uint32_t n = g_tx_bytes;
 
     /* Bounded wait, and the bound has to survive PREEMPTION.
      *
@@ -1125,6 +1160,68 @@ void display_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h,
  * every row after the first at the wrong offset, and drawing a subtly wrong
  * picture is worse than drawing none. Out-of-bounds is refused. */
 #define BLIT_BE_CHUNK 4088u     /* fits the descriptor's 12-bit size, /4 and /2 */
+
+/* ---- the same blit, started and then waited for ----------------------------
+ *
+ * display_blit_be_start() takes the lock, opens the window and sets the engine
+ * going; display_blit_be_finish() waits for it, closes the stream and releases
+ * the lock. Between them the caller may do anything that does not draw -- in
+ * vplay's case, read the next chunk off the SD card, which is the point: the
+ * panel and the card are different buses and only one of them needs to be paid
+ * for.
+ *
+ * ONE transfer, so the rectangle must fit a single descriptor (BLIT_BE_CHUNK).
+ * A larger one is sent synchronously inside _start and _finish then has nothing
+ * to do, which keeps every caller correct without anyone checking sizes.
+ *
+ * The lock is HELD across the gap. That is a real cost -- the display task
+ * cannot draw while a video frame is in flight -- and it is why _finish
+ * releases it before the caller converts the next batch rather than after. */
+static int g_be_held;
+
+void display_blit_be_start(uint32_t x, uint32_t y, uint32_t w, uint32_t h,
+                           const uint8_t *be)
+{
+    g_be_held = 0;
+    if (w == 0u || h == 0u || x >= DISP_W || y >= DISP_H
+        || w > DISP_W - x || h > DISP_H - y) {
+        return;
+    }
+    uint32_t total = w * h * 2u;
+
+    draw_lock();
+    set_window(x, y, x + w - 1u, y + h - 1u);
+
+    if (total > BLIT_BE_CHUNK || !g_dma_ok || g_panic_mode || total <= 64u) {
+        while (total) {
+            uint32_t chunk = (total > BLIT_BE_CHUNK) ? BLIT_BE_CHUNK : total;
+            spi_tx(be, chunk);
+            be    += chunk;
+            total -= chunk;
+        }
+        push_end();
+        draw_unlock();
+        return;
+    }
+
+    if (!spi2_dma_go(be, total, 0)) {
+        push_end();
+        draw_unlock();
+        return;
+    }
+    g_be_held = 1;
+}
+
+void display_blit_be_finish(void)
+{
+    if (!g_be_held) {
+        return;
+    }
+    g_be_held = 0;
+    spi2_dma_wait();
+    push_end();
+    draw_unlock();
+}
 
 void display_blit_be(uint32_t x, uint32_t y, uint32_t w, uint32_t h,
                      const uint8_t *be)

@@ -1073,3 +1073,82 @@ open   past 12 needs read and draw to OVERLAP rather than add. The SD driver
        and a frame would become max(40, 32) -- about 20 fps
 open   1 underrun per playback, still not chased
 ```
+
+---
+
+## step 16 — the panel drains while the card reads
+
+The panel costs 23 ms of a frame and the card 40, on two different buses, and
+until now the task waited for each in turn. `display_blit_be_start()` and
+`display_blit_be_finish()` split the blit so it can be started and come back
+to, and `draw_frame()` orders a batch like this:
+
+```
+read the bytes this batch needs    <- the PREVIOUS blit is in flight
+finish that blit                   <- usually already done
+expand the palette into the other buffer
+start this batch's blit
+```
+
+Two converted buffers, used alternately, because the panel is reading one while
+the CPU fills the other. They come from **`g_dec`, minimp3's decoder state** --
+SRAM1 has 2.4 KB free of 60, and a song and a video are different jobs of the
+same task, never both at once; `mp3dec_init()` runs at the start of every
+playback, so whatever a video leaves there is overwritten before it matters.
+
+Only one side has to be asynchronous. The card's read is still a busy-wait, and
+that wait is exactly what gives the panel its time.
+
+### the fill condition was the whole thing
+
+The first version filled until ONE ROW was in hand and then emitted whatever
+had accumulated. Batches came out at two rows as often as nine, with no read
+in front of them to hide the panel behind, and each still paid a full window
+setup:
+
+```
+                         panel wait   palette   window   draw
+fill to one row            18.6 ms     8.2 ms   1.3 ms   27.9
+fill to the whole batch     4.7 ms     8.2 ms   0.8 ms   13.9
+```
+
+18 of the panel's 23 ms are now hidden. The number that proves it is `panel
+wait`, which exists because guessing which third of "draw" was which had
+already been wrong four times in this log.
+
+```
+                 read    draw   frame   worst
+step 14          39.8    31.7    71.4    80
+step 16          41.0    13.9    54.9    63
+```
+
+The read went up 1 ms: batches are uniform now, so slightly more is read per
+batch and nothing is read twice.
+
+### where the time is left
+
+```
+read 41.0   of which ~33 ms is wire and token latency the card imposes
+palette 8.2   57,600 lookups, CPU, unhidden
+panel 4.7   of 23 ms; the rest is behind the read
+window 0.8
+```
+
+Hiding the palette expansion as well needs the CARD's read to be asynchronous
+too -- start it, convert the previous batch, collect -- which means
+`fat_read_start()`/`_collect()` through cluster walking. The driver halves
+exist; `fat.c` does not have them.
+
+**15 fps fits** (66.7 ms a frame against 54.9 average and 63 worst). 16 does
+not: 62.5 ms is under the worst frame.
+
+### State
+
+```
+works  frame 54.9 ms, 0 dropped, 0 underruns at 12 fps -- the file's rate,
+       not the board's limit any more
+open   15 fps is available for a re-convert
+open   past 15: an async fat_read would hide the palette expansion, and the
+       card's ~33 ms of wire is then the floor -- about 22 fps
+open   1 underrun per playback, still not chased
+```

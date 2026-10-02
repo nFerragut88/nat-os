@@ -49,6 +49,14 @@ static fat_file_t g_fa, g_fv;           /* the audio cursor and the video cursor
 
 /* Per-file values the loop needs. */
 static uint32_t g_first, g_stride, g_frame_b, g_rate, g_fnum, g_fden;
+
+/* Where the draw half of a frame actually goes: waiting for the panel,
+ * expanding the palette, and opening the next window. */
+static uint32_t g_fin_cc, g_conv_cc, g_start_cc;
+
+uint32_t vplay_fin_ms(void)   { return g_fin_cc / (CPU_HZ / 1000u); }
+uint32_t vplay_conv_ms(void)  { return g_conv_cc / (CPU_HZ / 1000u); }
+uint32_t vplay_start_ms(void) { return g_start_cc / (CPU_HZ / 1000u); }
 static int g_mute;
 
 void vplay_set_mute(int on) { g_mute = on ? 1 : 0; }
@@ -209,22 +217,54 @@ static int draw_frame(uint32_t i, uint32_t x, uint32_t y, uint32_t pix,
         return 0;
     }
 
+    /* ---- the overlap (next_moves/12 step 16) -------------------------------
+     *
+     * The panel and the card are different buses: 23 ms of a frame goes out to
+     * one and 40 ms comes in from the other, and until now the task waited for
+     * each in turn. Started rather than waited for, the panel drains WHILE the
+     * next chunk is read, and a frame costs max(read, draw) instead of their
+     * sum.
+     *
+     * The order in the loop is what makes it work, and it is not the obvious
+     * one:
+     *
+     *      read the bytes this batch needs   <- the previous blit is in flight
+     *      finish that blit                  <- usually already done
+     *      convert this batch                <- the lock is free here
+     *      start this batch's blit
+     *
+     * Two converted buffers, used alternately, because the panel is reading one
+     * while the CPU fills the other. `rows` is half of what the buffer holds
+     * for exactly that reason. */
     uint32_t pos = 0, avail = 0;    /* pixel bytes live in a[pos .. pos+avail) */
     uint32_t skip = 16u;            /* the chunk header, stepped over once     */
     uint32_t row = 0;
+    uint32_t half = 0;
+    int started = 0;
 
     while (row < h) {
         if (*stop) {
-            return 0;
+            break;                  /* the started blit is finished below */
         }
-        /* Fill until a whole row is in hand. */
-        while (avail < w) {
+        /* Fill until the WHOLE BATCH is in hand -- not one row.
+         *
+         * Filling to a single row let a batch be whatever happened to be left
+         * over: often two rows, with no read in front of it to hide the panel
+         * behind. Measured, that cost 18.6 ms a frame of waiting for a panel
+         * that only needs 23 ms in total, and it multiplied the per-batch
+         * window setups. Filling to the batch means a chunk read lands in
+         * front of nearly every blit, which is the whole mechanism.
+         *
+         * The SD transfer spins here, which is the time the panel is using. */
+        uint32_t want = ((h - row) < rows ? (h - row) : rows) * w;
+        while (avail < want) {
             uint32_t t0 = task_cpu_cycles();
             if (pos + avail + CHUNK > a_bytes) {
                 memmove(a, a + pos, avail);     /* at most one row, less 1 */
                 pos = 0;
             }
             if (fat_read(&g_fv, a + pos + avail, CHUNK) != (int32_t)CHUNK) {
+                display_blit_be_finish();
                 return FAT_ERR_CHAIN;
             }
             avail += CHUNK;
@@ -237,20 +277,40 @@ static int draw_frame(uint32_t i, uint32_t x, uint32_t y, uint32_t pix,
             *read_cc += task_cpu_cycles() - t0;
         }
 
+        /* Split three ways, because "draw" is three different things and the
+         * overlap only helps one of them: waiting for the panel. Guessing
+         * which was which has been wrong four times in this log. */
+        uint32_t t1 = task_cpu_cycles();
+        display_blit_be_finish();   /* the previous batch; frees the lock */
+        started = 0;
+        g_fin_cc += task_cpu_cycles() - t1;
+        uint32_t t1b = task_cpu_cycles();
+
         uint32_t n = avail / w;
         if (n > rows)    { n = rows; }
         if (n > h - row) { n = h - row; }
 
-        uint32_t t1 = task_cpu_cycles();
+        uint16_t *out = b + half * rows * w;
         for (uint32_t k = 0; k < n * w; k++) {
-            b[k] = g_pal[a[pos + k]];       /* already panel-order; see g_pal */
+            out[k] = g_pal[a[pos + k]];     /* already panel-order; see g_pal */
         }
-        display_blit_be(x, y + row, w, n, (const uint8_t *)b);
+        g_conv_cc += task_cpu_cycles() - t1b;
+        uint32_t t1c = task_cpu_cycles();
+        display_blit_be_start(x, y + row, w, n, (const uint8_t *)out);
+        started = 1;
+        g_start_cc += task_cpu_cycles() - t1c;
         *draw_cc += task_cpu_cycles() - t1;
 
+        half  ^= 1u;
         pos   += n * w;
         avail -= n * w;
         row   += n;
+    }
+
+    if (started) {
+        uint32_t t2 = task_cpu_cycles();
+        display_blit_be_finish();
+        *draw_cc += task_cpu_cycles() - t2;
     }
     return 0;
 }
@@ -302,9 +362,14 @@ int vplay_run(const char *path, uint32_t y, volatile int *stop,
 
     /* Rows per batch: as many as the smaller of the two borrowed buffers
      * holds (indices in `a`, RGB565 in `b`). */
-    uint32_t rows = b_words / g_st.w;
-    if (pix == PIX_PAL8 && a_bytes / g_st.w < rows) {
-        rows = a_bytes / g_st.w;
+    /* Rows per batch. HALF of what the buffer holds for PAL8, because the
+     * panel is reading one converted batch while the CPU fills the next
+     * (step 16) -- and no more than one DMA descriptor's worth, or the blit
+     * cannot be started and waited for separately. */
+    uint32_t rows = (pix == PIX_PAL8) ? b_words / (2u * g_st.w)
+                                      : b_words / g_st.w;
+    if (pix == PIX_PAL8 && rows * g_st.w * 2u > 4088u) {
+        rows = 4088u / (g_st.w * 2u);
     }
     if (rows == 0u) {
         return g_st.err = VPLAY_E_FORMAT;

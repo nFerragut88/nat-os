@@ -63,6 +63,13 @@ void vplay_status(vplay_status_t *st);
  * experiment, not a feature: it tells a USB drop caused by audio starting
  * apart from one caused by the display and the card working hard
  * (next_moves/12 step 6). */
+/* Milliseconds since boot spent in the three parts of a frame's drawing:
+ * waiting for the panel to finish a batch, expanding the palette into the next
+ * one, and opening its window. Only the first can be hidden by the overlap. */
+uint32_t vplay_fin_ms(void);
+uint32_t vplay_conv_ms(void);
+uint32_t vplay_start_ms(void);
+
 void vplay_set_mute(int on);
 int  vplay_muted(void);
 

@@ -137,6 +137,24 @@ void display_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h,
 void display_blit_be(uint32_t x, uint32_t y, uint32_t w, uint32_t h,
                      const uint8_t *be);
 
+/* ---- the same blit in two halves (next_moves/12 step 16) --------------------
+ *
+ * The panel costs 23 ms of a video frame and the SD card 40, on different
+ * buses. A caller that starts the panel, reads the card while it drains, and
+ * only then waits pays for one of them instead of both:
+ *
+ *      display_blit_be_start(x, y, w, h, bytes);
+ *      ... read the next chunk, convert the next rows ...
+ *      display_blit_be_finish();
+ *
+ * The rectangle must fit one descriptor (about 4 KB) or it is sent
+ * synchronously and _finish has nothing to do -- so a caller is correct either
+ * way. The display LOCK is held between the two calls, and the buffer must not
+ * be touched until _finish returns. Pair them on every path. */
+void display_blit_be_start(uint32_t x, uint32_t y, uint32_t w, uint32_t h,
+                           const uint8_t *be);
+void display_blit_be_finish(void);
+
 /* Bytes pushed to the panel since init — the cheapest measure of whether the
  * driver is doing anything at all when nothing appears on screen. */
 uint32_t display_bytes_written(void);
