@@ -1023,3 +1023,53 @@ open   past 12 fps needs read and draw to OVERLAP rather than add: the driver
        max(40, 32) instead of 72
 open   1 underrun per full MP3 playback, still not chased
 ```
+
+---
+
+## step 15 — 12 fps, 619 of 619
+
+The file re-cut at 12 fps and played end to end:
+
+```
+shown 619  dropped 0  = 11.9 fps shown over 51,970 ms   underruns=1
+per shown frame: read 39.8 ms  draw 31.7 ms   worst frame 80 ms of 83.3
+```
+
+The one underrun is the long-standing end-of-playback one (step 6), unchanged.
+
+`vidconv.py` predicted **71 ms of 83 available (85%)** before the card went
+back in the board, against 71.5 ms measured. The cost model is updated per
+step, and this is the first time it has agreed to within a millisecond:
+
+```
+             read us/byte   draw us/pixel   frame   measured
+  step 5         1.31           0.77        127 ms   127
+  step 8         0.82           0.61         85 ms    86
+  step 14        0.65           0.55         71 ms    71.5
+```
+
+### the day, in one table
+
+```
+                          read    draw   frame   fps
+morning (step 7)          80.1    46.8    127      7
+CMD18 + direct blit       50.5    35.4     86     10
+all-DMA                   47.0    35.3     82     10
+pipelined blocks          46.2    35.3     81     10
+whole-sector frame reads  39.8    31.7     71     12
+```
+
+Reads went from 480 KB/s to 1,083, and the frame rate from 7 to 12, with
+`crc32=0xf584e81c` unchanged at every step and the picture confirmed on the
+glass at the two points where only a person could tell.
+
+### State
+
+```
+works  12 fps, 619 of 619 frames, 0 dropped, full screen, in sync with audio
+open   13 fps does not fit: 76.9 ms against a worst frame of 80
+open   past 12 needs read and draw to OVERLAP rather than add. The SD driver
+       has start/collect; fat.c and display.c would each need the same split,
+       and a frame would become max(40, 32) -- about 20 fps
+open   1 underrun per playback, still not chased
+```

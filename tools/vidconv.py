@@ -433,15 +433,18 @@ def convert(a):
     print("  size     %.1f MB" % (size / 1048576))
     print("  the board must read %.0f KB/s to keep up" % kbs)
     # Measured during playback, SD bus at its 20 MHz default, against
-    # 1,000,000/fps us per frame. Re-measured after next_moves/12 step 8 made
-    # both halves cheaper -- multi-block SD reads and a byte-swap-free blit:
+    # 1,000,000/fps us per frame. Re-measured as the board got faster:
     #
-    #   read  1.31 -> 0.82 us/byte    draw  0.77 -> 0.61 us/pixel
+    #            read us/byte   draw us/pixel   frame (180x320)
+    #   step 5       1.31            0.77          127 ms
+    #   step 8       0.82            0.61           85 ms
+    #   step 14      0.65            0.55           71 ms
     #
-    # Numbers a build ago will UNDERSTATE what the board can do, which is the
-    # safe direction for a warning but wrong for choosing an fps, so they are
-    # updated here whenever the board is re-measured.
-    per_frame_us = stride * 0.82 + out_w * out_h * 0.61
+    # step 14 is all-DMA pipelined SD reads plus a frame read in whole sectors.
+    # Numbers a build ago UNDERSTATE what the board can do, which is the safe
+    # direction for a warning and the wrong one for choosing an fps, so these
+    # are updated whenever the board is re-measured.
+    per_frame_us = stride * 0.65 + out_w * out_h * 0.55
     budget_us = 1000000.0 * fps_den / fps_num
     print("  per frame on the board: ~%.0f ms of %.0f ms available (%.0f%%)" % (
         per_frame_us / 1000, budget_us / 1000, 100 * per_frame_us / budget_us))
