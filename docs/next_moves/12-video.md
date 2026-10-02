@@ -831,3 +831,87 @@ open   the word-aligned data path has never completed a read. The next
        `fat cat Test*` -- crc32 agreeing or it is wrong
 open   1 underrun per full MP3 playback, still not chased
 ```
+
+---
+
+## step 12 — the all-DMA path works, and it buys 7%
+
+Step 11's code, two bugs later, reads the card correctly:
+
+```
+fat cat Test pattern rotated.nvd
+  6,398,464 bytes   crc32=0xf584e81c   chain 1563 of 1563
+  own CPU 3,908 ms  (the W-register path: 4,307 ms)
+985,160 DMA transfers, 0 timeouts, 0 refusals, 0 failures ever recorded
+video 2, full screen, 516 frames: 0 dropped, 0 underruns
+  per frame: read 47.0 ms (was 50.5)  draw 35.3 ms  worst frame 85 ms
+```
+
+### the two bugs, and what each taught
+
+**A transfer longer than the limit was refused in silence.** A block asks for
+its remainder plus the CRC rounded up to a word, which reaches 516 bytes when
+the token lands at the end of a poll batch -- over `SPI3_DMA_MAX`, so the one
+guard that returned without counting anything rejected ~12% of blocks. Each
+then failed, retried, and cost double. That was the read that died at 3.1 MB
+AND the 200 us of data-phase time I could not account for. The guard counts
+now.
+
+**The copy was the whole cost.** With the transfer working, the data phase
+split as `transfer 290 us, copy 160 us` -- and 160 us to move 500 bytes is 26
+cycles a byte, because this kernel is built `-Os` and `memcpy` is a byte loop.
+A word-wise copy that brings the destination to a word boundary by hand and
+shifts aligned source words into place: **160 us -> 44 us**.
+
+### and the measurement I read past
+
+The length-sweep probe answered two questions at once, and I took the wrong
+answer from it:
+
+```
+512 B at +0: delivered 512, written 512      <- aligned, correct
+512 B at +1: delivered 512, written 512
+512 B at +2: delivered 512, written 511      <- one byte never arrived
+512 B at +3: delivered 512, written 510      <- two
+509 B at +0: delivered   0, written 509      <- data fine, length never written
+```
+
+I read "delivered 512" and dropped the destination-alignment check, which made
+the copy unnecessary and the read fast -- and wrong: `crc32=0xf994d357`. **The
+descriptor's length field is not a count of bytes written.** The probe had
+already said so in the same table.
+
+The real rule, now in `dma_usable()`: destination word-aligned, length a word
+multiple -- the second not because odd lengths fail to arrive, but because they
+cannot be CONFIRMED, and an unconfirmable transfer is not something to put a
+filesystem on.
+
+### why 7% and not 50%
+
+Because this implementation BUSY-WAITS. A 512-byte block is 206 us of wire time
+at 20 MHz, and the media task spends it spinning on a descriptor either way, so
+DMA only removes the per-byte register cost. The bus time is still charged to
+the task that waits for it.
+
+```
+read per frame   50.5 ms -> 47.0 ms       frame 82.2 ms, worst 85 ms
+```
+
+11 fps fits (90.9 ms a frame); 12 does not. The remaining time is not CPU
+overhead to shave -- it is the bus, and the only way to stop paying for it is to
+stop waiting: start a frame's read, draw the PREVIOUS row batch while the engine
+works, then collect. Read and draw overlap instead of adding, and a frame
+becomes max(47, 35) rather than 47 + 35 -- around 20 fps, with no faster bus and
+no faster card.
+
+### State
+
+```
+works  all-DMA SD reads, correct over 985k transfers; 10 fps playback with
+       0 dropped frames and ~18% more headroom than before
+open   11 fps is available for a re-convert; 12 is not
+open   the real gain is an ASYNCHRONOUS read -- spi3_read_dma_start() and
+       _collect() -- so vplay can draw while the engine reads. That is a
+       vplay/pcm change, not a driver one
+open   1 underrun per full MP3 playback, still not chased
+```

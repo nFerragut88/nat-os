@@ -95,7 +95,13 @@ int spi3_read(uint8_t *rx, uint32_t n);
  *
  * A timeout disables DMA for the rest of the run, as display.c does: an engine
  * that missed one completion has not earned the next block. */
-#define SPI3_DMA_MAX 512u
+/* 520, not 512: a block read asks for its remaining data AND the two CRC bytes
+ * in one word-multiple transfer, which is up to 516 bytes when the data token
+ * landed at the end of a poll batch. At 512 those transfers were REFUSED -- by
+ * the one guard that returns without counting anything -- so the block failed,
+ * the retry paid for it, and ~12% of blocks cost double. That is the 200 us of
+ * unexplained overhead in the data phase, and the read that died at 3.1 MB. */
+#define SPI3_DMA_MAX 520u
 void spi3_dma_init(void);
 int  spi3_read_dma(uint8_t *rx, uint32_t n);
 
@@ -106,6 +112,10 @@ int  spi3_read_dma(uint8_t *rx, uint32_t n);
  * transfer itself takes: the block data path hands over aligned buffers and
  * pays nothing. */
 int  spi3_xfer_dma(const uint8_t *tx, uint8_t *rx, uint32_t n);
+
+/* For the probe only: a receive with the alignment and length checks skipped,
+ * so what the engine tolerates can be measured instead of assumed. */
+int  spi3_force_dma(uint8_t *rx, uint32_t n);
 
 /* W-register transfers since boot, and the number of times DMA gave itself up
  * because that count moved after it was armed. The second must stay 0 in normal

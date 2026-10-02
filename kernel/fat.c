@@ -771,6 +771,7 @@ static void cmd_read(const char *path, uint32_t limit)
     uint32_t cc_cmd0 = sd_cc_cmd(), cc_tok0 = sd_cc_token();
     uint32_t cc_dat0 = sd_cc_data(), sdb0 = sd_blocks();
     uint32_t mb0 = sd_multi_blocks(), mr0 = sd_multi_bursts();
+    uint32_t cc_xfer0 = sd_cc_xfer(), cc_copy0 = sd_cc_copy();
     uint8_t head[16];
     uint32_t hops0 = g_read_hops;
 
@@ -867,7 +868,11 @@ static void cmd_read(const char *path, uint32_t limit)
         uart_put_dec(nb ? (sd_cc_token() - cc_tok0) / nb / 80u : 0u);
         uart_puts(" us  data ");
         uart_put_dec(nb ? (sd_cc_data() - cc_dat0) / nb / 80u : 0u);
-        uart_puts(" us  (");
+        uart_puts(" us (transfer ");
+        uart_put_dec(nb ? (sd_cc_xfer() - cc_xfer0) / nb / 80u : 0u);
+        uart_puts(", copy ");
+        uart_put_dec(nb ? (sd_cc_copy() - cc_copy0) / nb / 80u : 0u);
+        uart_puts(")  (");
         uart_put_dec(nb);
         uart_puts(" blocks, this read only)\n   of those, ");
         uart_put_dec(sd_multi_blocks() - mb0);

@@ -51,6 +51,10 @@ static uint32_t g_token_polls;  /* bytes read waiting for a data token */
  * 20 MHz, so the rest is somewhere, and guessing which is how the last three
  * days went wrong. */
 static uint32_t g_cc_cmd, g_cc_token, g_cc_data, g_blocks;
+static uint32_t g_cc_xfer, g_cc_copy;   /* inside the DMA data phase */
+
+uint32_t sd_cc_xfer(void) { return g_cc_xfer; }
+uint32_t sd_cc_copy(void) { return g_cc_copy; }
 
 uint32_t sd_cc_cmd(void)   { return g_cc_cmd; }
 uint32_t sd_cc_token(void) { return g_cc_token; }
@@ -425,6 +429,53 @@ uint32_t sd_speed(void)
     return g_hw ? g_div_wanted : 0u;
 }
 
+/* ---- copying out of the staging buffer --------------------------------------
+ *
+ * 500 bytes, once per block, and the obvious loop costs 160 us of the 400 us a
+ * block takes -- 26 cycles a byte, on a kernel built -Os where memcpy is also a
+ * byte loop. That one copy was the whole reason the DMA path measured SLOWER
+ * than the W registers it replaced.
+ *
+ * So: word loads and word stores. Xtensa needs 32-bit accesses aligned, and the
+ * DESTINATION is the one that cannot be moved (it is wherever the block's data
+ * continues), so the destination is brought to a word boundary a byte at a time
+ * and the source is then read as aligned words and shifted into place. `src`
+ * must have a word of slack past `n`, which the staging buffer has. */
+static void copy_out(uint8_t *dst, const uint8_t *src, uint32_t n)
+{
+    uint32_t head = (4u - ((uint32_t)dst & 3u)) & 3u;
+    if (head > n) {
+        head = n;
+    }
+    for (uint32_t i = 0; i < head; i++) {
+        dst[i] = src[i];
+    }
+    dst += head;
+    src += head;
+    n   -= head;
+
+    const uint32_t *s = (const uint32_t *)(void *)((uint32_t)src & ~3u);
+    uint32_t sh    = ((uint32_t)src & 3u) * 8u;
+    uint32_t *d    = (uint32_t *)(void *)dst;
+    uint32_t words = n / 4u;
+
+    if (sh == 0u) {
+        for (uint32_t i = 0; i < words; i++) {
+            d[i] = s[i];
+        }
+    } else {
+        uint32_t prev = s[0];
+        for (uint32_t i = 0; i < words; i++) {
+            uint32_t next = s[i + 1u];
+            d[i] = (prev >> sh) | (next << (32u - sh));
+            prev = next;
+        }
+    }
+    for (uint32_t i = words * 4u; i < n; i++) {
+        dst[i] = src[i];
+    }
+}
+
 /* ---- one block's two waits, shared by the single and multi-block reads ------
  *
  * Waits for a data token on the hardware bus. A batch that contains the token
@@ -500,35 +551,49 @@ static int data_read_hw(uint8_t *dst, uint32_t have)
      * The copy out of the staging buffer costs ~12 us against the 207 us the
      * transfer takes: 6%, for a destination the engine can always write. */
     if (spi3_dma_enabled()) {
+        /* ---- one transfer, whole words, data AND crc -----------------------
+         *
+         * The engine needs a word-aligned destination and a word-multiple
+         * length. Both were tested, and both matter:
+         *
+         *   a 2-byte transfer never retires its descriptor at all
+         *   512 bytes to an ODD address reported "delivered 512" while only
+         *   511 of them had changed -- the length field is not a count of
+         *   bytes written, and trusting it produced a read whose CRC was wrong
+         *
+         * The token batch leaves `have` bytes in hand, so what is left of the
+         * block starts at an address the engine may not be able to write. It
+         * therefore lands in a staging buffer: one transfer for the block's
+         * remainder AND its two CRC bytes, rounded UP to a word, which
+         * overshoots by 0-3 bytes of whatever follows. Inside a multi-block
+         * stream that can be the next block's token, so the overshoot is
+         * scanned and handed forward rather than dropped. */
         static uint8_t buf[SD_BLOCK_SIZE + 8u] __attribute__((aligned(4)));
         uint32_t rest = SD_BLOCK_SIZE - have;
-        uint32_t t    = rest + 2u;                  /* data left plus the CRC */
-        uint32_t n    = (t + 3u) & ~3u;             /* whole words, never < 4 */
+        uint32_t t    = rest + 2u;
+        uint32_t n    = (t + 3u) & ~3u;
 
+        uint32_t t0 = xt_ccount();
         if (!spi3_read_dma(buf, n)) {
-            /* ABANDON the block; do not re-read it on the slow path. A failed
-             * transfer still CLOCKED, so those bytes are gone and reading again
-             * returns the NEXT ones -- a block assembled from two places, which
-             * is what "mount failed: no FAT boot sector" was on a healthy card.
-             * display.c records the same mistake on its transmit side. */
+            /* ABANDON the block. A failed transfer still CLOCKED, so those
+             * bytes are gone and re-reading returns the NEXT ones. */
             return 0;
         }
-        for (uint32_t i = 0; i < rest; i++) {
-            dst[have + i] = buf[i];
-        }
+        uint32_t t1 = xt_ccount();
+        copy_out(dst + have, buf, rest);
 
-        /* buf[rest] and buf[rest+1] are the CRC, discarded. Anything after
-         * them was read out of the stream and has to be accounted for. */
         g_pend_token = 0;
         g_pend_n     = 0;
         for (uint32_t j = rest + 2u; j < n; j++) {
             if (g_pend_token) {
-                g_pend[g_pend_n++] = buf[j];        /* data, already arrived */
+                g_pend[g_pend_n++] = buf[j];
             } else if (buf[j] == DATA_TOKEN) {
-                g_pend_token = 1;                   /* the next block started */
+                g_pend_token = 1;
             }
             /* otherwise an idle 0xFF from the gap between blocks: drop it */
         }
+        g_cc_xfer += t1 - t0;
+        g_cc_copy += xt_ccount() - t1;
         return 1;
     }
 

@@ -516,7 +516,7 @@ void spi3_dma_init(void)
      * try again from a fresh boot -- there is no runtime way in, because by the
      * time a shell command could ask, the W registers have already moved bytes
      * and the engine is poisoned for the rest of the run. */
-    g_dma_allowed   = 0;        /* see below: one line to flip for a test */
+    g_dma_allowed   = 1;        /* the line step 11 left to flip */
     /* Armed, but NOT permitted by default. sd.c mixes W-register transfers with
      * these inside one card transaction, and on this peripheral a W-register
      * read permanently costs every later DMA transfer 16 bytes (measured; see
@@ -533,6 +533,22 @@ void spi3_dma_init(void)
 static uint8_t g_dma_tx[SPI3_DMA_MAX] __attribute__((aligned(4)));
 static uint8_t g_dma_rx[SPI3_DMA_MAX + 4u] __attribute__((aligned(4)));
 
+/* What the engine will take DIRECTLY, measured rather than assumed:
+ *
+ *   destination alignment   MATTERS, and the probe said so in a line I read
+ *                           past: 512 bytes to buf+2 reported "delivered 512"
+ *                           while only 511 of them had actually changed, and
+ *                           buf+3 lost two. The descriptor's length field is
+ *                           not a count of bytes written. Trusting it cost a
+ *                           read with the wrong CRC (0xf994d357).
+ *   length                  must be a word multiple -- not because the data
+ *                           fails to arrive (509 bytes all arrived) but because
+ *                           the descriptor's length field is only written on a
+ *                           word boundary, so a transfer of 509 can never be
+ *                           CONFIRMED. An unconfirmable transfer is one this
+ *                           driver will not build a filesystem on.
+ *   memory                  DRAM only; the engine cannot reach IRAM.
+ */
 static int dma_usable(const void *p, uint32_t n)
 {
     return ((uint32_t)p & 3u) == 0u && (n & 3u) == 0u
@@ -544,9 +560,25 @@ int spi3_read_dma(uint8_t *rx, uint32_t n)
     return spi3_xfer_dma(0, rx, n);
 }
 
+static int xfer_dma(const uint8_t *tx, uint8_t *rx, uint32_t n, int force);
+
+/* The probe's way in: the same transfer with the alignment and length refusals
+ * SKIPPED, so the probe can find out what the engine actually tolerates rather
+ * than what this file assumes. Nothing else may call it. */
+int spi3_force_dma(uint8_t *rx, uint32_t n)
+{
+    return xfer_dma(0, rx, n, 1);
+}
+
 int spi3_xfer_dma(const uint8_t *tx, uint8_t *rx, uint32_t n)
 {
+    return xfer_dma(tx, rx, n, 0);
+}
+
+static int xfer_dma(const uint8_t *tx, uint8_t *rx, uint32_t n, int force)
+{
     if (!g_dma_ok || n == 0u || n > SPI3_DMA_MAX) {
+        g_dma_refused++;        /* COUNTED. Silence here hid a 12% retry rate */
         return 0;
     }
     /* ---- the tripwire -------------------------------------------------------
@@ -585,7 +617,7 @@ int spi3_xfer_dma(const uint8_t *tx, uint8_t *rx, uint32_t n)
      * decision onto every caller; the copy is only paid by small transfers. */
     uint8_t *dst = rx;
     int staged = 0;
-    if (!rx || !dma_usable(rx, n)) {
+    if (!rx || (!dma_usable(rx, n) && !force)) {
         dst = g_dma_rx;
         staged = 1;
     }
@@ -1004,25 +1036,53 @@ void spi3_probe_dma(void)
  */
 void spi3_probe_dma_lengths(void)
 {
-    static uint8_t buf[SPI3_DMA_MAX] __attribute__((aligned(4)));
-    static const uint32_t ln[] = { 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u,
-                                   9u, 12u, 497u, 509u, 510u, 511u, 512u };
+    static uint8_t buf[SPI3_DMA_MAX + 8u] __attribute__((aligned(4)));
+    static const uint32_t ln[]  = { 4u, 8u, 509u, 510u, 511u, 512u,
+                                    512u, 512u, 512u, 509u, 510u, 511u };
+    /* The last six go to an UNALIGNED destination.
+     *
+     * Both of this wrapper's refusals -- a destination that is not word-aligned
+     * and a length that is not a word multiple -- are ASSUMPTIONS about an
+     * engine that "writes words", and together they cost a 500-byte
+     * byte-at-a-time copy out of a staging buffer on every single block:
+     * measured at 160 us against the 206 us the transfer itself needs, on a
+     * kernel built -Os where memcpy is a byte loop. If either assumption is
+     * wrong, that copy disappears and with it the reason DMA is currently
+     * SLOWER than the registers it replaced. */
+    static const uint32_t off[] = { 0u, 0u, 0u, 0u, 0u, 0u,
+                                    1u, 2u, 3u, 1u, 2u, 3u };
 
     for (uint32_t i = 0; i < sizeof ln / sizeof ln[0]; i++) {
         uint32_t n = ln[i];
+        uint8_t *dst = buf + off[i];
+        for (uint32_t k = 0; k < n + 8u; k++) {
+            buf[k] = 0x5Au;
+        }
         spi3_dma_init();
         spi3_dma_force_fifo(0);
-        int ok = spi3_read_dma(buf, n);
+        int ok = spi3_force_dma(dst, n);
+
+        uint32_t written = 0;
+        for (uint32_t k = 0; k < n; k++) {
+            if (dst[k] != 0x5Au) { written++; }
+        }
         uart_puts("   ");
         uart_put_dec(n);
-        uart_puts(n < 10u ? " B:   " : (n < 100u ? " B:  " : " B: "));
+        uart_puts(" B at +");
+        uart_put_dec(off[i]);
+        uart_puts(": ");
         uart_puts(ok ? "ok   " : "FAIL ");
-        uart_puts("stage=");
-        uart_put_dec(spi3_dma_stage());
-        uart_puts(" engine delivered ");
+        uart_puts("delivered ");
         uart_put_dec((g_rx_desc.flags >> 12) & 0xFFFu);
+        uart_puts(", written ");
+        uart_put_dec(written);
         uart_puts(" of ");
         uart_put_dec(n);
+        /* An idle MISO reads 0xFF, so every byte of the window should differ
+         * from the salt -- and the byte in front of it must NOT. */
+        if (off[i] != 0u && buf[off[i] - 1u] != 0x5Au) {
+            uart_puts("  CLOBBERED the byte before");
+        }
         uart_puts("\n");
     }
     spi3_dma_force_fifo(1);

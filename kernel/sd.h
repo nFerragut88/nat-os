@@ -123,6 +123,11 @@ uint32_t sd_cc_token(void);
 uint32_t sd_cc_data(void);
 uint32_t sd_blocks(void);
 
+/* Inside the DMA data phase: cycles in the transfer itself, and cycles spent
+ * copying out of the staging buffer. */
+uint32_t sd_cc_xfer(void);
+uint32_t sd_cc_copy(void);
+
 /* The R1 response byte from the last command, and the stage that failed.
  * Reported because SD failures are almost always diagnosable from R1 alone —
  * bit 2 is "illegal command", bit 0 is "still idle" — and losing it means
