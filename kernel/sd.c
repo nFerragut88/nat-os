@@ -77,6 +77,18 @@ static uint32_t g_attempts;
 
 #define DATA_TOKEN          0xFEu
 
+/* ---- bytes the data phase read past the end of a block ----------------------
+ *
+ * The data transfer rounds up to a whole word, so it can overshoot into the
+ * next block's data token and even the first bytes after it. Carrying that
+ * forward is what keeps a multi-block stream in step; losing it would make the
+ * next token wait hunt for a token that has already gone by. Cleared whenever a
+ * command is issued, because nothing may survive across transactions. */
+static uint8_t  g_pend[4];
+static uint32_t g_pend_n;
+static int      g_pend_token;
+
+
 static void delay_us(uint32_t us)
 {
     if (!us) {
@@ -95,6 +107,18 @@ static uint8_t sd_xfer(uint8_t out)
     uint8_t in = 0;
 
     if (g_hw) {
+        /* Through the W REGISTERS, deliberately, and giving up DMA as it goes.
+         *
+         * A one-byte DMA transfer does not retire its descriptor at all -- the
+         * engine moves words -- so trying it here produced a 500 ms timeout and
+         * then this same fallback, which is how a 1-byte transfer came to be
+         * the recorded failure for a fault that happened earlier somewhere
+         * else. And one W-register transfer poisons the engine permanently, so
+         * if this helper is reached at all, DMA is already over: say so, rather
+         * than leaving the next transfer to discover it. */
+        if (spi3_dma_enabled()) {
+            spi3_dma_force_fifo(1);
+        }
         spi3_xfer(&out, &in, 1u);
         return in;
     }
@@ -138,10 +162,87 @@ static uint8_t crc_for(uint8_t cmd, uint32_t arg)
     return 0x01u;                       /* stop bit only */
 }
 
+/* ---- the command, in whole transfers ---------------------------------------
+ *
+ * [next_moves/12 step 11] The byte-at-a-time version below costs ~30 transfers
+ * per command, which is fine at 2.9 us each through the W registers and ruinous
+ * at ~10 us each by DMA. So the hardware path sends the command as ONE eight-
+ * byte transfer and reads the answer in sixteen-byte batches, scanning them in
+ * memory: four transfers a command instead of thirty.
+ *
+ * Two details that are not optional:
+ *   - R1 is the first byte with bit 7 clear. Idle bytes are 0xFF, and no legal
+ *     R1 has the top bit set, so a batch can be scanned without ambiguity.
+ *   - the two spare bytes at the end of the command transfer already clock the
+ *     card's answer out, so R1 is often there before the first batch is read.
+ */
+static uint8_t sd_command_hw(uint8_t cmd, uint32_t arg)
+{
+    uint8_t b[16];
+
+    /* A new command ends any stream, so bytes carried over from one are void.
+     * Keeping them would let a token read during the LAST block of a burst
+     * reappear as the first block of the next one. */
+    g_pend_token = 0;
+    g_pend_n     = 0;
+
+    /* The card may still be busy from the previous command: it holds MISO low
+     * until it is not. One batch per look, bounded. */
+    for (int t = 0; t < 4; t++) {
+        if (!spi3_read_dma(b, sizeof b)) {
+            return 0xFFu;
+        }
+        int idle = 0;
+        for (uint32_t k = 0; k < sizeof b; k++) {
+            if (b[k] == 0xFFu) { idle = 1; break; }
+        }
+        if (idle) {
+            break;
+        }
+    }
+
+    uint8_t out[8];
+    out[0] = (uint8_t)(0x40u | cmd);
+    out[1] = (uint8_t)(arg >> 24);
+    out[2] = (uint8_t)(arg >> 16);
+    out[3] = (uint8_t)(arg >> 8);
+    out[4] = (uint8_t)arg;
+    out[5] = crc_for(cmd, arg);
+    out[6] = 0xFFu;                 /* two spare clocks: the answer may arrive */
+    out[7] = 0xFFu;
+    if (!spi3_xfer_dma(out, b, sizeof out)) {
+        return 0xFFu;
+    }
+    for (uint32_t k = 6; k < sizeof out; k++) {
+        if ((b[k] & 0x80u) == 0u) {
+            g_last_r1 = b[k];
+            return b[k];
+        }
+    }
+
+    /* R1 arrives within 8 bytes on any conforming card; two batches is 32. */
+    for (int t = 0; t < 2; t++) {
+        if (!spi3_read_dma(b, sizeof b)) {
+            return 0xFFu;
+        }
+        for (uint32_t k = 0; k < sizeof b; k++) {
+            if ((b[k] & 0x80u) == 0u) {
+                g_last_r1 = b[k];
+                return b[k];
+            }
+        }
+    }
+    g_last_r1 = 0xFFu;
+    return 0xFFu;
+}
+
 /* Sends a command and returns R1. 0xFF means the card never answered, which is
  * distinct from any legal R1 because bit 7 of R1 is always zero. */
 static uint8_t sd_command(uint8_t cmd, uint32_t arg)
 {
+    if (g_hw && spi3_dma_enabled()) {
+        return sd_command_hw(cmd, arg);
+    }
     /* A card may still be busy from the previous command. */
     for (int i = 0; i < 10; i++) {
         if (sd_rx() == 0xFFu) {
@@ -178,8 +279,17 @@ static void cs_high(void)
     gpio_set(SD_PIN_CS);
     /* Eight extra clocks after deselect. The card needs them to finish its
      * internal work, and omitting them is a classic source of a card that
-     * works for one command and then stops. */
-    sd_rx();
+     * works for one command and then stops.
+     *
+     * Four bytes rather than one on the DMA path: a transfer costs the same
+     * either way and four keeps every length on this path a multiple of a
+     * word, which is what the engine writes. */
+    if (g_hw && spi3_dma_enabled()) {
+        uint8_t t[4];
+        spi3_read_dma(t, sizeof t);
+    } else {
+        sd_rx();
+    }
 }
 
 int sd_init(void)
@@ -325,8 +435,25 @@ static uint8_t token_wait_hw(uint8_t *dst, uint32_t *have)
 {
     uint8_t batch[16];
     *have = 0;
+
+    /* The previous block's data transfer may have already read this block's
+     * token, and the bytes behind it. Then there is nothing to wait for. */
+    if (g_pend_token) {
+        for (uint32_t i = 0; i < g_pend_n; i++) {
+            dst[i] = g_pend[i];
+        }
+        *have = g_pend_n;
+        g_pend_token = 0;
+        g_pend_n = 0;
+        return DATA_TOKEN;
+    }
     for (int i = 0; i < 300; i++) {
-        if (!spi3_read(batch, sizeof batch)) {
+        /* By DMA when it is enabled, because one W-register read here would
+         * cost every block afterwards 16 bytes (step 10); through the registers
+         * otherwise, which is the proven path. */
+        int got = spi3_dma_enabled() ? spi3_read_dma(batch, sizeof batch)
+                                     : spi3_read(batch, sizeof batch);
+        if (!got) {
             return 0xFFu;
         }
         g_token_polls += sizeof batch;
@@ -352,65 +479,69 @@ static uint8_t token_wait_hw(uint8_t *dst, uint32_t *have)
  * registers' whole capacity. */
 static int data_read_hw(uint8_t *dst, uint32_t have)
 {
-    /* The token batch left `have` bytes in dst, so the rest starts at an
-     * arbitrary offset -- and the DMA engine writes WORDS at a word boundary.
-     * Three bytes on the slow path buy alignment for the other five hundred.
-     * (512 minus a multiple of four is a multiple of four, so the length the
-     * engine needs comes out right on its own.) */
-    uint32_t pad = spi3_dma_enabled() ? ((4u - (have & 3u)) & 3u) : 0u;
-    if (pad != 0u && have + pad <= SD_BLOCK_SIZE) {
-        if (!spi3_read(dst + have, pad)) {
+    /* ---- one transfer, whole words, data AND crc ---------------------------
+     *
+     * The engine only retires a descriptor when a whole word has arrived.
+     * Measured: a 2-byte transfer leaves the descriptor untouched -- owner
+     * still set, length 0 -- after 33 larger transfers in the same burst had
+     * succeeded, and a 1-byte one does the same. So this path must never ask
+     * for less than four bytes, and the two sub-word reads the first version
+     * made (1-3 bytes to align the offset, then 2 for the CRC) were the whole
+     * of what stood between step 10 and a working DMA read.
+     *
+     * Both are gone. The token batch leaves `have` data bytes in hand; the rest
+     * of the block plus its two discarded CRC bytes is T, and the transfer is T
+     * rounded UP to a word. That overshoots by 0-3 bytes of whatever follows,
+     * which inside a multi-block stream can be the next block's data token --
+     * so the overshoot is SCANNED rather than thrown away, and what it caught
+     * is handed to the next token wait. The CRC is always fully consumed,
+     * because the rounding is up, which is what makes the stream stay in step.
+     *
+     * The copy out of the staging buffer costs ~12 us against the 207 us the
+     * transfer takes: 6%, for a destination the engine can always write. */
+    if (spi3_dma_enabled()) {
+        static uint8_t buf[SD_BLOCK_SIZE + 8u] __attribute__((aligned(4)));
+        uint32_t rest = SD_BLOCK_SIZE - have;
+        uint32_t t    = rest + 2u;                  /* data left plus the CRC */
+        uint32_t n    = (t + 3u) & ~3u;             /* whole words, never < 4 */
+
+        if (!spi3_read_dma(buf, n)) {
+            /* ABANDON the block; do not re-read it on the slow path. A failed
+             * transfer still CLOCKED, so those bytes are gone and reading again
+             * returns the NEXT ones -- a block assembled from two places, which
+             * is what "mount failed: no FAT boot sector" was on a healthy card.
+             * display.c records the same mistake on its transmit side. */
             return 0;
         }
-        have += pad;
+        for (uint32_t i = 0; i < rest; i++) {
+            dst[have + i] = buf[i];
+        }
+
+        /* buf[rest] and buf[rest+1] are the CRC, discarded. Anything after
+         * them was read out of the stream and has to be accounted for. */
+        g_pend_token = 0;
+        g_pend_n     = 0;
+        for (uint32_t j = rest + 2u; j < n; j++) {
+            if (g_pend_token) {
+                g_pend[g_pend_n++] = buf[j];        /* data, already arrived */
+            } else if (buf[j] == DATA_TOKEN) {
+                g_pend_token = 1;                   /* the next block started */
+            }
+            /* otherwise an idle 0xFF from the gap between blocks: drop it */
+        }
+        return 1;
     }
 
+    /* The W-register path, unchanged and still correct: 64 bytes a transaction,
+     * then the two CRC bytes. Used when DMA is unavailable or has given up. */
     while (have < SD_BLOCK_SIZE) {
         uint32_t left = SD_BLOCK_SIZE - have;
-        /* DMA is OFF by default here and the reason is in spi3_read_dma: this
-         * function has just polled for the data token through the W registers,
-         * and on this peripheral a W-register read permanently costs every
-         * later DMA transfer 16 bytes. `spidma 1` turns it on for measuring.
-         *
-         * So the block is moved by the W registers, refilling the transmit side
-         * with 0xFF for every chunk -- which is half the peripheral-bus traffic
-         * and the reason a block costs 390 us against 205 us of wire time.
-         *
-         * Not refilling was tried, on the theory that a card streaming a block
-         * cannot see MOSI. It can, and it must: during a MULTI-BLOCK read the
-         * card watches MOSI for CMD12, which is the only way the stream ever
-         * stops. Sending the previous chunk's bytes instead of ones put a
-         * 0x40-prefixed byte in front of it soon enough to break the very first
-         * read -- "mount failed: no FAT boot sector" on a healthy card. */
-        if (spi3_dma_enabled()) {
-            uint32_t n = (left > SPI3_DMA_MAX) ? SPI3_DMA_MAX : left;
-            if (!spi3_read_dma(dst + have, n)) {
-                /* ABANDON the block. Do not re-read it on the slow path.
-                 *
-                 * A DMA transfer that failed still CLOCKED: those bytes have
-                 * left the card and are gone. Reading them again returns the
-                 * NEXT n bytes, so the block ends up assembled from two
-                 * different places -- which is what "mount failed: no FAT boot
-                 * sector" was, on a card whose block 0 is perfectly fine.
-                 *
-                 * The same mistake display.c records for its transmit path
-                 * (UM-NATOS-031 §2), made again on the receive side. The
-                 * failure also disabled DMA, so the caller's retry runs
-                 * entirely on the W-register path and succeeds. */
-                return 0;
-            }
-            have += n;
-        } else {
-            uint32_t n = (left > SPI3_XFER_MAX) ? SPI3_XFER_MAX : left;
-            if (!spi3_read(dst + have, n)) {
-                return 0;
-            }
-            have += n;
+        uint32_t n = (left > SPI3_XFER_MAX) ? SPI3_XFER_MAX : left;
+        if (!spi3_read(dst + have, n)) {
+            return 0;
         }
+        have += n;
     }
-
-    /* The two CRC bytes. 0xFF again from here: the card starts listening for
-     * the next command as soon as the block ends. */
     uint8_t crc[2];
     return spi3_read(crc, sizeof crc);
 }
@@ -439,9 +570,32 @@ static void multi_stop(void)
      * block after the last one we wanted, and a data byte can look like any
      * R1. What matters is that the bus is idle (0xFF) again before the next
      * command, which is what this waits for. */
-    for (int i = 0; i < 1000; i++) {
-        if (sd_rx() == 0xFFu) {
-            break;
+    if (g_hw && spi3_dma_enabled()) {
+        /* FOUR CONSECUTIVE idle bytes, not one.
+         *
+         * CMD12 is sent while the card is mid-stream, so the bytes around it
+         * are DATA -- and data contains 0xFF often. Taking the first 0xFF as
+         * "the card has gone idle" declares the stream stopped while it is
+         * still running, and a card still streaming answers every later command
+         * with data: it reads as a dead card that only a power cycle or a
+         * reseat brings back. That is the most likely cause of the four the
+         * card needed on 2026-10-02. A run of four is 32 bits of agreement. */
+        uint8_t b[16];
+        uint32_t idle = 0;
+        for (int i = 0; i < 64 && idle < 4u; i++) {
+            if (!spi3_read_dma(b, sizeof b)) {
+                break;
+            }
+            for (uint32_t k = 0; k < sizeof b; k++) {
+                idle = (b[k] == 0xFFu) ? idle + 1u : 0u;
+                if (idle >= 4u) { break; }
+            }
+        }
+    } else {
+        for (int i = 0; i < 1000; i++) {
+            if (sd_rx() == 0xFFu) {
+                break;
+            }
         }
     }
     cs_high();

@@ -59,6 +59,10 @@ void spi3_init(void);
 #define SPI3_PIN_NONE 0xFFu
 void spi3_route(uint8_t sck, uint8_t mosi, uint8_t miso);
 
+/* Re-runs the configuration and routing with the pins last given to
+ * spi3_route(). See the definition for why this is interesting. */
+void spi3_reattach(void);
+
 /* One full-duplex burst, at most SPI3_XFER_MAX bytes.
  *
  * `rx` may be 0 if the reply is not wanted; `tx` may not, because the bus always
@@ -95,6 +99,21 @@ int spi3_read(uint8_t *rx, uint32_t n);
 void spi3_dma_init(void);
 int  spi3_read_dma(uint8_t *rx, uint32_t n);
 
+/* Full duplex by DMA. `tx` of 0 sends 0xFF, which is what a read is; `rx` of 0
+ * discards. Buffers the engine cannot use directly -- unaligned, not a multiple
+ * of a word, or outside DRAM -- are staged through an internal copy, so callers
+ * need not care, but a 512-byte copy costs ~12 us against the 207 us the
+ * transfer itself takes: the block data path hands over aligned buffers and
+ * pays nothing. */
+int  spi3_xfer_dma(const uint8_t *tx, uint8_t *rx, uint32_t n);
+
+/* W-register transfers since boot, and the number of times DMA gave itself up
+ * because that count moved after it was armed. The second must stay 0 in normal
+ * operation: it means a diagnostic poisoned the engine and reads fell back to
+ * the slow path for the rest of the run. */
+uint32_t spi3_wreg_xfers(void);
+uint32_t spi3_dma_poisoned(void);
+
 /* Why the last DMA read gave up, and what the peripheral said at that instant.
  * stage: 0 none, 2 the shifter never finished, 3 the channel never signalled
  * its descriptor retired, 4 the channel reported a descriptor error.
@@ -111,6 +130,15 @@ uint32_t spi3_dma_err_eofs(void);
 uint32_t spi3_dma_flags(void);
 /* Transfers whose byte count had not caught up when the descriptor said the
  * engine was finished with it, and how many spins the last one needed. */
+/* The first failure since boot, which is the only one that explains anything:
+ * its stage, the length asked for, the descriptor, the interrupt bits, and how
+ * many transfers had already succeeded. */
+uint32_t spi3_dma_first_stage(void);
+uint32_t spi3_dma_first_len(void);
+uint32_t spi3_dma_first_flags(void);
+uint32_t spi3_dma_first_int(void);
+uint32_t spi3_dma_first_at(void);
+
 uint32_t spi3_dma_late(void);
 uint32_t spi3_dma_settle(void);
 uint32_t spi3_dma_int(void);
@@ -139,6 +167,15 @@ void spi3_probe_speed(void);    /* where a transfer's time goes */
  * ignores the clock, so this asks the peripheral and the channel alone whether
  * a length is acceptable, and prints what the channel said. */
 void spi3_probe_dma(void);
+
+/* Times back-to-back DMA reads, which is the only regime in which they are
+ * correct. Separate from the probe above, whose mixing rows poison the engine
+ * for everything after them. */
+void spi3_time_dma(void);
+
+/* Which transfer lengths the receive channel will actually retire. Cold, DMA
+ * only, no card traffic: CS stays high throughout. */
+void spi3_probe_dma_lengths(void);
 
 int spi3_selftest_const(int level);
 

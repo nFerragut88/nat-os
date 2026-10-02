@@ -75,6 +75,16 @@
 static uint32_t g_transfers;
 static uint32_t g_timeouts;
 
+/* W-register transfers, and the count as it stood when the DMA engine was last
+ * armed. One of these poisons every later DMA transfer by 16 bytes, so the
+ * difference between them is a yes/no answer to "is DMA still trustworthy". */
+static uint32_t g_wreg_xfers;
+static uint32_t g_wreg_at_init;
+static uint32_t g_dma_poisoned;     /* DMA given up because the count moved */
+
+uint32_t spi3_wreg_xfers(void)  { return g_wreg_xfers; }
+uint32_t spi3_dma_poisoned(void) { return g_dma_poisoned; }
+
 uint32_t spi3_transfers(void) { return g_transfers; }
 uint32_t spi3_timeouts(void)  { return g_timeouts; }
 
@@ -237,8 +247,14 @@ static int pad_capture(uint8_t pin, uint32_t sig, int keep_output)
     return 1;
 }
 
+/* The pins last routed, so the peripheral can be re-attached without the
+ * caller having to remember them. */
+static uint8_t g_sck = SPI3_PIN_NONE, g_mosi = SPI3_PIN_NONE,
+               g_miso = SPI3_PIN_NONE;
+
 void spi3_route(uint8_t sck, uint8_t mosi, uint8_t miso)
 {
+    g_sck = sck; g_mosi = mosi; g_miso = miso;
     if (sck != SPI3_PIN_NONE) {
         pad_drive(sck, VSPICLK_OUT_IDX, 0);
     }
@@ -248,6 +264,24 @@ void spi3_route(uint8_t sck, uint8_t mosi, uint8_t miso)
     if (miso != SPI3_PIN_NONE) {
         pad_capture(miso, VSPIQ_IN_IDX, 0);
     }
+}
+
+/* Re-attaches the peripheral: configure, set the clock, re-point the pads
+ * through the GPIO matrix. Exactly what sd_init() does after identification.
+ *
+ * Worth having as one call because of an observation that contradicts the
+ * "W-register reads poison DMA permanently" rule: the mixing probe's FIRST row
+ * always delivered every byte, in sessions where the boot had already read
+ * hundreds of blocks through the W registers. Something between those reads and
+ * that row cleared the deficit, and the one thing sd_init() does that none of
+ * the four resets did is take the pads away from the peripheral and give them
+ * back. If that is what clears it, mixing is survivable and this is the price:
+ * a dozen register writes before switching to DMA. */
+void spi3_reattach(void)
+{
+    spi3_init();
+    GPIO_REG(SPI3_CLOCK) = g_clk_reg;       /* spi3_init() reset it to 2 MHz */
+    spi3_route(g_sck, g_mosi, g_miso);
 }
 
 /* Receive n bytes while sending 0xFF -- what every SD read is.
@@ -296,6 +330,7 @@ int spi3_read(uint8_t *rx, uint32_t n)
         if (k > 3u) { rx[i + 3u] = (uint8_t)(w >> 24); }
     }
     g_transfers++;
+    g_wreg_xfers++;     /* the tripwire DMA watches; see spi3_xfer_dma */
     return 1;
 }
 
@@ -378,6 +413,31 @@ static uint32_t g_dma_err_eofs;     /* IN_ERR_EOF on a transfer that was fine */
 static uint32_t g_dma_flags;        /* the descriptor as the engine left it */
 static uint32_t g_dma_late, g_dma_settle;   /* transfers whose count lagged */
 
+/* The FIRST failure, kept unoverwritten. Every failure after the first is a
+ * consequence of it -- DMA gives itself up, callers fall back, and the last
+ * recorded failure describes the fallback rather than the fault. Reading the
+ * last one cost a build cycle chasing a 1-byte transfer that only happened
+ * because something else had already gone wrong. */
+static uint32_t g_first_stage, g_first_len, g_first_flags, g_first_int;
+static uint32_t g_first_at;         /* how many transfers had succeeded */
+
+uint32_t spi3_dma_first_stage(void) { return g_first_stage; }
+uint32_t spi3_dma_first_len(void)   { return g_first_len; }
+uint32_t spi3_dma_first_flags(void) { return g_first_flags; }
+uint32_t spi3_dma_first_int(void)   { return g_first_int; }
+uint32_t spi3_dma_first_at(void)    { return g_first_at; }
+
+static void dma_fail(uint32_t stage, uint32_t n, uint32_t flags, uint32_t raw)
+{
+    if (g_first_stage == 0u) {
+        g_first_stage = stage;
+        g_first_len   = n;
+        g_first_flags = flags;
+        g_first_int   = raw;
+        g_first_at    = g_dma_transfers;
+    }
+}
+
 uint32_t spi3_dma_late(void)   { return g_dma_late; }
 uint32_t spi3_dma_settle(void) { return g_dma_settle; }
 
@@ -432,6 +492,31 @@ void spi3_dma_init(void)
         return;
     }
     g_dma_reachable = 1;
+    g_wreg_at_init  = g_wreg_xfers;
+    /* ON, and the condition that makes it safe is absolute: NOTHING may have
+     * moved bytes through the W registers since power-on.
+     *
+     * One such transfer costs every later DMA transfer 16 bytes, cumulatively
+     * and permanently -- five mechanisms were measured against it (the channel
+     * reset, the AHB-master FIFO reset, SPI_SYNC_RESET, the DPORT peripheral
+     * reset, and re-attaching the pads through the GPIO matrix) and none of
+     * them clears it. So the peripheral is a DMA port for the whole run or a
+     * W-register port for the whole run.
+     *
+     * This is armed from sd_init(), whose identification is bit-banged GPIO and
+     * touches no register, so in a fresh boot the count is zero here and every
+     * SD transfer afterwards would be DMA. The tripwire in spi3_xfer_dma()
+     * enforces the rest: if a diagnostic moves the count, DMA gives itself up
+     * and reads fall back to the slow path for the remainder of the run.
+     *
+     * LEFT AT 0 because the word-aligned data path (step 11) is written but has
+     * never completed a read: every attempt to test it needed the card
+     * physically reseated first, for reasons that turned out to be the test
+     * before it rather than the code. `1` here is the whole change needed to
+     * try again from a fresh boot -- there is no runtime way in, because by the
+     * time a shell command could ask, the W registers have already moved bytes
+     * and the engine is poisoned for the rest of the run. */
+    g_dma_allowed   = 0;        /* see below: one line to flip for a test */
     /* Armed, but NOT permitted by default. sd.c mixes W-register transfers with
      * these inside one card transaction, and on this peripheral a W-register
      * read permanently costs every later DMA transfer 16 bytes (measured; see
@@ -440,19 +525,69 @@ void spi3_dma_init(void)
     g_dma_ok = g_dma_allowed;
 }
 
+/* Staging, for callers whose buffers the engine cannot use directly: the
+ * command bytes sd.c sends, and the odd 1-3 byte reads that bring a block's
+ * offset onto a word boundary. A 512-byte copy would cost ~12 us against the
+ * 207 us the transfer itself takes, so the block data path must stay DIRECT and
+ * these are only for the small transfers. */
+static uint8_t g_dma_tx[SPI3_DMA_MAX] __attribute__((aligned(4)));
+static uint8_t g_dma_rx[SPI3_DMA_MAX + 4u] __attribute__((aligned(4)));
+
+static int dma_usable(const void *p, uint32_t n)
+{
+    return ((uint32_t)p & 3u) == 0u && (n & 3u) == 0u
+        && (uint32_t)p >= DRAM_LO && (uint32_t)p + n <= DRAM_HI;
+}
+
 int spi3_read_dma(uint8_t *rx, uint32_t n)
 {
-    if (!g_dma_ok || !rx || n == 0u || n > SPI3_DMA_MAX) {
+    return spi3_xfer_dma(0, rx, n);
+}
+
+int spi3_xfer_dma(const uint8_t *tx, uint8_t *rx, uint32_t n)
+{
+    if (!g_dma_ok || n == 0u || n > SPI3_DMA_MAX) {
         return 0;
     }
-    /* The engine writes whole words at a word boundary, so a destination it
-     * cannot honour is refused here rather than half-filled. Counted, because a
-     * caller whose buffers are always odd would otherwise lose the speedup with
-     * no symptom but the old speed. */
-    if (((uint32_t)rx & 3u) != 0u || (n & 3u) != 0u
-        || (uint32_t)rx < DRAM_LO || (uint32_t)rx + n > DRAM_HI) {
-        g_dma_refused++;
+    /* ---- the tripwire -------------------------------------------------------
+     *
+     * A single W-register transfer permanently costs every later DMA transfer
+     * 16 bytes on this peripheral, cumulatively, and nothing clears it short of
+     * a power cycle (next_moves/12 step 10; four resets measured). sd.c no
+     * longer makes any on this path -- but `spitest`, `spi3` and the pin
+     * loopback still do, and they are one keystroke away.
+     *
+     * So the count is watched. If it moves, DMA is given up for the rest of the
+     * run and reads fall back to the W registers, which is slower and correct.
+     * The alternative is a driver that returns 496 bytes of a 512-byte block
+     * because somebody ran a diagnostic. */
+    if (g_wreg_xfers != g_wreg_at_init) {
+        g_dma_poisoned++;
+        g_dma_ok = 0;
+        g_dma_allowed = 0;
         return 0;
+    }
+
+    const uint8_t *src = g_ones;            /* a read sends ones */
+    if (tx) {
+        if (dma_usable(tx, n)) {
+            src = tx;
+        } else {
+            for (uint32_t i = 0; i < n; i++) {
+                g_dma_tx[i] = tx[i];
+            }
+            src = g_dma_tx;
+        }
+    }
+
+    /* The engine writes WORDS at a word boundary. A destination it cannot
+     * honour is staged rather than refused, because refusing would push the
+     * decision onto every caller; the copy is only paid by small transfers. */
+    uint8_t *dst = rx;
+    int staged = 0;
+    if (!rx || !dma_usable(rx, n)) {
+        dst = g_dma_rx;
+        staged = 1;
     }
 
     /* The AHB master FIFO only, and per transfer: this driver ALTERNATES
@@ -483,30 +618,9 @@ int spi3_read_dma(uint8_t *rx, uint32_t n)
                                | DMA_AHBM_FIFO_RST | DMA_AHBM_RST);
     GPIO_REG(SPI3_DMA_INT_CLR) = 0xFFFFFFFFu;
 
-    /* And the PERIPHERAL'S own receive buffer, which the channel reset does not
-     * touch. This is the fault that cost the most to find, and the measurement
-     * that names it is worth keeping:
-     *
-     *   asked        4   16   64  100  256  500  508  512
-     *   delivered    4    4   52   72  228  456  464  452
-     *   FIFO reads   0    1    1    2    2    3    3    4   (before each)
-     *
-     * The deficit is 16 bytes per preceding W-register read -- the size of
-     * sd.c's data-token poll -- and it ACCUMULATES across transfers and
-     * survives resetting the DMA channel. Those bytes are still sitting in the
-     * peripheral's 64-byte buffer, and the engine streams them into the
-     * descriptor ahead of the real data, so the tail of each block falls off
-     * the end. A cold transfer right after init was always perfect, which is
-     * why three earlier runs of the probe pronounced this working.
-     *
-     * SPI_SYNC_RESET resets the SPI logic, buffer pointers included, and is the
-     * only reset that clears it. Configuration registers are untouched -- USER
-     * is read back in the probe to prove exactly that. */
-    spi3_hard_reset();
-
     g_tx_desc.flags = (n & 0xFFFu) | ((n & 0xFFFu) << 12)
                     | (1u << 30) | (1u << 31);      /* eof, owned by the engine */
-    g_tx_desc.buf   = (uint32_t)g_ones;
+    g_tx_desc.buf   = (uint32_t)src;
     g_tx_desc.next  = 0;
 
     /* Receive descriptor: SIZE, and EOF, and the owner bit. `length` is left 0
@@ -521,8 +635,8 @@ int spi3_read_dma(uint8_t *rx, uint32_t n)
      * Espressif's lldesc_setup_link() marks the last descriptor eof=1 for
      * receive links exactly as it does for transmit ones. One descriptor per
      * transfer here, so this is that last one. */
-    g_rx_desc.flags = (n & 0xFFFu) | (1u << 30) | (1u << 31);
-    g_rx_desc.buf   = (uint32_t)rx;
+    g_rx_desc.flags = (((n + 3u) & ~3u) & 0xFFFu) | (1u << 30) | (1u << 31);
+    g_rx_desc.buf   = (uint32_t)dst;
     g_rx_desc.next  = 0;
 
     GPIO_REG(SPI3_DMA_OUT_LINK) = ((uint32_t)&g_tx_desc & 0xFFFFFu) | DMA_LINK_START;
@@ -551,6 +665,7 @@ int spi3_read_dma(uint8_t *rx, uint32_t n)
             g_dma_stage  = 2u;              /* the shifter never finished */
             g_dma_int    = GPIO_REG(SPI3_DMA_INT_RAW);
             g_dma_status = GPIO_REG(SPI3_DMA_STATUS);
+            dma_fail(2u, n, g_rx_desc.flags, g_dma_int);
             g_dma_timeouts++;
             g_dma_ok = 0;
             return 0;
@@ -577,6 +692,7 @@ int spi3_read_dma(uint8_t *rx, uint32_t n)
             g_dma_stage  = 3u;
             g_dma_int    = GPIO_REG(SPI3_DMA_INT_RAW);
             g_dma_status = GPIO_REG(SPI3_DMA_STATUS);
+            dma_fail(3u, n, g_rx_desc.flags, g_dma_int);
             g_dma_timeouts++;
             g_dma_ok = 0;
             return 0;
@@ -604,6 +720,7 @@ int spi3_read_dma(uint8_t *rx, uint32_t n)
             g_dma_flags  = g_rx_desc.flags;
             g_dma_int    = GPIO_REG(SPI3_DMA_INT_RAW);
             g_dma_status = GPIO_REG(SPI3_DMA_STATUS);
+            dma_fail(5u, n, g_dma_flags, g_dma_int);
             g_dma_timeouts++;
             g_dma_ok = 0;
             return 0;
@@ -614,6 +731,11 @@ int spi3_read_dma(uint8_t *rx, uint32_t n)
     g_dma_settle = spins2;
     if (spins2) {
         g_dma_late++;
+    }
+    if (staged && rx) {
+        for (uint32_t i = 0; i < n; i++) {
+            rx[i] = g_dma_rx[i];
+        }
     }
     if (g_dma_int & DMA_IN_ERR_EOF_INT) {
         g_dma_err_eofs++;
@@ -675,6 +797,7 @@ int spi3_xfer(const uint8_t *tx, uint8_t *rx, uint32_t n)
     }
 
     g_transfers++;
+    g_wreg_xfers++;     /* ditto: any W-register traffic poisons the engine */
     return 1;
 }
 
@@ -798,7 +921,6 @@ void spi3_probe_dma(void)
          * Clearing the disable flag does not put the channel back; only the
          * init sequence does. */
         spi3_dma_force_fifo(0);     /* the probe is where DMA is allowed */
-        spi3_dma_init();
         /* HALF the lengths get a W-register read first, because that is what
          * sd.c does: it polls for the data token through the FIFO and only then
          * hands the rest of the block to the engine. In the real path the engine
@@ -809,6 +931,22 @@ void spi3_probe_dma(void)
             static uint8_t pre[16] __attribute__((aligned(4)));
             spi3_read(pre, sizeof pre);
         }
+        /* The experiment this probe now exists for: does re-attaching the
+         * peripheral clear what the W-register read left behind? */
+        spi3_reattach();
+        /* AFTER the W-register read, not before it.
+         *
+         * The first version of this probe armed the engine and THEN did the
+         * poisoning read, so it never asked the one question that matters: does
+         * re-arming CLEAR the deficit? Four resets were measured against this
+         * fault and all of them were the DMA_CONF resets -- none of them
+         * rewrote DPORT_SPI_DMA_CHAN_SEL, which is the register that attaches
+         * this peripheral to the channel in the first place. */
+        spi3_dma_init();
+        /* AFTER the init, which now leaves DMA disallowed by default (step 11).
+         * Allowing first and arming second disabled the engine and every row
+         * failed at the guard with no transfer attempted -- stage 0, int 0. */
+        spi3_dma_force_fifo(0);
         int ok = spi3_read_dma(buf, n);
         uint32_t written = 0;
         for (uint32_t k = 0; k < n; k++) {
@@ -835,6 +973,99 @@ void spi3_probe_dma(void)
         uart_puts(" inlink=");
         uart_put_hex(GPIO_REG(SPI3_DMA_IN_LINK));
         uart_puts("\n");
+    }
+    spi3_dma_force_fifo(1);
+}
+
+/* ---- what a DMA transfer COSTS, back to back, DMA only --------------------
+ *
+ * The regime sd.c would live in if it gave up the W registers entirely: no
+ * mixing, so no 16-byte deficit. What matters is the FIXED cost per transfer,
+ * because an all-DMA command layer pays it several times per card command,
+ * against the ~262 us of wire a 512-byte block needs at 20 MHz.
+ *
+ * In this task's own cycles, with correctness counted alongside: a cost per
+ * transfer means nothing if the transfers are not delivering.
+ *
+ * SEPARATE from the mixing probe, and that is not cosmetic. Those rows leave a
+ * 16-byte deficit behind, after which every DMA transfer fails and sits out its
+ * 500 ms timeout -- timing them in the same run measured the timeout and
+ * printed nothing for minutes. */
+/* WHICH LENGTHS does the engine accept? The first real failure of the all-DMA
+ * SD path was a two-byte transfer -- the block's trailing CRC bytes -- whose
+ * descriptor the engine never touched at all (owner still set, length 0) after
+ * 33 larger transfers had succeeded. It moves words, so a request below a word
+ * leaves it waiting for data that will never fill one.
+ *
+ * What is NOT yet known is whether a length merely has to be >= 4 or has to be
+ * a MULTIPLE of 4, and the data path's shape depends on the answer: a block
+ * read that keeps the bytes trailing the data token has 497..511 bytes left,
+ * which is neither. So: every interesting length, cold, with nothing mixed in.
+ */
+void spi3_probe_dma_lengths(void)
+{
+    static uint8_t buf[SPI3_DMA_MAX] __attribute__((aligned(4)));
+    static const uint32_t ln[] = { 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u,
+                                   9u, 12u, 497u, 509u, 510u, 511u, 512u };
+
+    for (uint32_t i = 0; i < sizeof ln / sizeof ln[0]; i++) {
+        uint32_t n = ln[i];
+        spi3_dma_init();
+        spi3_dma_force_fifo(0);
+        int ok = spi3_read_dma(buf, n);
+        uart_puts("   ");
+        uart_put_dec(n);
+        uart_puts(n < 10u ? " B:   " : (n < 100u ? " B:  " : " B: "));
+        uart_puts(ok ? "ok   " : "FAIL ");
+        uart_puts("stage=");
+        uart_put_dec(spi3_dma_stage());
+        uart_puts(" engine delivered ");
+        uart_put_dec((g_rx_desc.flags >> 12) & 0xFFFu);
+        uart_puts(" of ");
+        uart_put_dec(n);
+        uart_puts("\n");
+    }
+    spi3_dma_force_fifo(1);
+}
+
+void spi3_time_dma(void)
+{
+    static uint8_t buf[SPI3_DMA_MAX] __attribute__((aligned(4)));
+    {
+        static const uint32_t tl[] = { 16u, 64u, 512u };
+        uart_puts("   cost per transfer, DMA only:");
+        for (uint32_t t = 0; t < 3u; t++) {
+            uint32_t n = tl[t], bad = 0;
+            spi3_dma_init();
+            spi3_dma_force_fifo(0);     /* in this order; see probe above */
+            /* 40, not 200. Two hundred back-to-back 512-byte transfers is a
+             * sustained 2.5 MB/s on a board whose supply already proved too
+             * weak for a speaker at full volume (step 7), and the card wedged
+             * after each long run of this loop. 40 is enough for a cost per
+             * transfer that agrees with the wire time to 1%. */
+            uint32_t c0 = task_cpu_cycles();
+            for (uint32_t k = 0; k < 40u; k++) {
+                if (!spi3_read_dma(buf, n)) {
+                    bad++;
+                    spi3_dma_force_fifo(0);     /* a failure disables it */
+                }
+            }
+            uint32_t ns = (task_cpu_cycles() - c0) * 25u / 2u / 40u;
+            uart_puts("  ");
+            uart_put_dec(n);
+            uart_puts(" B: ");
+            uart_put_dec(ns / 1000u);
+            uart_puts(".");
+            uart_put_dec((ns / 100u) % 10u);
+            uart_puts(" us");
+            if (bad) {
+                uart_puts(" (");
+                uart_put_dec(bad);
+                uart_puts(" of 40 FAILED)");
+            }
+        }
+        uart_puts("\n   wire time at 20 MHz: 8.2 us for 16 B, 32.8 for 64,"
+                  " 262 for 512\n");
     }
     spi3_dma_force_fifo(1);         /* and where it is put back */
 }

@@ -710,10 +710,38 @@ static void execute(char *line)
         /* Off by default, and it stays that way until someone measuring turns
          * it on: sd.c mixes W-register reads with DMA in one card transaction,
          * and this peripheral will not have that (next_moves/12 step 10). */
-        spi3_dma_force_fifo(parse_int(arg) > 0 ? 0 : 1);
+        if (parse_int(arg) > 0) {
+            /* Re-arm BEFORE allowing: the tripwire compares the W-register
+             * transfer count against its value when the engine was armed, and
+             * every `fat` command moves that count. Allowing without re-arming
+             * just trips it on the first transfer. */
+            spi3_dma_init();
+            spi3_dma_force_fifo(0);
+        } else {
+            spi3_dma_force_fifo(1);
+        }
         uart_puts("   SD block data by DMA: ");
         uart_puts(spi3_dma_enabled() ? "ON -- expect short receives\n"
                                      : "off (W registers)\n");
+    }
+    else if (str_eq(line, "spidmalen")) {
+        fat_lock();
+        if (sd_init() == SD_OK) {
+            spi3_probe_dma_lengths();
+        } else {
+            uart_puts("   card did not identify -- no bus clocking\n");
+        }
+        fat_unlock();
+    }
+    else if (str_eq(line, "spidmatime")) {
+        fat_lock();
+        int rc = sd_init();
+        if (rc == SD_OK) {
+            spi3_time_dma();
+        } else {
+            uart_puts("   card did not identify -- not clocking the bus\n");
+        }
+        fat_unlock();
     }
     else if (str_eq(line, "spidmatest")) {
         /* The card first: the probe measures the bus as sd.c leaves it, with a
@@ -3337,7 +3365,18 @@ static void execute(char *line)
         uart_put_dec(spi3_dma_settle());
         uart_puts(" retries=");
         uart_put_dec(sd_dma_retries());
-        uart_puts("\n   stage 2 = shifter unfinished, 3 = channel never retired, 4 = descriptor error\n");
+        uart_puts("\n   first failure: stage=");
+        uart_put_dec(spi3_dma_first_stage());
+        uart_puts(" len=");
+        uart_put_dec(spi3_dma_first_len());
+        uart_puts(" flags=");
+        uart_put_hex(spi3_dma_first_flags());
+        uart_puts(" int=");
+        uart_put_hex(spi3_dma_first_int());
+        uart_puts(" after ");
+        uart_put_dec(spi3_dma_first_at());
+        uart_puts(" good ones\n   stages: 2 shifter unfinished, 3 channel never"
+                  " retired, 5 short receive\n");
     }
     else if (str_eq(line, "spidump")) {
         /* Read the SPI2 configuration back off the chip.

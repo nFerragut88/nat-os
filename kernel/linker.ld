@@ -356,6 +356,16 @@ SECTIONS
      * confuse the measurement with the cache's mood. */
     *audio.c.o(.literal .literal.* .text .text.*)
 
+    /* [next_moves/12 step 11] efuse.c, 146 bytes, read once during the boot
+     * banner and never again. iram refused the SPI3 re-attach by 7 bytes. */
+    *efuse.c.o(.literal .literal.* .text .text.*)
+
+    /* [next_moves/12 step 11] adc.c, 2,489 bytes: adc_init() at boot and the
+     * shell's four probe commands are its only callers outside itself -- grep
+     * confirms nothing in the kernel samples it periodically. Room for the SD
+     * driver's DMA diagnostics, which iram then refused by 15 bytes. */
+    *adc.c.o(.literal .literal.* .text .text.*)
+
     . = ALIGN(4);
     _flash_text_end = .;
   } > irom

@@ -729,3 +729,105 @@ open   13-15 fps needs an all-DMA SD command layer, for the reason measured
        above. The engine is ready; the protocol layer is not
 open   1 underrun per full MP3 playback, still not chased
 ```
+
+---
+
+## step 11 — the all-DMA SD path: written, measured, and never once completed
+
+Step 10 ended with a rule: a W-register transfer permanently costs every later
+DMA transfer 16 bytes, so SPI3 is a DMA port for a whole run or a register port
+for a whole run. That makes 13-15 fps conditional on `sd.c` giving up the
+registers entirely -- commands included. This step builds that, and it does not
+work yet.
+
+### the cost that justified the work
+
+`spidmatime` times back-to-back DMA reads, DMA only, in this task's cycles:
+
+```
+                measured   wire at 20 MHz   CPU above the wire
+   16 B          11.0 us        6.4 us           4.6 us
+   64 B          30.5 us       25.6 us           4.9 us
+  512 B         206.8 us      204.8 us           2.0 us
+```
+
+A block's data costs 420 us through the W registers and 207 by DMA. Four
+transfers a command instead of thirty keeps the command cheap, so a block
+projects to ~290 us against 546 -- read 50.5 -> ~27 ms a frame, a ~62 ms frame,
+15 fps.
+
+### what was built
+
+`spi3_xfer_dma()` -- full duplex, 0xFF from a buffer when there is nothing to
+send, staging for destinations the engine cannot write. `sd.c`'s hardware path
+has no W-register transfer left in it: the command goes out as one eight-byte
+transfer with its answer read in sixteen-byte batches and scanned in memory,
+and the token poll, the block, its CRC and the trailing clocks after deselect
+are all DMA. A tripwire watches the W-register count and surrenders DMA for the
+rest of the run if a diagnostic moves it.
+
+### the rule that finally emerged
+
+**The engine retires a descriptor only when a whole word has arrived.** A
+two-byte transfer leaves the descriptor untouched -- owner still set, length 0
+-- *after 33 larger transfers in the same burst had succeeded*:
+
+```
+first failure: stage=3 len=2 flags=0xc0000004 after 33 good ones
+```
+
+33 good transfers is the command, the token poll and the full 512-byte block,
+all correct, all by DMA. The only thing that failed was the two trailing CRC
+bytes. A one-byte transfer fails the same way, which is why `sd_xfer()` now
+goes to the registers and says so rather than trying.
+
+So the data phase asks for the block's remainder AND its CRC in one transfer,
+rounded UP to a word. That overshoots by 0-3 bytes of whatever follows, which
+inside a stream can be the next block's token and the bytes behind it, so the
+overshoot is scanned and handed to the next token wait. The CRC is always
+consumed, which is what keeps the stream in step.
+
+That code is written. It has never completed a read.
+
+### five instruments, four reseats, and the shape of the mistake
+
+Every attempt to test the path needed the card physically reseated first, and
+the reason was almost always the test before it:
+
+1. The **alignment pad** read 1-3 bytes through the W registers -- poisoning the
+   engine on the first block, after which the tripwire disabled DMA and the
+   fallback re-read bytes already clocked off the card. A card handed a
+   malformed stream has to be reseated.
+2. A **one-byte transfer** then timed out for 500 ms and fell back the same way,
+   which is why every failure I examined pointed at `len=1`: a consequence.
+   The instrument now records the FIRST failure and never overwrites it.
+3. `spi3`, the selftest command, **tied MISO to a matrix constant and never put
+   it back**; `sd_init()` only re-routes at the end of a successful
+   identification, so a failing one never got there. Two of the four power
+   cycles were this. It hands the bus back now.
+4. `spidmatime` fired **600 back-to-back 512-byte transfers**; the card wedged
+   after every long run. The loop is 40 now. The board's supply was already
+   known to be marginal (step 7).
+5. And twice the card simply needed **reseating** -- the committed build failed
+   identically, which is the only reason I stopped blaming my code.
+
+### what is NOT the explanation
+
+Measured and ruled out, each against the 16-byte deficit: the DMA channel
+reset, the AHB-master FIFO reset, `SPI_SYNC_RESET`, SPI3's DPORT peripheral
+reset with a full reconfigure, and re-attaching the pads through the GPIO
+matrix. The first row of the mixing probe was always perfect, which looked like
+evidence that something cleared it; re-arming the engine immediately before the
+transfer does not.
+
+### State
+
+```
+works  the 10 fps playback of step 9, unchanged, re-verified at crc32=
+       0xf584e81c and 516 of 516 frames. DMA is OFF: g_dma_allowed = 0 in
+       spi3_dma_init(), which is the whole of what a test session must flip
+open   the word-aligned data path has never completed a read. The next
+       attempt needs: that one line, a fresh boot, a seated card, and
+       `fat cat Test*` -- crc32 agreeing or it is wrong
+open   1 underrun per full MP3 playback, still not chased
+```
