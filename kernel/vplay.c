@@ -322,6 +322,12 @@ int vplay_run(const char *path, uint32_t y, volatile int *stop,
     for (uint32_t k = 0; k < sizeof g_st; k++) {
         z[k] = 0;
     }
+    /* PER PLAYBACK, like everything else in g_st. These three accumulated
+     * across runs while the frame count they are divided by did not, so the
+     * first report after a second playback read 34 ms of palette expansion for
+     * work that takes 8 -- a counter answering a wider question than the one
+     * printed beside it. */
+    g_fin_cc = g_conv_cc = g_start_cc = 0;
 
     int rc = fat_open(&g_fv, path);
     if (rc) {

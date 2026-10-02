@@ -1152,3 +1152,59 @@ open   past 15: an async fat_read would hide the palette expansion, and the
        card's ~33 ms of wire is then the floor -- about 22 fps
 open   1 underrun per playback, still not chased
 ```
+
+---
+
+## step 17 — 15 fps, 773 of 773
+
+```
+shown 773  dropped 0  = 14.8 fps shown over 51,920 ms   underruns=1
+per shown frame: read 40.2 ms  draw 13.9 ms   worst frame 56 ms of 66.7
+of the draw: panel wait 4.6 ms   palette 8.1 ms   window 0.8 ms
+```
+
+The one underrun is the end-of-playback one from step 6, unchanged.
+
+`vidconv.py` warned against this file before its cost model was corrected --
+it predicted 70 ms of 67 available and advised a lower rate. The model still
+ADDED the draw to the read, and since step 16 the draw mostly does not add:
+the panel is started and the next chunk read while it drains. Corrected to
+0.68 µs a byte and 0.24 µs a pixel, it predicts **54 ms of 67 (81%)** against
+54.1 measured.
+
+That is the second time this model has had to change shape rather than
+magnitude, and both times it warned about a file the board plays without
+dropping a frame. A cost model is a measurement with a date on it.
+
+### the whole arc, 7 fps to 15
+
+```
+                              read    draw   frame   fps   KB/s
+morning (step 7)              80.1    46.8    127      7    480
+CMD18 + direct blit           50.5    35.4     86     10   1022
+all-DMA command layer         47.0    35.3     82     10   1083
+pipelined blocks              46.2    35.3     81     10   1083
+whole-sector frame reads      39.8    31.7     71     12   1083
+panel started, not waited for 40.2    13.9     54     15   1083
+```
+
+`crc32=0xf584e81c` held at every step, and the picture was confirmed on the
+glass at each of the three points where only a person could tell.
+
+### and one instrument fixed
+
+The three-way split of the draw accumulated across playbacks while the frame
+count it was divided by did not, so the first report after a second playback
+read 34 ms of palette expansion for work that takes 8. Reset per playback now,
+with the rest of the status.
+
+### State
+
+```
+works  15 fps, 773 of 773 frames, 0 dropped, full screen, in sync with audio
+open   16 fps does not fit: 62.5 ms against a worst frame of 56 is close, but
+       the average 54.1 leaves nothing for a long frame
+open   past 15 needs an async fat_read so the palette expansion hides behind
+       the card too; the card's ~33 ms of wire is then the floor -- ~22 fps
+open   1 underrun per playback, still not chased
+```

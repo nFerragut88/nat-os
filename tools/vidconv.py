@@ -439,12 +439,18 @@ def convert(a):
     #   step 5       1.31            0.77          127 ms
     #   step 8       0.82            0.61           85 ms
     #   step 14      0.65            0.55           71 ms
+    #   step 16      0.68            0.24           55 ms
     #
-    # step 14 is all-DMA pipelined SD reads plus a frame read in whole sectors.
+    # step 16 is the one that breaks the shape of this sum. The panel's blit is
+    # STARTED and the next chunk read while it drains, so most of the drawing
+    # no longer adds to the frame -- 0.24 us a pixel is the palette expansion
+    # plus the 4.7 ms of panel wait that is still left, not the 23 ms the panel
+    # actually takes. The read went up slightly because batches are uniform now.
+    #
     # Numbers a build ago UNDERSTATE what the board can do, which is the safe
     # direction for a warning and the wrong one for choosing an fps, so these
     # are updated whenever the board is re-measured.
-    per_frame_us = stride * 0.65 + out_w * out_h * 0.55
+    per_frame_us = stride * 0.68 + out_w * out_h * 0.24
     budget_us = 1000000.0 * fps_den / fps_num
     print("  per frame on the board: ~%.0f ms of %.0f ms available (%.0f%%)" % (
         per_frame_us / 1000, budget_us / 1000, 100 * per_frame_us / budget_us))
