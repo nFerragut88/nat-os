@@ -9,6 +9,8 @@
 #include "timer.h"
 #include "mp3.h"            /* mp3_volume(): one volume for the player */
 
+void *memmove(void *dst, const void *src, unsigned int n);   /* kstring.c */
+
 #define CPU_HZ 80000000u
 
 /* How long either wait on the audio clock may go without finishing. Five
@@ -150,38 +152,52 @@ static int queue_audio(uint32_t i, volatile int *stop)
     return 0;
 }
 
-/* Reads frame i and puts it on the panel, `rows` rows at a time. */
+/* ---- reading a frame in whole sectors --------------------------------------
+ *
+ * The old version asked for one blit batch at a time: 12 rows, 12 x 180 = 2,160
+ * bytes, starting 16 bytes into a sector because that is where a chunk's pixel
+ * data begins. Every such call came out as
+ *
+ *     partial sector | 3 whole sectors | partial sector
+ *
+ * so the SD driver's pipelined burst only covered the middle, and a frame cost
+ * 135 block reads for the 113 it contains -- a fifth of the bus spent reading
+ * sectors twice for a few bytes each (next_moves/12 step 13).
+ *
+ * Now the file is read in 2,048-byte chunks from the chunk's own 512-aligned
+ * base, which keeps every read four whole sectors and every burst fully
+ * pipelined, and the 16-byte chunk header is stepped over in memory rather than
+ * seeked past. Rows are emitted as the bytes accumulate, so a row that straddles
+ * two chunks is drawn once the second arrives; the leftover carried between
+ * chunks is always less than one row, so compacting it is a move of at most 179
+ * bytes.
+ *
+ * `rows` is still the blit batch: as many rows as the two borrowed buffers hold.
+ */
+#define CHUNK 2048u             /* four sectors; a multiple of 512, always */
+
 static int draw_frame(uint32_t i, uint32_t x, uint32_t y, uint32_t pix,
-                      uint8_t *a, uint16_t *b, uint32_t rows,
+                      uint8_t *a, uint32_t a_bytes, uint16_t *b, uint32_t rows,
                       uint32_t *read_cc, uint32_t *draw_cc, volatile int *stop)
 {
     uint32_t w = g_st.w, h = g_st.h;
     uint32_t c0 = task_cpu_cycles();
-    if (fat_seek(&g_fv, g_first + i * g_stride + 16u) != FAT_OK) {
+    if (fat_seek(&g_fv, g_first + i * g_stride) != FAT_OK) {
         return FAT_ERR_CHAIN;
     }
     *read_cc += task_cpu_cycles() - c0;
-    for (uint32_t r = 0; r < h; r += rows) {
-        /* Checked per batch, not per frame: leaving the view stops the video
-         * and then repaints the launcher, and a frame finishing after that
-         * would land on top of the icons. */
-        if (*stop) {
-            return 0;
+
+    if (pix != PIX_PAL8) {
+        /* RGB565: twice the data and no palette, left as it was. */
+        if (fat_seek(&g_fv, g_first + i * g_stride + 16u) != FAT_OK) {
+            return FAT_ERR_CHAIN;
         }
-        uint32_t n = (h - r < rows) ? h - r : rows;
-        uint32_t t0 = task_cpu_cycles();
-        if (pix == PIX_PAL8) {
-            if (fat_read(&g_fv, a, n * w) != (int32_t)(n * w)) {
-                return FAT_ERR_CHAIN;
+        for (uint32_t r = 0; r < h; r += rows) {
+            if (*stop) {
+                return 0;
             }
-            uint32_t t1 = task_cpu_cycles();
-            *read_cc += t1 - t0;
-            for (uint32_t k = 0; k < n * w; k++) {
-                b[k] = g_pal[a[k]];     /* already panel-order; see g_pal */
-            }
-            display_blit_be(x, y + r, w, n, (const uint8_t *)b);
-            *draw_cc += task_cpu_cycles() - t1;
-        } else {
+            uint32_t n = (h - r < rows) ? h - r : rows;
+            uint32_t t0 = task_cpu_cycles();
             if (fat_read(&g_fv, b, n * w * 2u) != (int32_t)(n * w * 2u)) {
                 return FAT_ERR_CHAIN;
             }
@@ -190,6 +206,51 @@ static int draw_frame(uint32_t i, uint32_t x, uint32_t y, uint32_t pix,
             display_blit(x, y + r, w, n, b, w);
             *draw_cc += task_cpu_cycles() - t1;
         }
+        return 0;
+    }
+
+    uint32_t pos = 0, avail = 0;    /* pixel bytes live in a[pos .. pos+avail) */
+    uint32_t skip = 16u;            /* the chunk header, stepped over once     */
+    uint32_t row = 0;
+
+    while (row < h) {
+        if (*stop) {
+            return 0;
+        }
+        /* Fill until a whole row is in hand. */
+        while (avail < w) {
+            uint32_t t0 = task_cpu_cycles();
+            if (pos + avail + CHUNK > a_bytes) {
+                memmove(a, a + pos, avail);     /* at most one row, less 1 */
+                pos = 0;
+            }
+            if (fat_read(&g_fv, a + pos + avail, CHUNK) != (int32_t)CHUNK) {
+                return FAT_ERR_CHAIN;
+            }
+            avail += CHUNK;
+            if (skip != 0u) {
+                uint32_t sk = (skip < avail) ? skip : avail;
+                pos   += sk;        /* no move: the header is just stepped past */
+                avail -= sk;
+                skip  -= sk;
+            }
+            *read_cc += task_cpu_cycles() - t0;
+        }
+
+        uint32_t n = avail / w;
+        if (n > rows)    { n = rows; }
+        if (n > h - row) { n = h - row; }
+
+        uint32_t t1 = task_cpu_cycles();
+        for (uint32_t k = 0; k < n * w; k++) {
+            b[k] = g_pal[a[pos + k]];       /* already panel-order; see g_pal */
+        }
+        display_blit_be(x, y + row, w, n, (const uint8_t *)b);
+        *draw_cc += task_cpu_cycles() - t1;
+
+        pos   += n * w;
+        avail -= n * w;
+        row   += n;
     }
     return 0;
 }
@@ -321,7 +382,8 @@ int vplay_run(const char *path, uint32_t y, volatile int *stop,
 
         uint32_t f0 = task_cpu_cycles();
         uint32_t rb = read_cc, db = draw_cc;
-        rc = draw_frame(i, x, y, pix, a, b, rows, &read_cc, &draw_cc, stop);
+        rc = draw_frame(i, x, y, pix, a, a_bytes, b, rows, &read_cc, &draw_cc,
+                        stop);
         if (rc) {
             g_st.err = rc;
             goto out;

@@ -976,3 +976,50 @@ open   the bigger prize is still overlapping the READ with the DRAW -- the
        would need them too, and a frame becomes max(read, draw)
 open   1 underrun per full MP3 playback, still not chased
 ```
+
+---
+
+## step 14 — reading a frame in whole sectors
+
+Step 13's pipeline reached almost none of the video because of the shape of the
+reads. `draw_frame()` asked for one blit batch at a time -- 12 rows, 2,160
+bytes, starting 16 bytes into a sector -- and every such call came out as a
+partial sector, three whole ones, and another partial. Only the middle was a
+burst, and a frame cost 135 block reads for the 113 it contains.
+
+It now reads **2,048-byte chunks from the chunk's own 512-aligned base**, steps
+over the 16-byte chunk header in memory instead of seeking past it, and emits
+rows as the bytes accumulate. A row straddling two chunks is drawn when the
+second arrives; the leftover carried across is always less than one row, so
+compacting it moves at most 179 bytes.
+
+```
+                 read    draw   frame   worst
+before today     50.5    35.4    85.9    (143 ms budget at 7 fps)
+all-DMA          47.0    35.3    82.3
+pipelined        46.2    35.3    81.5
+whole sectors    39.7    31.7    71.4    80 ms
+```
+
+0 dropped frames and 0 underruns throughout, and the picture verified on the
+glass -- which matters here more than the numbers, because "0 dropped" says
+nothing about whether the rows went to the right places.
+
+The draw got cheaper too, which was not the point and is not fully explained:
+fewer, larger blits and less contention with the SD engine are the likely
+reasons.
+
+**12 fps fits** -- 83.3 ms a frame against 71.4 average and 80 worst. 13 does
+not: its 76.9 ms budget is under the worst frame already measured.
+
+### State
+
+```
+works  39.7 ms a frame of reading, 113 block reads a frame instead of 135,
+       every burst pipelined; picture confirmed unchanged
+open   the file is still 10 fps until it is re-cut at 12
+open   past 12 fps needs read and draw to OVERLAP rather than add: the driver
+       has the start/collect halves, fat.c does not, and a frame would become
+       max(40, 32) instead of 72
+open   1 underrun per full MP3 playback, still not chased
+```
