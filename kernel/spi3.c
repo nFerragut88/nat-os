@@ -36,6 +36,8 @@
 #define SPI3_MOSI_DLEN     (SPI3_BASE + 0x28u)
 #define SPI3_MISO_DLEN     (SPI3_BASE + 0x2Cu)
 #define SPI3_PIN           (SPI3_BASE + 0x34u)
+#define SPI3_SLAVE         (SPI3_BASE + 0x38u)
+#define SPI_SYNC_RESET     (1u << 31)   /* SPI_SLAVE_REG: reset the SPI logic */
 #define SPI3_W(n)          (SPI3_BASE + 0x80u + 4u * (n))
 
 #define SPI_USR_BIT        (1u << 18)
@@ -101,6 +103,34 @@ void spi3_init(void)
     GPIO_REG(SPI3_PIN) = SPI_CS0_DIS_BIT | SPI_CS1_DIS_BIT | SPI_CS2_DIS_BIT;
 }
 
+/* The clock word in force, so a peripheral reset can put it back. */
+static uint32_t g_clk_reg = SPI3_CLKDIV;
+
+/* Takes SPI3 through its DPORT reset and restores every register spi3_init()
+ * sets. Heavier than SPI_SYNC_RESET, and for one specific reason:
+ *
+ * A W-register transfer leaves the peripheral counting 16 bytes that a
+ * subsequent DMA transfer then spends out of its descriptor, PERMANENTLY and
+ * cumulatively -- 512 of 512 cold, 496 after one FIFO read, 480 after two, on
+ * every transfer thereafter. Resetting the DMA channel does not clear it and
+ * neither does SPI_SYNC_RESET (both measured, next_moves/12 step 10). This is
+ * the next-largest hammer: the peripheral itself, back to its power-on state.
+ *
+ * Costs ~10 register writes against the ~205 us a 512-byte transfer takes at
+ * 20 MHz, so if it works it is cheap at the price. */
+static void spi3_hard_reset(void)
+{
+    GPIO_REG(DPORT_PERIP_RST_EN) |= DPORT_SPI3_BIT;
+    GPIO_REG(DPORT_PERIP_RST_EN) &= ~DPORT_SPI3_BIT;
+
+    GPIO_REG(SPI3_CLOCK) = g_clk_reg;
+    GPIO_REG(SPI3_USER)  = SPI_DOUTDIN_BIT | SPI_USR_MOSI_BIT | SPI_USR_MISO_BIT;
+    GPIO_REG(SPI3_USER1) = 0;
+    GPIO_REG(SPI3_USER2) = 0;
+    GPIO_REG(SPI3_CTRL)  = 0;
+    GPIO_REG(SPI3_PIN)   = SPI_CS0_DIS_BIT | SPI_CS1_DIS_BIT | SPI_CS2_DIS_BIT;
+}
+
 void spi3_set_div(uint32_t div)
 {
     if (div < 2u)  { div = 2u; }
@@ -110,7 +140,8 @@ void spi3_set_div(uint32_t div)
      * against SPI3_CLKDIV above, which decodes to n=39 h=19 l=39: 2 MHz. */
     uint32_t n = div - 1u;
     uint32_t h = div / 2u - 1u;
-    GPIO_REG(SPI3_CLOCK) = (n << 12) | (h << 6) | n;
+    g_clk_reg = (n << 12) | (h << 6) | n;
+    GPIO_REG(SPI3_CLOCK) = g_clk_reg;
 }
 
 /* ---- pads ---------------------------------------------------------------
@@ -224,6 +255,19 @@ void spi3_route(uint8_t sck, uint8_t mosi, uint8_t miso)
  * The transmit side needs no packing loop: the W registers are simply filled
  * with ones. That and the word-wise readback are the whole of the difference
  * between 0.4 us of software per byte and the wire's own 0.4 us at 20 MHz. */
+/* The transmit fill is NOT optional, and it is half of this function's cost.
+ *
+ * Every W-register access crosses the peripheral bus at ~50 CPU cycles: 16
+ * writes and 16 reads per 64 bytes, which is the 0.36 us a byte this driver
+ * spends above the 20 MHz wire's own 0.4 us. Skipping the fill -- sending the
+ * previous chunk's received bytes instead of ones -- was tried and it broke the
+ * first block read on the card. During a MULTI-BLOCK read the card watches MOSI
+ * for CMD12, because that is the only thing that stops the stream, so arbitrary
+ * bytes there are a command waiting to happen.
+ *
+ * Halving this traffic needs DMA, whose transmit side streams 0xFF from memory
+ * at no CPU cost -- and DMA cannot be mixed with this path at all. See
+ * spi3_read_dma. */
 int spi3_read(uint8_t *rx, uint32_t n)
 {
     if (!rx || n == 0u || n > SPI3_XFER_MAX) {
@@ -252,6 +296,330 @@ int spi3_read(uint8_t *rx, uint32_t n)
         if (k > 3u) { rx[i + 3u] = (uint8_t)(w >> 24); }
     }
     g_transfers++;
+    return 1;
+}
+
+/* ---- DMA reads ---------------------------------------------------------------
+ *
+ * [next_moves/12 step 10] Even word-wise, every byte of a block read costs the
+ * CPU an APB register access: measured 0.36 us a byte on top of the 0.4 us the
+ * 20 MHz wire itself takes. DMA removes the CPU from the data path entirely, so
+ * a block read approaches its wire time.
+ *
+ * The register constants and the hard-won ordering both come from display.c's
+ * SPI2 engine, which cost UM-NATOS-030 and UM-NATOS-033 to get right. Two
+ * differences, and both matter:
+ *
+ *   - this is the INBOUND channel, which display.c never uses. The engine
+ *     writes WORDS into DRAM, so a destination must be 4-byte aligned and in
+ *     DRAM; anything else is refused and counted, not silently mangled.
+ *   - a read still has to send something. SD expects all ones while it talks,
+ *     so the outbound channel streams a buffer of 0xFF alongside.
+ */
+#define SPI3_DMA_CONF      (SPI3_BASE + 0x100u)
+#define SPI3_DMA_OUT_LINK  (SPI3_BASE + 0x104u)
+#define SPI3_DMA_IN_LINK   (SPI3_BASE + 0x108u)
+#define SPI3_DMA_STATUS    (SPI3_BASE + 0x10Cu)
+#define SPI3_DMA_INT_RAW   (SPI3_BASE + 0x114u)
+#define SPI3_DMA_INT_CLR   (SPI3_BASE + 0x11Cu)
+
+/* SPI_DMA_CONF_REG. The IN/OUT pairs are named together because the wrong one
+ * of a pair is a real bit the hardware accepts in silence -- which is exactly
+ * how DMA_OUT_RST spent a year acting on the receive channel in display.c. */
+#define DMA_IN_RST          (1u << 2)
+#define DMA_OUT_RST         (1u << 3)
+#define DMA_AHBM_FIFO_RST   (1u << 4)
+#define DMA_AHBM_RST        (1u << 5)
+#define DMA_OUTDSCR_BURST   (1u << 10)
+#define DMA_INDSCR_BURST    (1u << 11)
+#define DMA_OUT_DATA_BURST  (1u << 12)
+
+/* SPI_DMA_INT_RAW_REG: 3 IN_DONE, 4 IN_SUC_EOF, 5 IN_ERR_EOF, 6 OUT_DONE,
+ * 7 OUT_EOF, 8 OUT_TOTAL_EOF. IN_SUC_EOF is the inbound analogue of the bit
+ * display.c learned to wait for: the channel has retired the descriptor, which
+ * is a different event from the SPI transaction ending. */
+#define DMA_IN_SUC_EOF_INT  (1u << 4)
+#define DMA_IN_ERR_EOF_INT  (1u << 5)
+#define DMA_STATUS_TX_EN    (1u << 1)
+
+#define DMA_LINK_START      (1u << 29)   /* NOT 30, which is RESTART */
+
+/* Bits 5:4 are SPI3's channel; 3:2 are SPI2's and must survive untouched. */
+#define DPORT_SPI_DMA_CHAN_SEL 0x3FF005A8u
+#define DPORT_SPI_DMA_CLK_EN   (1u << 22)
+
+/* DRAM, the only memory the engine can reach. A descriptor or buffer outside
+ * this range is not slow, it is unreachable. */
+#define DRAM_LO 0x3FFAE000u
+#define DRAM_HI 0x40000000u
+
+typedef struct {
+    uint32_t flags;     /* size:12 | length:12 | offset:5 | sosf:1 | eof:1 | owner:1 */
+    uint32_t buf;
+    uint32_t next;
+} dma_desc_t;
+
+static dma_desc_t g_rx_desc __attribute__((aligned(4)));
+static dma_desc_t g_tx_desc __attribute__((aligned(4)));
+static uint8_t    g_ones[SPI3_DMA_MAX] __attribute__((aligned(4)));
+
+static int      g_dma_ok;           /* usable right now                     */
+static int      g_dma_allowed;      /* policy: off until asked, see below    */
+static int      g_dma_reachable;    /* descriptors and buffers are in DRAM   */
+static uint32_t g_dma_transfers, g_dma_timeouts, g_dma_refused;
+
+/* Which wait gave up, and what the peripheral said at that moment. A timeout
+ * counter alone says "DMA does not work", which is the one thing already
+ * obvious; these say whether the shifter ran, whether the channel started, and
+ * what the interrupt-raw bits were when it stopped. */
+static uint32_t g_dma_stage;        /* see spi3.h */
+static uint32_t g_dma_int, g_dma_status, g_dma_spins, g_dma_len;
+static uint32_t g_dma_err_eofs;     /* IN_ERR_EOF on a transfer that was fine */
+static uint32_t g_dma_flags;        /* the descriptor as the engine left it */
+static uint32_t g_dma_late, g_dma_settle;   /* transfers whose count lagged */
+
+uint32_t spi3_dma_late(void)   { return g_dma_late; }
+uint32_t spi3_dma_settle(void) { return g_dma_settle; }
+
+uint32_t spi3_dma_flags(void) { return g_dma_flags; }
+
+uint32_t spi3_dma_err_eofs(void) { return g_dma_err_eofs; }
+
+uint32_t spi3_dma_stage(void)  { return g_dma_stage; }
+uint32_t spi3_dma_int(void)    { return g_dma_int; }
+uint32_t spi3_dma_status(void) { return g_dma_status; }
+uint32_t spi3_dma_spins(void)  { return g_dma_spins; }
+uint32_t spi3_dma_len(void)    { return g_dma_len; }
+
+uint32_t spi3_dma_transfers(void) { return g_dma_transfers; }
+uint32_t spi3_dma_timeouts(void)  { return g_dma_timeouts; }
+uint32_t spi3_dma_refused(void)   { return g_dma_refused; }
+int      spi3_dma_enabled(void)   { return g_dma_ok; }
+void spi3_dma_force_fifo(int on)
+{
+    g_dma_allowed = !on;
+    g_dma_ok = g_dma_allowed && g_dma_reachable;
+}
+
+void spi3_dma_init(void)
+{
+    for (uint32_t i = 0; i < SPI3_DMA_MAX; i++) {
+        g_ones[i] = 0xFFu;
+    }
+    GPIO_REG(DPORT_PERIP_CLK_EN) |= DPORT_SPI_DMA_CLK_EN;
+
+    uint32_t sel = GPIO_REG(DPORT_SPI_DMA_CHAN_SEL);
+    sel &= ~(3u << 4);
+    sel |=  (2u << 4);                  /* channel 2; SPI2 keeps channel 1 */
+    GPIO_REG(DPORT_SPI_DMA_CHAN_SEL) = sel;
+
+    /* Reset ONCE, here. display.c proved that resetting a channel between
+     * back-to-back transfers tears down the state that produces its completion
+     * signal, and sd.c issues these back to back inside one card transaction. */
+    GPIO_REG(SPI3_DMA_CONF) |= DMA_IN_RST | DMA_OUT_RST
+                             | DMA_AHBM_FIFO_RST | DMA_AHBM_RST;
+    GPIO_REG(SPI3_DMA_CONF) &= ~(DMA_IN_RST | DMA_OUT_RST
+                               | DMA_AHBM_FIFO_RST | DMA_AHBM_RST);
+    GPIO_REG(SPI3_DMA_CONF) |= DMA_OUTDSCR_BURST | DMA_INDSCR_BURST
+                             | DMA_OUT_DATA_BURST;
+
+    /* The descriptors themselves must be reachable too, and .bss placement is
+     * the linker's business, not this file's. Checked rather than assumed. */
+    if ((uint32_t)&g_rx_desc < DRAM_LO || (uint32_t)&g_rx_desc >= DRAM_HI
+        || (uint32_t)&g_ones < DRAM_LO || (uint32_t)&g_ones >= DRAM_HI) {
+        g_dma_reachable = 0;
+        g_dma_ok = 0;
+        return;
+    }
+    g_dma_reachable = 1;
+    /* Armed, but NOT permitted by default. sd.c mixes W-register transfers with
+     * these inside one card transaction, and on this peripheral a W-register
+     * read permanently costs every later DMA transfer 16 bytes (measured; see
+     * spi3_read_dma). `spidma 1` allows it for measurement, and the probe
+     * allows it around its own transfers. */
+    g_dma_ok = g_dma_allowed;
+}
+
+int spi3_read_dma(uint8_t *rx, uint32_t n)
+{
+    if (!g_dma_ok || !rx || n == 0u || n > SPI3_DMA_MAX) {
+        return 0;
+    }
+    /* The engine writes whole words at a word boundary, so a destination it
+     * cannot honour is refused here rather than half-filled. Counted, because a
+     * caller whose buffers are always odd would otherwise lose the speedup with
+     * no symptom but the old speed. */
+    if (((uint32_t)rx & 3u) != 0u || (n & 3u) != 0u
+        || (uint32_t)rx < DRAM_LO || (uint32_t)rx + n > DRAM_HI) {
+        g_dma_refused++;
+        return 0;
+    }
+
+    /* The AHB master FIFO only, and per transfer: this driver ALTERNATES
+     * transports inside one card transaction -- commands and the token poll go
+     * through the W registers, block data comes this way -- and the two share
+     * that FIFO. Same reasoning as display.c, same bits. */
+    /* The reset, in the order Espressif's driver does it -- and the ORDER is
+     * the whole content of this comment, because two wrong versions of it came
+     * first and each failed differently:
+     *
+     *   resetting nothing but the AHB FIFO   -> IN_ERR_EOF, every time
+     *   adding IN_RST without clearing START -> both channels dead, int_raw 0
+     *
+     * A link register keeps its START bit after a transfer. Pulsing a channel
+     * reset while START is still set leaves the engine believing it is running
+     * a descriptor that has been torn out from under it, and nothing brings it
+     * back -- which is why every attempt after the first read int_raw
+     * 0x00000000: the peripheral had quietly reverted to its W-register FIFO.
+     *
+     * So: raise the resets, CLEAR BOTH LINKS, drop the resets. spi_dma_reset()
+     * in spi_ll.h, and display.c's warning about per-transfer resets was the
+     * same fault seen from the far side. */
+    GPIO_REG(SPI3_DMA_CONF) |= DMA_IN_RST | DMA_OUT_RST
+                             | DMA_AHBM_FIFO_RST | DMA_AHBM_RST;
+    GPIO_REG(SPI3_DMA_OUT_LINK) = 0;
+    GPIO_REG(SPI3_DMA_IN_LINK)  = 0;
+    GPIO_REG(SPI3_DMA_CONF) &= ~(DMA_IN_RST | DMA_OUT_RST
+                               | DMA_AHBM_FIFO_RST | DMA_AHBM_RST);
+    GPIO_REG(SPI3_DMA_INT_CLR) = 0xFFFFFFFFu;
+
+    /* And the PERIPHERAL'S own receive buffer, which the channel reset does not
+     * touch. This is the fault that cost the most to find, and the measurement
+     * that names it is worth keeping:
+     *
+     *   asked        4   16   64  100  256  500  508  512
+     *   delivered    4    4   52   72  228  456  464  452
+     *   FIFO reads   0    1    1    2    2    3    3    4   (before each)
+     *
+     * The deficit is 16 bytes per preceding W-register read -- the size of
+     * sd.c's data-token poll -- and it ACCUMULATES across transfers and
+     * survives resetting the DMA channel. Those bytes are still sitting in the
+     * peripheral's 64-byte buffer, and the engine streams them into the
+     * descriptor ahead of the real data, so the tail of each block falls off
+     * the end. A cold transfer right after init was always perfect, which is
+     * why three earlier runs of the probe pronounced this working.
+     *
+     * SPI_SYNC_RESET resets the SPI logic, buffer pointers included, and is the
+     * only reset that clears it. Configuration registers are untouched -- USER
+     * is read back in the probe to prove exactly that. */
+    spi3_hard_reset();
+
+    g_tx_desc.flags = (n & 0xFFFu) | ((n & 0xFFFu) << 12)
+                    | (1u << 30) | (1u << 31);      /* eof, owned by the engine */
+    g_tx_desc.buf   = (uint32_t)g_ones;
+    g_tx_desc.next  = 0;
+
+    /* Receive descriptor: SIZE, and EOF, and the owner bit. `length` is left 0
+     * because the engine writes it -- but EOF is NOT the engine's to set here,
+     * and leaving it clear is what made the first version fail:
+     *
+     *   int_raw 0x000001e8 -- OUT_DONE, OUT_EOF, OUT_TOTAL_EOF and IN_ERR_EOF,
+     *   with IN_SUC_EOF absent. The transmit side was flawless; the inbound
+     *   channel ran out of stream with no descriptor marked as its end and
+     *   retired the descriptor as an ERROR.
+     *
+     * Espressif's lldesc_setup_link() marks the last descriptor eof=1 for
+     * receive links exactly as it does for transmit ones. One descriptor per
+     * transfer here, so this is that last one. */
+    g_rx_desc.flags = (n & 0xFFFu) | (1u << 30) | (1u << 31);
+    g_rx_desc.buf   = (uint32_t)rx;
+    g_rx_desc.next  = 0;
+
+    GPIO_REG(SPI3_DMA_OUT_LINK) = ((uint32_t)&g_tx_desc & 0xFFFFFu) | DMA_LINK_START;
+    GPIO_REG(SPI3_DMA_IN_LINK)  = ((uint32_t)&g_rx_desc & 0xFFFFFu) | DMA_LINK_START;
+
+    /* Let the channels fetch their descriptors before the shifter starts.
+     * Waited on as a condition, bounded; falling through leaves the race this
+     * replaces, not a hang. */
+    uint32_t spins = 0;
+    while (!(GPIO_REG(SPI3_DMA_STATUS) & DMA_STATUS_TX_EN) && spins < 1000u) {
+        spins++;
+    }
+    g_dma_spins = spins;
+    g_dma_len   = n;
+
+    GPIO_REG(SPI3_MOSI_DLEN) = n * 8u - 1u;
+    GPIO_REG(SPI3_MISO_DLEN) = n * 8u - 1u;
+    GPIO_REG(SPI3_CMD)       = SPI_USR_BIT;
+
+    /* Wall clock, and bounded far beyond one scheduling round trip: the wait
+     * keeps running while this task does not, and a bound shorter than a
+     * context switch times out on hardware that is working (UM-NATOS-030). */
+    uint32_t start = xt_ccount();
+    while (GPIO_REG(SPI3_CMD) & SPI_USR_BIT) {
+        if ((xt_ccount() - start) > 40000000u) {
+            g_dma_stage  = 2u;              /* the shifter never finished */
+            g_dma_int    = GPIO_REG(SPI3_DMA_INT_RAW);
+            g_dma_status = GPIO_REG(SPI3_DMA_STATUS);
+            g_dma_timeouts++;
+            g_dma_ok = 0;
+            return 0;
+        }
+    }
+    /* And then the channel, which is a different question from the shifter --
+     * returning here would hand back a buffer the engine is still filling.
+     *
+     * Asked of the DESCRIPTOR, not of an interrupt bit. The engine clears the
+     * owner bit and writes the byte count it delivered into `length`, so this
+     * waits for owner==0 and then checks length==n: the one condition that
+     * actually means "n bytes are in that buffer".
+     *
+     * The first version waited for IN_SUC_EOF and failed every transfer with
+     * IN_ERR_EOF -- while writing all 512 bytes correctly. In MASTER mode the
+     * peripheral never produces a stream EOF for the inbound channel to match,
+     * so a descriptor marked eof=1 retires as an "error" by definition. That
+     * bit is not a verdict on the data here, and Espressif's own master driver
+     * does not consult it either; it waits on the transaction. Counted anyway,
+     * below, because a bit that fires on every good transfer is worth watching
+     * in case it ever means something. */
+    while (g_rx_desc.flags & (1u << 31)) {
+        if ((xt_ccount() - start) > 40000000u) {
+            g_dma_stage  = 3u;
+            g_dma_int    = GPIO_REG(SPI3_DMA_INT_RAW);
+            g_dma_status = GPIO_REG(SPI3_DMA_STATUS);
+            g_dma_timeouts++;
+            g_dma_ok = 0;
+            return 0;
+        }
+    }
+    g_dma_int    = GPIO_REG(SPI3_DMA_INT_RAW);
+    g_dma_status = GPIO_REG(SPI3_DMA_STATUS);
+    /* The owner bit clearing is NOT "the bytes are in memory".
+     *
+     * Measured: at that instant the length field reads short, and by a margin
+     * that grows with the transfer -- 49 of 64, 225 of 256, 449 of 512, always
+     * 15, 31, 47 or 63 bytes behind. Counting the buffer's changed bytes a
+     * moment later showed MORE than the length field had claimed, which is the
+     * engine still retiring its last burst while the descriptor already says it
+     * is done with it.
+     *
+     * So the wait is on the count, which is the only thing that means what this
+     * function promises. `late` counts the transfers that needed it, because a
+     * race that always resolves in a few spins and a race that occasionally
+     * does not are different, and only a number tells them apart. */
+    uint32_t spins2 = 0;
+    while (((g_rx_desc.flags >> 12) & 0xFFFu) != n) {
+        if ((xt_ccount() - start) > 40000000u) {
+            g_dma_stage  = 5u;          /* short receive, and it stayed short */
+            g_dma_flags  = g_rx_desc.flags;
+            g_dma_int    = GPIO_REG(SPI3_DMA_INT_RAW);
+            g_dma_status = GPIO_REG(SPI3_DMA_STATUS);
+            g_dma_timeouts++;
+            g_dma_ok = 0;
+            return 0;
+        }
+        spins2++;
+    }
+    g_dma_flags = g_rx_desc.flags;
+    g_dma_settle = spins2;
+    if (spins2) {
+        g_dma_late++;
+    }
+    if (g_dma_int & DMA_IN_ERR_EOF_INT) {
+        g_dma_err_eofs++;
+    }
+
+    g_dma_transfers++;
     return 1;
 }
 
@@ -359,6 +727,116 @@ void spi3_probe_speed(void)
     }
     GPIO_REG(SPI3_CLOCK) = saved;
     uart_puts("   wire time for 64 B: 25.6 us at 20 MHz, 12.8 at 40, 51.2 at 10\n");
+}
+
+/* [next_moves/12 step 10] Does the receive channel accept this LENGTH?
+ *
+ * The first DMA read failed with IN_ERR_EOF -- the inbound channel retiring its
+ * descriptor with an error -- and the card was blamed for a whole build cycle
+ * before this existed. It need not be: with CS high the card ignores the clock
+ * entirely, so a transfer still exercises the peripheral, the channel and the
+ * descriptor while reading nothing but an idle line. Every length gets its own
+ * answer, printed with the interrupt-raw bits, because "DMA is broken" and
+ * "DMA refuses 500 bytes" are different problems.
+ *
+ * Bytes are checked as well as timing: an idle MISO reads 0xFF, so a buffer
+ * salted with a different value shows whether anything was written at all. */
+void spi3_probe_dma(void)
+{
+    static uint8_t buf[SPI3_DMA_MAX] __attribute__((aligned(4)));
+    /* One length throughout, so the only variable is what precedes each
+     * transfer. A 16-byte W-register read goes in front of rows 1 and 4 only.
+     *
+     * If the deficit is 16 for rows 1-3 and 32 for rows 4-5, the offset a FIFO
+     * read introduces is PERMANENT and every later DMA transfer inherits it. If
+     * instead rows 2-3 and 5 come back clean, only the transfer immediately
+     * after a FIFO read is affected, and that is a much cheaper thing to fix. */
+    static const uint32_t lens[] = { 512u, 512u, 512u, 512u, 512u, 512u };
+    static const uint32_t pre_fifo[] = { 0u, 1u, 0u, 0u, 1u, 0u };
+
+    /* Establish the peripheral, do not assume it.
+     *
+     * The first three runs of this probe tested an SPI3 that had never been
+     * initialised: nothing in those sessions had touched the card, and
+     * spi3_init() is called from sd_init(), so SPI_USER sat at its power-on
+     * default of 0x80000040 -- DOUTDIN, USR_MOSI and USR_MISO all clear, no
+     * receive phase at all. Three builds were spent explaining a receive
+     * channel that was never asked to receive.
+     *
+     * Reading the register back is what ended it, and USER is printed below so
+     * the next reader gets the evidence rather than the conclusion.
+     *
+     * The CALLER brings the bus up -- the shell runs sd_init() first. An earlier
+     * version initialised the peripheral here and then clocked 1.5 KB at a
+     * chip-select nobody had driven high yet, and the card stopped identifying.
+     * A diagnostic may disturb what it measures; it should not be the only
+     * thing that configures it. */
+    spi3_dma_init();
+    uart_puts("   chan_sel=");
+    uart_put_hex(GPIO_REG(DPORT_SPI_DMA_CHAN_SEL));
+    uart_puts(" (bits 1:0 SPI1, 3:2 SPI2, 5:4 SPI3)  dma_conf=");
+    uart_put_hex(GPIO_REG(SPI3_DMA_CONF));
+    uart_puts("\n   user=");
+    uart_put_hex(GPIO_REG(SPI3_USER));
+    uart_puts(" status=");
+    uart_put_hex(GPIO_REG(SPI3_DMA_STATUS));
+    uart_puts(" rx_desc at ");
+    uart_put_hex((uint32_t)&g_rx_desc);
+    uart_puts(" buf at ");
+    uart_put_hex((uint32_t)buf);
+    uart_puts("\n");
+
+    for (uint32_t i = 0; i < sizeof lens / sizeof lens[0]; i++) {
+        uint32_t n = lens[i];
+        for (uint32_t k = 0; k < n; k++) {
+            buf[k] = 0x5Au;             /* neither 0xFF nor 0x00 */
+        }
+        /* Re-arm, not merely re-enable. A failed transfer leaves the channel
+         * unattached -- every attempt after the first reported int_raw
+         * 0x00000000, which is the peripheral quietly running the transfer
+         * through the W-register FIFO instead, with no DMA involved at all.
+         * Clearing the disable flag does not put the channel back; only the
+         * init sequence does. */
+        spi3_dma_force_fifo(0);     /* the probe is where DMA is allowed */
+        spi3_dma_init();
+        /* HALF the lengths get a W-register read first, because that is what
+         * sd.c does: it polls for the data token through the FIFO and only then
+         * hands the rest of the block to the engine. In the real path the engine
+         * reported delivering 149 bytes of 496 while this probe, transfer-cold,
+         * reported every byte. If the transport switch is the difference, the
+         * odd rows below are short and the even rows are not. */
+        if (pre_fifo[i]) {
+            static uint8_t pre[16] __attribute__((aligned(4)));
+            spi3_read(pre, sizeof pre);
+        }
+        int ok = spi3_read_dma(buf, n);
+        uint32_t written = 0;
+        for (uint32_t k = 0; k < n; k++) {
+            if (buf[k] != 0x5Au) {
+                written++;
+            }
+        }
+        uart_puts("   ");
+        uart_put_dec(n);
+        uart_puts(pre_fifo[i] ? " B after a FIFO read: " : " B, no FIFO read: ");
+        uart_puts(ok ? "ok  " : "FAIL");
+        uart_puts(" stage=");
+        uart_put_dec(spi3_dma_stage());
+        uart_puts(" int=");
+        uart_put_hex(spi3_dma_int());
+        uart_puts(" bytes changed=");
+        uart_put_dec(written);
+        uart_puts(" of ");
+        uart_put_dec(n);
+        /* The engine writes `length` into the descriptor and clears its owner
+         * bit when it retires one. Unchanged flags mean it never looked. */
+        uart_puts("  rx_flags=");
+        uart_put_hex(g_rx_desc.flags);
+        uart_puts(" inlink=");
+        uart_put_hex(GPIO_REG(SPI3_DMA_IN_LINK));
+        uart_puts("\n");
+    }
+    spi3_dma_force_fifo(1);         /* and where it is put back */
 }
 
 int spi3_selftest_const(int level)

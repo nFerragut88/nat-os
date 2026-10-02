@@ -725,7 +725,8 @@ static void cmd_ls(const char *path)
 static void cmd_read(const char *path, uint32_t limit)
 {
     static fat_file_t f;
-    static uint8_t buf[2048];
+    /* Aligned: it is a DMA destination once sd.c reaches the card. */
+    static uint8_t buf[2048] __attribute__((aligned(4)));
     int rc = fat_open(&f, path);
     if (rc) {
         uart_puts("   ");

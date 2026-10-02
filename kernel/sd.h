@@ -90,6 +90,11 @@ int sd_read_blocks(uint32_t lba, uint32_t count, uint8_t *dst);
 uint32_t sd_multi_bursts(void);
 uint32_t sd_multi_blocks(void);
 
+/* Blocks read a second time because a DMA transfer failed and took its bytes
+ * with it. Expected to be 0, or 1 on a boot where the engine disables itself; a
+ * growing number means the retry is papering over something. */
+uint32_t sd_dma_retries(void);
+
 sd_type_t sd_type(void);
 
 /* ---- speed (next_moves/11 step 3) ------------------------------------------

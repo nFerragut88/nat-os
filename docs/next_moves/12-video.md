@@ -615,3 +615,117 @@ open   the read half is still ~0.36 us/byte of CPU above the wire time; SPI3
        DMA is the next ~2x and would put 13-15 fps in reach
 open   1 underrun per full MP3 playback, still not chased
 ```
+
+---
+
+## step 10 — SPI3 DMA: the engine works, the driver cannot use it
+
+Step 8 left reads costing ~0.36 us a byte of CPU on top of the 0.4 us the
+20 MHz wire itself takes, all of it peripheral-bus accesses to the W registers.
+DMA removes the CPU from the data path, so this was the next ~2x on the read
+half and would have put 13-15 fps in reach. **It does not work here, and the
+reason is worth more than the speed would have been.**
+
+### what was built
+
+`spi3_read_dma()` -- inbound SPI3 DMA on channel 2 (the display has channel 1),
+with the outbound channel streaming 0xFF from a buffer because a read still has
+to send ones. Descriptors in DRAM, every wait bounded, a timeout disabling the
+engine for the run, and `sd_read_blocks()`/`sd_read_block()` retrying once when
+a transfer fails because the failure disables DMA and the retry then runs on the
+proven path.
+
+### the engine works
+
+`spidmatest` (`spi3_probe_dma()`) asks the peripheral and the channel alone,
+with CS high so the card ignores the clock entirely:
+
+```
+512 B: ok  int=0x1e8  bytes changed=512 of 512  rx_flags=0x40200200
+            size 512, length 512, owner cleared -- every byte delivered
+```
+
+Four, 16, 64, 100, 256, 500, 508 and 512 bytes, all exact.
+
+### why the driver cannot use it
+
+```
+transfer                        delivered of 512
+cold                                 512          <- perfect
+after one 16-byte W-register read    496
+next, with no W-register read        496          <- it did not recover
+next, with no W-register read        496
+after a second one                   480
+next, with no W-register read        480
+```
+
+**Each W-register read permanently costs every later DMA transfer 16 bytes**,
+cumulative, saturating at the peripheral's 64-byte buffer. Not cleared by the
+DMA channel reset, the AHB-master FIFO reset, `SPI_SYNC_RESET`, or taking SPI3
+through its DPORT reset and reconfiguring it -- all four measured.
+
+`sd.c` has to mix: commands go out through the W registers and so does the
+data-token poll. So DMA needs the whole SD command layer rewritten to be
+DMA-only, with commands and token polls batched into buffered transfers rather
+than the byte-at-a-time protocol they are today. That is the open route to
+13-15 fps; it is not a patch.
+
+The cheap alternative is closed too. Half the W-register traffic is filling the
+transmit side with 0xFF, and skipping it looked safe on the grounds that a card
+streaming a block is not listening. **It is listening**: during a multi-block
+read the card watches MOSI for CMD12, which is the only thing that stops the
+stream. Sending the previous chunk's bytes instead put a 0x40-prefixed byte in
+front of it and broke the first read of the card.
+
+### five wrong answers, and what each cost
+
+1. **Waited for `IN_SUC_EOF`.** In master mode the peripheral never produces a
+   stream EOF for the inbound channel, so a descriptor marked eof=1 always
+   retires as `IN_ERR_EOF`. Every transfer "failed" while delivering all 512
+   bytes correctly. The fix is to ask the descriptor: owner cleared, and the
+   length it reports equal to what was asked.
+2. **Fell back to a W-register re-read after a failed DMA.** A failed transfer
+   still CLOCKED -- those bytes are gone, so the re-read returns the NEXT ones
+   and the block is assembled from two places. That is what `mount failed: no
+   FAT boot sector` was, on a card whose block 0 is fine. display.c records
+   this same mistake on its transmit side (UM-NATOS-031 §2).
+3. **A probe that configured the peripheral itself**, run before anything had
+   driven the card's chip-select high. It clocked 1.5 KB at a floating CS and
+   the card stopped answering CMD0 until its power was cycled. The probe now
+   refuses to clock the bus unless `sd_init()` has just succeeded.
+4. **Three builds spent on an uninitialised peripheral.** Nothing in those
+   sessions had touched the card, `spi3_init()` is called from `sd_init()`, and
+   `SPI_USER` sat at its power-on 0x80000040 -- no receive phase at all. Reading
+   the register back is what ended it, and the probe prints it now.
+5. **`spi3`, the selftest command, tied MISO to a matrix constant and never
+   put it back.** Every read after it failed, `sd_init()` could not recover
+   because it only re-routes at the END of a successful identification, and
+   this was read as a wedged card twice, with a power cycle each time. It hands
+   the bus back now and says whether the card re-identified.
+
+### where things stand
+
+The DMA path stays in the tree, armed and OFF: `spidma 1` enables it,
+`spidmatest` probes it. Nothing uses it.
+
+```
+fat cat Test pattern rotated.nvd
+  6,398,464 bytes, crc32=0xf584e81c, chain 1563 of 1563
+  own CPU 4,307 ms -- against 4,289 ms before this step began
+video 2, full screen
+  shown 516  dropped 0  = 9.9 fps over 51,950 ms  underruns=0
+  per frame: read 50.5 ms  draw 35.4 ms  worst frame 88 ms
+```
+
+The wall-clock KB/s wandered between 884 and 1022 across these runs and meant
+nothing: own CPU is identical to a fraction of a percent. Measured in the wrong
+clock, this step would have read as a 13% regression.
+
+### State
+
+```
+works  everything step 9 left working, unchanged and re-verified
+open   13-15 fps needs an all-DMA SD command layer, for the reason measured
+       above. The engine is ready; the protocol layer is not
+open   1 underrun per full MP3 playback, still not chased
+```

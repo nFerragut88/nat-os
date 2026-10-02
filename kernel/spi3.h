@@ -72,6 +72,58 @@ int spi3_xfer(const uint8_t *tx, uint8_t *rx, uint32_t n);
  * a general transfer needs. Same bound, same limit. */
 int spi3_read(uint8_t *rx, uint32_t n);
 
+
+/* ---- DMA reads (next_moves/12 step 10) --------------------------------------
+ *
+ * The same read with the CPU out of the data path. Word-wise register access
+ * still costs ~0.36 us a byte on top of the wire's 0.4 us at 20 MHz, and all of
+ * that is APB accesses; the engine has none.
+ *
+ * spi3_dma_init() must be called after spi3_init(), which resets the
+ * peripheral. A whole 512-byte block fits one descriptor.
+ *
+ * spi3_read_dma() returns 0 WITHOUT having moved anything if it cannot honour
+ * the request -- the destination must be 4-byte aligned, `n` a multiple of 4,
+ * and the buffer in DRAM, because the engine writes words and cannot reach
+ * IRAM. Callers fall back to spi3_read(); the refusals are counted so a caller
+ * whose buffers are never aligned shows up as a number rather than as the old
+ * speed with no explanation.
+ *
+ * A timeout disables DMA for the rest of the run, as display.c does: an engine
+ * that missed one completion has not earned the next block. */
+#define SPI3_DMA_MAX 512u
+void spi3_dma_init(void);
+int  spi3_read_dma(uint8_t *rx, uint32_t n);
+
+/* Why the last DMA read gave up, and what the peripheral said at that instant.
+ * stage: 0 none, 2 the shifter never finished, 3 the channel never signalled
+ * its descriptor retired, 4 the channel reported a descriptor error.
+ * `spins` is how long the outbound channel took to start (0 is normal, 1000 is
+ * "it never did"), `len` the request's length. */
+uint32_t spi3_dma_stage(void);          /* 3 stalled, 5 short receive */
+/* Transfers that completed correctly while the channel raised IN_ERR_EOF, which
+ * in master mode is what a descriptor marked eof=1 always does. Expect this to
+ * equal the transfer count; a DIVERGENCE would be the interesting event. */
+uint32_t spi3_dma_err_eofs(void);
+/* The receive descriptor as the engine left it: size in 11:0, the length it
+ * says it delivered in 23:12, owner at 31. The one place that distinguishes
+ * "the data is there" from "the transfer ended". */
+uint32_t spi3_dma_flags(void);
+/* Transfers whose byte count had not caught up when the descriptor said the
+ * engine was finished with it, and how many spins the last one needed. */
+uint32_t spi3_dma_late(void);
+uint32_t spi3_dma_settle(void);
+uint32_t spi3_dma_int(void);
+uint32_t spi3_dma_status(void);
+uint32_t spi3_dma_spins(void);
+uint32_t spi3_dma_len(void);
+
+uint32_t spi3_dma_transfers(void);
+uint32_t spi3_dma_timeouts(void);
+uint32_t spi3_dma_refused(void);
+int      spi3_dma_enabled(void);
+void     spi3_dma_force_fifo(int on);   /* for measuring the guard's absence */
+
 /* SCK = APB (80 MHz) / div, div 2..64, 50% duty. The default after
  * spi3_init() is div 40, 2 MHz -- the radio's rate. The SD card uses this to
  * go faster once it has identified itself (next_moves/11 step 3). */
@@ -82,6 +134,11 @@ void spi3_set_div(uint32_t div);
 /* Tie MISO to a constant through the matrix and check what comes back. `level`
  * is 0 or 1. Returns 1 if every received byte matched. Drives no pin. */
 void spi3_probe_speed(void);    /* where a transfer's time goes */
+
+/* Attempts a DMA read of each of several lengths with CS high -- the card
+ * ignores the clock, so this asks the peripheral and the channel alone whether
+ * a length is acceptable, and prints what the channel said. */
+void spi3_probe_dma(void);
 
 int spi3_selftest_const(int level);
 

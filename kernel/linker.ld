@@ -344,6 +344,18 @@ SECTIONS
      * flash like mp3.c: its time goes to the SD bus and the panel. */
     *vplay.c.o(.literal .literal.* .text .text.*)
 
+    /* [next_moves/12 step 10] audio.c, the tone generator: 1,978 bytes, moved
+     * to make room for spi3.c's DMA diagnostics, which iram refused by 55
+     * bytes. It programs LEDC and returns; audio_service() is a deadline check
+     * the display task makes once a frame, and pcm.c -- already in flash --
+     * is its only other caller. Nothing here runs in ISR context or touches
+     * the flash bus, which step 316 established is the only disqualifier.
+     *
+     * The DMA data path itself stays in iram: sd.c and spi3.c are what this
+     * step is trying to make cheaper, and measuring them through a cache would
+     * confuse the measurement with the cache's mood. */
+    *audio.c.o(.literal .literal.* .text .text.*)
+
     . = ALIGN(4);
     _flash_text_end = .;
   } > irom

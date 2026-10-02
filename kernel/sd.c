@@ -288,6 +288,9 @@ int sd_init(void)
         spi3_init();
         spi3_set_div(g_div_wanted);
         spi3_route(SD_PIN_SCK, SD_PIN_MOSI, SD_PIN_MISO);
+        /* After spi3_init(), which resets the peripheral. Re-running it on a
+         * re-init is deliberate: a hot-swapped card comes back through here. */
+        spi3_dma_init();
         g_hw = 1;
     }
     return SD_OK;
@@ -341,19 +344,73 @@ static uint8_t token_wait_hw(uint8_t *dst, uint32_t *have)
     return 0xFFu;
 }
 
-/* The rest of a block, then its two discarded CRC bytes. 64 bytes per
- * transaction: the W registers' whole capacity. */
+/* The rest of a block, then its two discarded CRC bytes.
+ *
+ * By DMA where the destination allows it, which is nearly always and is worth
+ * arranging for: the engine costs the CPU nothing per byte, against ~0.36 us a
+ * byte through the W registers. Otherwise 64 bytes a transaction, the W
+ * registers' whole capacity. */
 static int data_read_hw(uint8_t *dst, uint32_t have)
 {
-    for (uint32_t i = have; i < SD_BLOCK_SIZE; i += SPI3_XFER_MAX) {
-        uint32_t n = SD_BLOCK_SIZE - i;
-        if (n > SPI3_XFER_MAX) {
-            n = SPI3_XFER_MAX;
-        }
-        if (!spi3_read(dst + i, n)) {
+    /* The token batch left `have` bytes in dst, so the rest starts at an
+     * arbitrary offset -- and the DMA engine writes WORDS at a word boundary.
+     * Three bytes on the slow path buy alignment for the other five hundred.
+     * (512 minus a multiple of four is a multiple of four, so the length the
+     * engine needs comes out right on its own.) */
+    uint32_t pad = spi3_dma_enabled() ? ((4u - (have & 3u)) & 3u) : 0u;
+    if (pad != 0u && have + pad <= SD_BLOCK_SIZE) {
+        if (!spi3_read(dst + have, pad)) {
             return 0;
         }
+        have += pad;
     }
+
+    while (have < SD_BLOCK_SIZE) {
+        uint32_t left = SD_BLOCK_SIZE - have;
+        /* DMA is OFF by default here and the reason is in spi3_read_dma: this
+         * function has just polled for the data token through the W registers,
+         * and on this peripheral a W-register read permanently costs every
+         * later DMA transfer 16 bytes. `spidma 1` turns it on for measuring.
+         *
+         * So the block is moved by the W registers, refilling the transmit side
+         * with 0xFF for every chunk -- which is half the peripheral-bus traffic
+         * and the reason a block costs 390 us against 205 us of wire time.
+         *
+         * Not refilling was tried, on the theory that a card streaming a block
+         * cannot see MOSI. It can, and it must: during a MULTI-BLOCK read the
+         * card watches MOSI for CMD12, which is the only way the stream ever
+         * stops. Sending the previous chunk's bytes instead of ones put a
+         * 0x40-prefixed byte in front of it soon enough to break the very first
+         * read -- "mount failed: no FAT boot sector" on a healthy card. */
+        if (spi3_dma_enabled()) {
+            uint32_t n = (left > SPI3_DMA_MAX) ? SPI3_DMA_MAX : left;
+            if (!spi3_read_dma(dst + have, n)) {
+                /* ABANDON the block. Do not re-read it on the slow path.
+                 *
+                 * A DMA transfer that failed still CLOCKED: those bytes have
+                 * left the card and are gone. Reading them again returns the
+                 * NEXT n bytes, so the block ends up assembled from two
+                 * different places -- which is what "mount failed: no FAT boot
+                 * sector" was, on a card whose block 0 is perfectly fine.
+                 *
+                 * The same mistake display.c records for its transmit path
+                 * (UM-NATOS-031 §2), made again on the receive side. The
+                 * failure also disabled DMA, so the caller's retry runs
+                 * entirely on the W-register path and succeeds. */
+                return 0;
+            }
+            have += n;
+        } else {
+            uint32_t n = (left > SPI3_XFER_MAX) ? SPI3_XFER_MAX : left;
+            if (!spi3_read(dst + have, n)) {
+                return 0;
+            }
+            have += n;
+        }
+    }
+
+    /* The two CRC bytes. 0xFF again from here: the card starts listening for
+     * the next command as soon as the block ends. */
     uint8_t crc[2];
     return spi3_read(crc, sizeof crc);
 }
@@ -369,6 +426,7 @@ static int data_read_hw(uint8_t *dst, uint32_t have)
  * The stream is open-ended until CMD12 stops it, so every early return has to
  * send the stop -- a card left streaming answers the next command with data. */
 static uint32_t g_multi_bursts, g_multi_blocks;
+static uint32_t g_dma_retries;      /* blocks re-read after a DMA failure */
 
 uint32_t sd_multi_bursts(void) { return g_multi_bursts; }
 uint32_t sd_multi_blocks(void) { return g_multi_blocks; }
@@ -389,7 +447,7 @@ static void multi_stop(void)
     cs_high();
 }
 
-int sd_read_blocks(uint32_t lba, uint32_t count, uint8_t *dst)
+static int read_blocks_once(uint32_t lba, uint32_t count, uint8_t *dst)
 {
     if (count == 0u) {
         return SD_OK;
@@ -444,7 +502,7 @@ int sd_read_blocks(uint32_t lba, uint32_t count, uint8_t *dst)
     return SD_OK;
 }
 
-int sd_read_block(uint32_t lba, uint8_t *dst)
+static int read_block_once(uint32_t lba, uint8_t *dst)
 {
     if (g_type == SD_TYPE_NONE) {
         return SD_ERR_IDLE;
@@ -513,6 +571,45 @@ int sd_read_block(uint32_t lba, uint8_t *dst)
     cs_high();
     return SD_OK;
 }
+
+/* ---- one retry, and only for the one cause ---------------------------------
+ *
+ * A DMA transfer that fails takes its bytes with it (see data_read_hw), so the
+ * block is abandoned rather than patched -- and the same failure disables the
+ * engine. That makes exactly one retry worth having: it runs on the W-register
+ * path that has read this card for two weeks.
+ *
+ * Conditional on the engine having JUST been disabled, not on failure alone. A
+ * card that is absent, or wedged, must fail at the same speed it always did;
+ * blanket retries are how a driver turns a clear failure into a slow one. */
+static int retried(int rc, int dma_before)
+{
+    return rc != SD_OK && dma_before && !spi3_dma_enabled();
+}
+
+int sd_read_block(uint32_t lba, uint8_t *dst)
+{
+    int dma = spi3_dma_enabled();
+    int rc = read_block_once(lba, dst);
+    if (retried(rc, dma)) {
+        g_dma_retries++;
+        rc = read_block_once(lba, dst);
+    }
+    return rc;
+}
+
+int sd_read_blocks(uint32_t lba, uint32_t count, uint8_t *dst)
+{
+    int dma = spi3_dma_enabled();
+    int rc = read_blocks_once(lba, count, dst);
+    if (retried(rc, dma)) {
+        g_dma_retries++;
+        rc = read_blocks_once(lba, count, dst);
+    }
+    return rc;
+}
+
+uint32_t sd_dma_retries(void) { return g_dma_retries; }
 
 sd_type_t sd_type(void)          { return g_type; }
 uint32_t  sd_last_r1(void)       { return g_last_r1; }

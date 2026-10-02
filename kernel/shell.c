@@ -706,6 +706,34 @@ static void execute(char *line)
     else if (str_eq(line, "cpu")) { cmd_cpu(); }
     else if (str_eq(line, "dispcost")) { cmd_dispcost(); }
     else if (str_eq(line, "spitest")) { spi3_probe_speed(); }
+    else if (str_eq(line, "spidma")) {
+        /* Off by default, and it stays that way until someone measuring turns
+         * it on: sd.c mixes W-register reads with DMA in one card transaction,
+         * and this peripheral will not have that (next_moves/12 step 10). */
+        spi3_dma_force_fifo(parse_int(arg) > 0 ? 0 : 1);
+        uart_puts("   SD block data by DMA: ");
+        uart_puts(spi3_dma_enabled() ? "ON -- expect short receives\n"
+                                     : "off (W registers)\n");
+    }
+    else if (str_eq(line, "spidmatest")) {
+        /* The card first: the probe measures the bus as sd.c leaves it, with a
+         * chip-select that is actually driven high. */
+        fat_lock();
+        int rc = sd_init();
+        if (rc == SD_OK) {
+            spi3_probe_dma();
+        } else {
+            /* REFUSED, not attempted anyway. Run before anything had driven the
+             * card's chip-select high, this probe clocked 1.5 KB at a floating
+             * CS and left a card that would not answer CMD0 again until its
+             * power was cycled. A diagnostic that can brick what it measures
+             * has to check first. */
+            uart_puts("   card did not identify (");
+            uart_puts(fat_strerror(FAT_ERR_SD));
+            uart_puts(") -- not clocking the bus\n");
+        }
+        fat_unlock();
+    }
     else if (str_eq(line, "mp3")) { mp3_shell(arg); }
     else if (str_eq(line, "videoopen")) {
         desktop_open_video();
@@ -3262,11 +3290,54 @@ static void execute(char *line)
             }
         }
 
+        /* PUT THE BUS BACK. The constant tests above tie SPI3's MISO input to
+         * a fixed level through the GPIO matrix and nothing here ever undid it,
+         * so running `spi3` left the card unreadable until the next successful
+         * sd_init() happened to re-route it -- and a failing sd_init never gets
+         * that far. That cost several readings on 2026-09-28 which were taken
+         * as a wedged card, including two power cycles.
+         *
+         * A diagnostic that borrows the bus returns it. */
+        fat_lock();
+        int back = sd_init();
+        uart_puts(back == SD_OK ? "   SD bus handed back, card re-identified\n"
+                                : "   SD bus handed back, card did NOT answer\n");
+        fat_unlock();
+
         uart_puts("   transfers=");
         uart_put_dec(spi3_transfers());
         uart_puts(" timeouts=");
         uart_put_dec(spi3_timeouts());
-        uart_puts("\n");
+        uart_puts("\n   DMA ");
+        uart_puts(spi3_dma_enabled() ? "on" : "OFF");
+        uart_puts(": transfers=");
+        uart_put_dec(spi3_dma_transfers());
+        uart_puts(" timeouts=");
+        uart_put_dec(spi3_dma_timeouts());
+        uart_puts(" refused=");
+        uart_put_dec(spi3_dma_refused());
+        uart_puts("  (refused = a destination the engine cannot write)\n");
+        uart_puts("   last: stage=");
+        uart_put_dec(spi3_dma_stage());
+        uart_puts(" int=");
+        uart_put_hex(spi3_dma_int());
+        uart_puts(" status=");
+        uart_put_hex(spi3_dma_status());
+        uart_puts(" start-spins=");
+        uart_put_dec(spi3_dma_spins());
+        uart_puts(" len=");
+        uart_put_dec(spi3_dma_len());
+        uart_puts(" rx_flags=");
+        uart_put_hex(spi3_dma_flags());
+        uart_puts(" (engine said length=");
+        uart_put_dec((spi3_dma_flags() >> 12) & 0xFFFu);
+        uart_puts(")  late=");
+        uart_put_dec(spi3_dma_late());
+        uart_puts(" last settle spins=");
+        uart_put_dec(spi3_dma_settle());
+        uart_puts(" retries=");
+        uart_put_dec(sd_dma_retries());
+        uart_puts("\n   stage 2 = shifter unfinished, 3 = channel never retired, 4 = descriptor error\n");
     }
     else if (str_eq(line, "spidump")) {
         /* Read the SPI2 configuration back off the chip.

@@ -14,7 +14,10 @@
 
 void *memmove(void *dst, const void *src, size_t n);    /* kstring.c */
 
-#define SRAM1 __attribute__((section(".sram1")))
+/* 4-byte aligned as well as placed: these buffers are handed to the SD
+ * driver, whose DMA engine writes words and refuses an odd destination
+ * (spi3_read_dma). A section attribute alone does not promise alignment. */
+#define SRAM1 __attribute__((section(".sram1"), aligned(4)))
 #define CPU_HZ 80000000u
 
 /* ---- the decoder ------------------------------------------------------------
