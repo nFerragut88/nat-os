@@ -698,6 +698,25 @@ static int read_blocks_once(uint32_t lba, uint32_t count, uint8_t *dst)
     g_cc_cmd += xt_ccount() - t0;
     g_multi_bursts++;
 
+    /* ---- the pipeline (next_moves/12 step 13) ------------------------------
+     *
+     * Block k's transfer is 206 us of wire time that the CPU can spend on
+     * something instead of spinning, and there is exactly one thing waiting:
+     * copying block k-1 out of its staging buffer, 44 us of word moves.
+     *
+     * So the loop starts the engine, copies the PREVIOUS block, then collects.
+     * Two staging buffers, used alternately -- the engine is writing one while
+     * the copy reads the other, which is the whole point and also the reason
+     * one buffer would be a corruption bug rather than a slow path.
+     *
+     * The overshoot scan cannot be deferred the same way: the next token wait
+     * needs to know whether the token has already gone by, and that is in the
+     * bytes the transfer just landed. It is three bytes of looking. */
+    static uint8_t stage[2][SD_BLOCK_SIZE + 8u] __attribute__((aligned(4)));
+    uint8_t *copy_dst = 0;              /* block k-1, waiting to be copied */
+    const uint8_t *copy_src = 0;
+    uint32_t copy_n = 0;
+
     for (uint32_t b = 0; b < count; b++) {
         uint8_t *p = dst + b * SD_BLOCK_SIZE;
         uint32_t t1 = xt_ccount(), have = 0;
@@ -708,13 +727,66 @@ static int read_blocks_once(uint32_t lba, uint32_t count, uint8_t *dst)
             multi_stop();
             return SD_ERR_TOKEN;
         }
-        if (!data_read_hw(p, have)) {
+
+        /* Without DMA there is nothing to overlap and no start/collect to do
+         * it with, so the proven per-block path carries the burst. Leaving
+         * this out made a poisoned engine -- one `spitest` away -- turn every
+         * multi-block read into a failure rather than a slow success. */
+        if (!spi3_dma_enabled()) {
+            if (!data_read_hw(p, have)) {
+                multi_stop();
+                return SD_ERR_TOKEN;
+            }
+            g_cc_data += xt_ccount() - t2;
+            g_blocks++;
+            g_multi_blocks++;
+            continue;
+        }
+
+        uint8_t *buf  = stage[b & 1u];
+        uint32_t rest = SD_BLOCK_SIZE - have;
+        uint32_t n    = (rest + 2u + 3u) & ~3u;
+
+        if (!spi3_read_dma_start(buf, n)) {
             multi_stop();
             return SD_ERR_TOKEN;
         }
+
+        /* The overlap: the previous block's bytes move into place while this
+         * block's bytes are still arriving. */
+        if (copy_n != 0u) {
+            copy_out(copy_dst, copy_src, copy_n);
+            copy_n = 0;
+        }
+
+        if (!spi3_read_dma_collect()) {
+            multi_stop();
+            return SD_ERR_TOKEN;
+        }
+
+        /* Whatever the rounding read past the CRC belongs to the next block. */
+        g_pend_token = 0;
+        g_pend_n     = 0;
+        for (uint32_t j = rest + 2u; j < n; j++) {
+            if (g_pend_token) {
+                g_pend[g_pend_n++] = buf[j];
+            } else if (buf[j] == DATA_TOKEN) {
+                g_pend_token = 1;
+            }
+        }
+
+        copy_dst = p + have;
+        copy_src = buf;
+        copy_n   = rest;
+
         g_cc_data += xt_ccount() - t2;
         g_blocks++;
         g_multi_blocks++;
+    }
+
+    /* The last block has nobody to overlap with. */
+    if (copy_n != 0u) {
+        copy_out(copy_dst, copy_src, copy_n);
     }
 
     multi_stop();

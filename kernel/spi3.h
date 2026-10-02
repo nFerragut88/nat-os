@@ -117,6 +117,24 @@ int  spi3_xfer_dma(const uint8_t *tx, uint8_t *rx, uint32_t n);
  * so what the engine tolerates can be measured instead of assumed. */
 int  spi3_force_dma(uint8_t *rx, uint32_t n);
 
+/* ---- the same receive, in two halves (next_moves/12 step 13) ----------------
+ *
+ * A 512-byte transfer is 206 us of wire time at 20 MHz, and the synchronous
+ * call spends all of it spinning -- which is why DMA bought 7% rather than
+ * half. A caller with other work to do can start the engine, do that work, and
+ * come back:
+ *
+ *      spi3_read_dma_start(buf, n);
+ *      ... anything that does not touch buf or the bus ...
+ *      spi3_read_dma_collect();
+ *
+ * ONE transfer may be in flight: there is a single descriptor pair. Starting
+ * again without collecting is refused. `rx` must be directly writable by the
+ * engine (word-aligned, word-multiple, DRAM) -- the staging path cannot be used
+ * here, because nothing may be copied out until the transfer is collected. */
+int  spi3_read_dma_start(uint8_t *rx, uint32_t n);
+int  spi3_read_dma_collect(void);
+
 /* W-register transfers since boot, and the number of times DMA gave itself up
  * because that count moved after it was armed. The second must stay 0 in normal
  * operation: it means a diagnostic poisoned the engine and reads fell back to

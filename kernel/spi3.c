@@ -560,22 +560,47 @@ int spi3_read_dma(uint8_t *rx, uint32_t n)
     return spi3_xfer_dma(0, rx, n);
 }
 
-static int xfer_dma(const uint8_t *tx, uint8_t *rx, uint32_t n, int force);
+static int xfer_dma(const uint8_t *tx, uint8_t *rx, uint32_t n, int force,
+                    int wait);
+static int collect_dma(void);
+
+/* The one transfer that may be in flight, and what collecting it needs. */
+static int      g_inflight;
+static uint32_t g_in_n;
+static uint8_t *g_in_rx;
+static int      g_in_staged;
 
 /* The probe's way in: the same transfer with the alignment and length refusals
  * SKIPPED, so the probe can find out what the engine actually tolerates rather
  * than what this file assumes. Nothing else may call it. */
 int spi3_force_dma(uint8_t *rx, uint32_t n)
 {
-    return xfer_dma(0, rx, n, 1);
+    return xfer_dma(0, rx, n, 1, 1);
 }
 
 int spi3_xfer_dma(const uint8_t *tx, uint8_t *rx, uint32_t n)
 {
-    return xfer_dma(tx, rx, n, 0);
+    return xfer_dma(tx, rx, n, 0, 1);
 }
 
-static int xfer_dma(const uint8_t *tx, uint8_t *rx, uint32_t n, int force)
+/* Start a receive and come back for it. `rx` must be one the engine can write
+ * directly: there is nothing to copy out of until collect, so the staging path
+ * cannot stand in while the caller is away doing other work. */
+int spi3_read_dma_start(uint8_t *rx, uint32_t n)
+{
+    if (g_inflight || !rx || !dma_usable(rx, n)) {
+        return 0;
+    }
+    return xfer_dma(0, rx, n, 0, 0);
+}
+
+int spi3_read_dma_collect(void)
+{
+    return collect_dma();
+}
+
+static int xfer_dma(const uint8_t *tx, uint8_t *rx, uint32_t n, int force,
+                    int wait)
 {
     if (!g_dma_ok || n == 0u || n > SPI3_DMA_MAX) {
         g_dma_refused++;        /* COUNTED. Silence here hid a 12% retry rate */
@@ -687,6 +712,37 @@ static int xfer_dma(const uint8_t *tx, uint8_t *rx, uint32_t n, int force)
     GPIO_REG(SPI3_MOSI_DLEN) = n * 8u - 1u;
     GPIO_REG(SPI3_MISO_DLEN) = n * 8u - 1u;
     GPIO_REG(SPI3_CMD)       = SPI_USR_BIT;
+
+    /* ---- the split ---------------------------------------------------------
+     *
+     * Everything above starts the engine; everything below waits for it. A
+     * 512-byte block is 206 us of wire time at 20 MHz and this driver spends it
+     * spinning, which is why DMA bought 7% and not half (step 12): the bus time
+     * is charged to whoever waits for it.
+     *
+     * So a caller with other work can take the halves separately and do that
+     * work in between. ONE transfer may be in flight -- there is a single
+     * descriptor pair -- so g_inflight says whether there is anything to
+     * collect, and starting twice without collecting is refused. */
+    g_inflight  = 1;
+    g_in_n      = n;
+    g_in_rx     = rx;
+    g_in_staged = staged;
+    if (!wait) {
+        return 1;
+    }
+    return collect_dma();
+}
+
+static int collect_dma(void)
+{
+    if (!g_inflight) {
+        return 0;
+    }
+    g_inflight      = 0;
+    uint32_t n      = g_in_n;
+    uint8_t *rx     = g_in_rx;
+    int      staged = g_in_staged;
 
     /* Wall clock, and bounded far beyond one scheduling round trip: the wait
      * keeps running while this task does not, and a bound shorter than a

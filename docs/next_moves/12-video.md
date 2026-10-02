@@ -915,3 +915,64 @@ open   the real gain is an ASYNCHRONOUS read -- spi3_read_dma_start() and
        vplay/pcm change, not a driver one
 open   1 underrun per full MP3 playback, still not chased
 ```
+
+---
+
+## step 13 — the read, in two halves
+
+`spi3_read_dma_start()` and `spi3_read_dma_collect()`: the engine is started,
+the caller does something useful, the caller comes back. One transfer in flight,
+because there is one descriptor pair, and starting twice without collecting is
+refused rather than papered over.
+
+The first thing worth doing in between was already waiting: `sd_read_blocks()`
+starts block k's transfer, copies block **k-1** out of its staging buffer, then
+collects. Two staging buffers, used alternately -- the engine writes one while
+the copy reads the other, which is the point and also why one buffer would be a
+corruption bug rather than a slow path.
+
+```
+fat cat Test pattern rotated.nvd    crc32=0xf584e81c, chain 1563 of 1563
+  data phase per block   408 us -> 309 us
+  own CPU for 6.4 MB   4,307 (W registers) -> 3,908 (DMA) -> 3,717 ms
+  throughput             940 -> 1,083 KB/s
+```
+
+### and almost none of it reaches the video
+
+```
+read per frame   50.5 (W) -> 47.0 (DMA) -> 46.2 ms (pipelined)
+```
+
+0.8 ms, against the ~11 ms a frame the per-block saving predicts. The reason is
+the shape of the reads, not the driver: `vplay` asks for 12 rows at a time, and
+12 x 180 = 2,160 bytes starting 16 bytes into a sector. Every such call is
+
+```
+  partial sector | 3 whole sectors | partial sector
+  single read    | one 3-block burst | single read
+```
+
+so only the middle is pipelined, and 135 blocks get read for the 113 a frame
+contains -- 20% of the bus wasted on sectors read twice for a few bytes each.
+
+Fixing that is a `vplay` change and needs no new format: read the frame in
+**512-aligned 2,048-byte chunks** starting at the chunk's own base (its first 16
+bytes are the chunk header, which has to be read anyway), and carry the leftover
+bytes across chunk boundaries into row batches. Then every read is four whole
+sectors, one burst, fully pipelined, nothing read twice. 113 blocks a frame
+instead of 135, with the overlap applying to all of them: ~37 ms a frame, which
+puts 13 fps inside the budget.
+
+### State
+
+```
+works  all-DMA pipelined SD reads, crc32 verified; 10 fps playback with
+       0 dropped frames, read 46.2 ms of an 81.5 ms frame
+open   11 fps fits TODAY with a re-convert. 13 needs the aligned chunked
+       reads above, which is where the next effort belongs
+open   the bigger prize is still overlapping the READ with the DRAW -- the
+       driver now has the start/collect halves that would need, but fat.c
+       would need them too, and a frame becomes max(read, draw)
+open   1 underrun per full MP3 playback, still not chased
+```
