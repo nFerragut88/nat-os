@@ -81,6 +81,35 @@ void intr_install(uint32_t line, intr_handler_fn fn);
 /* Called from _handler_level3 in vectors.S. Not static — assembly names it. */
 void intr_dispatch(void);
 
+/* The CPU lines that are LEVEL 1 on the ESP32.
+ *
+ *   0..10   level 1   (6 is internal timer0, 7 internal software, 10 edge)
+ *   12, 13  level 1
+ *   17, 18  level 1
+ *
+ * Everything else is another level and must not be enabled by a caller that
+ * expects this dispatcher to service it: 11, 15, 22, 23, 27 and 29 are level 3,
+ * 19..21 level 2, 24, 25, 28, 30 level 4, 16, 26, 31 level 5, and 14 is the
+ * NMI. A line enabled at the wrong level is not a lost interrupt -- it is a
+ * panic on the first arrival, which is how the Bluetooth controller's request
+ * for lines 5, 7 and 8 was found. */
+#define INTR_LEVEL1_MASK    0x000637FFu
+
+/* Called from _handler_user in vectors.S when EXCCAUSE says 4 — a level-1
+ * interrupt rather than a fault. Runs at INTLEVEL 3, non-reentrant, on the
+ * interrupted context's stack; see the long note above the handler. */
+void intr_dispatch_level1(void);
+
+/* Level-1 counters, separate from the level-3 ones because the two paths are
+ * separate and a single total would hide which vector is actually firing. */
+uint32_t intr_level1_count(void);     /* level-1 interrupts serviced */
+uint32_t intr_level1_spurious(void);  /* pending, enabled, unhandled */
+
+/* Asserts CPU line 7 (the level-1 software interrupt) and reports whether the
+ * handler ran. Proves the mechanism without needing a peripheral or the radio:
+ * if this fails, nothing built on level-1 dispatch is worth debugging yet. */
+int  intr_selftest_level1(void);
+
 /* Observability. Counters rather than prints: an interrupt handler that writes
  * to the UART changes the timing of the thing it is reporting on, and this
  * project has already lost three separate measurements to being printed into a

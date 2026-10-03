@@ -332,8 +332,14 @@ static const uint32_t BT_INTERNAL_LINE[BT_INTERNAL_MAX] = {
     11u,    /* -6 profiling, level 3, usable            */
 };
 
-/* Which of them this kernel will actually install. Indexed as above. */
-static const uint8_t BT_INTERNAL_OK[BT_INTERNAL_MAX] = { 0, 0, 0, 0, 1, 1 };
+/* Which of them this kernel will actually install. Indexed as above.
+ *
+ * [next_moves/13 step 2] -1 (timer0, line 6) and -4 (SW0, line 7) are level 1
+ * and became serviceable when _handler_user learned to dispatch. -2 stays
+ * refused because line 15 is the scheduler's own tick, which is not a level
+ * problem but an ownership one, and -3 stays refused because line 16 is level 5
+ * and nothing dispatches that. */
+static const uint8_t BT_INTERNAL_OK[BT_INTERNAL_MAX] = { 1, 0, 0, 1, 1, 1 };
 
 static void bt_intr_tramp0(void) { if (g_intr[0].used) { g_intr[0].fn(g_intr[0].arg); } }
 static void bt_intr_tramp1(void) { if (g_intr[1].used) { g_intr[1].fn(g_intr[1].arg); } }
@@ -376,7 +382,7 @@ uint32_t bt_host_intr_alloc(uint32_t source, uint32_t fn, uint32_t arg)
             uart_put_dec(BT_INTERNAL_LINE[idx]);
             uart_puts(BT_INTERNAL_LINE[idx] == INTR_LINE_TIMER1
                       ? " -- that is the scheduler tick, refused\n"
-                      : " -- not level 3, this kernel cannot dispatch it\n");
+                      : " -- neither level 1 nor 3, nothing dispatches it\n");
             return 0;
         }
         internal = 1u;
@@ -509,9 +515,18 @@ uint32_t bt_host_set_handler(uint32_t line, uint32_t fn, uint32_t arg)
          * edge -- which is exactly what exccause 4 was. */
         uart_puts("   [bt] handler wanted on CPU line ");
         uart_put_dec(line);
-        uart_puts(line == 11u || line == 15u || line == 22u || line == 29u
-                  ? " (level 3, serviceable)\n"
-                  : " (NOT level 3 -- this kernel cannot dispatch it)\n");
+        if (line == 11u || line == 15u || line == 22u || line == 29u) {
+            uart_puts(" (level 3, serviceable)\n");
+        } else if ((1u << line) & INTR_LEVEL1_MASK) {
+            /* Serviceable as of next_moves/13 step 2. These three lines -- 5, 7
+             * and 8 -- are what made level-1 dispatch necessary; before it they
+             * got a handler installed on a vector that went to the panic
+             * printer. */
+            uart_puts(" (level 1, serviceable)\n");
+        } else {
+            uart_puts(" (neither level 1 nor 3 -- this kernel cannot"
+                      " dispatch it)\n");
+        }
         intr_install(line, XT_TRAMPS[i]);
         g_n_xt++;
         return 1;
@@ -748,8 +763,17 @@ uint32_t bt_host_crit_overflows(void) { return g_crit_overflow; }
  * recorded. On the ESP32 those are 11, 15, 22, 23, 27 and 29; 15, 23 and 27
  * belong to the tick, GPIO and the WiFi MAC, which leaves the three BT may
  * use. Enabling a line the kernel cannot service is strictly worse than not
- * enabling it: one loses an interrupt, the other loses the board. */
-#define BT_ENABLE_OK ((1u << 11) | (1u << 22) | (1u << 29))
+ * enabling it: one loses an interrupt, the other loses the board.
+ *
+ * [next_moves/13 step 2] The level-1 lines are in the set now. The controller
+ * asked for 5, 7 and 8 and was refused here, correctly, because the general
+ * exception vector went straight to the panic printer. _handler_user now tells
+ * EXCCAUSE 4 apart from a fault and intr_dispatch_level1 services it, proven by
+ * the [6c] self-test at boot rather than by this comment. The level-3 lines
+ * stay listed separately because they are the three BT may use -- 15, 23 and 27
+ * belong to the tick, GPIO and the WiFi MAC, and INTR_LEVEL1_MASK contains
+ * none of them. */
+#define BT_ENABLE_OK (INTR_LEVEL1_MASK | (1u << 11) | (1u << 22) | (1u << 29))
 
 static uint32_t g_mask_refused;         /* bits asked for and not granted */
 static uint32_t g_mask_calls;

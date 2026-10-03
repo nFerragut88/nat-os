@@ -175,3 +175,158 @@ note    `bt` is shell-only and brings the radio up on first use. Nothing
         Bluetooth runs at boot: a radio that wedges would take the shell
         with it
 ```
+
+---
+
+## Step 2 — level-1 interrupts, and the DRAM the ROM already owns
+
+Level-1 dispatch works and is tested. It was not the last blocker, and the one
+behind it is a memory-map constraint that had not been suspected.
+
+### level-1 interrupts
+
+"Add a level-1 vector" was the wrong description of the work. The Xtensa
+architecture does not give level 1 a vector of its own — it arrives at the
+**general (user) exception vector** with `EXCCAUSE = 4`, which is precisely why
+every level-1 arrival in this kernel has presented as
+
+```
+*** KERNEL PANIC ***  exccause : 4  (Level1Interrupt)
+```
+
+The vector was always being taken. What was missing was the two instructions
+that tell a level-1 interrupt apart from a fault, and a dispatcher behind them.
+`_vector_user` now goes to `_handler_user`, which checks `EXCCAUSE`, dispatches
+if it is 4, and otherwise hands `a0` back untouched and falls through to
+`_handler_panic` exactly as before.
+
+Three things it does differently from `_handler_level3`:
+
+- **No context switch.** The level-3 handler is also the scheduler's switch
+  point and carries the whole register-window investigation with it. This one
+  returns to the context it interrupted, so it saves only what C may clobber:
+  `a0`, `a2..a11`, `SAR`, and the LOOP registers. `a12..a15` are callee-saved.
+- **`EPC1` travels in the frame.** Level 1 gets no `EPCn`/`EPSn` pair of its
+  own: the interrupted PC is in `EPC1` and the interrupted PS is `PS` with
+  `EXCM` set. A window exception inside the dispatcher is itself an exception
+  and would overwrite `EPC1`, so it cannot be trusted to survive the call.
+- **`INTLEVEL 3`, not 1.** Handlers are non-reentrant and the scheduler is
+  locked out: no tick, no switch, no second level-1 arrival on top of the
+  first. IDF leaves them preemptible; this does not, and the cost is that a
+  handler which blocks stops the clock. That is the right trade for a first
+  version — if something later needs to block in one, the answer is to hand
+  work to a task, not to lower this.
+
+The 48-byte reserve below the interrupted `sp` is the same hazard step 145
+found on the level-3 path: those bytes are a `CALL12` frame's extended save
+area.
+
+Proven rather than asserted, at boot:
+
+```
+[6c] level-1  : PASS  software line 7 asserted, handler ran, line cleared
+```
+
+Line 7 is the level-1 software interrupt, so the whole path is reachable from C
+with no peripheral and no radio. The flag is cleared first and only the handler
+can set it, so the test can fail. A software line stays asserted until
+`INTCLEAR` clears it — the same obligation a level-triggered peripheral carries
+— and the handler clears it.
+
+With that in place the controller's requests are granted instead of refused:
+
+```
+[bt] handler wanted on CPU line 8 (level 1, serviceable)
+[bt] handler wanted on CPU line 7 (level 1, serviceable)
+```
+
+### the real blocker: the BT ROM owns DRAM nat-os is using
+
+The controller still dies, and in the same place as before, so the NULL call was
+never a consequence of the refused handlers:
+
+```
+*** KERNEL PANIC *** exccause 20 (InstFetchProhibited)  epc 0x00000000
+fault regs: a0 0x8010fb35
+```
+
+`a0` is a windowed return address, so the caller is `0x40000000 | 0x0010fb35` =
+**0x4010fb35**, which is `r_rwip_init +0xc5`. The `r_` prefix is the giveaway:
+that is the ESP32's **ROM-resident** Riviera-Waves IP, and ROM code reaches the
+blob through function-pointer tables at **fixed DRAM addresses**. From
+`esp32.rom.ld`:
+
+```
+r_ip_funcs_p      = 0x3ffae70c
+r_modules_funcs_p = 0x3ffafd68
+r_plf_funcs_p     = 0x3ffb8360
+rwip_rf           = 0x3ffbdb28
+```
+
+`0x3ffb8360` is in the fault's own register dump — the ROM was reading its
+platform-function table. And nat-os's DRAM starts at `0x3FFB0000`, so:
+
+```
+r_ip_funcs_p       0x3ffae70c  below nat-os DRAM -- ROM-reserved, untouched
+r_modules_funcs_p  0x3ffafd68  below nat-os DRAM -- ROM-reserved, untouched
+r_plf_funcs_p      0x3ffb8360  --> g_store  (+0x3a4)    the settings struct
+rwip_rf            0x3ffbdb28  --> g_stacks (+0x784)    a task stack
+```
+
+The ROM's BT data region is where this kernel keeps its persistent settings and
+its task stacks. `r_rwip_init` reads a function pointer out of what is actually
+`g_store`, gets zero, and calls it.
+
+This is what IDF's `CONFIG_BT_RESERVE_DRAM` is for: `0xdb5c` bytes from
+`0x3FFB0000`, ending at `0x3FFBDB5C` — immediately past `rwip_rf`. The number
+checks out against the symbol addresses exactly, which is the useful part: the
+reservation is not a safety margin, it is the ROM's data.
+
+Nothing earlier could have caught this. The region is not declared, not
+referenced by any symbol the link resolves, and writing to it is perfectly legal
+right up until ROM code reads it back.
+
+### the budget this creates
+
+```
+nat-os DRAM            0x3FFB0000..0x3FFD3000   143,360 B
+BT ROM reservation     0x3FFB0000..0x3FFBDB5C    56,156 B
+left for the kernel                              87,204 B
+currently static (.data + .bss + btdm)          113,508 B
+heap on top of that                              30,360 B
+```
+
+So a `-BT` image does not fit, and is short by about 56 KB — which is roughly
+what the stacks cost: twelve task stacks at 2 KB is 24 KB, `_phy_stack` is 6 KB,
+and the two stacks this work added (`btboot` 6 KB, `btctrl` 5 KB) are 11 KB.
+
+The way out is already in the linker script and nearly unused:
+
+```
+sram1 (rw) : ORIGIN = 0x3FFF1000, LENGTH = 0xF000    /* 60 KB */
+```
+
+60 KB against the 56 KB that has to be vacated. Stacks and diagnostic buffers
+need no DMA and do not care which SRAM they live in, so moving `g_stacks`,
+`g_regsave`, `_phy_stack` and the two BT stacks into `.sram1` is the obvious
+shape of it — and `g_store` has to move regardless, since it is sitting on
+`r_plf_funcs_p`.
+
+### State
+
+```
+works   level-1 interrupt dispatch, [6c] PASS at boot, line 7 round trip
+works   the controller's level-1 handler requests are granted (lines 5, 7, 8)
+works   everything from step 1 still holds; default image unaffected and all
+        boot self-tests pass
+open    0x3FFB0000..0x3FFBDB5C must be reserved for the BT ROM's data, and
+        nat-os must vacate it. g_store and g_stacks are the two confirmed
+        occupants; there may be more above 0x3ffbdb28
+open    about 56 KB of static DRAM has to move, probably into the 60 KB of
+        sram1 at 0x3FFF1000 that is currently almost empty
+open    whether sram1 at 0x3FFF1000 is wholly usable on this silicon has not
+        been checked -- it is NOLOAD and nothing has leaned on it yet
+open    HCI_Reset still never sent
+note    INTLEVEL 3 in the level-1 handler is a deliberate simplification.
+        Revisit only with a reason, and a test
+```

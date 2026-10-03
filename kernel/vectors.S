@@ -45,7 +45,7 @@ _vector_kernel:
     .align 4
     .global _vector_user
 _vector_user:
-    j       _handler_panic
+    j       _handler_user
 
     .section .vectors.double, "ax"
     .align 4
@@ -819,6 +819,160 @@ _handler_double:
     rsr.ps       a4
     call0   kernel_panic
     .size _handler_double, . - _handler_double
+
+/* ------------------------------------------------------------------ */
+/* Level-1 interrupts — the user exception vector, dispatched not panicked. */
+/* ------------------------------------------------------------------ */
+/*
+ * A level-1 interrupt is NOT delivered to a vector of its own. The Xtensa
+ * architecture routes it through the general (user) exception vector with
+ * EXCCAUSE = 4, which is why every level-1 arrival in this kernel has presented
+ * as
+ *
+ *     *** KERNEL PANIC ***  exccause : 4  (Level1Interrupt)
+ *
+ * and why "add a level-1 vector" was the wrong description of the work. The
+ * vector was always being taken. What was missing was the two instructions
+ * that tell a level-1 interrupt apart from a fault, and a dispatcher behind
+ * them.
+ *
+ * Who needs it: Espressif's Bluetooth controller asks for handlers on CPU
+ * lines 5, 7 and 8, all level 1, and IDF's FreeRTOS port dispatches level 1 as
+ * its ordinary interrupt path. Until now nat-os served level 3 only -- one
+ * internal timer and a handful of routed peripherals -- and could honestly
+ * refuse everything else, which is what next_moves/13 step 1 ended on.
+ *
+ * ---- what this handler does differently from _handler_level3 ----------------
+ *
+ * It does NOT switch tasks. The level-3 handler is also the context switch and
+ * carries the whole register-window investigation with it; this one returns to
+ * exactly the context it interrupted. So it saves only what C may clobber:
+ * a0, a2..a11 (caller-saved under call0), SAR, and the zero-overhead LOOP
+ * registers. a12..a15 are callee-saved and C preserves them by definition.
+ *
+ * EPC1 and PS are saved too, and for a reason that is easy to miss: a level-1
+ * exception does not get its own EPC/EPS pair the way level 3 does. The
+ * interrupted PC is in EPC1, the interrupted PS is PS itself with EXCM set, and
+ * RFE restores from those. A window exception taken inside the dispatcher would
+ * overwrite EPC1 -- window handling is itself an exception -- so EPC1 must
+ * travel in the frame rather than be trusted to survive the call.
+ *
+ * ---- the 48 bytes of reserve ------------------------------------------------
+ *
+ * Same hazard as step 145 on the level-3 path: the 48 bytes directly below the
+ * interrupted sp are a CALL12 frame's extended save area, and writing a frame
+ * through them corrupts a windowed caller's registers. The frame therefore
+ * starts 48 bytes further down. 80 bytes of frame plus 48 of reserve, which is
+ * 128 and keeps the stack 16-byte aligned.
+ *
+ * ---- INTLEVEL 3, not 1 ------------------------------------------------------
+ *
+ * The dispatcher runs with EXCM cleared, so window exceptions inside it are
+ * handled normally, and with INTLEVEL raised to 3, which masks everything this
+ * kernel dispatches. That makes a level-1 handler non-reentrant and keeps the
+ * scheduler out of it entirely: no tick, no task switch, no second level-1
+ * arrival on top of the first.
+ *
+ * IDF leaves level-1 handlers preemptible and nests them. This does not, and
+ * the cost is real -- the tick is delayed for as long as a handler runs, so a
+ * handler that blocks stops the clock. That is the correct trade for the first
+ * version: a non-reentrant handler is one that can be reasoned about, and the
+ * interrupt sources that need this are short by construction. If something
+ * later needs to block in a level-1 handler, the answer is to hand work to a
+ * task, not to lower this.
+ */
+
+    .align 4
+    .global _handler_user
+    .type _handler_user, @function
+_handler_user:
+    /* EXCCAUSE first, and with a0 as the only scratch, because nothing else is
+     * free yet -- the frame below needs a1 intact to be written at all.
+     * EXCSAVE1 holds a0 for the three instructions this takes; _handler_panic
+     * uses EXCSAVE1 too, but only after this has restored a0 and jumped. */
+    wsr.excsave1 a0
+    rsr.exccause a0
+    addi    a0, a0, -4                  /* 4 = EXCCAUSE_LEVEL1_INTERRUPT */
+    beqz    a0, .Luser_level1
+    rsr.excsave1 a0                     /* a fault: give a0 back untouched */
+    j       _handler_panic
+
+.Luser_level1:
+    rsr.excsave1 a0                     /* the frame saves it properly below */
+
+    addi    a1, a1, -128                /* 80 of frame, 48 of CALL12 reserve */
+    s32i    a0,  a1, 0
+    s32i    a2,  a1, 4
+    s32i    a3,  a1, 8
+    s32i    a4,  a1, 12
+    s32i    a5,  a1, 16
+    s32i    a6,  a1, 20
+    s32i    a7,  a1, 24
+    s32i    a8,  a1, 28
+    s32i    a9,  a1, 32
+    s32i    a10, a1, 36
+    s32i    a11, a1, 40
+    rsr.sar  a2
+    s32i     a2, a1, 44
+    rsr.epc1 a2
+    s32i     a2, a1, 48
+    rsr.ps   a2
+    s32i     a2, a1, 52
+
+    /* GCC emits LOOP for ordinary counted C loops, and intr_dispatch_level1 has
+     * one. Leaving these out lets a stale LCOUNT branch the interrupted task
+     * back to the dispatcher's LEND -- the defect that broke M2 on the level-3
+     * path, recorded at its save site there. */
+    rsr.lbeg   a2
+    s32i       a2, a1, 56
+    rsr.lend   a2
+    s32i       a2, a1, 60
+    rsr.lcount a2
+    s32i       a2, a1, 64
+
+    /* INTLEVEL 3, EXCM clear. Derived from the live PS rather than written as a
+     * constant: WOE, UM and CALLINC all have to survive, and hardcoding this
+     * would change the execution mode out from under whatever was interrupted. */
+    rsr.ps   a2
+    movi     a3, -32                    /* ~0x1F: clear INTLEVEL and EXCM */
+    and      a2, a2, a3
+    movi     a3, 3
+    or       a2, a2, a3
+    wsr.ps   a2
+    rsync
+
+    call0    intr_dispatch_level1
+
+    /* PS back first, EXCM and all: RFE clears EXCM and restores the rest, so
+     * the value that goes in here is the one the interrupt arrived with. */
+    l32i     a2, a1, 52
+    wsr.ps   a2
+    rsync
+    l32i     a2, a1, 48
+    wsr.epc1 a2
+    l32i     a2, a1, 44
+    wsr.sar  a2
+    l32i     a2, a1, 56
+    wsr.lbeg a2
+    l32i     a2, a1, 60
+    wsr.lend a2
+    l32i     a2, a1, 64
+    wsr.lcount a2
+
+    l32i    a0,  a1, 0
+    l32i    a2,  a1, 4
+    l32i    a3,  a1, 8
+    l32i    a4,  a1, 12
+    l32i    a5,  a1, 16
+    l32i    a6,  a1, 20
+    l32i    a7,  a1, 24
+    l32i    a8,  a1, 28
+    l32i    a9,  a1, 32
+    l32i    a10, a1, 36
+    l32i    a11, a1, 40
+    addi    a1,  a1, 128
+    rfe
+    .size _handler_user, . - _handler_user
 
     .align 4
 _handler_panic:

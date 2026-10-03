@@ -1230,6 +1230,27 @@ static void m6_selftest(void)
     uart_puts("  recursive depth, ownership, non-owner unlock refused (");
     uart_put_dec(m.errors);
     uart_puts("), try_lock both ways\n");
+
+    /* [next_moves/13 step 2] Level-1 interrupt dispatch.
+     *
+     * Every level-1 arrival used to be `*** KERNEL PANIC *** exccause 4`,
+     * because the architecture delivers level 1 through the general exception
+     * vector and this kernel sent that vector straight to the panic handler.
+     * The Bluetooth controller wants handlers on lines 5, 7 and 8, all level 1.
+     *
+     * Tested here rather than trusted: line 7 is the software interrupt, so the
+     * whole path is reachable from C with no peripheral and no radio. If this
+     * says FAIL, nothing built on it is worth debugging. */
+    int l1_ok = intr_selftest_level1();
+
+    uart_puts("  [6c] level-1  : ");
+    uart_puts(l1_ok ? "PASS" : "FAIL");
+    uart_puts("  software line 7 asserted, handler ran, line cleared");
+    if (intr_level1_spurious()) {
+        uart_puts("  SPURIOUS ");
+        uart_put_dec(intr_level1_spurious());
+    }
+    uart_puts("\n");
 }
 
 /* Runs from the reporter task, NOT from m6_selftest(). The first version was

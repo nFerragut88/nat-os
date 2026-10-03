@@ -76,6 +76,27 @@ static inline uint32_t xt_get_interrupt(void)
     return v;
 }
 
+/* Raises a SOFTWARE interrupt line by hand.
+ *
+ * Only the lines the silicon marks software-settable respond: on the ESP32 that
+ * is 7 (level 1) and 29 (level 3). Writing any other bit does nothing, which is
+ * why the level-1 self-test asserts that the handler ran rather than assuming
+ * the write took.
+ *
+ * INTSET is write-1-to-set and has no read side; the pending bit shows up in
+ * INTERRUPT. A software line stays asserted until INTCLEAR clears it, so a
+ * handler for one MUST clear it or the kernel re-enters forever -- the same
+ * obligation a level-triggered peripheral line carries. */
+static inline void xt_set_intset(uint32_t mask)
+{
+    __asm__ volatile ("wsr.intset %0; esync" :: "a"(mask));
+}
+
+static inline void xt_set_intclear(uint32_t mask)
+{
+    __asm__ volatile ("wsr.intclear %0; esync" :: "a"(mask));
+}
+
 /* ---- processor state ---- */
 
 static inline uint32_t xt_get_ps(void)

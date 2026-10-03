@@ -119,6 +119,95 @@ void intr_dispatch(void)
     }
 }
 
+/* ---- level 1 ----------------------------------------------------------------
+ *
+ * Reached from _handler_user, which has already established that EXCCAUSE is 4
+ * and saved everything C may clobber. See the note above that handler for why
+ * level 1 arrives at the general exception vector at all, and why this runs at
+ * INTLEVEL 3.
+ *
+ * Deliberately the same shape as intr_dispatch(), including the defence at the
+ * bottom. The hazard is identical and worse here: level-1 lines are mostly
+ * level-TRIGGERED, so an enabled line with no handler re-enters this function
+ * forever, and at INTLEVEL 3 the tick cannot even get in to notice. Masking the
+ * line loses one interrupt; not masking it loses the board. */
+static uint32_t g_l1_count;
+static uint32_t g_l1_spurious;
+
+void intr_dispatch_level1(void)
+{
+    uint32_t pending = xt_get_interrupt() & xt_get_intenable() &
+                       INTR_LEVEL1_MASK;
+
+    while (pending) {
+        uint32_t line = 31u - (uint32_t)__builtin_clz(pending);
+        pending &= ~(1u << line);
+
+        if (g_handler[line]) {
+            g_count[line]++;
+            g_l1_count++;
+            g_handler[line]();
+            continue;
+        }
+
+        g_l1_spurious++;
+        g_spurious++;
+        g_disabled |= (1u << line);
+        xt_disable_interrupt(line);
+    }
+}
+
+uint32_t intr_level1_count(void)    { return g_l1_count; }
+uint32_t intr_level1_spurious(void) { return g_l1_spurious; }
+
+/* ---- proving it, before anything depends on it ------------------------------
+ *
+ * Line 7 is the ESP32's level-1 software interrupt: INTSET can raise it with no
+ * peripheral involved, which makes the whole path testable from C. The test is
+ * written so it can FAIL -- the flag is cleared first, and the only thing that
+ * can set it is the handler actually running. An earlier shape of this simply
+ * asserted the interrupt and reported success, which would have passed on a
+ * kernel that still panicked.
+ *
+ * A software line stays asserted until INTCLEAR clears it, exactly like a
+ * level-triggered peripheral, so the handler clears it before returning. A
+ * handler that forgets re-enters forever; this is the cheap place to get that
+ * obligation right. */
+static volatile uint32_t g_l1_test_hits;
+
+static void l1_test_handler(void)
+{
+    xt_set_intclear(1u << 7);
+    g_l1_test_hits++;
+}
+
+int intr_selftest_level1(void)
+{
+    intr_handler_fn saved = g_handler[7];
+    uint32_t was_enabled = xt_get_intenable() & (1u << 7);
+
+    g_l1_test_hits = 0;
+    g_handler[7] = l1_test_handler;
+    xt_enable_interrupt(7);
+
+    xt_set_intset(1u << 7);
+
+    /* It should already have happened: the interrupt is taken the moment
+     * INTSET lands, because this runs at INTLEVEL 0. The loop is a bounded
+     * second chance, not a wait -- if it is still zero after this, the
+     * mechanism does not work. */
+    for (uint32_t i = 0; i < 1000u && g_l1_test_hits == 0u; i++) {
+        __asm__ volatile ("nop");
+    }
+
+    if (!was_enabled) {
+        xt_disable_interrupt(7);
+    }
+    g_handler[7] = saved;
+
+    return g_l1_test_hits != 0u;
+}
+
 uint32_t intr_count(uint32_t line)  { return (line < 32u) ? g_count[line] : 0u; }
 uint32_t intr_spurious(void)        { return g_spurious; }
 uint32_t intr_disabled_mask(void)   { return g_disabled; }
