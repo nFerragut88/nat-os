@@ -33,6 +33,32 @@ _start:
     j       .Lbss_loop
 .Lbss_done:
 
+    /* Zero .btdm_bss too.
+     *
+     * It is a separate NOLOAD section with its own marker pair, placed before
+     * .data so the controller's data and bss are each contiguous and the
+     * markers bracket all of it. That placement puts it OUTSIDE
+     * _bss_start.._bss_end, so the loop above never touched it, and the
+     * Bluetooth controller started life with every uninitialised variable
+     * holding whatever was in DRAM at reset. It presented as:
+     *
+     *     exccause 28 (LoadProhibited)  epc 0x401128e5  excvaddr 0x12250025
+     *
+     * which is semphr_delete_wrapper +0x9 deleting a semaphore whose handle
+     * was never assigned -- reset garbage read as a pointer. Not a Bluetooth
+     * bug at all: a section that looked zeroed because every other bss is.
+     *
+     * Unconditional. In a build without -BT no archive contributes here, so
+     * start == end and the loop falls straight through. */
+    movi    a2, _btdm_bss_start
+    movi    a3, _btdm_bss_end
+.Lbtdm_loop:
+    bgeu    a2, a3, .Lbtdm_done
+    s32i    a4, a2, 0
+    addi    a2, a2, 4
+    j       .Lbtdm_loop
+.Lbtdm_done:
+
     /* Into C. kmain must not return. */
     call0   kmain
 

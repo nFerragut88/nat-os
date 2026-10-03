@@ -51,7 +51,19 @@
 #define MEM_LIBC_MALLOC             0
 #define MEMP_MEM_MALLOC             0
 #define MEM_ALIGNMENT               4
+/* [next_moves/13 step 1] A Bluetooth build gets the smallest lwIP that still
+ * compiles, because its buffers are pure loss there and the BT controller needs
+ * the DRAM: it refused its configuration with ESP_ERR_NO_MEM against a heap of
+ * 9,288 bytes, and MEM_SIZE plus PBUF_POOL were 15.5 KB of that shortfall.
+ *
+ * lwIP is still built -- net.c, browser.c, webfetch.c and tcpsrv.c reference it
+ * and are compiled in every image -- it simply has no room to work in. A
+ * -BT image has no network interface to attach anyway. */
+#ifdef BOARD_HAS_BT
+#define MEM_SIZE                    1024
+#else
 #define MEM_SIZE                    (6 * 1024)   /* was 16 K */
+#endif
 
 #define MEMP_NUM_PBUF               16
 #define MEMP_NUM_UDP_PCB            4
@@ -60,7 +72,16 @@
 #define MEMP_NUM_TCP_SEG            8
 #define MEMP_NUM_REASSDATA          4
 #define MEMP_NUM_ARP_QUEUE          4
+#ifdef BOARD_HAS_BT
+#define PBUF_POOL_SIZE              1            /* see MEM_SIZE above */
+/* lwIP checks that TCP_WND fits the pool and refuses to compile otherwise,
+ * which is right for an image that intends to carry TCP. This one does not:
+ * there is no network interface in a -BT build, and the pool exists only so
+ * the code that references it still links. */
+#define LWIP_DISABLE_TCP_SANITY_CHECKS 1
+#else
 #define PBUF_POOL_SIZE              6            /* was 12; 6 x 1536 = 9 KB */
+#endif
 #define PBUF_POOL_BUFSIZE           1536   /* one Ethernet frame, aligned up */
 
 /* ---- protocols --------------------------------------------------------- */

@@ -5,6 +5,7 @@
  */
 
 #include "shell.h"
+#include "bt.h"
 #include "panic.h"
 #include "blob.h"
 #include "blobcall.h"
@@ -723,6 +724,17 @@ static void execute(char *line)
         uart_puts("   SD block data by DMA: ");
         uart_puts(spi3_dma_enabled() ? "ON -- expect short receives\n"
                                      : "off (W registers)\n");
+    }
+    else if (str_eq(line, "bt")) {
+        /* [next_moves/13 step 1] Brings the controller up on first use and
+         * reports either way. Nothing here runs at boot: a radio that wedges
+         * the board would take the shell with it, and this is stage 1. */
+#ifdef BOARD_HAS_BT
+        (void)bt_init();
+        bt_report();
+#else
+        uart_puts("   this image has no Bluetooth: build with -BT\n");
+#endif
     }
     else if (str_eq(line, "spidmalen")) {
         fat_lock();

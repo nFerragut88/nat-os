@@ -366,9 +366,109 @@ SECTIONS
      * driver's DMA diagnostics, which iram then refused by 15 bytes. */
     *adc.c.o(.literal .literal.* .text .text.*)
 
+    /* [next_moves/13 step 1] Six more of the kernel's own files, moved to make
+     * room for the Bluetooth controller's 35,680 resident bytes.
+     *
+     * The budget was estimated with `nm`, which sizes SYMBOLS and so missed
+     * every literal pool: it said 61 KB of iram were free when the true figure
+     * was closer to 20. These six are what covered the difference, and every
+     * one of them meets step 316's rule -- nothing here runs with the cache
+     * off, and nothing here can be reached during a flash erase, because
+     * flash.c masks interrupts for the whole 125 ms (see the note above).
+     *
+     *   vm.c       the bytecode interpreter; applications are not timing work
+     *   desktop.c  the launcher, drawn when a human is looking at it
+     *   touch.c    the panel's controller, polled at the tick
+     *   i2c.c      bit-banged, and I2C tolerates a stretched clock
+     *   device.c   the device table, reached from VM syscalls
+     *   raycast.c  the 3D view. It WILL be slower from flash; it is the only
+     *              one of the six with a frame rate, and 16 fps has margin
+     *
+     * NOT moved, deliberately: display.c, sd.c and spi3.c, which are the video
+     * path this project spent a day measuring, and task.c, panic.c, flash.c and
+     * store.c, which are pinned for cause. */
+    *vm.c.o(.literal .literal.* .text .text.*)
+    *desktop.c.o(.literal .literal.* .text .text.*)
+    *touch.c.o(.literal .literal.* .text .text.*)
+    *i2c.c.o(.literal .literal.* .text .text.*)
+    *device.c.o(.literal .literal.* .text .text.*)
+    *raycast.c.o(.literal .literal.* .text .text.*)
+
+    /* [next_moves/13 step 1] Espressif's PHY archive, which was the single
+     * largest thing in IRAM for no reason: 27,131 bytes of phy_chip_v7, _cal
+     * and _ana.
+     *
+     * Its calibration runs ONCE, from a task, through phy_stack_call() with the
+     * cache on, and the hooks the blobs call afterwards come from the same
+     * context. Nothing here is reached with the cache off or during a flash
+     * erase, which is step 316's whole test.
+     *
+     * Its .iram1 sections are a different matter and stay resident -- they are
+     * the radio's interrupt-time routines (ram_disable_agc, wr_bt_tx_atten and
+     * the rest), and the linker places them in an orphan .iram1 section of
+     * 8,941 bytes that this script deliberately does not touch.
+     *
+     * This is what made room for Bluetooth, and the WiFi build gets the same
+     * 27 KB back. */
+    *libphy_natos.a:(.literal .literal.* .text .text.*)
+    *libpp_natos.a:(.literal .literal.* .text .text.*)
+
+    /* [next_moves/13 step 1] The Bluetooth controller's non-resident code:
+     * 96 KB of it, which is why this lives in flash rather than iram. Only its
+     * .iram1 sections are interrupt-time; the rest is init, HCI and link
+     * management, reached from the controller's own task with the cache on. */
+    *libbtdm_app_natos.a:(.literal .literal.* .text .text.* .rodata .rodata.*)
+    *libbt_natos.a:(.literal .literal.* .text .text.* .rodata .rodata.*)
+    *libcoexist_natos.a:(.literal .literal.* .text .text.* .rodata .rodata.*)
+
     . = ALIGN(4);
     _flash_text_end = .;
   } > irom
+
+  /* ---- the Bluetooth controller's resident code (next_moves/13 step 1) ----
+   *
+   * 39,686 bytes of it, and none of it can live in flash: these are the
+   * controller's interrupt-time routines, which run while the radio is mid-
+   * packet and cannot stall on a cache miss. That is the single largest claim
+   * on iram this project has ever accepted, and the measurement that allowed
+   * it is 61,119 bytes free in a blob-free build.
+   *
+   * BEFORE .text, because the linker assigns an input section exactly once and
+   * .text's wildcard would otherwise claim these objects first. */
+  .btdm_iram : ALIGN(4)
+  {
+    _btdm_iram_start = .;
+    *libbtdm_app_natos.a:(.iram1 .iram1.*)
+    *libbt_natos.a:(.iram1 .iram1.*)
+    *libcoexist_natos.a:(.iram1 .iram1.*)
+    . = ALIGN(4);
+    _btdm_iram_end = .;
+  } > iram
+
+  /* ---- the radio's own resident code (next_moves/13 step 1) ---------------
+   *
+   * libphy keeps its interrupt-time routines in .iram1 and in dozens of
+   * .phyiram.N sections -- ram_disable_agc, wr_bt_tx_atten and the rest, the
+   * code that runs while a packet is in the air. Those stay in IRAM; it is only
+   * the calibration that went to flash.
+   *
+   * Gathered into ONE output section, and that is not tidiness. The linker
+   * gives every orphan section its own image segment, and esptool refuses an
+   * image with more than sixteen: thirty-one .phyiram sections produced
+   * "Invalid segment count 18 (max 16)", which reads like a linker script
+   * problem because it is one. */
+  .phy_iram : ALIGN(4)
+  {
+    _phy_iram_start = .;
+    *(.iram1 .iram1.*)
+    *(.phyiram .phyiram.*)
+    *(.wifi0iram .wifi0iram.* .wifirxiram .wifirxiram.*)
+    *(.wifiorslpiram .wifiorslpiram.* .wifislpiram .wifislpiram.*)
+    *(.wifislprxiram .wifislprxiram.* .wifiextrairam .wifiextrairam.*)
+    *(.coexiram .coexiram.*)
+    . = ALIGN(4);
+    _phy_iram_end = .;
+  } > iram
 
   .text : ALIGN(4)
   {
@@ -423,6 +523,61 @@ SECTIONS
     . = ALIGN(4);
     _rodata_end = .;
   } > drom
+
+  /* BEFORE .data, and that is the point: .data's wildcard claims every
+   * input .data section it sees first, and 1,230 bytes of the controller's
+   * own data went there in the first version -- outside the markers that
+   * bracket it. The controller walks that range itself, so a marker pair
+   * around a fragment is worse than none.
+   */
+  /* ---- the Bluetooth controller's data (next_moves/13 step 1) -------------
+   *
+   * The blob's writable state, and the five pairs of marker symbols it insists
+   * on. They are not decoration: the controller walks _btdm_data_start.._end
+   * and _btdm_bss_start.._end itself, to hand that memory to its own
+   * allocator. Markers that bracket the wrong bytes mean the controller
+   * scribbling on whatever happens to be there, which is the kind of fault
+   * that presents as something else entirely.
+   *
+   * The _nimble_ pair exists because libbt.a references it whether or not a
+   * NimBLE host is present. Empty here, and bracketing nothing, which is the
+   * truth: there is no host stack in this image. */
+  .btdm_data : ALIGN(4)
+  {
+    _bt_data_start = .;
+    _btdm_data_start = .;
+    /* .dram1.N, not .data: Espressif's archives name their writable data that
+     * way, and the first version of this section came out EMPTY (0x0) while
+     * three dozen .dram1 orphans each took an image segment -- which is what
+     * esptool's "Invalid segment count" was really complaining about. The
+     * markers then bracketed nothing, which is worse than an error: the
+     * controller walks that range itself. */
+    *libbtdm_app_natos.a:(.data .data.* .dram1 .dram1.*)
+    *libbt_natos.a:(.data .data.* .dram1 .dram1.*)
+    *libcoexist_natos.a:(.data .data.* .dram1 .dram1.*)
+    *libphy_natos.a:(.data .data.* .dram1 .dram1.*)
+    *libpp_natos.a:(.data .data.* .dram1 .dram1.*)
+    *(.dram1 .dram1.*)
+    . = ALIGN(4);
+    _btdm_data_end = .;
+    _bt_data_end = .;
+    _nimble_data_start = .;
+    _nimble_data_end = .;
+  } > dram
+
+  .btdm_bss (NOLOAD) : ALIGN(4)
+  {
+    _bt_bss_start = .;
+    _btdm_bss_start = .;
+    *libbtdm_app_natos.a:(.bss .bss.* COMMON)
+    *libbt_natos.a:(.bss .bss.* COMMON)
+    *libcoexist_natos.a:(.bss .bss.* COMMON)
+    . = ALIGN(4);
+    _btdm_bss_end = .;
+    _bt_bss_end = .;
+    _nimble_bss_start = .;
+    _nimble_bss_end = .;
+  } > dram
 
   .data : ALIGN(4)
   {

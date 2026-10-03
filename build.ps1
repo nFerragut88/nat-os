@@ -31,7 +31,17 @@ param(
     # project links. Off by default: everything else in the kernel is code from
     # this project, and libphy cannot be reimplemented from public information,
     # so WiFi is the one part that can never be clean. See docs/blob-free.md.
-    [switch]$WiFi
+    [switch]$WiFi,
+
+    # [next_moves/13 step 1] Bluetooth. A separate build from -WiFi, not an
+    # addition to it: the BT controller wants 39,686 bytes of iram and WiFi's
+    # blob wants its own, and this chip has 128 KB of it in total. Measured, a
+    # blob-free build has 61,119 free -- enough for one radio, not two.
+    [switch]$BT,
+
+    # Prints every BT host-shim call as it happens. Diagnostic only: it changes
+    # the controller's timing completely, and implies -BT.
+    [switch]$BTTrace
 )
 
 $ErrorActionPreference = "Stop"
@@ -83,6 +93,9 @@ $cflags = @(
     "-DBOARD_$($Board.ToUpper())"
 )
 if ($WiFi) { $cflags += "-DBOARD_WIFI_OVERRIDE=1" }
+if ($BTTrace) { $BT = $true }
+if ($BT)   { $cflags += "-DBOARD_HAS_BT=1" }
+if ($BTTrace) { $cflags += "-DBT_TRACE=1" }
 
 Write-Host "== board: $Board ==" -ForegroundColor Cyan
 
@@ -156,9 +169,14 @@ $objs = @()
 # and that table is now handed to the loaded blob from a build that links no
 # Espressif code. It includes only kernel headers.
 $blobFiles = @("wifimac.c")
+# bt.c calls into libbt.a; bt_host.c only serves it. Both are excluded unless
+# -BT for the same reason wifimac.c is: a file that is not compiled cannot
+# link, and `nm` can prove the image has no path to Bluetooth at all.
+$btFiles = @("bt.c", "bt_host.c")
 
 foreach ($src in (Get-ChildItem "$root\kernel" -Include *.c,*.S -Recurse)) {
     if ((-not $WiFi) -and ($blobFiles -contains $src.Name)) { continue }
+    if ((-not $BT) -and ($btFiles -contains $src.Name)) { continue }
     # Full name, not BaseName. A kernel with both appcpu.c and appcpu.S would
     # otherwise compile both to appcpu.o, the second silently overwriting the
     # first, and the only symptom is an undefined-reference at link time for
@@ -271,7 +289,16 @@ if ($winsrc) {
                 # [step 240] the WPA crypto headers: the handshake and the
                 # self-test are windowed and call it directly.
                 "-I", "$root\vendor\wpa\include")
+    # The windowed files compile with their OWN flag list, so a -D added to
+    # $cflags never reaches them. -BTTrace therefore produced a trace that
+    # printed nothing at all, which read as "the controller never calls a
+    # single host shim" -- the most misleading result available, and wrong.
+    if ($BTTrace) { $wflags += "-DBT_TRACE=1" }
     foreach ($src in $winsrc) {
+        # bt_osi.c answers symbols that only exist when the BT archives are
+        # linked, and defines malloc/free, which nothing else in this image
+        # wants. Out of every other build entirely.
+        if ((-not $BT) -and ($src.Name -eq "bt_osi.c")) { continue }
         $obj = Join-Path $build ($src.BaseName + ".o")
         Write-Host ("  {0}  [windowed]" -f $src.Name)
         & $gcc @wflags -c $src.FullName -o $obj
@@ -295,6 +322,12 @@ $elf = Join-Path $build "natos.elf"
 # __divsf3, the one helper the ROM lacks.
 $sdk = "$env:USERPROFILE\.platformio\packages\framework-arduinoespressif32\tools\sdk\esp32"
 $phylibs = @()
+# [next_moves/13 step 1] libphy_natos.a's 27,131 bytes now live in FLASH rather
+# than IRAM -- see kernel/linker.ld. The first attempt dropped the archive from
+# a Bluetooth build entirely, on the theory that register_chipv7_phy was in the
+# ROM; it is not (only phy_get_romfuncs is), so a radio of either kind needs
+# this archive. What it does not need is the archive RESIDENT: the calibration
+# runs once, from a task, with the cache on.
 if (Test-Path "$root\vendor\phy\libphy_natos.a") {
     # ONLY esp32.rom.ld, and only the patched archive.
     #
@@ -325,6 +358,36 @@ if (Test-Path "$root\vendor\phy\libphy_natos.a") {
     Write-Host "  linking libpp_natos.a + libphy_natos.a + esp32.rom.ld" -ForegroundColor DarkGray
 } elseif (-not $WiFi) {
     Write-Host "  no vendor archives: this image is blob-free" -ForegroundColor Green
+}
+
+# [next_moves/13 step 1] The Bluetooth controller: four archives, patched by
+# vendor/bt/patch_bt.py so their libc references land on ROM addresses under
+# names that cannot displace the kernel's own call0 memcpy -- the failure
+# vendor/phy/README.md records.
+#
+# Order matters and is repeated for the same reason the PHY pair is: a static
+# archive only answers references the linker has already seen, and these three
+# call each other in every direction.
+$btlibs = @()
+if ($BT) {
+    $btdir = "$root\vendor\bt"
+    if (-not (Test-Path "$btdir\libbtdm_app_natos.a")) {
+        Write-Host "== patching the Bluetooth archives ==" -ForegroundColor Cyan
+        & python "$btdir\patch_bt.py"
+        if ($LASTEXITCODE -ne 0) { throw "patch_bt.py failed" }
+    }
+    $btlibs = @(
+        "$btdir\libbt_natos.a",
+        "$btdir\libbtdm_app_natos.a",
+        "$btdir\libcoexist_natos.a",
+        "$btdir\libbt_natos.a",
+        "$btdir\libbtdm_app_natos.a",
+        "-T", "$btdir\bt_rom.ld"
+    )
+    if ($phylibs.Count -eq 0) {
+        $btlibs += @("-T", "$sdk\ld\esp32.rom.ld")
+    }
+    Write-Host "  linking the Bluetooth controller + bt_rom.ld" -ForegroundColor DarkGray
 }
 
 # [next_moves/11 step 4] Exactly one object may use the FPU.
@@ -358,7 +421,7 @@ $ldflags = @(
     "-Wl,-Map,$build\natos.map",
     "-T", "$root\kernel\linker.ld"
 )
-& $gcc @ldflags -o $elf @objs @phylibs
+& $gcc @ldflags -o $elf @objs @phylibs @btlibs
 if ($LASTEXITCODE -ne 0) { throw "link failed" }
 
 & $size $elf

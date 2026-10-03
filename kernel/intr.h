@@ -34,6 +34,13 @@
  * a wrong index silently programs a different peripheral's routing. */
 #define INTR_SRC_GPIO_PRO   22u
 
+/* How many there are: ESP32 has 69 peripheral sources, numbered 0..68.
+ *
+ * intr_route() needs this because DPORT_PRO_MAP(src) is unbounded arithmetic --
+ * a source outside the table does not fail, it writes into whatever register
+ * lies that far from the array. See the bound check in intr_route(). */
+#define INTR_SRC_COUNT      69u
+
 /* The WiFi MAC is source 0 -- the first entry in the silicon's table, which is
  * why its map register is the first one. Verified only by that structural fact
  * so far; nothing has been observed to arrive on it yet. */
@@ -81,6 +88,10 @@ void intr_dispatch(void);
 uint32_t intr_count(uint32_t line);      /* times this line has been serviced */
 uint32_t intr_spurious(void);            /* pending, enabled, and unhandled */
 uint32_t intr_disabled_mask(void);       /* lines shut off by the defence below */
+
+/* Calls to intr_route() refused because the source was outside 0..68. Any
+ * non-zero value here is a caller bug that USED to be a stray DPORT write. */
+uint32_t intr_bad_sources(void);
 
 /* Reads back the registers that make routing work, for when it does not. */
 void intr_dump(void);

@@ -245,9 +245,23 @@ uint32_t blob_call_contended(void) { return g_contended; }
  *
  * A second concurrent blob task wanting more than a pool stack is refused
  * rather than silently squeezed; if that ever happens the counter says so. */
+/* [next_moves/13 step 1] 7,168 bytes for the WiFi blob's task -- and nothing in
+ * a Bluetooth image ever creates it. The BT controller wants that DRAM for its
+ * own allocations, so a -BT build keeps the smallest stack that satisfies the
+ * assertion below and the request is refused at run time instead (the check in
+ * blobcall_task_create already does that, and says so).
+ *
+ * The assertion stays live in both: a WiFi build that silently got a short
+ * stack would overflow inside the blob, which is not a diagnosable place. */
+#ifdef BOARD_HAS_BT
+#define BLOB_TASK_STACK_WORDS 64u               /* 256 B: unusable, unused */
+#else
 #define BLOB_TASK_STACK_WORDS 1792u             /* 7168 B */
+#endif
+#ifndef BOARD_HAS_BT
 _Static_assert(BLOB_TASK_STACK_WORDS * 4u >= 6656u,
                "blob task stack smaller than the 6656 B the WiFi task requests");
+#endif
 static uint32_t g_blob_stack[BLOB_TASK_STACK_WORDS];
 static int      g_blob_stack_taken;
 

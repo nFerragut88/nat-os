@@ -22,6 +22,7 @@ static intr_handler_fn g_handler[32];
 static uint32_t        g_count[32];
 static uint32_t        g_spurious;
 static uint32_t        g_disabled;
+static uint32_t        g_bad_source;
 
 void intr_install(uint32_t line, intr_handler_fn fn)
 {
@@ -33,6 +34,32 @@ void intr_install(uint32_t line, intr_handler_fn fn)
 void intr_route(uint32_t source, uint32_t line, intr_handler_fn fn)
 {
     if (line >= 32u) {
+        return;
+    }
+
+    /* The SOURCE has to be bounded too, and was not.
+     *
+     * DPORT_PRO_MAP(src) is base + 4*src with no upper limit, so a caller with
+     * a bad source number does not fail -- it writes the line number into
+     * whatever register that arithmetic lands on. The Bluetooth controller
+     * asked for ETS_INTERNAL_SW1_INTR_SOURCE, which is IDF's -5 (internal
+     * sources are negative and do not come through the matrix at all), and
+     * this function wrote 11 to
+     *
+     *     0x3FF00104 + 4 * 0xFFFFFFFB = 0x3FF000F0
+     *
+     * which is twenty bytes below the array, in DPORT's clock and reset block
+     * -- four words from PERIP_CLK_EN and CORE_RST_EN. The board then froze
+     * solid: no ticks, no task switches, and 30 seconds later the hang
+     * detector reset it. The fault was nowhere near where it presented, which
+     * is exactly what an unbounded register write buys.
+     *
+     * ESP32 has 69 peripheral sources, 0..68. Anything else is a caller bug,
+     * including every negative number, and it is counted and refused rather
+     * than written. intr_install() is the entry point for sources that do not
+     * come through the matrix. */
+    if (source >= INTR_SRC_COUNT) {
+        g_bad_source++;
         return;
     }
 
@@ -95,6 +122,7 @@ void intr_dispatch(void)
 uint32_t intr_count(uint32_t line)  { return (line < 32u) ? g_count[line] : 0u; }
 uint32_t intr_spurious(void)        { return g_spurious; }
 uint32_t intr_disabled_mask(void)   { return g_disabled; }
+uint32_t intr_bad_sources(void)      { return g_bad_source; }
 
 /* ---- register read-back -------------------------------------------------
  *
