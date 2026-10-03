@@ -529,6 +529,19 @@ void kernel_panic(unsigned int exccause, unsigned int epc, unsigned int ps)
             uart_puts("\n");
         }
 
+#ifdef BOARD_HAS_BT
+        /* [next_moves/13 step 3] The Bluetooth DRAM map's one unverified
+         * assumption, reported here because the controller's bring-up panics
+         * before bt_report() ever runs -- so the canary over the 32 KB below
+         * the ROM's BT bss was being filled and never read. An instrument whose
+         * output only appears on the paths that already worked is not an
+         * instrument. */
+        {
+            extern void bt_canary_report(void);
+            bt_canary_report();
+        }
+#endif
+
         {
             extern volatile int g_term_hit, g_term_by;
             extern volatile uint32_t g_term_was, g_term_now;

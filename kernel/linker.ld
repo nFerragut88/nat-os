@@ -18,12 +18,53 @@ MEMORY
   iram (rwx) : ORIGIN = 0x40080000, LENGTH = 0x20000   /* 128 KB */
 
   /* Internal SRAM2 — data RAM, below the ROM's reserved region. */
+#ifdef BOARD_HAS_BT
+  /* [next_moves/13 step 3] A Bluetooth image has a DIFFERENT DRAM map, because
+   * the ESP32's ROM owns part of this range and says so only in esp32.rom.ld.
+   *
+   * ROM BT code (the r_* symbols — r_rwip_init and the rest of the
+   * Riviera-Waves IP that lives in ROM) reaches the blob through
+   * function-pointer tables at FIXED addresses, and two of them were landing
+   * inside this kernel:
+   *
+   *   r_plf_funcs_p  0x3ffb8360  ->  g_store  +0x3a4   the settings struct
+   *   rwip_rf        0x3ffbdb28  ->  g_stacks +0x784   a task stack
+   *
+   * r_rwip_init read a function pointer out of what was actually g_store, got
+   * zero, and called it: exccause 20, epc 0. Nothing at build time can catch
+   * that — the region is undeclared, no symbol the link resolves refers to it,
+   * and writing to it is legal right up until ROM code reads it back.
+   *
+   * The extent is taken from the ROM's own named symbols,
+   * _bss_start_btdm = 0x3ffb8000 and _bss_end_btdm = 0x3ffbff70, rounded up to
+   * 0x3FFC0000. Note that the SDK's memory.ld reserves MORE than this —
+   * 0x3FFB0000 + 0xdb5c — so the low 32 KB is reserved by IDF but contains no
+   * named ROM symbol. This script uses it, and checks that decision at run
+   * time rather than asserting it: kernel/bt.c fills the unused tail with a
+   * canary and `bt` reports whether it survived the controller's bring-up. If
+   * that ever reports a hit, the answer is to give the whole 0x3FFB0000..
+   * 0x3FFC0000 to the ROM and find the 32 KB elsewhere.
+   *
+   * What pays for the carve-out is the WiFi blob. The full length of this
+   * region is 0x2C200; it is normally shortened to 0x24000 to reserve the top
+   * 32 KB for the WiFi blob's writable state (BLOB_DRAM_ADDR in flash.h). A
+   * -BT image never loads that blob, so the reservation is released here and
+   * the two trades very nearly cancel:
+   *
+   *   +33 KB  the WiFi blob's reservation, released
+   *   -32 KB  the ROM's BT bss, carved out
+   *
+   * leaving 147,968 B against the 147,456 B a non-BT build gets. */
+  btdram (rw) : ORIGIN = 0x3FFB0000, LENGTH = 0x8000   /* 32 KB, below ROM BT */
+  dram (rw)   : ORIGIN = 0x3FFC0000, LENGTH = 0x1C200  /* 115 KB, above it */
+#else
   /* Shortened from 0x2C200 to reserve the top 32 KB for the vendor blob's
    * .data and .bss (kernel/flash.h, BLOB_DRAM_ADDR). Unlike the irom carve-out
    * this one is NOT free: the heap is whatever is left between _bss_end and
    * the stack, so this costs ~33 KB of heap directly. That is the price of the
    * blob having writable state, and the MMU cannot help with it. */
   dram (rw)  : ORIGIN = 0x3FFB0000, LENGTH = 0x24000   /* 144 KB */
+#endif
 
   /* [next_moves/11 step 4] SRAM1's upper 60 KB, the first RAM above the
    * old "ROM-reserved" line to be claimed.
@@ -76,6 +117,15 @@ MEMORY
 }
 
 ENTRY(_start)
+
+/* Which region the Bluetooth blob's own data and bss go in. In a -BT build
+ * that is the 32 KB below the ROM's BT bss; otherwise it is ordinary dram and
+ * the sections are empty anyway, because no BT archive is linked. */
+#ifdef BOARD_HAS_BT
+#define BT_REGION btdram
+#else
+#define BT_REGION dram
+#endif
 
 SECTIONS
 {
@@ -416,10 +466,28 @@ SECTIONS
     /* [next_moves/13 step 1] The Bluetooth controller's non-resident code:
      * 96 KB of it, which is why this lives in flash rather than iram. Only its
      * .iram1 sections are interrupt-time; the rest is init, HCI and link
-     * management, reached from the controller's own task with the cache on. */
-    *libbtdm_app_natos.a:(.literal .literal.* .text .text.* .rodata .rodata.*)
-    *libbt_natos.a:(.literal .literal.* .text .text.* .rodata .rodata.*)
-    *libcoexist_natos.a:(.literal .literal.* .text .text.* .rodata .rodata.*)
+     * management, reached from the controller's own task with the cache on.
+     *
+     * .rodata is NOT here, and that is load-bearing. It was, and the
+     * controller died with
+     *
+     *     exccause 3 (LoadStoreError)  epc 0x40103681
+     *
+     * which is lc_reset_hci_cmd_handler_table_funcs +0x95, reached from
+     * config_lc_task_funcs_reset: it reads an HCI command-handler table a byte
+     * and a short at a time. flash.h already says what that costs -- ".rodata
+     * placed in the instruction window serves 32-bit aligned accesses only,
+     * and vendor code reads bytes and shorts out of its own rodata
+     * constantly" -- and it was written there for the WiFi blob, about this
+     * exact failure.
+     *
+     * So these three archives contribute .literal and .text here and let
+     * .rodata fall through to .flash.rodata in drom, which is mapped through
+     * the DATA cache and has no such restriction. Wildcards match in script
+     * order, so removing .rodata from this earlier section is all it takes. */
+    *libbtdm_app_natos.a:(.literal .literal.* .text .text.*)
+    *libbt_natos.a:(.literal .literal.* .text .text.*)
+    *libcoexist_natos.a:(.literal .literal.* .text .text.*)
 
     . = ALIGN(4);
     _flash_text_end = .;
@@ -563,7 +631,7 @@ SECTIONS
     _bt_data_end = .;
     _nimble_data_start = .;
     _nimble_data_end = .;
-  } > dram
+  } > BT_REGION
 
   .btdm_bss (NOLOAD) : ALIGN(4)
   {
@@ -577,7 +645,42 @@ SECTIONS
     _bt_bss_end = .;
     _nimble_bss_start = .;
     _nimble_bss_end = .;
-  } > dram
+  } > BT_REGION
+
+#ifdef BOARD_HAS_BT
+  /* [next_moves/13 step 3] The static buffers that moved below the ROM's BT
+   * bss, and a canary over whatever is left of the 32 KB.
+   *
+   * g_stacks is here because it is the biggest single static buffer in the
+   * kernel (13 x 2 KB) and because it needs nothing from this region but
+   * space: task_create_with_stack fills every word with STACK_FILL and writes
+   * a guard before the task runs, so it does not need zeroing by start.S and
+   * does not care which SRAM it lives in. That also means thirteen guard words
+   * sit in this region already, and the boot report prints "guard ok" for each
+   * one -- free corroboration for the canary below.
+   *
+   * NOLOAD: nothing here has an initial value worth putting in the image. */
+  .btdram_bss (NOLOAD) : ALIGN(16)
+  {
+    _btdram_start = .;
+    *(.btdram .btdram.*)
+    . = ALIGN(4);
+    _btdram_end = .;
+
+    /* The rest of the region, as a canary. This is the part of the decision
+     * that is not backed by a ROM symbol: IDF reserves 0x3FFB0000 upward and
+     * this script only honours 0x3FFB8000 upward, on the evidence that no
+     * named ROM symbol lies below it. Filling the remainder and checking it
+     * after the controller has run turns that from a belief into a reading --
+     * see bt_canary_fill/bt_canary_check in kernel/bt.c. */
+    _btdram_canary_start = .;
+    . = ORIGIN(btdram) + LENGTH(btdram);
+    _btdram_canary_end = .;
+  } > btdram
+
+  ASSERT(_btdram_end <= ORIGIN(btdram) + LENGTH(btdram),
+         "static buffers in .btdram overflowed into the ROM's BT bss at 0x3FFB8000")
+#endif
 
   .data : ALIGN(4)
   {
@@ -647,5 +750,17 @@ SECTIONS
 ASSERT(ORIGIN(irom) + LENGTH(irom) == 0x40300000,
        "kernel irom must end exactly where the blob region begins (flash.h BLOB_IROM_ADDR)")
 
+#ifdef BOARD_HAS_BT
+/* A -BT image releases the WiFi blob's data reservation -- it never loads that
+ * blob -- and spends it on the ROM's Bluetooth bss instead, so dram runs past
+ * BLOB_DRAM_ADDR on purpose here. The invariant that matters in this build is
+ * the other end: dram must start at or above the ROM's region, and the blob's
+ * own data must stay below it. */
+ASSERT(ORIGIN(dram) >= 0x3FFC0000,
+       "kernel dram must start at or above the ROM's BT bss end (0x3ffbff70, rounded up)")
+ASSERT(ORIGIN(btdram) + LENGTH(btdram) <= 0x3FFB8000,
+       "btdram must stop at or below _bss_start_btdm (0x3ffb8000) -- see esp32.rom.ld")
+#else
 ASSERT(ORIGIN(dram) + LENGTH(dram) == 0x3FFD4000,
        "kernel dram must end exactly where the blob data region begins (flash.h BLOB_DRAM_ADDR)")
+#endif

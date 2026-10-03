@@ -330,3 +330,183 @@ open    HCI_Reset still never sent
 note    INTLEVEL 3 in the level-1 handler is a deliberate simplification.
         Revisit only with a reason, and a test
 ```
+
+---
+
+## Step 3 — the DRAM map, and reading the blob instead of guessing at it
+
+The memory-map work is done and checked. The controller still does not
+initialise, but the reason is now a specific null table rather than a region
+this kernel was scribbling on, and three of this step's conclusions came from
+disassembling the blob rather than from trying things on the board.
+
+### sram1 was the wrong answer, and step 2 said so wrongly
+
+Step 2 proposed moving the stacks into "the 60 KB of sram1 at 0x3FFF1000 that
+is currently almost empty". It is not almost empty. It is 58,952 of 61,440
+bytes used:
+
+```
+37,768  mp3.c       the minimp3 decoder state
+16,576  pcm.c       audio buffers
+ 2,560  vidlist.c
+ 2,048  player.c
+-------
+58,952  of 61,440, leaving 2,488 B
+```
+
+Nowhere near the ~44 KB the stacks need. And the region's own note in
+linker.ld, from the measurement campaign that claimed it (next_moves/08 step
+396), says what it is for:
+
+> Untested there, so untrusted here: BT, deep sleep, OTA, coredump. Only data
+> that can be rebuilt goes in it — decoder state, never the record.
+
+Task stacks are the least rebuildable data in the kernel, and Bluetooth is the
+one feature that region was never probed under. So the stacks stayed in DRAM.
+
+### what paid for the ROM's region instead: the WiFi blob
+
+`dram` is normally 0x24000 rather than its full 0x2C200, because the top 32 KB
+is reserved for the **WiFi** blob's writable state (`BLOB_DRAM_ADDR` in
+flash.h). A `-BT` image never loads that blob, so in a Bluetooth build the
+reservation is released and spent on the ROM instead:
+
+```
++33 KB   the WiFi blob's reservation, released
+-32 KB   the ROM's BT bss, carved out
+```
+
+Which leaves 147,968 B against the 147,456 B a non-BT build gets. The layout,
+read back out of the map:
+
+```
+0x3FFB0000..0x3FFB16B0   the blob's .btdm_data and .btdm_bss     5,808 B
+0x3FFB16B0..0x3FFB7EB0   g_stacks, the task stack pool          26,624 B
+0x3FFB7EB0..0x3FFB8000   canary                                    336 B
+0x3FFB8000..0x3FFBFF70   THE ROM'S BT BSS -- untouched          32,624 B
+0x3FFC0000..0x3FFD52F4   kernel .data and .bss
+0x3FFD52F4..0x3FFDB200   heap                                   24,328 B
+```
+
+`g_stacks` moved because it is the biggest single static buffer in the kernel
+and needs nothing from its address: `task_create_with_stack` fills every word
+and writes a guard before the task runs, so it never depended on start.S having
+zeroed it.
+
+The script is now run through the C preprocessor to express that, since GNU ld
+has no conditionals and the two builds need different maps. ESP-IDF does the
+same with its own scripts.
+
+### the part that was a guess, and is now a reading
+
+The extent of the ROM's region had two sources that disagree: `esp32.rom.ld`'s
+named symbols span 0x3ffb8000..0x3ffbff70, while the SDK's `memory.ld` reserves
+0x3FFB0000 + 0xdb5c. This script honours the symbols and uses the low 32 KB,
+which is the aggressive read. So it is checked: the unused tail of the region
+carries an address-dependent pattern, and the result is printed by `bt` **and
+by the panic printer**, because the bring-up faults before any report would
+otherwise run.
+
+```
+bt canary : 84 words below 0x3FFB8000, all intact
+```
+
+The ROM does not write below 0x3FFB8000 on the path reached so far. Thirteen
+stack guard words sit in the same region as a second, independent check, and
+the boot report prints "guard ok" for each.
+
+### .rodata in the instruction window
+
+A real fix, of a class this repo had already written down. The controller was
+dying at
+
+```
+exccause 3 (LoadStoreError)  epc 0x40103681
+```
+
+which is `lc_reset_hci_cmd_handler_table_funcs +0x95`, reading an HCI
+command-handler table a byte and a short at a time. flash.h has carried the
+explanation since the WiFi bring-up:
+
+> .rodata placed in the instruction window serves 32-bit aligned accesses only,
+> and vendor code reads bytes and shorts out of its own rodata constantly.
+
+This script was putting all three BT archives' `.rodata` in `.flash.text` —
+the instruction window — alongside their code. They now contribute only
+`.literal` and `.text` there and let `.rodata` fall through to `.flash.rodata`
+in drom, which is mapped through the data cache. `r_plf_funcs_ro` moved from
+0x401124a8 (type T) to 0x3f418084 (type R).
+
+### where it stops, and what the blob says about it
+
+Still `exccause 20, epc 0x00000000` — a call through a null function pointer.
+`a0` is 0x8010fb35, so the faulting call is the `callx8 a4` at 0x4010fb32 in
+`r_rwip_init`:
+
+```
+002342  l32i a4, a3, 0        a4 = the table
+1c2442  l32i a4, a4, 112      a4 = table[28]
+0004e0  callx8 a4             <-- zero
+```
+
+The three function-table pointers are empty when that runs, and so are the
+ROM's own copies:
+
+```
+blob shadows  plf 0x00000000 ip 0x00000000 modules 0x00000000
+ROM copies    plf 0x1239c87b ip 0xe64e2ea2 modules 0x8dfd5862   (power-on garbage)
+```
+
+Two host-side attempts to fill them were tried and both were **wrong**, and
+disassembly is what settled it rather than another board cycle:
+
+- `config_funcs_reset()` faulted at exccause 29, excvaddr 0x154 — it writes
+  *through* those pointers, so it fills tables rather than creating them. And
+  the call list of `esp_bt_controller_init` does not contain it at all, so no
+  host is meant to call it.
+- `btdm_app_ref_init()` ran cleanly and changed nothing — because
+  `btdm_controller_task` already calls it.
+
+The authoritative sequences, for whoever picks this up:
+
+```
+esp_bt_controller_init:
+  hli_queue_setup, btdm_osi_funcs_register, semphr_create_wrapper,
+  btdm_lpclk_select_src, btdm_lpclk_set_div, btdm_controller_set_sleep_mode,
+  sdk_config_set_uart_flow_ctrl_enable, coex_init, btdm_controller_init, ...
+
+btdm_controller_init:
+  sdk_config_set_mask, sdk_config_set_opts, sdk_config_set_bt_mode,
+  btdm_task_post        <- the real work is POSTED to the controller's task
+
+btdm_controller_task:
+  r_rf_rw_bt_init, r_rf_rw_le_init, coex_schm_..._set_afh,
+  btdm_app_ref_init, r_rw_pre_main   <- r_rwip_init is reached from here
+```
+
+Every one of those pre-init functions is genuine blob code; none is a stub of
+ours. So the tables ought to be filled somewhere in `r_rf_rw_bt_init` ..
+`r_rw_pre_main`, and finding out where is reading, not experimenting.
+
+### State
+
+```
+works   the -BT DRAM map: ROM's BT bss reserved, WiFi blob's 32 KB reclaimed,
+        g_stacks in .btdram, verified against the map, nothing overlapping
+works   the canary says the ROM leaves the low 32 KB alone -- measured, and
+        reported from the panic path so it cannot silently stop being checked
+works   BT .rodata in drom, not the instruction window (exccause 3 fixed)
+works   linker.ld is preprocessed, so the two builds can differ honestly
+works   default image unaffected: 307,408 B, boots, every self-test passes
+        including [6c] level-1
+open    r_rwip_init calls table[28] of a table that is still null. Next move
+        is to read r_rf_rw_bt_init and r_rw_pre_main and find what fills
+        r_ip_funcs / r_modules_funcs / r_plf_funcs_p -- NOT to call more blob
+        entry points from the host and see what happens
+open    heap is 24,328 B, down from 30,344. The controller had taken ~17 KB by
+        the time it faulted, so this may bind before HCI_Reset does
+open    HCI_Reset still never sent
+note    sram1 is 96% full and flagged untrusted under BT. Step 2's claim that
+        it was nearly empty was wrong
+```

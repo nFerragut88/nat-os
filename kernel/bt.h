@@ -67,4 +67,9 @@ void bt_report(void);
  * length, 0 if none; `out` must have room for 64 bytes. */
 uint32_t bt_last_event(uint8_t *out);
 
+/* Prints whether the 32 KB below the ROM's BT bss survived the controller.
+ * Called by bt_report() and by the panic printer -- the bring-up can fault
+ * before any report runs, which is exactly when the reading matters. */
+void bt_canary_report(void);
+
 #endif /* NATOS_BT_H */

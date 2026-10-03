@@ -196,6 +196,86 @@ static int hci_send(const uint8_t *pkt, uint32_t len)
     return 0;
 }
 
+/* ---- the canary over the low 32 KB -----------------------------------------
+ *
+ * This kernel reserves 0x3FFB8000..0x3FFC0000 for the ROM's Bluetooth bss, on
+ * the evidence of esp32.rom.ld's own named symbols (_bss_start_btdm = 0x3ffb8000,
+ * _bss_end_btdm = 0x3ffbff70). The SDK's memory.ld reserves MORE than that --
+ * 0x3FFB0000 + 0xdb5c -- and this script uses the low 32 KB anyway, for the
+ * blob's data and the task stack pool.
+ *
+ * That is the one part of the DRAM map not backed by a symbol, so it is
+ * measured instead of argued. The unused tail of the region gets a pattern
+ * before the controller starts and is checked after, and `bt` prints the
+ * result either way. A hit means the ROM writes below 0x3FFB8000 after all,
+ * and the answer is to hand it the whole 64 KB and find the space elsewhere.
+ *
+ * The thirteen stack guard words in the same region are a second, independent
+ * check on the same question -- the boot report already prints "guard ok" for
+ * every task.
+ *
+ * The pattern is address-dependent so a wholesale memset of the region is
+ * distinguishable from a single stray word, and so the report can say WHERE. */
+extern uint32_t _btdram_canary_start[];
+extern uint32_t _btdram_canary_end[];
+
+static uint32_t g_canary_words;
+static uint32_t g_canary_bad;
+static uint32_t g_canary_first;     /* address of the first word that changed */
+
+static uint32_t canary_of(const uint32_t *p)
+{
+    return 0xB7CA0000u ^ (uint32_t)p;
+}
+
+static void bt_canary_fill(void)
+{
+    uint32_t *p = _btdram_canary_start;
+    g_canary_words = 0;
+    g_canary_bad = 0;
+    g_canary_first = 0;
+    for (; p < _btdram_canary_end; p++) {
+        *p = canary_of(p);
+        g_canary_words++;
+    }
+}
+
+static void bt_canary_check(void)
+{
+    g_canary_bad = 0;
+    g_canary_first = 0;
+    for (uint32_t *p = _btdram_canary_start; p < _btdram_canary_end; p++) {
+        if (*p != canary_of(p)) {
+            if (!g_canary_bad) {
+                g_canary_first = (uint32_t)p;
+            }
+            g_canary_bad++;
+        }
+    }
+}
+
+/* Called from the panic printer too, because the controller's bring-up panics
+ * before bt_report() runs and a canary nobody reads is not a check. */
+void bt_canary_report(void)
+{
+    if (g_canary_words == 0u) {
+        uart_puts("  bt canary : never filled -- `bt` has not run\n");
+        return;
+    }
+    bt_canary_check();
+    uart_puts("  bt canary : ");
+    uart_put_dec(g_canary_words);
+    uart_puts(" words below 0x3FFB8000, ");
+    if (g_canary_bad == 0u) {
+        uart_puts("all intact\n");
+    } else {
+        uart_put_dec(g_canary_bad);
+        uart_puts(" CHANGED, first at ");
+        uart_put_hex(g_canary_first);
+        uart_puts(" -- the ROM owns more than 0x3FFB8000 up\n");
+    }
+}
+
 /* ---- why the bring-up runs on its own task ---------------------------------
  *
  * The first version of this called esp_bt_controller_init through
@@ -247,8 +327,121 @@ static volatile uint32_t g_boot_done;
  * stack every time, and it would have looked like a real measurement. */
 static int g_boot_task = -1;
 
+/* ---- the blob's function tables, and who fills them ------------------------
+ *
+ * The controller dies at exccause 20, epc 0 -- a call through a null function
+ * pointer -- and the disassembly says exactly which one. a0 at the fault is
+ * 0x8010fb35, so the faulting call is the `callx8 a4` at 0x4010fb32 inside
+ * r_rwip_init:
+ *
+ *     002342  l32i a4, a3, 0        a4 = the table
+ *     1c2442  l32i a4, a4, 112      a4 = table[28]
+ *     0004e0  callx8 a4             <-- a4 is zero
+ *
+ * The blob reaches those tables through its OWN symbols, not the ROM's fixed
+ * addresses: the l32r two instructions earlier resolves to r_plf_funcs_p at
+ * 0x3ffb0d6c, which is inside .btdm_bss where this script puts it. So the
+ * linkage is right and the table is simply empty.
+ *
+ * What fills it is `config_funcs_reset`, in the blob's own config_funcs.o,
+ * which calls config_rwip_funcs_reset and its siblings. Only arch_main.o
+ * references it -- the blob's startup -- and whether that startup runs on this
+ * path is the open question.
+ *
+ * So: read the pointers, call it, read them again, and print all six numbers.
+ * If they were null and are not afterwards, the blob's startup never ran here
+ * and this is the missing step. If they were already set, this call is not the
+ * answer and the null is a specific entry rather than a whole table. Either
+ * way the next move follows from the reading rather than from an argument. */
+extern void *r_plf_funcs_p;
+extern void *r_ip_funcs_p;
+extern void *r_modules_funcs_p;
+
+/* NOT config_funcs_reset, which was the first guess and is the wrong end.
+ *
+ * Calling it directly faulted with exccause 29 (StoreProhibited) at
+ * excvaddr 0x154 -- it writes THROUGH those pointers, so something has to
+ * assign them first. config_funcs_reset fills tables; it does not create them.
+ *
+ * btdm_app_ref_init is in the same object as btdm_controller_init
+ * (arch_main.o), is exported, and -- the useful part -- is referenced by
+ * NOTHING in any of the four archives. Every other entry point in that object
+ * has a caller; this one is the host's job, and nat-os was never doing it.
+ * The faulting function's own literal pool sits next to it, which is how it
+ * was found. */
+/* The tables the three pointers are supposed to point AT, for the record.
+ *
+ *   r_plf_funcs_ro   108 bytes, const -- the platform functions, compile-time.
+ *   r_ip_funcs       0x3ffae710, ROM DRAM, writable, patched at run time.
+ *   r_modules_funcs  0x3ffafd6c, likewise.
+ *
+ * The two ROM tables are not in the image: esp32.rom.ld only PROVIDEs them and
+ * nothing references them. Both sit below 0x3FFB0000, in the ROM's own reserved
+ * DRAM, outside this kernel's map and never written by it. */
+#define ROM_IP_FUNCS         ((void *)0x3ffae710u)
+#define ROM_MODULES_FUNCS    ((void *)0x3ffafd6cu)
+
+/* The ROM's OWN copies of the same three pointers, at the addresses
+ * esp32.rom.ld names. Each one sits four bytes below its table --
+ * r_ip_funcs_p 0x3ffae70c against r_ip_funcs 0x3ffae710, r_modules_funcs_p
+ * 0x3ffafd68 against r_modules_funcs 0x3ffafd6c -- which is what a pointer and
+ * the thing it points at look like when both are ROM DRAM objects.
+ *
+ * Both of those live BELOW 0x3FFB0000, outside this kernel's map entirely, so
+ * nothing here has ever written them. Reading them says whether ROM startup
+ * initialised them, and therefore whether the blob is supposed to use the ROM's
+ * copies rather than the uninitialised .bss shadows plf_funcs.o brought in. */
+#define ROM_IP_FUNCS_P       ((void **)0x3ffae70cu)
+#define ROM_MODULES_FUNCS_P  ((void **)0x3ffafd68u)
+#define ROM_PLF_FUNCS_P      ((void **)0x3ffb8360u)
+
+static void bt_funcs_report(const char *when)
+{
+    uart_puts("   [bt] funcs ");
+    uart_puts(when);
+    uart_puts(":\n     blob shadows  plf ");
+    uart_put_hex((uint32_t)r_plf_funcs_p);
+    uart_puts(" ip ");
+    uart_put_hex((uint32_t)r_ip_funcs_p);
+    uart_puts(" modules ");
+    uart_put_hex((uint32_t)r_modules_funcs_p);
+    uart_puts("\n     ROM copies    plf ");
+    uart_put_hex((uint32_t)*ROM_PLF_FUNCS_P);
+    uart_puts(" ip ");
+    uart_put_hex((uint32_t)*ROM_IP_FUNCS_P);
+    uart_puts(" modules ");
+    uart_put_hex((uint32_t)*ROM_MODULES_FUNCS_P);
+    uart_puts("\n");
+}
+
 static void bt_boot_task(void)
 {
+    /* Reported, NOT initialised here.
+     *
+     * Two host-side attempts at filling these were tried and both were wrong,
+     * and the disassembly of the blob is what settled it:
+     *
+     *   config_funcs_reset()  faulted at exccause 29, excvaddr 0x154 -- it
+     *                         writes THROUGH the pointers, so it fills tables
+     *                         rather than creating them. And the call list of
+     *                         esp_bt_controller_init does not contain it at
+     *                         all, so no host is supposed to call it.
+     *   btdm_app_ref_init()   ran cleanly and changed nothing, and it turns
+     *                         out btdm_controller_task already calls it:
+     *                         r_rf_rw_bt_init, r_rf_rw_le_init, an AFH set,
+     *                         btdm_app_ref_init, then r_rw_pre_main.
+     *
+     * Pointing the pointers at their tables by hand got further still and then
+     * faulted inside lc_reset_lc_default_state_funcs walking an 8-byte-entry
+     * table from 0x40000004 -- because the table at r_ip_funcs is itself
+     * uninitialised DRAM. Guessing at the blob's private init order is the
+     * wrong method, so it stops here.
+     *
+     * What is left is the reading, which is the useful part: all three are
+     * zero when r_rwip_init runs, and the ROM's own copies hold power-on
+     * garbage. In a working system they would not. */
+    bt_funcs_report("before the controller starts");
+
     uart_puts("   handing the controller its configuration\n");
     g_init_rc = (int)rom_call4((uint32_t)&esp_bt_controller_init,
                                (uint32_t)&g_cfg, 0, 0, 0);
@@ -296,6 +489,7 @@ bt_state_t bt_init(void)
     }
 
     g_heap_before = heap_largest_free();
+    bt_canary_fill();
 
     /* The PHY first, and this one DOES go through phy_stack_call: it needs the
      * deep stack and it never blocks, which is the combination that mechanism
@@ -367,6 +561,21 @@ void bt_report(void)
     uart_puts(" B asked for, ");
     uart_put_dec(bt_queues_failed);
     uart_puts(" refused\n");
+
+    /* The DRAM map's one unverified assumption, as a reading. */
+    bt_canary_check();
+    uart_puts("   low 32 KB canary: ");
+    uart_put_dec(g_canary_words);
+    uart_puts(" words checked, ");
+    if (g_canary_bad == 0u) {
+        uart_puts("all intact -- the ROM did not write below 0x3FFB8000\n");
+    } else {
+        uart_put_dec(g_canary_bad);
+        uart_puts(" CHANGED, first at ");
+        uart_put_hex(g_canary_first);
+        uart_puts(" -- the ROM owns more than 0x3FFB8000 up; give it the\n"
+                  "                      whole 64 KB (see linker.ld)\n");
+    }
 
     uart_puts("   bring-up stack: ");
     if (g_boot_task < 0) {

@@ -50,7 +50,21 @@ static struct {
 
 volatile uint32_t g_ttab_lo_seen, g_ttab_hi_seen;   /* first clobbered value */
 volatile int      g_ttab_side = -1;                 /* 0 = below, 1 = above */
+/* [next_moves/13 step 3] In a Bluetooth image the task stack pool moves into
+ * .btdram -- the 32 KB below the ROM's Bluetooth bss -- because this is the
+ * biggest single static buffer in the kernel (13 x 2 KB) and the ROM needs
+ * 0x3FFB8000..0x3FFBFF70 back. rwip_rf, one of the ROM's fixed function-pointer
+ * tables, used to land at g_stacks +0x784.
+ *
+ * Safe to leave .bss for: task_create_with_stack fills every word with
+ * STACK_FILL and writes the guard before the task runs, so nothing here relies
+ * on start.S having zeroed it. See the .btdram_bss note in linker.ld. */
+#ifdef BOARD_HAS_BT
+static uint32_t g_stacks[TASK_MAX][TASK_STACK_WORDS]
+    __attribute__((section(".btdram"), aligned(16)));
+#else
 static uint32_t g_stacks[TASK_MAX][TASK_STACK_WORDS];
+#endif
 
 /* Scratch for _handler_level3's window-state restore: the frame pointer has to
  * live somewhere base-independent while WINDOWBASE is written. See vectors.S. */

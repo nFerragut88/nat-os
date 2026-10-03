@@ -415,11 +415,26 @@ if ($fpuUsers) {
 }
 Write-Host "  FPU check: only mp3.c uses the FPU" -ForegroundColor DarkGray
 
+# The linker script goes through the C preprocessor, because a -BT image needs a
+# DIFFERENT DRAM map: the ESP32's ROM owns 0x3FFB8000..0x3FFBFF70 for its own
+# Bluetooth data, and the WiFi blob's 32 KB reservation is released to pay for
+# it. GNU ld has no conditionals of its own, so the choice has to be made here.
+# ESP-IDF preprocesses its own scripts the same way.
+#
+# -P drops the line markers, which ld would reject. linker.ld has no #
+# directives of its own apart from the ones this adds, and its only apostrophes
+# are inside comments, which cpp removes.
+$ldscript = Join-Path $build "linker.gen.ld"
+$cppflags = @("-E", "-P", "-x", "c")
+if ($BT) { $cppflags += "-DBOARD_HAS_BT=1" }
+& $gcc @cppflags "$root\kernel\linker.ld" -o $ldscript
+if ($LASTEXITCODE -ne 0) { throw "preprocessing linker.ld failed" }
+
 $ldflags = @(
     "-mabi=call0", "-nostdlib", "-nostartfiles",
     "-Wl,--gc-sections",
     "-Wl,-Map,$build\natos.map",
-    "-T", "$root\kernel\linker.ld"
+    "-T", $ldscript
 )
 & $gcc @ldflags -o $elf @objs @phylibs @btlibs
 if ($LASTEXITCODE -ne 0) { throw "link failed" }
